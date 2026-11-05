@@ -53,21 +53,21 @@ class GroupRef(Part, frozen=True):
 
 
 class HostInfoDoc(Part, frozen=True):
-    """`roster info HOST --json`."""
+    """`roster hosts HOST --json`."""
 
     host: Host
     group: GroupRef | None
 
 
 class ResourceInfoDoc(Part, frozen=True):
-    """`roster info RESOURCE --json`."""
+    """`roster hosts RESOURCE --json`."""
 
     resource: Resource
     group: GroupRef | None
 
 
 class ResourcesDoc(Part, frozen=True):
-    """`roster resources --json`."""
+    """`roster hosts --resources --json`."""
 
     resources: list[Resource]
 
@@ -224,11 +224,14 @@ class Provider(Part, frozen=True):
 
 
 class ProvidersDoc(Part, frozen=True):
-    """`roster providers --json`."""
+    """`roster vault status --json` (was `roster providers --json`): the providers, then each vault's state as
+    `roster check --box` says it and when `roster vault sync` last synced each one that syncs (null: never)."""
 
     providers: list[Provider]
     unknown: list[str]
     ok: bool
+    vault: list[BoxCheck] = []
+    last_sync: dict[str, str | None] = {}
 
 
 class UsedFor(Part, frozen=True):
@@ -237,7 +240,7 @@ class UsedFor(Part, frozen=True):
 
 
 class LoginRow(Part, frozen=True):
-    """A Login reference of `roster auth-check --json`, and whether a value was found (never the value)."""
+    """A Login reference of `roster check --auth --json`, and whether a value was found (never the value)."""
 
     group: str
     auth: str | None = Field(repr=False)
@@ -248,10 +251,34 @@ class LoginRow(Part, frozen=True):
 
 
 class LoginsDoc(Part, frozen=True):
-    """`roster auth-check --json`."""
+    """`roster check --auth --json`."""
 
     logins: list[LoginRow]
     ok: bool
+
+
+class VaultItem(Part, frozen=True):
+    """A vault item no Login in roster.yml names (fromvault.row), and the Host it suggests. Never a value."""
+
+    provider: str
+    id: str
+    name: str
+    auth: str
+    new: bool
+    host: str | None = None
+    address: str | None = None
+    port: int | None = None
+    user: str | None = None
+    note: str | None = None
+
+
+class VaultItemsDoc(Part, frozen=True):
+    """`roster add --from-vault --json` (no NAME): the items (new ones, or every one with --all), how many no Login
+    names, and how many of those are new."""
+
+    items: list[VaultItem]
+    unmapped: int
+    new: int
 
 
 # ---------------------------------------------------------------- named Inventories

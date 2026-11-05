@@ -237,6 +237,60 @@ describe("a shell that marks its prompts (OSC 133)", () => {
   });
 });
 
+// #242 (Q185): the folder a command ran in, as the shell said it (OSC 7) before the command ran.
+describe("the folder in a Done", () => {
+  const SEVEN = (url: string) => `\x1b]7;${url}\x07`;
+
+  it("is the folder the shell said last before the command ran, not the one after it", async () => {
+    const s = screen();
+    await s.write(`${SEVEN("file://web-01/srv/app")}${A}$ ${B}cd /tmp\r\n${C}${D(0)}${SEVEN("file://web-01/tmp")}${A}$ ${B}`);
+    await s.write(`ls\r\n${C}file\r\n${D(0)}${A}$ ${B}`);
+    expect(s.takeDone()).toEqual([
+      { command: "cd /tmp", output: "", code: 0, cwd: "/srv/app" },
+      { command: "ls", output: "file\n", code: 0, cwd: "/tmp" },
+    ]);
+  });
+
+  it("isn't there when the shell never said one, or said one roster doesn't take", async () => {
+    const s = screen();
+    await s.write(`${A}$ ${B}ls\r\n${C}${D(0)}${SEVEN("file://web-01/a%1Bb")}${A}$ ${B}ls\r\n${C}${D(0)}${A}$ ${B}`);
+    expect(s.takeDone()).toEqual([
+      { command: "ls", output: "", code: 0 },
+      { command: "ls", output: "", code: 0 },
+    ]);
+  });
+});
+
+// #223: Dones are kept only while a Plugin listens for `command_done` (the manager says so).
+describe("Dones while no Plugin listens for them", () => {
+  it("makes none, and keeps no output for them; terminal_output's lines are all still there", async () => {
+    const s = screen();
+    s.collectDone(false);
+    await s.write(`${A}$ ${B}ls\r\n${C}file\r\n${D(0)}${A}$ ${B}`);
+    expect(s.takeRuns()).toEqual([
+      { text: "$ ls\n", kind: "input" },
+      { text: "file\n", kind: "output" },
+    ]);
+    expect(s.takeDone()).toEqual([]);
+  });
+
+  it("makes none for a command that started before one listened; the next one is a Done", async () => {
+    const s = screen();
+    s.collectDone(false);
+    await s.write(`${A}$ ${B}make\r\n${C}step 1\r\n`);
+    s.collectDone(true);
+    await s.write(`step 2\r\n${D(0)}${A}$ ${B}ls\r\n${C}file\r\n${D(0)}${A}$ ${B}`);
+    expect(s.takeDone()).toEqual([{ command: "ls", output: "file\n", code: 0 }]);
+  });
+
+  it("drops the Dones not taken yet when the last listener goes", async () => {
+    const s = screen();
+    await s.write(`${A}$ ${B}ls\r\n${C}file\r\n${D(0)}${A}$ ${B}`);
+    s.collectDone(false);
+    expect(s.takeDone()).toEqual([]);
+  });
+});
+
 // #223: the cap holds when the text over it ends in one line longer than the cap.
 describe("lastLines", () => {
   it("keeps the last whole lines that fit", () => {

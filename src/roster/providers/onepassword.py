@@ -4,7 +4,8 @@ import json
 import os
 import re
 
-from . import PROVIDERS, SecretError, errtext, register, split_field
+from . import PROVIDERS, ItemNotFound, SecretError, SeveralItems, errtext, register, split_field
+from .bw_items_filter import no_userinfo
 
 # ---- built-in: 1Password
 
@@ -84,6 +85,106 @@ def _onepassword(spec, ctx):
         raise SecretError(f"1Password item '{item}' has no value in field '{field}'")
     return val
 
+
+# ---- every Login item, never a field's value (Q191). `op item list` prints overviews only (id, title, vault,
+# category, URLs; no field values); a username is one more `op item get ID --fields label=username` each, never with
+# --reveal (a concealed field stays concealed), and only for the items roster.yml doesn't name yet.
+
+def _op_items(ctx, mapped):
+    _op_ready(ctx)
+    vault = ctx.settings.get("vault")
+    r = _op(ctx, _op_base(ctx) + ["item", "list", "--categories", "Login", "--format", "json"]
+            + (["--vault", str(vault)] if vault else []))
+    if r.returncode != 0:
+        raise SecretError(f"`op item list` failed: {errtext(r, stdout=False)}")
+    try:
+        listed = json.loads(r.stdout or "[]")
+        if not isinstance(listed, list):
+            raise ValueError
+    except ValueError:
+        raise SecretError("couldn't read `op item list` output") from None
+    out = []
+    for i in listed:
+        if not isinstance(i, dict) or not isinstance(i.get("id"), str):
+            continue
+        title = str(i.get("title") or "")
+        where = str((i.get("vault") or {}).get("name") or "")
+        item = {"id": i["id"], "name": title, "keys": [i["id"], title] + ([f"{where}/{title}"] if where else []),
+                "uris": [], "username": None}
+        if not mapped(item):
+            item["uris"] = [no_userinfo(u["href"]) for u in i.get("urls") or []       # never a URL's user:password@
+                            if isinstance(u, dict) and isinstance(u.get("href"), str)]
+            item["username"] = _op_username(ctx, i["id"])
+        out.append(item)
+    return out
+
+
+def _op_username(ctx, item_id):
+    r = _op(ctx, _op_base(ctx) + ["item", "get", item_id, "--fields", "label=username", "--format", "json"])
+    if r.returncode != 0:
+        return None                                         # no username field
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return None
+    data = data[0] if isinstance(data, list) and data else data
+    value = data.get("value") if isinstance(data, dict) and data.get("type") != "CONCEALED" else None
+    return value if isinstance(value, str) and value else None
+
+
+def _op_ref_item(spec):
+    """What an op: reference names an item by: op://VAULT/ITEM/FIELD's VAULT/ITEM, else VAULT/ITEM or ITEM."""
+    if spec.startswith("op://"):
+        parts = spec[5:].split("/")
+        return "/".join(parts[:2]) if len(parts) >= 2 else spec
+    return split_field(spec)[0]
+
+
+# ---- one item's address and user, never its password (T223, #432, Q197). op has no field-only read of an item's URL
+# (`--fields` reads fields; a Login's website is in its overview's `urls`), so: every item's overview from
+# `op item list` (id, title, vault, URLs and a subtitle roster ignores; no concealed value, as Q191's listing), the one ITEM names found there (by id, or
+# by title in any case; several fail closed, as bw's do), its URL with no user:password@ (no_userinfo), and then its
+# username by that id, `op item get ID --fields label=username` without --reveal, so both come from the same item.
+
+SEVERAL = "several 1Password items match '{}' - use the item's id instead (the 1Password app shows it)"
+
+
+def _op_overviews(ctx, vault):
+    r = _op(ctx, _op_base(ctx) + ["item", "list", "--format", "json"] + (["--vault", str(vault)] if vault else []))
+    if r.returncode != 0:
+        raise SecretError(f"`op item list` failed: {errtext(r, stdout=False)}")
+    try:
+        listed = json.loads(r.stdout or "[]")
+        if not isinstance(listed, list):
+            raise ValueError
+    except ValueError:
+        raise SecretError("couldn't read `op item list` output") from None
+    return [i for i in listed if isinstance(i, dict) and isinstance(i.get("id"), str)]
+
+
+def _op_urls(item):
+    urls = [u for u in item.get("urls") or [] if isinstance(u, dict) and isinstance(u.get("href"), str)]
+    urls.sort(key=lambda u: u.get("primary") is not True)               # the primary one first
+    return [no_userinfo(u["href"]) for u in urls]
+
+
+def _op_login_fields(name, ctx):
+    _op_ready(ctx)
+    item, vault = (_op_ref_item(name) if name.startswith("op://") else name), ctx.settings.get("vault")
+    if "/" in item:
+        vault, item = item.split("/", 1)
+    found = [i for i in _op_overviews(ctx, vault)
+             if i["id"] == item or str(i.get("title") or "").casefold() == item.casefold()]
+    if not found:
+        raise ItemNotFound(f"no 1Password item matches '{item}'" + (f" in vault {vault}" if vault else ""), item)
+    if len(found) > 1:
+        raise SeveralItems(SEVERAL.format(item), item, [{"name": str(i.get("title") or ""), "uris": _op_urls(i),
+                                                         "revised": i.get("updated_at")} for i in found], exact=False)
+    urls = _op_urls(found[0])
+    return {"uri": urls[0] if urls else None, "username": _op_username(ctx, found[0]["id"])}
+
+
+PROVIDERS["op"].update(items=_op_items, ref_item=_op_ref_item, login_fields=_op_login_fields)
 
 PROVIDERS["op"]["login_help"] = (
     "1Password signs in through its desktop app, not here: turn on Settings > Developer > \"Integrate with "

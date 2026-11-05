@@ -164,11 +164,38 @@ NOT_POWERSHELL = 161        # `run` on an os: windows Host: the command doesn't 
 SHARED_BOX_NAME = 162       # warning: this Box's name is an OS image's default hostname, so another Box likely has
                             #   it too; Boxes with one name are one owner (its key's tag and the Mesh's)
 
-# `roster bw` (T202, #387, decision Q178): read-only unless --write, and a fail-closed allowlist (catalog rows 224-226).
+# `roster vault bw` (T202, #387, decision Q178): read-only unless --write, and a fail-closed allowlist (catalog rows 224-226).
 # None of the three messages repeats what came after bw's command: those arguments may hold a password
 BW_NEEDS_WRITE = 164        # a bw command that changes the vault, writes it out, or acts on the account, without --write
-BW_NOT_ALLOWED = 165        # a bw command or option before it that roster bw doesn't know, or --write among bw's own
+BW_NOT_ALLOWED = 165        # a bw command or option before it that roster vault bw doesn't know, or --write among bw's own
 BW_REFUSED = 166            # never run: `bw serve` (the vault to every local program) or a session on the command line
+
+# A new Inventory (T212, #401, decision Q182): `roster init --inventory HOW` (catalog rows 230-233, 235)
+INVENTORY_THERE = 170       # roster init: a roster.yml is there already, so it's kept as it is; nothing written
+NOT_AN_INVENTORY = 171      # roster init: the file to import isn't there or doesn't load, or a clone has no roster.yml
+CLONE_FAILED = 172          # roster init: git couldn't clone the repo (or isn't installed, or the folder isn't empty)
+SSH_CONFIG_UNREADABLE = 173  # roster init: the ssh config to import Hosts from can't be read; nothing written
+FOLDER_NOT_WRITABLE = 174   # roster init / inventory.create: the folder can't be made or written in; nothing written
+
+# Adding one Host (T220, #427, decision Q190): `roster add` and serve's host.add, one implementation (addhost.py)
+# (catalog rows 245-247)
+ADDRESS_TAKEN = 184         # a Host at that address (and SSH port) is in roster.yml already; data.host, data.group
+NEEDS_FLAG = 185            # roster add without a terminal (or with --yes): a value it can't guess; the flag is named
+NO_ITEM_FIELDS = 186        # the vault can't give an item's address and user without reading its password
+
+# The vault items roster.yml doesn't name yet (T221, #428, decision Q191): `roster add --from-vault` with no NAME
+# (catalog rows 248-249)
+LIST_FAILED = 187           # the vault couldn't list its items (bw list items, its filter, op item list, kp ls) or sync
+NO_LISTABLE_VAULT = 188     # roster.yml uses no vault that can list its items without roster reading their passwords
+
+# A Box's key (T226, #435, decision Q193; catalog row 251)
+BOX_NAME_TAKEN = 190        # setup on a renamed Box: another key's line on that Host has the new name; --force goes on
+
+# `roster vault op` (T223, #432, decision Q197): read-only unless --write, a fail-closed allowlist, as bw's (catalog rows
+# 258-260). None of the three messages repeats what came after op's command: those arguments may hold a password
+OP_NEEDS_WRITE = 196        # an op command that changes the vault or the account, or writes a file here, without --write
+OP_NOT_ALLOWED = 197        # an op command or option before it that roster vault op doesn't know, or --write among op's own
+OP_REFUSED = 198            # never run: `op run`/`op plugin run` (another program with the sign-in), --session, --config
 
 
 class Problem(Exception):
@@ -252,9 +279,16 @@ def login_problem(e, h, what="ssh"):
                        fix=f"fix the name in {h['name']}'s auth: in roster.yml, or rename the item in the vault")
     if isinstance(e, providers.SeveralItems):
         how = "are named" if e.exact else "match"
-        listed = "; ".join(f"'{m['name']}' (edited {m['revised'] or '?'}"
-                           + (f", {', '.join(m['uris'])}" if m["uris"] else "") + ")" for m in e.matches)
-        return Problem(SEVERAL_ITEMS, f"{len(e.matches)} vault items {how} '{e.item}' ({where}): {listed}",
+        listed = "; ".join(f"'{m['name']}'" + (f" ({about})" if (about := ", ".join(
+            ([f"edited {m['revised']}"] if m.get("revised") else []) + list(m["uris"]))) else "")
+            for m in e.matches)
+        total = getattr(e, "total", None)
+        if total:                               # bw found more than its login rows show (Q191 (p))
+            head = f"{total} vault items match '{e.item}' ({where}), some of them aren't logins"
+            text = head + (f": {listed}" if listed else "")
+        else:
+            text = f"{len(e.matches)} vault items {how} '{e.item}' ({where}): {listed}"
+        return Problem(SEVERAL_ITEMS, text,
                        {"matches": e.matches},
                        fix="delete or rename the extra items in the vault, or use the item's id in auth:")
     if isinstance(e, providers.NoField):
@@ -264,7 +298,7 @@ def login_problem(e, h, what="ssh"):
     if type(e) in VAULT_ERRORS:                 # the vault, not the item: its message already says what to run
         code = VAULT_ERRORS[type(e)]
         return Problem(code, str(e), fix="unlock the vault" if code == VAULT_LOCKED else str(e))
-    return Problem(LOOKUP_FAILED, f"{e} ({where})", fix="see the message; `roster auth-check` tests every Login")
+    return Problem(LOOKUP_FAILED, f"{e} ({where})", fix="see the message; `roster check --auth` tests every Login")
 
 
 def inventory_problem(message, path=None):
@@ -272,13 +306,14 @@ def inventory_problem(message, path=None):
     m = re.search(r"line (\d+)", message)
     data = {"path": str(path.resolve()) if path else None} | ({"line": int(m.group(1))} if m else {})
     where = f"{path or 'roster.yml'}" + (f" at line {data['line']}" if m else "")
-    return Problem(INVENTORY_ERROR, message, data, fix=f"fix {where}, or run `roster init` if there's none yet")
+    return Problem(INVENTORY_ERROR, message, data, fix=f"fix {where}, or make one if there's none yet: "
+                                                                 "`roster init --blank` (`roster init --help`: the others)")
 
 
 def unknown_provider(h, auth, what="ssh"):
     name = str(auth).partition(":")[0].strip()
     return Problem(NO_PROVIDER, f"{h['name']}'s {what} Login uses '{name}:', which isn't set up on this box",
-                   {"provider": name}, fix="see `roster providers` for the ones that are, then fix auth: in "
+                   {"provider": name}, fix="see `roster vault status` for the ones that are, then fix auth: in "
                                            "roster.yml (or add the provider)")
 
 

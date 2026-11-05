@@ -2,7 +2,7 @@
 
 <!-- Generated from crates/roster-core/src/plugin/api.rs by `cargo run -p roster-core --example gen_plugin_api`: edit that, then run it. -->
 
-Every function, value, event and data type of the `roster` Lua module a Plugin gets, `roster.api_version` 5. How to write, install and trust a Plugin is the guide, [Writing a Plugin](plugins.md); this is the reference. Each entry is a help topic: `:help roster.inventory.host()` for a function, `:help roster-Host` for a type.
+Every function, value, event and data type of the `roster` Lua module a Plugin gets, `roster.api_version` 6. How to write, install and trust a Plugin is the guide, [Writing a Plugin](plugins.md); this is the reference. Each entry is a help topic: `:help roster.inventory.host()` for a function, `:help roster-Host` for a type.
 
 Types are written as [LuaCATS](https://luals.github.io/wiki/annotations/) annotations write them: `string?` may be `nil`, `Host[]` is a list of Hosts, `table<string, Group>` a table of Groups by name, `"info"|"warn"` one of those strings. The same declarations are [`roster.lua`](../examples/plugins/types/roster.lua), for [your editor](#editor-support).
 
@@ -225,6 +225,7 @@ roster embeds **Lua 5.4** (built into the app, nothing to install), not LuaJIT a
 | [`HostCheck`](#hostcheck) | `host.check`'s result: the steps of `roster check HOST` |
 | [`CheckJob`](#checkjob) | `host.check_job`'s result: a Host's check, and how it came out |
 | [`CheckStep`](#checkstep) | One step of a `host.check` |
+| [`InventoryStore`](#inventorystore) | How `roster.yml` is kept: a plain file or a team repo (serve API 28) |
 | [`ChangesDiff`](#changesdiff) | `changes.diff`'s result: the Pending changes |
 | [`HostChange`](#hostchange) | A Host in `changes.diff` |
 | [`GroupChange`](#groupchange) | A group in `changes.diff` |
@@ -3269,7 +3270,7 @@ None.
 
 **Returns**
 
-- [`Session`](#session)`[]`: Each open Session's id and Host, oldest open first.
+- [`Session`](#session)`[]`: Each open Session's id and Host (and, with `terminal.read`, its folder), oldest open first.
 
 **Errors**
 
@@ -4488,6 +4489,7 @@ What `roster.inventory.review` wrote.
 | `box` | `string` | yes | This Box's name. |
 | `host_count` | `integer` | yes | How many Hosts. |
 | `providers` | `string[]` | yes | The password providers roster has. |
+| `store` | [`InventoryStore`](#inventorystore) | no | How `roster.yml` is kept: a plain file or a team repo (serve API 28; absent before). |
 | `roster_version` | `string` | yes | roster's version. |
 | `api_version` | `integer` | yes | roster serve's API version (not `roster.api_version`). |
 
@@ -4555,6 +4557,18 @@ One step of a `host.check`.
 | `details` | `string` | no | The raw text, when there is one (ssh's stderr). |
 | `data` | `table` | no | What the code's row says it carries. |
 
+### `InventoryStore`
+
+How `roster.yml` is kept: a plain file or a team repo (serve API 28).
+
+Decided per file, each time: `repo` when `roster.yml` is committed in a git repo with a remote (edits are Pending changes until Publish), `file` otherwise (every edit is saved straight to it, and there's nothing to publish).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `kind` | `"repo"\|"file"` | yes | A team repo, or a plain file. |
+| `note` | `string` | yes | Which, in a sentence, as `roster check --box` says it. |
+| `repo` | `string` | no | The git work tree it's in; `nil` outside one. |
+
 ### `ChangesDiff`
 
 `changes.diff`'s result: the Pending changes.
@@ -4562,7 +4576,8 @@ One step of a `host.check`.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `path` | `string` | yes | `roster.yml`'s path. |
-| `repo` | `string` | yes | The infra repo's top folder. |
+| `repo` | `string` | no | The infra repo's top folder; `nil` for a plain file. |
+| `kind` | `"repo"\|"file"` | no | `file` for a plain file, whose edits are saved already: no diff, `count` 0 (serve API 28; absent before). |
 | `diff` | `string` | yes | git's diff of `roster.yml` against the last commit; `""` for none. A `cmd:` reference in it reaches a Plugin cut to `cmd:` (the rest of its line), an `env:` one to `env:`. |
 | `hosts` | [`HostChange`](#hostchange)`[]` | yes | The Hosts it changes. |
 | `groups` | [`GroupChange`](#groupchange)`[]` | yes | The groups it changes. |
@@ -4680,8 +4695,9 @@ The `mesh: false` a `mesh.cut` writes into `roster.yml`.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `written` | `boolean` | yes | Whether it was written now (`false` when it already was, or couldn't be). |
-| `backup` | `string` | no | The copy of `roster.yml` from before; `nil` when it isn't in a git repo. |
-| `note` | `string` | no | Why nothing was written, or that it went straight to a file outside git. |
+| `backup` | `string` | no | The copy of `roster.yml` from before (since serve API 28 a plain file's too; `nil` before for a file outside git). |
+| `kind` | `"repo"\|"file"` | no | A Pending change in a team repo, or saved straight to a plain file (serve API 28; absent before). |
+| `note` | `string` | no | Why nothing was written (before serve API 28, also that it went straight to a file outside git). |
 | `error` | `string` | no | Why it couldn't be written (the cut still happened). |
 | `fix` | `string` | no | What to do then, in a sentence. |
 
@@ -4860,6 +4876,7 @@ An open Session, as `roster.sessions.list` gives it.
 |---|---|---|---|
 | `session` | `integer` | yes | The Session's id, as its events name it: `roster.terminal.send` and `roster.sessions.show` take it. |
 | `host` | `string` | no | The Host's name; `nil` for a Quick Connect Session (`:quick`), which isn't on a Host. |
+| `cwd` | `string` | no | The folder the Session's shell last said it's in, with OSC 7 (since api 6; [Shell integration](plugins.md#shell-integration)): an absolute path such as `/srv/app` (PowerShell's on Windows: `/C:/Users/you`). Only for a Plugin granted `terminal.read`, as it's something the Session printed; `nil` without it, until the shell says one, or when what it said isn't a plain `file://` folder roster takes (no control characters, no invisible format characters such as zero-width spaces or bidi marks, at most 1024 characters). It's the shell's word, never checked: the Host can say any folder, so show it or report it, never use it to reach a file. It changes on every `cd`; read the list again when you need it now. |
 
 ### `SessionOpenEvent`
 
@@ -4922,6 +4939,7 @@ Read from the OSC 133 marks the Session's own shell prints (its rc file turns th
 | `command` | `string` | no | The command line as the shell showed it after its prompt; `nil` when it couldn't be read (the shell sent no `B` mark, or the line scrolled away or was reflowed by a resize before it ran). |
 | `output` | `string` | yes | What it printed, each line ending in `\n`, as `terminal_output` sent it (its last line too, if it didn't end in a line feed). At most the last 16 KB. |
 | `code` | `integer` | no | Its exit code; `nil` when the shell didn't say. |
+| `cwd` | `string` | no | The folder the shell last said it was in (OSC 7) before the command ran, so a `cd`'s is the folder it left (since api 6); `nil` when it said none roster takes. As [`Session`](#session)'s `cwd`: the shell's word, never checked. |
 
 ## Editor support
 

@@ -309,11 +309,11 @@ def test_an_unknown_host_or_group(inv):
         assert e.value.code == code, fn.__name__
 
 
-def test_removing_the_last_host_of_all_is_refused_because_it_wouldnt_load(write_config):
+def test_removing_the_last_host_of_all_leaves_an_empty_inventory_that_loads(write_config):
+    """T212: an Inventory with no Hosts is valid (a blank one), so the last Host can go too."""
     path = write_config("groups:\n  a:\n    user: u\n    hosts:\n      h1: 10.0.0.1\n")
-    with pytest.raises(Problem) as e:
-        edit.removed(path, "h1")
-    assert e.value.code == INVALID_EDIT and "defines no hosts" in e.value.details
+    _, new, _ = edit.removed(path, "h1")
+    assert "h1" not in new and edit.load_text(path, new)["hosts"] == {}
 
 
 def test_crlf_stays_crlf(write_config):
@@ -333,7 +333,7 @@ def git(cwd, *args):
 
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
-    """A scratch infra repo with INVENTORY committed (never the real ~/infra: serve gets -c to this one)."""
+    """A scratch infra repo with INVENTORY committed and a remote (never the real ~/infra: serve gets -c to this one)."""
     for k, v in {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t",
                  "GIT_COMMITTER_EMAIL": "t@x", "GIT_CONFIG_NOSYSTEM": "1"}.items():
         monkeypatch.setenv(k, v)
@@ -343,6 +343,7 @@ def repo(tmp_path, monkeypatch):
     (r / "roster.yml").write_text(INVENTORY)
     git(r, "add", "-A")
     git(r, "commit", "-q", "-m", "inventory")
+    git(r, "remote", "add", "origin", str(tmp_path / "origin.git"))      # a team repo (T212); never fetched here
     return r / "roster.yml"
 
 
@@ -613,3 +614,26 @@ def test_serves_own_writes_are_not_outside_edits(repo):
         assert taken(got) == [("inventory.changed", {"applied": False, "error": None})]
     finally:
         looks.set()
+
+
+WINDOWS = ("groups:\n  win:\n    user: u\n    os: windows\n    hosts:\n      w1: 10.0.0.1\n"
+           "  plain:\n    user: u\n    hosts:\n      p1: 10.0.0.9\n")
+
+
+def test_moving_a_host_out_of_a_windows_group_keeps_its_os(write_config):
+    path = write_config(WINDOWS)
+    _, new, h, pinned = edit.moved(path, "w1", "plain")
+    assert pinned == ["os"] and h["os"] == "windows" and "      w1:\n        ip: 10.0.0.1\n        os: windows\n" in new
+
+
+def test_moving_a_posix_host_into_a_windows_group_keeps_it_posix(write_config):
+    path = write_config(WINDOWS)
+    _, new, h, pinned = edit.moved(path, "p1", "win")          # unset is posix (Q174): written so the group's can't win
+    assert pinned == ["os"] and h["os"] == "posix" and "      p1:\n        ip: 10.0.0.9\n        os: posix\n" in new
+
+
+def test_deleting_a_windows_group_moves_its_hosts_keeping_their_os(write_config):
+    from roster.config import load_config_text
+    path = write_config(WINDOWS)
+    _, new, moved = edit.group_deleted(path, "win", "plain")
+    assert moved == ["w1"] and load_config_text(new, path)["hosts"]["w1"]["os"] == "windows"

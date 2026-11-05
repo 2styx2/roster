@@ -5,12 +5,12 @@ Use this to give another machine (your laptop, a teammate's box, a jump host, a 
 You need three things:
 
 1. **roster itself**: this repository.
-2. **The team's `roster.yml`**: the host list. It holds hosts, users and vault item names, but no passwords. It lives in [yourteam/infra](https://example.com/yourteam/infra).
+2. **An Inventory, `roster.yml`**: the host list. It holds hosts, users and vault item names, but no passwords. It's either your team's, in its git repo ([yourteam/infra](https://example.com/yourteam/infra)), or a plain file of your own on this Box; roster works the same with both ([A plain file or a team repo](cli-reference.md#a-plain-file-or-a-team-repo)).
 3. **Access to the vault** the `roster.yml` points at, with the same items (`bw:...`, `op:...`).
 
-**Shortcut:** `./install.sh` in the roster checkout does steps 1–6 for you, plus `ROSTER_CONFIG`, Tab completion for roster in your shell and an auto-update cron job. It asks before each stage, and for your team's map repo (or pass `--infra-repo GIT-URL`, which `--yes` needs to clone it). It installs the newest Release (the highest `vX.Y.Z` tag that `origin` has, asked for first), whatever branch your checkout is on, from a clean copy unpacked into `~/.local/share/roster/source/` (kept, because uv's record of the install points there; the next install removes the one before): your checkout is never switched, pulled or changed. `--ref REF` installs a tag or one of `origin`'s branches instead (`--ref dev`); with no Release tag it takes `origin`'s default branch, and offline it installs the checkout as it is and says so. It never installs an older roster over a newer one without a yes (under `--yes` it keeps the newer one; `--allow-downgrade` or `--ref` installs it anyway). It ends by printing the roster it installed and where from (`Installed roster 0.5.0 from ~/roster (v0.5.0, commit 1a2b3c4)`).
+**Shortcut:** `./install.sh` in the roster checkout does steps 1–6 for you, plus `ROSTER_CONFIG`, Tab completion for roster in your shell and an auto-update cron job. It asks before each stage, and how to start your Inventory when its folder has none: a blank one (the default, so `--yes` alone makes one), a copy of a `roster.yml` you have, a clone of your team's repo, or the Hosts in `~/.ssh/config`. `--inventory blank|file:PATH|repo:URL|ssh-config[:PATH]` picks one without asking (`--infra-repo URL` is `repo:URL`). A `roster.yml` already there is kept; it can add a new one beside it as a named Inventory instead. After a new one it offers `git init` too, never required. It installs the newest Release (the highest `vX.Y.Z` tag that `origin` has, asked for first), whatever branch your checkout is on, from a clean copy unpacked into `~/.local/share/roster/source/` (kept, because uv's record of the install points there; the next install removes the one before): your checkout is never switched, pulled or changed. `--ref REF` installs a tag or one of `origin`'s branches instead (`--ref dev`); with no Release tag it takes `origin`'s default branch, and offline it installs the checkout as it is and says so. It never installs an older roster over a newer one without a yes (under `--yes` it keeps the newer one; `--allow-downgrade` or `--ref` installs it anyway). It ends by printing the roster it installed and where from (`Installed roster 0.5.0 from ~/roster (v0.5.0, commit 1a2b3c4)`).
 
-**Installing or updating.** On a box that's set up (roster and uv, a map roster finds (`ROSTER_CONFIG`, or `~/.config/roster/roster.yml`) that's still there, and the cron job when the map has `bin/roster-pull`), `./install.sh` is an update: it says so and runs `./update.sh` with the same `--yes`, `--dry-run`, `--prefix`, `--no-completion` and `--allow-downgrade`. A box that isn't finished (the first run had no map yet, a stage failed, or it was installed before install.sh set up cron) gets every stage again, each skipping what's done: run `./install.sh --infra-repo GIT-URL` again after a first `--yes` without one, and it clones the map and finishes. `--finish` runs every stage on a set-up box too. A "no" to the cron job or `--no-completion` is kept in `~/.config/roster/install-choices`, so later runs (and `update.sh`) don't ask or add it again; delete the line to change your mind. Update with `./update.sh`, not `uv tool upgrade`. `./update.sh` and `./uninstall.sh` beside it do [Keeping it up to date](#keeping-it-up-to-date) and [Removing a box](#removing-a-box). The rest of this page is what they do, done by hand.
+**Installing or updating.** On a box that's set up (roster and uv, an Inventory roster finds (`ROSTER_CONFIG`, the active named Inventory, or `~/.config/roster/roster.yml`; a team repo's or a plain one, a blank one included) that's still there, and the cron job when the map has `bin/roster-pull`), `./install.sh` is an update: it says so and runs `./update.sh` with the same `--yes`, `--dry-run`, `--prefix`, `--no-completion` and `--allow-downgrade`. A box that isn't finished (a stage failed, or it was installed before install.sh set up cron) gets every stage again, each skipping what's done. A first `--yes` with no `--inventory` makes a blank Inventory, so the box is set up; to add the team's repo beside it later: `roster -c ~/team/roster.yml init --inventory repo:GIT-URL --name work`. `--finish` runs every stage on a set-up box too. On a box with no init system (a container: no systemd or `service`) it starts the cron daemon itself and says nothing starts it again after a restart; with no cron daemon to start it skips the job and says to run `bin/roster-pull` yourself. A "no" to the cron job or `--no-completion` is kept in `~/.config/roster/install-choices`, so later runs (and `update.sh`) don't ask or add it again; delete the line to change your mind. Update with `./update.sh`, not `uv tool upgrade`. `./update.sh` and `./uninstall.sh` beside it do [Keeping it up to date](#keeping-it-up-to-date) and [Removing a box](#removing-a-box). The rest of this page is what they do, done by hand.
 
 ## 1. Prerequisites
 
@@ -29,25 +29,34 @@ You need three things:
 git clone git@github.com:2styx2/roster.git
 cd roster
 uv tool install .          # puts `roster` in ~/.local/bin
-roster man --install       # puts its man page in ~/.local/share/man/man1, next to it
+roster help --man --install  # puts its man page in ~/.local/share/man/man1, next to it
 roster --help              # if not found: export PATH="$HOME/.local/bin:$PATH"
 man roster                 # the manual
 ```
 
-Tab completion (`roster ho<Tab>` is `roster hosts`, `roster run <Tab>` lists your Hosts): add `eval "$(roster completion bash)"` to `~/.bashrc` (`zsh` in `~/.zshrc`; for fish, `roster completion fish > ~/.config/fish/completions/roster.fish`). `install.sh` does this without asking; `--no-completion` leaves it off. See [Tab completion](cli-reference.md#tab-completion).
+Tab completion (`roster ho<Tab>` is `roster hosts`, `roster run <Tab>` lists your Hosts): add `eval "$(roster help --completion bash)"` to `~/.bashrc` (`zsh` in `~/.zshrc`; for fish, `roster help --completion fish > ~/.config/fish/completions/roster.fish`). `install.sh` does this without asking; `--no-completion` leaves it off. See [Tab completion](cli-reference.md#tab-completion).
 
 No git access on that box? Use `git archive --format=zip -o roster.zip HEAD` on a box that has it, copy the zip over, unzip it, and run `uv tool install .` inside.
 
 ## 3. Put the host list in place
 
-The team's map lives in the [infra repo](https://example.com/yourteam/infra):
+**The team's repo.** The team's map lives in the [infra repo](https://example.com/yourteam/infra):
 
 ```bash
-git clone git@example.com:yourteam/infra.git ~/infra
+git clone git@example.com:yourteam/infra.git ~/infra     # or: roster -c ~/infra/roster.yml init --inventory repo:URL
 cd ~/infra                 # roster reads ./roster.yml; run roster commands from here
 ```
 
-No git access? Copy `roster.yml` into `~/infra/` by hand instead. You'll then need to copy it again whenever it changes.
+No git access? Copy `roster.yml` into `~/infra/` by hand instead (`roster -c ~/infra/roster.yml init --inventory file:PATH` copies it once it loads). You'll then need to copy it again whenever it changes.
+
+**A plain file of your own.** No team repo, or your own machines? Start one:
+
+```bash
+roster -c ~/infra/roster.yml init --blank                  # a short, empty one to add Hosts to
+roster -c ~/infra/roster.yml init --inventory ssh-config   # or the Hosts already in ~/.ssh/config (it isn't changed)
+```
+
+A plain file needs no git: the app's edits, `roster add`, `roster discover --write` and `roster mesh cut` save straight to it, and there's nothing to publish. `git init` in its folder is optional, for history you commit yourself. A `roster.yml` that's already there is never replaced: make the new one in another folder with `--name NAME` to name it beside the first ([A new Inventory](cli-reference.md#a-new-inventory)).
 
 roster looks for its config in this order: `-c PATH`, `--inv NAME`, `$ROSTER_CONFIG`, `./roster.yml`, the active named Inventory, `~/.config/roster/roster.yml`. To run roster from any directory, name it (`roster inv add work ~/infra/roster.yml`, see step 9), or add this to `~/.bashrc` (and `~/.zshrc` if you use zsh):
 
@@ -68,18 +77,27 @@ mkdir -p ~/.config/roster
 (umask 077; bw unlock --raw > ~/.config/roster/bw-session)
 ```
 
-roster only uses the session file if only you can read it (mode 600). When the vault locks or the session expires, roster tells you; rerun the `bw unlock` line. `bw lock` ends the session. `roster bw …` then runs other `bw` commands with that session, read-only unless `--write` ([`roster bw`](cli-reference.md#roster-bw): first-time setup, changing a password, what roster can and can't see).
+On Windows, in PowerShell (the folder is `%APPDATA%\roster`):
+
+```powershell
+New-Item -ItemType Directory -Force $env:APPDATA\roster | Out-Null
+bw unlock --raw | Set-Content -Encoding ascii -NoNewline $env:APPDATA\roster\bw-session
+```
+
+`Set-Content -Encoding ascii` writes the key as plain text. Windows PowerShell 5.1's `>` writes UTF-16 instead, and PowerShell 7's UTF-8; roster reads both (with or without a byte-order mark, and without the line end), and ignores, with a warning, a file that isn't a session key.
+
+roster only uses the session file if it's yours alone: a plain file (not a symlink or a hard link), owned by you, that only you can read (mode 600); otherwise it warns and ignores it. Only the file itself is checked, not the folders it's in, so keep `~/.config/roster` your own. On Windows the same holds through the file's owner and permissions: owned by you (or Administrators), and nobody but you, SYSTEM and Administrators may open it, as a file in your own `%APPDATA%` is. When the vault locks or the session expires, roster tells you; rerun the `bw unlock` line. `bw lock` ends the session. `roster vault bw …` then runs other `bw` commands with that session, read-only unless `--write` ([`roster vault bw`](cli-reference.md#roster-vault-bw): first-time setup, changing a password, what roster can and can't see).
 
 **1Password:** use the desktop app integration, `eval $(op signin)`, or `OP_SERVICE_ACCOUNT_TOKEN` on a headless box.
 
 ## 5. Check that every credential can be found
 
 ```bash
-roster providers           # the password manager you use should say [tool found]
-roster auth-check          # every vault reference should say "ok"; nothing secret is printed
+roster vault status        # the password manager you use should say [tool found]
+roster check --auth        # every vault reference should say "ok"; nothing secret is printed
 ```
 
-`auth-check` only checks that a value exists. The next step checks it against the hosts.
+`roster check --auth` only checks that a value exists. The next step checks it against the hosts.
 
 ## 6. Run setup
 
@@ -90,7 +108,7 @@ roster setup
 
 On this box, setup does the following:
 
-1. Creates `~/.ssh/roster_ed25519`, tagged with this box's name (`box_name:` in roster.yml, or the hostname). Give each Box a name no other Box uses: two Boxes with the same name (a hostname every machine of that image has, such as `ubuntu`, `raspberrypi` or `localhost`, or a cloned VM) are one owner to roster, so each one's `roster setup` (as it installs its key) and `roster revoke` take the other's key off the Hosts they share, and each one's `roster mesh` takes the other's Mesh entries ([Whose Mesh it is](mesh.md#whose-mesh-it-is)). `roster check --box` warns about a common default name; it can't see the other Boxes, so a name two of them share by chance isn't caught. Set `box_name:` before the first `roster setup`. To rename a Box that's already set up: run `roster revoke` first, under the old name (it also takes a same-named Box's key, so that Box runs `roster setup` again), then set `box_name:` and run `roster setup` again. Changing `box_name:` alone doesn't re-tag the Box's key on its Hosts, and `roster revoke` then looks only for the new name's tag, so it would leave the old key there.
+1. Creates `~/.ssh/roster_ed25519`, tagged with this box's name (`box_name:` in roster.yml, or the hostname). Give each Box a name no other Box uses: two Boxes with the same name (a hostname every machine of that image has, such as `ubuntu`, `raspberrypi` or `localhost`, or a cloned VM) are one owner to roster, so each one's `roster setup` (as it installs its key) and `roster revoke` take the other's key off the Hosts they share, and each one's `roster mesh` takes the other's Mesh entries ([Whose Mesh it is](mesh.md#whose-mesh-it-is)). `roster check --box` warns about a common default name; it can't see the other Boxes, so a name two of them share by chance isn't caught. Set `box_name:` before the first `roster setup` if you can. To rename a Box that's already set up, set `box_name:` and run `roster setup`: it re-tags this Box's key line under the new name on every Host where the key works (`ok    nas-1 (re-tagged)`), found by this Box's own public key, so another Box's line, even one with the old name, is never touched. Until every key Host has been re-tagged (one down, or `--only`), the next `roster setup` re-tags the rest, and `roster revoke` finds the key under either name all along. On ESXi, setup, the re-tag and `roster revoke` use ESXi's own key file, `/etc/ssh/keys-USER/authorized_keys` (the one its sshd reads, kept across a reboot); a new one gets mode `1600`, as ESXi's own. `user:` must be the account as ESXi names it (`id -un` there): on a mismatch setup and revoke fail that Host and say both names, as the key would go to a folder sshd doesn't read. Where the key works from a line you wrote yourself, setup says it found no line and names the file it looked in (`note  nas-1: the key works, but no roster-managed line for it is in ~/.ssh/authorized_keys …`): change or remove that line by hand. The re-tag keeps a line's options (`from="…"` before the key) and its line end (a CRLF too), keeps one copy where there were two, and never touches another Box's line under the old name. A Host where another key's line already has the new name is another Box's name: this Box's setup and revoke would take that line too (one name, one owner), so setup leaves that Host as it is and fails it with [190](app/errors.md#a-boxs-key); give this Box another name, or run `roster setup --force` to go ahead.
 2. Records each host's fingerprint in `~/.ssh/roster_known_hosts`.
 3. Installs the key on every `enroll: true` host that doesn't accept it yet. It logs in once with the vault password to do this.
 4. Writes `~/.ssh/config.d/roster`, so `ssh <name>` works.
@@ -136,6 +154,8 @@ roster inv add home ~/home-net/roster.yml    # your own, with its own vault Logi
 roster --inv home setup                      # its own ssh config, known_hosts and ROSTER.md; work's stay as they are
 roster inv list                              # * marks the active one; `roster inv use home` switches
 ```
+
+Add a machine you know with one command, in the Inventory you name: `roster --inv home add pi --ip 10.0.0.30 --auth prompt --setup` ([One Host you already know](adding-hosts.md#one-host-you-already-know)).
 
 `ssh pi` then works for a Host in either one (the active one's wins if both have that name), and `roster check --box` warns if the same machine is in both. `ROSTER.md` (and the `CLAUDE.md` import) is written for this Box: it marks Hosts another Inventory's name shadows here, so keep it out of the shared repo (add `ROSTER.md` to its `.gitignore`). See [Named Inventories](cli-reference.md#named-inventories).
 

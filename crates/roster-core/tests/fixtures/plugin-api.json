@@ -1,5 +1,5 @@
 {
-  "api_version": 5,
+  "api_version": 6,
   "commands": [
     {
       "name": "finder",
@@ -118,18 +118,22 @@
   ],
   "functions": [
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "What to say. It's shown after the Plugin's name (`pinned: …`).",
           "name": "text",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "`\"info\"` (the default), `\"warn\"` or `\"error\"`.",
           "name": "level",
           "optional": true,
           "type": "Level"
         },
         {
+          "doc": "Buttons on the notice (since api 3): `{ actions = { { label = \"Show the plan\", run = \"view mesh-plan\" } } }`; whether an info notice is quiet (since api 4): `{ quiet = false }`.",
           "name": "opts",
           "optional": true,
           "type": "NoticeOptions"
@@ -138,16 +142,21 @@
       "path": "roster.notify",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Shows a notice, naming the Plugin"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The event's name: `lock`, `unlock`, `host_selected`, `session_open`, `session_exit`, `inventory_changed`, `terminal_output`, `command_done` or `job_progress`.",
           "name": "event",
           "optional": false,
           "type": "EventName"
         },
         {
+          "doc": "Runs with the event's payload (see [Events](#events)) each time it happens. Its return value is ignored.",
           "name": "listener",
           "optional": false,
           "type": "fun(e: table)"
@@ -156,11 +165,15 @@
       "path": "roster.on",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Runs a function on an event"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "What to ask, the button that confirms, and what runs when the user does.",
           "name": "question",
           "optional": false,
           "type": "Confirm"
@@ -169,11 +182,15 @@
       "path": "roster.confirm",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Asks the user to confirm, then runs a function"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A command line, as typed after `:` (`\"finder alerts\"`).",
           "name": "line",
           "optional": false,
           "type": "string"
@@ -182,16 +199,21 @@
       "path": "roster.cmd",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Runs a command line"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "What to say, on one line.",
           "name": "text",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "`{ quiet = true }` for a routine confirmation (since api 4).",
           "name": "opts",
           "optional": true,
           "type": "EchoOptions"
@@ -200,11 +222,15 @@
       "path": "roster.echo",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Answers on the message line, as roster's own commands do"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The start of a line for one of your commands (`\"folder new \"`); the user finishes it.",
           "name": "text",
           "optional": false,
           "type": "string"
@@ -213,11 +239,15 @@
       "path": "roster.cmdline",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Opens the command line with text typed in"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A permission's name: `\"terminal.read\"`, `\"serve:mesh.status\"`.",
           "name": "permission",
           "optional": false,
           "type": "string"
@@ -226,16 +256,21 @@
       "path": "roster.has",
       "permission": null,
       "returns": "boolean",
-      "since": 3
+      "returns_doc": "`true` when it's granted (and not revoked in `:plugins`).",
+      "since": 3,
+      "summary": "Whether the Plugin was granted a permission"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "How long to wait, in milliseconds: at least 50 (less waits 50), at most 2,147,483,647.",
           "name": "ms",
           "optional": false,
           "type": "number"
         },
         {
+          "doc": "What to run then, in the Plugin, with the budget of a call.",
           "name": "fn",
           "optional": false,
           "type": "fun()"
@@ -244,16 +279,21 @@
       "path": "roster.defer",
       "permission": null,
       "returns": "Timer",
-      "since": 3
+      "returns_doc": "Its id, for `roster.cancel`.",
+      "since": 3,
+      "summary": "Runs a function once, later"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "How long between runs, in milliseconds: at least 1,000.",
           "name": "ms",
           "optional": false,
           "type": "number"
         },
         {
+          "doc": "What to run each time, in the Plugin.",
           "name": "fn",
           "optional": false,
           "type": "fun()"
@@ -262,11 +302,15 @@
       "path": "roster.every",
       "permission": null,
       "returns": "Timer",
-      "since": 3
+      "returns_doc": "Its id, for `roster.cancel`.",
+      "since": 3,
+      "summary": "Runs a function again and again, until it's cancelled"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "What `roster.defer` or `roster.every` returned.",
           "name": "timer",
           "optional": false,
           "type": "Timer"
@@ -275,16 +319,21 @@
       "path": "roster.cancel",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Cancels a timer"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The command: `:name ARGS`. Lower case letters, digits, `-`, `_` and `.`, at most 64.",
           "name": "name",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "Its description and what it runs.",
           "name": "spec",
           "optional": false,
           "type": "CommandSpec"
@@ -293,11 +342,15 @@
       "path": "roster.commands.add",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Adds a `:` command"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A command this Plugin added.",
           "name": "name",
           "optional": false,
           "type": "string"
@@ -306,11 +359,15 @@
       "path": "roster.commands.remove",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Removes one of the Plugin's commands"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's commands.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -319,11 +376,15 @@
       "path": "roster.commands.get",
       "permission": null,
       "returns": "CommandSpec?",
-      "since": 5
+      "returns_doc": "`nil` if it has none by that id.",
+      "since": 5,
+      "summary": "One of the Plugin's commands, as it set it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A command's id.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -332,28 +393,37 @@
       "path": "roster.commands.has",
       "permission": null,
       "returns": "boolean",
-      "since": 5
+      "returns_doc": "`true` if it has.",
+      "since": 5,
+      "summary": "Whether the Plugin has that command"
     },
     {
+      "needs_text": "none",
       "params": [],
       "path": "roster.commands.list",
       "permission": null,
       "returns": "string[]",
-      "since": 5
+      "returns_doc": "A new list each call.",
+      "since": 5,
+      "summary": "The ids of the Plugin's commands"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "`\"leader\"` (a key after the Leader), `\"list\"` or `\"list_vim\"` (the Sidebar, and its vim keys).",
           "name": "context",
           "optional": false,
           "type": "KeyContext"
         },
         {
+          "doc": "The keys, space-separated: `\"w w\"`.",
           "name": "keys",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "A command line: one of the Plugin's commands or one of the app's that [`roster.cmd`](#rostercmdline) may run (`\"finder alerts\"`). `false` is deprecated: it takes the Plugin's binding off, as [`roster.keymap.del`](#rosterkeymapdelcontext-keys) does.",
           "name": "action",
           "optional": false,
           "type": "string|false"
@@ -362,16 +432,21 @@
       "path": "roster.keymap.set",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Binds keys to a command line"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "Where it was bound.",
           "name": "context",
           "optional": false,
           "type": "KeyContext"
         },
         {
+          "doc": "The keys, as `set` took them.",
           "name": "keys",
           "optional": false,
           "type": "string"
@@ -380,16 +455,21 @@
       "path": "roster.keymap.del",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Takes one of the Plugin's key bindings off"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "`\"leader\"`, `\"list\"` or `\"list_vim\"`.",
           "name": "context",
           "optional": false,
           "type": "KeyContext"
         },
         {
+          "doc": "The keys, as `set` took them.",
           "name": "keys",
           "optional": false,
           "type": "string"
@@ -398,16 +478,21 @@
       "path": "roster.keymap.get",
       "permission": null,
       "returns": "string?",
-      "since": 5
+      "returns_doc": "`nil` if it binds no such keys there.",
+      "since": 5,
+      "summary": "The command line one of the Plugin's key bindings runs"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "`\"leader\"`, `\"list\"` or `\"list_vim\"`.",
           "name": "context",
           "optional": false,
           "type": "KeyContext"
         },
         {
+          "doc": "The keys, as `set` took them.",
           "name": "keys",
           "optional": false,
           "type": "string"
@@ -416,11 +501,15 @@
       "path": "roster.keymap.has",
       "permission": null,
       "returns": "boolean",
-      "since": 5
+      "returns_doc": "`true` if it has.",
+      "since": 5,
+      "summary": "Whether the Plugin binds those keys there"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "`\"leader\"`, `\"list\"` or `\"list_vim\"`.",
           "name": "context",
           "optional": false,
           "type": "KeyContext"
@@ -429,16 +518,21 @@
       "path": "roster.keymap.list",
       "permission": null,
       "returns": "table<string, string>",
-      "since": 5
+      "returns_doc": "Keys to command line.",
+      "since": 5,
+      "summary": "The Plugin's key bindings in a context"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The Theme's id, as `:theme ID` takes it.",
           "name": "id",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "As `init.lua`'s `themes` takes one.",
           "name": "theme",
           "optional": false,
           "type": "Theme"
@@ -447,11 +541,15 @@
       "path": "roster.themes.define",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Adds a Theme"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's Themes.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -460,11 +558,15 @@
       "path": "roster.themes.remove",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Removes one of the Plugin's Themes"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's Themes.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -473,11 +575,15 @@
       "path": "roster.themes.get",
       "permission": null,
       "returns": "Theme?",
-      "since": 5
+      "returns_doc": "`nil` if it has none by that id.",
+      "since": 5,
+      "summary": "One of the Plugin's Themes, as it set it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A Theme's id.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -486,23 +592,31 @@
       "path": "roster.themes.has",
       "permission": null,
       "returns": "boolean",
-      "since": 5
+      "returns_doc": "`true` if it has.",
+      "since": 5,
+      "summary": "Whether the Plugin has that Theme"
     },
     {
+      "needs_text": "none",
       "params": [],
       "path": "roster.themes.list",
       "permission": null,
       "returns": "string[]",
-      "since": 5
+      "returns_doc": "A new list each call.",
+      "since": 5,
+      "summary": "The ids of the Plugin's Themes"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The section's id: a name like `recent-alerts`.",
           "name": "id",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "Its title, place, empty text and rows.",
           "name": "section",
           "optional": false,
           "type": "Section"
@@ -511,11 +625,15 @@
       "path": "roster.sidebar.set",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Adds a Sidebar section, or replaces it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's sections.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -524,11 +642,15 @@
       "path": "roster.sidebar.remove",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Removes a Sidebar section"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's Sidebar sections.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -537,11 +659,15 @@
       "path": "roster.sidebar.get",
       "permission": null,
       "returns": "Section?",
-      "since": 5
+      "returns_doc": "`nil` if it has none by that id.",
+      "since": 5,
+      "summary": "One of the Plugin's Sidebar sections, as it set it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A Sidebar section's id.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -550,23 +676,31 @@
       "path": "roster.sidebar.has",
       "permission": null,
       "returns": "boolean",
-      "since": 5
+      "returns_doc": "`true` if it has.",
+      "since": 5,
+      "summary": "Whether the Plugin has that Sidebar section"
     },
     {
+      "needs_text": "none",
       "params": [],
       "path": "roster.sidebar.list",
       "permission": null,
       "returns": "string[]",
-      "since": 5
+      "returns_doc": "A new list each call.",
+      "since": 5,
+      "summary": "The ids of the Plugin's Sidebar sections"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The segment's id.",
           "name": "id",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "Its text, tooltip and what clicking it runs.",
           "name": "segment",
           "optional": false,
           "type": "StatusSegment"
@@ -575,11 +709,15 @@
       "path": "roster.status.set",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Adds a status bar segment, or replaces it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's segments.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -588,11 +726,15 @@
       "path": "roster.status.remove",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Removes a status bar segment"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's status segments.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -601,11 +743,15 @@
       "path": "roster.status.get",
       "permission": null,
       "returns": "StatusSegment?",
-      "since": 5
+      "returns_doc": "`nil` if it has none by that id.",
+      "since": 5,
+      "summary": "One of the Plugin's status segments, as it set it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A status segment's id.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -614,23 +760,31 @@
       "path": "roster.status.has",
       "permission": null,
       "returns": "boolean",
-      "since": 5
+      "returns_doc": "`true` if it has.",
+      "since": 5,
+      "summary": "Whether the Plugin has that status segment"
     },
     {
+      "needs_text": "none",
       "params": [],
       "path": "roster.status.list",
       "permission": null,
       "returns": "string[]",
-      "since": 5
+      "returns_doc": "A new list each call.",
+      "since": 5,
+      "summary": "The ids of the Plugin's status segments"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The finder's id: `:finder ID` opens it.",
           "name": "id",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "Its title and items.",
           "name": "finder",
           "optional": false,
           "type": "Finder"
@@ -639,11 +793,15 @@
       "path": "roster.finders.set",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Adds a finder, or replaces it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's finders.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -652,11 +810,15 @@
       "path": "roster.finders.remove",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Removes a finder"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's finders.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -665,11 +827,15 @@
       "path": "roster.finders.get",
       "permission": null,
       "returns": "Finder?",
-      "since": 5
+      "returns_doc": "`nil` if it has none by that id.",
+      "since": 5,
+      "summary": "One of the Plugin's finders, as it set it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A finder's id.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -678,23 +844,31 @@
       "path": "roster.finders.has",
       "permission": null,
       "returns": "boolean",
-      "since": 5
+      "returns_doc": "`true` if it has.",
+      "since": 5,
+      "summary": "Whether the Plugin has that finder"
     },
     {
+      "needs_text": "none",
       "params": [],
       "path": "roster.finders.list",
       "permission": null,
       "returns": "string[]",
-      "since": 5
+      "returns_doc": "A new list each call.",
+      "since": 5,
+      "summary": "The ids of the Plugin's finders"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The page's topic: `:help TOPIC`.",
           "name": "topic",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "Its title, summary and Markdown.",
           "name": "page",
           "optional": false,
           "type": "HelpPage"
@@ -703,11 +877,15 @@
       "path": "roster.help.set",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Adds a help page, or replaces it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's pages.",
           "name": "topic",
           "optional": false,
           "type": "string"
@@ -716,11 +894,15 @@
       "path": "roster.help.remove",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Removes a help page"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's help pages.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -729,11 +911,15 @@
       "path": "roster.help.get",
       "permission": null,
       "returns": "HelpPage?",
-      "since": 5
+      "returns_doc": "`nil` if it has none by that id.",
+      "since": 5,
+      "summary": "One of the Plugin's help pages, as it set it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A help page's id.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -742,23 +928,31 @@
       "path": "roster.help.has",
       "permission": null,
       "returns": "boolean",
-      "since": 5
+      "returns_doc": "`true` if it has.",
+      "since": 5,
+      "summary": "Whether the Plugin has that help page"
     },
     {
+      "needs_text": "none",
       "params": [],
       "path": "roster.help.list",
       "permission": null,
       "returns": "string[]",
-      "since": 5
+      "returns_doc": "A new list each call.",
+      "since": 5,
+      "summary": "The ids of the Plugin's help pages"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The section's id.",
           "name": "id",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "Its title, and its checks or the function that makes them.",
           "name": "section",
           "optional": false,
           "type": "HealthSection"
@@ -767,16 +961,21 @@
       "path": "roster.health.set",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Adds a section to `:check` (this Box's health), or replaces it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The `check` field of what the section's `check` was called with.",
           "name": "check",
           "optional": false,
           "type": "integer"
         },
         {
+          "doc": "The section's lines for that run.",
           "name": "lines",
           "optional": false,
           "type": "HealthCheck[]"
@@ -785,11 +984,15 @@
       "path": "roster.health.answer",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Answers a `:check` section's check that returned `\"later\"`"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's sections.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -798,11 +1001,15 @@
       "path": "roster.health.remove",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Removes a `:check` section"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's `:check` sections.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -811,11 +1018,15 @@
       "path": "roster.health.get",
       "permission": null,
       "returns": "HealthSection?",
-      "since": 5
+      "returns_doc": "`nil` if it has none by that id.",
+      "since": 5,
+      "summary": "One of the Plugin's `:check` sections, as it set it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A `:check` section's id.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -824,23 +1035,31 @@
       "path": "roster.health.has",
       "permission": null,
       "returns": "boolean",
-      "since": 5
+      "returns_doc": "`true` if it has.",
+      "since": 5,
+      "summary": "Whether the Plugin has that `:check` section"
     },
     {
+      "needs_text": "none",
       "params": [],
       "path": "roster.health.list",
       "permission": null,
       "returns": "string[]",
-      "since": 5
+      "returns_doc": "A new list each call.",
+      "since": 5,
+      "summary": "The ids of the Plugin's `:check` sections"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The tutorial's id: `:tutor ID` runs it, `:help tutor-ID` is its page.",
           "name": "id",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "Its text and lessons.",
           "name": "tutorial",
           "optional": false,
           "type": "Tutorial"
@@ -849,11 +1068,15 @@
       "path": "roster.tutor.set",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Adds a tutorial, or replaces it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's tutorials.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -862,11 +1085,15 @@
       "path": "roster.tutor.remove",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Removes a tutorial"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's tutorials.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -875,11 +1102,15 @@
       "path": "roster.tutor.get",
       "permission": null,
       "returns": "Tutorial?",
-      "since": 5
+      "returns_doc": "`nil` if it has none by that id.",
+      "since": 5,
+      "summary": "One of the Plugin's tutorials, as it set it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A tutorial's id.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -888,23 +1119,31 @@
       "path": "roster.tutor.has",
       "permission": null,
       "returns": "boolean",
-      "since": 5
+      "returns_doc": "`true` if it has.",
+      "since": 5,
+      "summary": "Whether the Plugin has that tutorial"
     },
     {
+      "needs_text": "none",
       "params": [],
       "path": "roster.tutor.list",
       "permission": null,
       "returns": "string[]",
-      "since": 5
+      "returns_doc": "A new list each call.",
+      "since": 5,
+      "summary": "The ids of the Plugin's tutorials"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The control's id: a name like `scan`, which `modes.<mode>.toolbar` can list.",
           "name": "id",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "Its label, icon or word, and what it runs.",
           "name": "control",
           "optional": false,
           "type": "ToolbarControl"
@@ -913,11 +1152,15 @@
       "path": "roster.toolbar.set",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Adds a control to the toolbar, or replaces it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's controls.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -926,11 +1169,15 @@
       "path": "roster.toolbar.remove",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Removes a toolbar control"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's toolbar controls.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -939,11 +1186,15 @@
       "path": "roster.toolbar.get",
       "permission": null,
       "returns": "ToolbarControl?",
-      "since": 5
+      "returns_doc": "`nil` if it has none by that id.",
+      "since": 5,
+      "summary": "One of the Plugin's toolbar controls, as it set it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A toolbar control's id.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -952,23 +1203,31 @@
       "path": "roster.toolbar.has",
       "permission": null,
       "returns": "boolean",
-      "since": 5
+      "returns_doc": "`true` if it has.",
+      "since": 5,
+      "summary": "Whether the Plugin has that toolbar control"
     },
     {
+      "needs_text": "none",
       "params": [],
       "path": "roster.toolbar.list",
       "permission": null,
       "returns": "string[]",
-      "since": 5
+      "returns_doc": "A new list each call.",
+      "since": 5,
+      "summary": "The ids of the Plugin's toolbar controls"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A name like `scan`: `:cancel scan` cancels it.",
           "name": "id",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "What's going on, how far it has got, and how to stop it.",
           "name": "progress",
           "optional": false,
           "type": "Progress"
@@ -977,11 +1236,15 @@
       "path": "roster.progress.set",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Shows or updates the progress of something long"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's progresses.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -990,11 +1253,15 @@
       "path": "roster.progress.remove",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Takes a progress away: it's over"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's progresses.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -1003,11 +1270,15 @@
       "path": "roster.progress.get",
       "permission": null,
       "returns": "Progress?",
-      "since": 5
+      "returns_doc": "`nil` if it has none by that id.",
+      "since": 5,
+      "summary": "One of the Plugin's progresses, as it set it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A progress's id.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -1016,23 +1287,31 @@
       "path": "roster.progress.has",
       "permission": null,
       "returns": "boolean",
-      "since": 5
+      "returns_doc": "`true` if it has.",
+      "since": 5,
+      "summary": "Whether the Plugin has that progress"
     },
     {
+      "needs_text": "none",
       "params": [],
       "path": "roster.progress.list",
       "permission": null,
       "returns": "string[]",
-      "since": 5
+      "returns_doc": "A new list each call.",
+      "since": 5,
+      "summary": "The ids of the Plugin's progresses"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The Host's name in the Inventory.",
           "name": "host",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "The badge: keep it short, a count (`\"2\"`) or a word (at most 40 characters); `nil` takes it off.",
           "name": "text",
           "optional": true,
           "type": "string"
@@ -1041,11 +1320,15 @@
       "path": "roster.badges.set",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Puts a badge on a Host's Inventory row, or takes it off"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A Host the Plugin put a badge on.",
           "name": "host",
           "optional": false,
           "type": "string"
@@ -1054,11 +1337,15 @@
       "path": "roster.badges.remove",
       "permission": null,
       "returns": "",
-      "since": 5
+      "returns_doc": "",
+      "since": 5,
+      "summary": "Takes the Plugin's badge off a Host's row"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A Host's name.",
           "name": "host",
           "optional": false,
           "type": "string"
@@ -1067,11 +1354,15 @@
       "path": "roster.badges.get",
       "permission": null,
       "returns": "string?",
-      "since": 5
+      "returns_doc": "`nil` if it has none on that Host.",
+      "since": 5,
+      "summary": "The text of the Plugin's badge on a Host"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A Host's name.",
           "name": "host",
           "optional": false,
           "type": "string"
@@ -1080,18 +1371,25 @@
       "path": "roster.badges.has",
       "permission": null,
       "returns": "boolean",
-      "since": 5
+      "returns_doc": "`true` if it has.",
+      "since": 5,
+      "summary": "Whether the Plugin has a badge on a Host"
     },
     {
+      "needs_text": "none",
       "params": [],
       "path": "roster.badges.list",
       "permission": null,
       "returns": "string[]",
-      "since": 5
+      "returns_doc": "A new list each call.",
+      "since": 5,
+      "summary": "The Hosts the Plugin has a badge on"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "Its title and lines.",
           "name": "float",
           "optional": false,
           "type": "Float"
@@ -1100,23 +1398,31 @@
       "path": "roster.float.open",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Opens a floating window over the terminal, or replaces the Plugin's"
     },
     {
+      "needs_text": "none",
       "params": [],
       "path": "roster.float.close",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Closes the Plugin's floating window"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The view's id: a name like `discover`. `:view ID` opens it.",
           "name": "id",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "Where it goes, its title, text, facts, and a table or a graph.",
           "name": "view",
           "optional": false,
           "type": "View"
@@ -1125,16 +1431,21 @@
       "path": "roster.views.set",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Adds a view, or replaces it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's views.",
           "name": "id",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "What changes: rows to add or replace, rows to take away, and the text or facts.",
           "name": "changes",
           "optional": false,
           "type": "ViewUpdate"
@@ -1143,16 +1454,21 @@
       "path": "roster.views.update",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Changes some of a view's rows or nodes in place, or its text or facts"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's views.",
           "name": "id",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "Where it opens (since api 4): `{ select = \"esx-02\" }` selects that node of its graph or row of its table.",
           "name": "opts",
           "optional": true,
           "type": "ViewOpenOptions"
@@ -1161,11 +1477,15 @@
       "path": "roster.views.open",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Opens a view"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's views.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -1174,11 +1494,15 @@
       "path": "roster.views.close",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Closes a view, if it's open"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's views.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -1187,11 +1511,15 @@
       "path": "roster.views.remove",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Removes a view"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A view's id.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -1200,28 +1528,37 @@
       "path": "roster.views.has",
       "permission": null,
       "returns": "boolean",
-      "since": 5
+      "returns_doc": "`true` if it has.",
+      "since": 5,
+      "summary": "Whether the Plugin has that view"
     },
     {
+      "needs_text": "none",
       "params": [],
       "path": "roster.views.list",
       "permission": null,
       "returns": "string[]",
-      "since": 5
+      "returns_doc": "A new list each call.",
+      "since": 5,
+      "summary": "The ids of the Plugin's views"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The section's id: a name like `mesh`.",
           "name": "id",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "The Host's name in the Inventory.",
           "name": "host",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "Its title, text, facts and table; `nil` takes this Host's away.",
           "name": "section",
           "optional": true,
           "type": "DetailsSection"
@@ -1230,11 +1567,15 @@
       "path": "roster.details.set",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Adds a section to a Host's details, or replaces it"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "One of the Plugin's sections.",
           "name": "id",
           "optional": false,
           "type": "string"
@@ -1243,16 +1584,21 @@
       "path": "roster.details.remove",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Removes a section from every Host's details"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The section's id.",
           "name": "id",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "A Host's name.",
           "name": "host",
           "optional": false,
           "type": "string"
@@ -1261,16 +1607,21 @@
       "path": "roster.details.get",
       "permission": null,
       "returns": "DetailsSection?",
-      "since": 5
+      "returns_doc": "`nil` if it has none by that id on that Host.",
+      "since": 5,
+      "summary": "One of the Plugin's Host-details sections, as it set it for a Host"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The section's id.",
           "name": "id",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "A Host's name; left out, any Host.",
           "name": "host",
           "optional": true,
           "type": "string"
@@ -1279,11 +1630,15 @@
       "path": "roster.details.has",
       "permission": null,
       "returns": "boolean",
-      "since": 5
+      "returns_doc": "`true` if it has.",
+      "since": 5,
+      "summary": "Whether the Plugin has that section, on a Host or on any"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "A section's id.",
           "name": "id",
           "optional": true,
           "type": "string"
@@ -1292,11 +1647,15 @@
       "path": "roster.details.list",
       "permission": null,
       "returns": "string[]",
-      "since": 5
+      "returns_doc": "A new list each call.",
+      "since": 5,
+      "summary": "The ids of the Plugin's Host-details sections, or the Hosts one is on"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "What to put on the clipboard, at most 64 KB.",
           "name": "text",
           "optional": false,
           "type": "string"
@@ -1305,11 +1664,15 @@
       "path": "roster.clipboard.copy",
       "permission": null,
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Puts text on the clipboard"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The file's name (`\"folders.json\"`).",
           "name": "name",
           "optional": false,
           "type": "string"
@@ -1318,16 +1681,21 @@
       "path": "roster.storage.read",
       "permission": null,
       "returns": "string?",
-      "since": 3
+      "returns_doc": "What the file holds, or `nil` when there's no such file.",
+      "since": 3,
+      "summary": "Reads one of the Plugin's files"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The file's name.",
           "name": "name",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "What it holds from now on, at most 1 MB (any bytes).",
           "name": "text",
           "optional": false,
           "type": "string"
@@ -1336,18 +1704,25 @@
       "path": "roster.storage.write",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Writes one of the Plugin's files, whole"
     },
     {
+      "needs_text": "none",
       "params": [],
       "path": "roster.storage.list",
       "permission": null,
       "returns": "string[]",
-      "since": 3
+      "returns_doc": "In name order; `{}` before the first write.",
+      "since": 3,
+      "summary": "The names of the Plugin's files"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The file's name.",
           "name": "name",
           "optional": false,
           "type": "string"
@@ -1356,11 +1731,15 @@
       "path": "roster.storage.remove",
       "permission": null,
       "returns": "boolean",
-      "since": 3
+      "returns_doc": "`true` if it was there.",
+      "since": 3,
+      "summary": "Removes one of the Plugin's files"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The file's name.",
           "name": "name",
           "optional": false,
           "type": "string"
@@ -1369,16 +1748,21 @@
       "path": "roster.storage.read_json",
       "permission": null,
       "returns": "any",
-      "since": 3
+      "returns_doc": "The value, or `nil` when there's no such file.",
+      "since": 3,
+      "summary": "Reads one of the Plugin's files as JSON"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The file's name.",
           "name": "name",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "Plain data: tables, text, numbers and booleans (no functions).",
           "name": "value",
           "optional": false,
           "type": "any"
@@ -1387,18 +1771,25 @@
       "path": "roster.storage.write_json",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Writes one of the Plugin's files as JSON, whole"
     },
     {
+      "needs_text": "`inventory.read`",
       "params": [],
       "path": "roster.inventory.hosts",
       "permission": "inventory.read",
       "returns": "Host[]",
-      "since": 2
+      "returns_doc": "The Hosts, each with its Login references (a vault item's name, never a password; a `cmd:` or `env:` one cut to its kind).",
+      "since": 2,
+      "summary": "Every Host, in `roster.yml` order"
     },
     {
+      "needs_text": "`inventory.read`",
       "params": [
         {
+          "doc": "The Host's exact name.",
           "name": "name",
           "optional": false,
           "type": "string"
@@ -1407,18 +1798,25 @@
       "path": "roster.inventory.host",
       "permission": "inventory.read",
       "returns": "Host?",
-      "since": 2
+      "returns_doc": "The Host, or `nil` when no Host has that name.",
+      "since": 2,
+      "summary": "One Host, by its exact name"
     },
     {
+      "needs_text": "`inventory.read`",
       "params": [],
       "path": "roster.inventory.groups",
       "permission": "inventory.read",
       "returns": "table<string, Group>",
-      "since": 3
+      "returns_doc": "The groups, by name.",
+      "since": 3,
+      "summary": "Every group, by name"
     },
     {
+      "needs_text": "`inventory.read`",
       "params": [
         {
+          "doc": "Runs once with the answer: every Host and group (`list.hosts`, `list.groups`), or `nil` and why (`roster.inventory.request: MESSAGE (code N)`). Its return value is ignored; an error in it counts like an action's.",
           "name": "done",
           "optional": false,
           "type": "fun(list: HostList?, err: string?)"
@@ -1427,16 +1825,21 @@
       "path": "roster.inventory.request",
       "permission": "inventory.read",
       "returns": "",
-      "since": 4
+      "returns_doc": "",
+      "since": 4,
+      "summary": "Reads every Host and group without waiting: `done` gets them"
     },
     {
+      "needs_text": "`inventory.write`",
       "params": [
         {
+          "doc": "The Host's exact name.",
           "name": "host",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "The fields to change, and their new values.",
           "name": "changes",
           "optional": false,
           "type": "Change"
@@ -1445,16 +1848,21 @@
       "path": "roster.inventory.update",
       "permission": "inventory.write",
       "returns": "UpdateResult",
-      "since": 2
+      "returns_doc": "What was written.",
+      "since": 2,
+      "summary": "Changes a Host's fields, as a Pending change"
     },
     {
+      "needs_text": "`inventory.write`",
       "params": [
         {
+          "doc": "The Host's exact name.",
           "name": "host",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "Its new name.",
           "name": "to",
           "optional": false,
           "type": "string"
@@ -1463,16 +1871,21 @@
       "path": "roster.inventory.rename",
       "permission": "inventory.write",
       "returns": "RenameResult",
-      "since": 2
+      "returns_doc": "What was written.",
+      "since": 2,
+      "summary": "Renames a Host, as a Pending change"
     },
     {
+      "needs_text": "`inventory.write`",
       "params": [
         {
+          "doc": "The Host's exact name.",
           "name": "host",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "The group to move it to (at its end).",
           "name": "group",
           "optional": false,
           "type": "string"
@@ -1481,16 +1894,21 @@
       "path": "roster.inventory.move",
       "permission": "inventory.write",
       "returns": "MoveResult",
-      "since": 2
+      "returns_doc": "What was written, and which fields were pinned on the Host.",
+      "since": 2,
+      "summary": "Moves a Host to another group, as a Pending change"
     },
     {
+      "needs_text": "`inventory.write`",
       "params": [
         {
+          "doc": "The Host's exact name.",
           "name": "host",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "`true` (the default) marks it reviewed; `false` un-reviews it.",
           "name": "reviewed",
           "optional": true,
           "type": "boolean"
@@ -1499,16 +1917,21 @@
       "path": "roster.inventory.review",
       "permission": "inventory.write",
       "returns": "ReviewResult",
-      "since": 2
+      "returns_doc": "What was written.",
+      "since": 2,
+      "summary": "Marks a Host reviewed (or not), as a Pending change"
     },
     {
+      "needs_text": "none",
       "params": [
         {
+          "doc": "The Session's id, from an event (`e.session`).",
           "name": "session",
           "optional": false,
           "type": "integer"
         },
         {
+          "doc": "Text of a line it printed: the app searches its scrollback from the bottom for the latest line with it, and shows it highlighted.",
           "name": "line",
           "optional": true,
           "type": "string"
@@ -1517,9 +1940,12 @@
       "path": "roster.sessions.show",
       "permission": null,
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Goes to a Session, and to a line in its scrollback"
     },
     {
+      "needs_text": "`inventory.read` or `terminal.read`",
       "params": [],
       "path": "roster.sessions.list",
       "permission": [
@@ -1527,11 +1953,15 @@
         "terminal.read"
       ],
       "returns": "Session[]",
-      "since": 4
+      "returns_doc": "Each open Session's id and Host (and, with `terminal.read`, its folder), oldest open first.",
+      "since": 4,
+      "summary": "The Sessions open now, in the order they opened"
     },
     {
+      "needs_text": "`sessions.open`",
       "params": [
         {
+          "doc": "The Host's exact name.",
           "name": "host",
           "optional": false,
           "type": "string"
@@ -1540,16 +1970,21 @@
       "path": "roster.sessions.open",
       "permission": "sessions.open",
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Opens a Session on a Host, as `:connect HOST`"
     },
     {
+      "needs_text": "`terminal.write`",
       "params": [
         {
+          "doc": "The Session's id, from an event (`e.session`).",
           "name": "session",
           "optional": false,
           "type": "integer"
         },
         {
+          "doc": "What to type, as if the user typed it: `\"uptime\\n\"` runs `uptime`.",
           "name": "text",
           "optional": false,
           "type": "string"
@@ -1558,16 +1993,21 @@
       "path": "roster.terminal.send",
       "permission": "terminal.write",
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Types into an open Session"
     },
     {
+      "needs_text": "`serve:<method>` (that method)",
       "params": [
         {
+          "doc": "A roster serve method the Plugin was granted, by name (`serve:inventory.info` grants `inventory.info`).",
           "name": "method",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "The method's params; `{}` if left out. Data only: no functions.",
           "name": "params",
           "optional": true,
           "type": "table"
@@ -1576,21 +2016,27 @@
       "path": "roster.serve.call",
       "permission": "serve:*",
       "returns": "any",
-      "since": 2
+      "returns_doc": "The method's result, as Lua tables (JSON `null` is `nil`).",
+      "since": 2,
+      "summary": "Calls a roster serve method the Plugin was granted"
     },
     {
+      "needs_text": "`serve:<method>` (that method)",
       "params": [
         {
+          "doc": "A roster serve method the Plugin was granted, as [`roster.serve.call`](#rosterservecallmethod-params)'s.",
           "name": "method",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "The method's params; `nil` or `{}` for none. Data only: no functions.",
           "name": "params",
           "optional": true,
           "type": "table"
         },
         {
+          "doc": "Runs once with the answer: the method's `result` (as `roster.serve.call` returns it), or `nil` and why (`roster.serve.request METHOD: MESSAGE (code N)`). Its return value is ignored; an error in it counts like an action's.",
           "name": "done",
           "optional": false,
           "type": "fun(result: any, err: string?)"
@@ -1599,16 +2045,21 @@
       "path": "roster.serve.request",
       "permission": "serve:*",
       "returns": "",
-      "since": 3
+      "returns_doc": "",
+      "since": 3,
+      "summary": "Asks roster serve without waiting: `done` gets the answer"
     },
     {
+      "needs_text": "`network:<site>` (that site)",
       "params": [
         {
+          "doc": "What to send: at least its `url`.",
           "name": "request",
           "optional": false,
           "type": "HttpRequest"
         },
         {
+          "doc": "Runs once with the answer: `response` for any status the site gave (a 404 too), or `nil` and why there was none (refused, unreachable, timed out, too big). Its return value is ignored; an error in it counts like an action's.",
           "name": "done",
           "optional": false,
           "type": "fun(response: HttpResponse?, err: string?)"
@@ -1617,16 +2068,21 @@
       "path": "roster.http.request",
       "permission": "network:*",
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Sends an HTTP request to a site the Plugin was granted"
     },
     {
+      "needs_text": "`network:<site>` (that site)",
       "params": [
         {
+          "doc": "The URL, on a site the Plugin was granted.",
           "name": "url",
           "optional": false,
           "type": "string"
         },
         {
+          "doc": "As [`roster.http.request`](#rosterhttprequestrequest-done)'s.",
           "name": "done",
           "optional": false,
           "type": "fun(response: HttpResponse?, err: string?)"
@@ -1635,7 +2091,126 @@
       "path": "roster.http.get",
       "permission": "network:*",
       "returns": "",
-      "since": 2
+      "returns_doc": "",
+      "since": 2,
+      "summary": "Fetches a URL from a site the Plugin was granted"
+    }
+  ],
+  "modules": [
+    {
+      "doc": "`require(\"roster\")`, also the global `roster`. Each Plugin has its own, built from what it was granted: a function a permission gives isn't there without it.",
+      "name": "roster",
+      "summary": "The module itself: its version, the OS, the Plugin, notices and events"
+    },
+    {
+      "doc": "",
+      "name": "roster.commands",
+      "summary": "`:` commands"
+    },
+    {
+      "doc": "",
+      "name": "roster.keymap",
+      "summary": "Key bindings"
+    },
+    {
+      "doc": "",
+      "name": "roster.themes",
+      "summary": "Themes"
+    },
+    {
+      "doc": "",
+      "name": "roster.sidebar",
+      "summary": "Sidebar sections"
+    },
+    {
+      "doc": "",
+      "name": "roster.status",
+      "summary": "Status bar segments"
+    },
+    {
+      "doc": "",
+      "name": "roster.finders",
+      "summary": "Finders (`:finder ID`)"
+    },
+    {
+      "doc": "",
+      "name": "roster.help",
+      "summary": "Help pages (`:help TOPIC`)"
+    },
+    {
+      "doc": "",
+      "name": "roster.health",
+      "summary": "Sections of `:check`"
+    },
+    {
+      "doc": "",
+      "name": "roster.tutor",
+      "summary": "Tutorials (`:tutor ID`)"
+    },
+    {
+      "doc": "A control in the title bar's toolbar (decision Q65), after roster's own by the window's buttons. It's shown unless `init.lua` picks the controls itself with `modes.<mode>.toolbar`: then it shows where that list names its id. It never takes focus from the terminal.",
+      "name": "roster.toolbar",
+      "summary": "Controls in the toolbar"
+    },
+    {
+      "doc": "What the Plugin is doing that takes a while (a scan, a long roster serve call), shown in the status bar: how far it has got, or only that it's going, and a way to stop it. `:cancel ID` (or the button) calls its `cancel` function. Setting it any time is fine, from an event too: it changes nothing but itself.",
+      "name": "roster.progress",
+      "summary": "Progress of something long"
+    },
+    {
+      "doc": "",
+      "name": "roster.badges",
+      "summary": "Badges on Host rows"
+    },
+    {
+      "doc": "",
+      "name": "roster.float",
+      "summary": "A floating window over the terminal"
+    },
+    {
+      "doc": "A view is data the app draws in its own style: a title, text, facts and a table. `place` says where: `\"panel\"` beside the terminal (over it in Focus or a narrow window), or `\"full\"` over the whole window, as Topology is. `:view ID` opens one, and the `views` finder (`:finder views`) lists them all; bind a key to `view ID` with `roster.keymap.set`. `Esc` closes it and puts you back where you were. A table's rows are plain data, so `roster.views.update` changes some in place without sending the rest again. A view can hold a graph instead of a table: nodes, edges and clusters, also plain data, with a list of every node and edge one key away (`t`).",
+      "name": "roster.views",
+      "summary": "Views: side panels and full views"
+    },
+    {
+      "doc": "Your own sections in a Host's details panel (`:info HOST`), after roster's: set per Host, like a badge.",
+      "name": "roster.details",
+      "summary": "Sections of a Host's details"
+    },
+    {
+      "doc": "",
+      "name": "roster.clipboard",
+      "summary": "The clipboard"
+    },
+    {
+      "doc": "Every Plugin has a data folder of its own, in the app's data folder (next to the State; never the config folder, never on the network), and `roster.storage` reads and writes files there by name (decision Q93). No permission: it's the Plugin's own, and nothing else is reachable through it. A name is a plain file name (letters, digits, `-`, `_` and `.`, not starting with `.`; at most 100 characters), never a path, so there's no way out of the folder; a link there (a symlink, or a junction on Windows) is never followed. A write replaces the whole file at once (a temporary file, then a rename), so a crash leaves the old file or the new one, never half of one. A file holds at most 1 MB, the folder 10 MB in at most 1,000 files. The folder goes when the Plugin is removed (`:plugins remove`, or `:packages clean` for a Package), and stays across reloads, updates and revoked permissions. The time the disk takes doesn't count against the Plugin's budget.",
+      "name": "roster.storage",
+      "summary": "The Plugin's own files"
+    },
+    {
+      "doc": "`nil` unless the Plugin was granted `inventory.read` or `inventory.write`; each function is there only with its own permission. The reads but `request` wait for `roster serve`; that time doesn't count against the Plugin's budget, nor toward it being given up on. One call (a load, an event, an action, an answer) reads the Inventory once: `hosts()` and `groups()` in it share one answer of serve's, until a call into serve that can change something (a write, `mesh.cut`, …) in the same call. [`roster.inventory.request`](#rosterinventoryrequestdone) doesn't wait: prefer it where the Plugin would otherwise hold up the user, and for a big Inventory.",
+      "name": "roster.inventory",
+      "summary": "Hosts, and Pending changes to them"
+    },
+    {
+      "doc": "Every Plugin may go to a Session the user is shown (`show`), in a call the user started; `list` is there with `inventory.read` or `terminal.read` (the permissions that hear `session_open` and `session_exit`), and `open` only with `sessions.open`.",
+      "name": "roster.sessions",
+      "summary": "Going to Sessions, and opening them"
+    },
+    {
+      "doc": "`nil` unless the Plugin was granted `terminal.write`. Reading what Sessions print is the `terminal_output` event (`terminal.read`).",
+      "name": "roster.terminal",
+      "summary": "Typing into Sessions"
+    },
+    {
+      "doc": "`nil` unless the Plugin was granted at least one `serve:<method>` permission. roster serve answers several requests at once, but a call can still wait: for its turn (2 calls into serve at a time for each Plugin, 4 for all of them) or behind the app's own write (a Publish: a minute or two). [`roster.serve.request`](#rosterserverequestmethod-params-done) doesn't wait: prefer it in anything the user starts. A job's progress comes as the `job_progress` event (serve API 20). [`roster.serve.call`](#rosterservecallmethod-params) waits, and the user's next action in the Plugin waits behind it; the wait never counts against the Plugin.",
+      "name": "roster.serve",
+      "summary": "roster serve's methods, by name"
+    },
+    {
+      "doc": "`nil` unless the Plugin was granted at least one `network:<site>` permission ([Permissions](plugins.md#permissions)). The request runs in roster's core, never in the app's window, and doesn't wait: the function you pass gets the answer later, as a call of its own with a call's budget. Only the sites granted are reached, redirects included; a name that resolves to an address on this computer or a private network is refused unless the manifest lists the address itself, or the name as a private site (`network:private:nas.lan`), which reaches only private addresses. A pinned site (`#sha256:…`) trusts only that certificate. No cookies or credentials of roster's go along, and no proxy but the user's `plugin_proxy`, through which a public name is still looked up here first, refused if it leads inside, and reached only at the address roster checked (the proxy is asked for a tunnel to that address, never the name; a name this computer can't look up isn't sent). At most 4 requests at once, a 256 KB body out, a 1 MB body back, 30 seconds each.",
+      "name": "roster.http",
+      "summary": "HTTP requests to the sites the manifest lists"
     }
   ],
   "roster_only": [
@@ -1699,6 +2274,7 @@
     "roster-HttpResponse": "plugin-api#httpresponse",
     "roster-InventoryError": "plugin-api#inventoryerror",
     "roster-InventoryInfo": "plugin-api#inventoryinfo",
+    "roster-InventoryStore": "plugin-api#inventorystore",
     "roster-JobProgressEvent": "plugin-api#jobprogressevent",
     "roster-KeyContext": "plugin-api#keycontext",
     "roster-LastCommit": "plugin-api#lastcommit",
@@ -1904,2974 +2480,3753 @@
     "Change": {
       "fields": [
         {
+          "doc": "One line.",
           "name": "title",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "One line.",
           "name": "description",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "One line.",
           "name": "type",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "No spaces, not empty. Needs a test login first: refused from a Plugin (code 75).",
           "name": "ip",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "No spaces, not empty. Refused from a Plugin (code 75).",
           "name": "user",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "1 to 65535. Refused from a Plugin (code 75).",
           "name": "port",
           "required": false,
           "type": "integer"
         },
         {
+          "doc": "Refused from a Plugin (code 75).",
           "name": "auth",
           "required": false,
           "type": "LoginRef"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 78,
+      "summary": "`roster.inventory.update`'s changes: the fields to change"
     },
     "ChangesDiff": {
       "fields": [
         {
+          "doc": "`roster.yml`'s path.",
           "name": "path",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The infra repo's top folder; `nil` for a plain file.",
           "name": "repo",
-          "required": true,
+          "required": false,
           "type": "string"
         },
         {
+          "doc": "`file` for a plain file, whose edits are saved already: no diff, `count` 0 (serve API 28; absent before).",
+          "name": "kind",
+          "required": false,
+          "type": "\"repo\"|\"file\""
+        },
+        {
+          "doc": "git's diff of `roster.yml` against the last commit; `\"\"` for none. A `cmd:` reference in it reaches a Plugin cut to `cmd:` (the rest of its line), an `env:` one to `env:`.",
           "name": "diff",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The Hosts it changes.",
           "name": "hosts",
           "required": true,
           "type": "HostChange[]"
         },
         {
+          "doc": "The groups it changes.",
           "name": "groups",
           "required": true,
           "type": "GroupChange[]"
         },
         {
+          "doc": "How many Hosts change (1 for a change that touches none, 0 for no change).",
           "name": "count",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "The commit message Publish would write.",
           "name": "message",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The branch's last commit; `nil` in a repo with none.",
           "name": "last_commit",
           "required": false,
           "type": "LastCommit"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 90,
+      "summary": "`changes.diff`'s result: the Pending changes"
     },
     "CheckJob": {
       "fields": [
         {
+          "doc": "Always `\"check\"`.",
           "name": "kind",
           "required": true,
           "type": "\"check\""
         },
         {
+          "doc": "Its id, `\"check-N\"`.",
           "name": "job",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Always `\"check\"`.",
           "name": "action",
           "required": true,
           "type": "\"check\""
         },
         {
+          "doc": "`\"running\"`, `\"stopping\"`, or how it ended: `\"done\"`, `\"stopped\"`, `\"failed\"`.",
           "name": "state",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Steps started.",
           "name": "done",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "Steps in all (8).",
           "name": "total",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "The step under way (`\"dns\"`, `\"auth\"`, ...).",
           "name": "at",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The Host it checks.",
           "name": "host",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Once `done` or `stopped`: `host.check`'s result. `ok` is false for a stopped check, its later steps `skipped`.",
           "name": "result",
           "required": false,
           "type": "HostCheck"
         },
         {
+          "doc": "Once `failed`: why.",
           "name": "error",
           "required": false,
           "type": "ServeError"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 87,
+      "summary": "`host.check_job`'s result: a Host's check, and how it came out"
     },
     "CheckStep": {
       "fields": [
         {
+          "doc": "Its name.",
           "name": "step",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "How it went; every step after a `fail` is `skipped`.",
           "name": "status",
           "required": true,
           "type": "\"ok\"|\"fail\"|\"skipped\""
         },
         {
+          "doc": "What happened.",
           "name": "message",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "A failed step's error code (serve-api.md's tables).",
           "name": "code",
           "required": false,
           "type": "integer"
         },
         {
+          "doc": "What to do, in a sentence.",
           "name": "fix",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The raw text, when there is one (ssh's stderr).",
           "name": "details",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "What the code's row says it carries.",
           "name": "data",
           "required": false,
           "type": "table"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 88,
+      "summary": "One step of a `host.check`"
     },
     "Column": {
       "fields": [
         {
+          "doc": "The key of its value in each row's `cells`.",
           "name": "id",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its heading.",
           "name": "label",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "How its values read and sort; `\"text\"` if left out.",
           "name": "kind",
           "required": false,
           "type": "ColumnKind"
         },
         {
+          "doc": "How wide, in characters; it shares the room with the others if left out.",
           "name": "width",
           "required": false,
           "type": "number"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 46,
+      "summary": "A table's column"
     },
     "ColumnKind": {
-      "alias": "\"text\"|\"data\"|\"number\""
+      "alias": "\"text\"|\"data\"|\"number\"",
+      "order": 47,
+      "summary": "How a column's values read and sort"
     },
     "CommandArgs": {
       "fields": [
         {
+          "doc": "Everything after the command's name, trimmed (`\"\"` for none).",
           "name": "args",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "`args` split at spaces (`{}` for none).",
           "name": "words",
           "required": true,
           "type": "string[]"
         },
         {
+          "doc": "The Session on screen; `nil` with none. Only with `inventory.read` or `terminal.read` (since api 3).",
           "name": "session",
           "required": false,
           "type": "integer"
         },
         {
+          "doc": "The Host of the Session on screen; `nil` with none, for a Quick Connect Session, and without `inventory.read` or `terminal.read` (since api 3).",
           "name": "session_host",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The Host under the Sidebar's cursor (else the one on screen), as roster's own commands take it; `nil` with none, and without `inventory.read` (since api 3).",
           "name": "host",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "When the Sidebar's cursor is on a row of one of your own sections: that section's id (since api 3).",
           "name": "section",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "And that row's `id`, or `nil` on the section's heading (since api 3).",
           "name": "row",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 9,
+      "summary": "What a command's function is called with"
     },
     "CommandDoneEvent": {
       "fields": [
         {
+          "doc": "The Session's id.",
           "name": "session",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "The Host's name; `nil` for a Quick Connect Session.",
           "name": "host",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The command line as the shell showed it after its prompt; `nil` when it couldn't be read (the shell sent no `B` mark, or the line scrolled away or was reflowed by a resize before it ran).",
           "name": "command",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "What it printed, each line ending in `\\n`, as `terminal_output` sent it (its last line too, if it didn't end in a line feed). At most the last 16 KB.",
           "name": "output",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its exit code; `nil` when the shell didn't say.",
           "name": "code",
           "required": false,
           "type": "integer"
+        },
+        {
+          "doc": "The folder the shell last said it was in (OSC 7) before the command ran, so a `cd`'s is the folder it left (since api 6); `nil` when it said none roster takes. As [`Session`](#session)'s `cwd`: the shell's word, never checked.",
+          "name": "cwd",
+          "required": false,
+          "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 119,
+      "summary": "`command_done`'s payload"
     },
     "CommandSpec": {
       "fields": [
         {
+          "doc": "Its description, for `:help commands` and completion. The name if left out.",
           "name": "desc",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "A function, called with what followed the command, or a command line to run instead.",
           "name": "run",
           "required": true,
           "type": "string|fun(args: CommandArgs): any"
         },
         {
+          "doc": "Since api 3: what Tab offers after the command's name. Called with what's typed after it (`\"add esx\"`) as the user types, it returns whole arguments that start with it (`{ \"add esx-02 \" }`; end one with a space when another word follows). At most 200; the app shows the last answer until the next comes. It isn't a call the user started: no clipboard, questions or command lines in it.",
           "name": "complete",
           "required": false,
           "type": "fun(arg: string): string[]"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 8,
+      "summary": "`roster.commands.add`'s second argument"
     },
     "Confirm": {
       "fields": [
         {
+          "doc": "The question (`\"Cut esx-02 from the Mesh?\"`).",
           "name": "title",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "What will happen, in the app's voice; a blank line starts a paragraph.",
           "name": "text",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Label and value pairs: exactly what will be done to what.",
           "name": "facts",
           "required": false,
           "type": "Fact[]"
         },
         {
+          "doc": "The confirming button's word (`\"Cut\"`); `\"Confirm\"` if left out.",
           "name": "action",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The stronger form, for what can't easily be undone: the button in the danger colour, the keys starting on Cancel.",
           "name": "danger",
           "required": false,
           "type": "boolean"
         },
         {
+          "doc": "With `danger`: a word the user types before the button works (a Host's name), at most 100 characters.",
           "name": "typed",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Called when the user confirms.",
           "name": "run",
           "required": true,
           "type": "fun(e: table): any"
         },
         {
+          "doc": "Called when they don't (`Esc` or Cancel), or another Plugin's question takes its place.",
           "name": "cancel",
           "required": false,
           "type": "fun(e: table): any"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 36,
+      "summary": "A question the user answers (`roster.confirm`)"
     },
     "DetailsSection": {
       "fields": [
         {
+          "doc": "Its heading; the id if left out.",
           "name": "title",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Where it goes among the Plugins' sections, lowest first; 500 if left out.",
           "name": "order",
           "required": false,
           "type": "number"
         },
         {
+          "doc": "Buttons on its heading, at most 4, for what the section does about this Host (`Cut`): each runs with `{ section, host }` (since api 3), and its `key` runs it from anywhere in the section (since api 4).",
           "name": "actions",
           "required": false,
           "type": "HeadAction[]"
         },
         {
+          "doc": "A few lines, in the app's voice.",
           "name": "text",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Label and value pairs.",
           "name": "facts",
           "required": false,
           "type": "Fact[]"
         },
         {
+          "doc": "A table of rows.",
           "name": "table",
           "required": false,
           "type": "Table"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 43,
+      "summary": "A section of a Host's details (`roster.details.set`)"
     },
     "DiscoverAdd": {
       "fields": [
         {
+          "doc": "The new group they went in.",
           "name": "group",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Each Host added, `reviewed: false`, as a Pending change.",
           "name": "added",
           "required": true,
           "type": "DiscoverAdded[]"
         },
         {
+          "doc": "The copy of `roster.yml` from before.",
           "name": "backup",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 109,
+      "summary": "`discover.add`'s result"
     },
     "DiscoverAdded": {
       "fields": [
         {
+          "doc": "Its address.",
           "name": "address",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its name in `roster.yml`.",
           "name": "name",
           "required": true,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 110,
+      "summary": "A Host `discover.add` added"
     },
     "DiscoverFound": {
       "fields": [
         {
+          "doc": "Its address.",
           "name": "address",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The name it would be added as; `nil` when `known` names the Host already there.",
           "name": "name",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The guessed kind.",
           "name": "type",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its name in DNS; `\"\"` for none.",
           "name": "hostname",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "A web page's title; `\"\"` for none.",
           "name": "title",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its web address, when it serves one.",
           "name": "web",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The Inventory's Host at that address.",
           "name": "known",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The name `discover.add` gave it.",
           "name": "added",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The network card's maker (nmap); `\"\"` when unknown.",
           "name": "vendor",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The guessed operating system (nmap); `\"\"` when unknown.",
           "name": "os",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its MAC address (nmap, on the same network); `\"\"` when unknown.",
           "name": "mac",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its open ports.",
           "name": "ports",
           "required": true,
           "type": "DiscoverPort[]"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 106,
+      "summary": "Something a scan found at an address"
     },
     "DiscoverPlan": {
       "fields": [
         {
+          "doc": "The targets as written back, without one another covers.",
           "name": "targets",
           "required": true,
           "type": "string[]"
         },
         {
+          "doc": "How many addresses they hold.",
           "name": "addresses",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "How many ports it tries on each.",
           "name": "ports",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "nmap, or roster's own TCP connect scan without it.",
           "name": "scanner",
           "required": true,
           "type": "\"nmap\"|\"built-in\""
         },
         {
+          "doc": "The most addresses without `force` (4,096).",
           "name": "limit",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "The most with `force` (65,536).",
           "name": "max",
           "required": true,
           "type": "integer"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 104,
+      "summary": "`discover.plan`'s result: what a scan would visit"
     },
     "DiscoverPort": {
       "fields": [
         {
+          "doc": "Its number.",
           "name": "port",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "The service's name (`ssh`).",
           "name": "name",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "What answered (`OpenSSH 9.6`); `\"\"` when unknown.",
           "name": "product",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "A web page's title; `\"\"` for none.",
           "name": "title",
           "required": true,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 107,
+      "summary": "An open port a scan found"
     },
     "DiscoverStatus": {
       "fields": [
         {
+          "doc": "Its id (`\"scan-N\"`).",
           "name": "scan",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Where it is.",
           "name": "state",
           "required": true,
           "type": "\"running\"|\"stopping\"|\"done\"|\"stopped\"|\"failed\""
         },
         {
+          "doc": "What it scans.",
           "name": "targets",
           "required": true,
           "type": "string[]"
         },
         {
+          "doc": "What it scans with.",
           "name": "scanner",
           "required": true,
           "type": "\"nmap\"|\"built-in\""
         },
         {
+          "doc": "Addresses visited so far.",
           "name": "done",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "Addresses in all.",
           "name": "total",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "How many it found in all: the next `since`.",
           "name": "count",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "How many answered with none of the ports open (nmap only).",
           "name": "quiet",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "What it found, after the first `since`.",
           "name": "found",
           "required": true,
           "type": "DiscoverFound[]"
         },
         {
+          "doc": "Why it `failed`.",
           "name": "error",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 105,
+      "summary": "`discover.status`'s and `discover.start`'s result: how far a scan has got"
     },
     "DiscoverStop": {
       "fields": [
         {
+          "doc": "The scan.",
           "name": "scan",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "`false` when it had ended already; `discover.status` says `stopped` once it has.",
           "name": "stopping",
           "required": true,
           "type": "boolean"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 108,
+      "summary": "`discover.stop`'s result"
     },
     "EchoOptions": {
       "fields": [
         {
+          "doc": "A routine confirmation (`true`): shown only with `ui.messages = \"all\"`, heard by a screen reader and kept by `:messages` either way. Left out or `false`, it shows.",
           "name": "quiet",
           "required": false,
           "type": "boolean"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 15,
+      "summary": "How a line on the message line is said (`roster.echo`, since api 4)"
     },
     "EdgeDir": {
-      "alias": "\"one\"|\"both\""
+      "alias": "\"one\"|\"both\"",
+      "order": 61,
+      "summary": "Which way an edge goes"
     },
     "EdgeStyle": {
-      "alias": "\"solid\"|\"dashed\"|\"dotted\""
+      "alias": "\"solid\"|\"dashed\"|\"dotted\"",
+      "order": 62,
+      "summary": "An edge's line"
     },
     "EdgeTone": {
-      "alias": "\"live\"|\"muted\"|\"warn\"|\"error\""
+      "alias": "\"live\"|\"muted\"|\"warn\"|\"error\"",
+      "order": 63,
+      "summary": "How an edge is marked"
     },
     "EmptyEvent": {
       "fields": [],
-      "open": false
+      "open": false,
+      "order": 112,
+      "summary": "The payload of `lock`, `unlock` and `inventory_changed`: an empty table"
     },
     "EventName": {
-      "alias": "\"lock\"|\"unlock\"|\"host_selected\"|\"session_open\"|\"session_exit\"|\"inventory_changed\"|\"terminal_output\"|\"command_done\"|\"job_progress\""
+      "alias": "\"lock\"|\"unlock\"|\"host_selected\"|\"session_open\"|\"session_exit\"|\"inventory_changed\"|\"terminal_output\"|\"command_done\"|\"job_progress\"",
+      "order": 111,
+      "summary": "An event a Plugin can listen for"
     },
     "Fact": {
       "fields": [
         {
+          "doc": "What it is (`reach`).",
           "name": "label",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its value (`can reach 7 Hosts`).",
           "name": "value",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "`true` for something you could paste into a shell (an address, a name), set in the data font.",
           "name": "data",
           "required": false,
           "type": "boolean"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 44,
+      "summary": "A label and its value"
     },
     "FilterState": {
-      "alias": "\"live\"|\"down\"|\"warn\"|\"error\""
+      "alias": "\"live\"|\"down\"|\"warn\"|\"error\"",
+      "order": 67,
+      "summary": "A state a graph's filter keeps"
     },
     "Finder": {
       "fields": [
         {
+          "doc": "Its title (the `:finder` command's label and the dialog's name); the id if left out.",
           "name": "title",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "What it shows before the query (`Folders ›`), at most 64 characters; its title if left out (since api 3).",
           "name": "prompt",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "What it finds in, at most 2,000; or a function that returns them, run in the Plugin each time the finder opens (not a call the user started, whoever opened it; choosing an item is). Until it first answers the finder says it's loading; after that it shows the last answer while it asks again.",
           "name": "items",
           "required": false,
           "type": "FinderItem[]|fun(): FinderItem[]"
         },
         {
+          "doc": "Instead of `items`: one of your own Sidebar sections, whose rows it finds in (with their paths, unfolded), as roster's own `inventory` finder does (since api 3).",
           "name": "section",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 23,
+      "summary": "A finder (`roster.finders.set`)"
     },
     "FinderItem": {
       "fields": [
         {
+          "doc": "Unique in the finder; its place in the list if left out.",
           "name": "id",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "What's matched and shown.",
           "name": "label",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Shown after the label, and matched too.",
           "name": "detail",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Where it is, shown quieter (`lab › esx-02`).",
           "name": "path",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "What Enter runs.",
           "name": "run",
           "required": true,
           "type": "Run"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 24,
+      "summary": "One thing a finder lists"
     },
     "Float": {
       "fields": [
         {
+          "doc": "Its title.",
           "name": "title",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Its text, a line each (at most 2,000, each cut to 500 characters).",
           "name": "lines",
           "required": false,
           "type": "string[]"
         },
         {
+          "doc": "Buttons at its foot (at most 4).",
           "name": "actions",
           "required": false,
           "type": "FloatAction[]"
         },
         {
+          "doc": "Web pages to open in the browser (at most 4).",
           "name": "links",
           "required": false,
           "type": "Link[]"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 33,
+      "summary": "A floating window (`roster.float.open`)"
     },
     "FloatAction": {
       "fields": [
         {
+          "doc": "What it does (`\"Go to the line\"`).",
           "name": "label",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "One character that runs it while the window has focus (not `q`, which closes it).",
           "name": "key",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "What pressing it runs.",
           "name": "run",
           "required": true,
           "type": "Run"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 34,
+      "summary": "A button in a floating window"
     },
     "Graph": {
       "fields": [
         {
+          "doc": "Its nodes, in order: a cluster's first node is at its centre (at most 5,000).",
           "name": "nodes",
           "required": false,
           "type": "GraphNode[]"
         },
         {
+          "doc": "Its edges (at most 10,000).",
           "name": "edges",
           "required": false,
           "type": "GraphEdge[]"
         },
         {
+          "doc": "Its clusters, in order (at most 500).",
           "name": "clusters",
           "required": false,
           "type": "GraphCluster[]"
         },
         {
+          "doc": "How far a node's reach goes, for the counts and what selecting it lights up: `\"all\"` (the default) every hop, `\"direct\"` one.",
           "name": "reach",
           "required": false,
           "type": "GraphReach"
         },
         {
+          "doc": "What it shows to begin with; the rest is hidden until the user changes it (`f`).",
           "name": "filter",
           "required": false,
           "type": "GraphFilter"
         },
         {
+          "doc": "What `Enter` (or a double click) on a node runs. Without it, a node with a `host` opens that Host.",
           "name": "open",
           "required": false,
           "type": "NodeRun"
         },
         {
+          "doc": "What can be done to the selected node (at most 8).",
           "name": "actions",
           "required": false,
           "type": "NodeAction[]"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 55,
+      "summary": "A graph: nodes, edges and clusters as plain data, and what a node can do"
     },
     "GraphCluster": {
       "fields": [
         {
+          "doc": "Unique among the graph's nodes and clusters: nodes name it as their `cluster`.",
           "name": "id",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its title; the id if left out.",
           "name": "title",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "`true`: every node in it reaches every other, both ways, without an edge for each pair (the Mesh's `mesh: true`).",
           "name": "mesh",
           "required": false,
           "type": "boolean"
         },
         {
+          "doc": "How it starts: collapsed (`true`) or open (`false`). Left out, it collapses when the graph has more than 300 nodes. The user's own choice is kept and wins.",
           "name": "collapsed",
           "required": false,
           "type": "boolean"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 64,
+      "summary": "A cluster of a graph's nodes"
     },
     "GraphEdge": {
       "fields": [
         {
+          "doc": "Unique among its edges; `\"FROM>TO\"` if left out.",
           "name": "id",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The id of the node or cluster it starts at.",
           "name": "from",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The id of the node or cluster it goes to.",
           "name": "to",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "`\"one\"` (the default) is one way, with an arrow at `to`; `\"both\"` is each way.",
           "name": "dir",
           "required": false,
           "type": "EdgeDir"
         },
         {
+          "doc": "Its line; `\"solid\"` if left out.",
           "name": "style",
           "required": false,
           "type": "EdgeStyle"
         },
         {
+          "doc": "Live (in the accent), muted, or marked warn or error.",
           "name": "tone",
           "required": false,
           "type": "EdgeTone"
         },
         {
+          "doc": "`true` draws it broken in the middle by a cross: about to be cut.",
           "name": "cut",
           "required": false,
           "type": "boolean"
         },
         {
+          "doc": "A few words about it, in the list.",
           "name": "label",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 60,
+      "summary": "An edge of a graph: plain data"
     },
     "GraphFilter": {
       "fields": [
         {
+          "doc": "Cluster ids: only their nodes show (at most 500).",
           "name": "clusters",
           "required": false,
           "type": "string[]"
         },
         {
+          "doc": "Kinds (a node's `kind`): only nodes of these show (at most 500).",
           "name": "kinds",
           "required": false,
           "type": "string[]"
         },
         {
+          "doc": "A node's `state` or `mark`: only nodes live, down, or marked warn or error show.",
           "name": "states",
           "required": false,
           "type": "FilterState[]"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 66,
+      "summary": "What a graph shows: the rest is hidden"
     },
     "GraphNode": {
       "fields": [
         {
+          "doc": "Unique among the graph's nodes and clusters (at most 100 characters): edges, updates and the selection follow it.",
           "name": "id",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its name on the map; the id if left out.",
           "name": "label",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "What sort of thing it is (`\"esxi\"`): searched, and a column in the list.",
           "name": "kind",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "How it's drawn; `\"dot\"` if left out.",
           "name": "shape",
           "required": false,
           "type": "NodeShape"
         },
         {
+          "doc": "Live (in the accent) or down.",
           "name": "state",
           "required": false,
           "type": "NodeState"
         },
         {
+          "doc": "A small warn or error mark beside it.",
           "name": "mark",
           "required": false,
           "type": "NodeMark"
         },
         {
+          "doc": "A few words (`\"out of date\"`), beside it when selected and in the list.",
           "name": "note",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The id of the cluster it's in.",
           "name": "cluster",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The Host it is: `Enter` opens it when the graph has no `open`, and actions get it as `e.host`.",
           "name": "host",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "A second line in the data font (an address), when selected and in the list.",
           "name": "detail",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 56,
+      "summary": "A node of a graph: plain data"
     },
     "GraphReach": {
-      "alias": "\"all\"|\"direct\""
+      "alias": "\"all\"|\"direct\"",
+      "order": 65,
+      "summary": "How far a graph's reach goes"
     },
     "Group": {
       "fields": [
         {
+          "doc": "One line; `\"\"` if unset.",
           "name": "title",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "One line; `\"\"` if unset.",
           "name": "description",
           "required": true,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 77,
+      "summary": "A group of Hosts, as `hosts.list` gives it"
     },
     "GroupChange": {
       "fields": [
         {
+          "doc": "Its name.",
           "name": "group",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "What happened to it.",
           "name": "change",
           "required": true,
           "type": "\"changed\"|\"added\"|\"removed\""
         }
       ],
-      "open": false
+      "open": false,
+      "order": 92,
+      "summary": "A group in `changes.diff`"
     },
     "HandlerContext": {
       "fields": [
         {
+          "doc": "The Sidebar section's id, for a row or a row's button.",
           "name": "section",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The row's `id` (its place in the list, `\"3\"`, if it has none).",
           "name": "row",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Which button was pressed, 1 for the first: of the row's `actions`, the section's (no `row` then) or the float's.",
           "name": "action",
           "required": false,
           "type": "integer"
         },
         {
+          "doc": "For a section's or a row's `drop`: the Host dropped on it (since api 3).",
           "name": "dropped",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The finder's id, for a finder item.",
           "name": "finder",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The item's `id` (its place, if it has none).",
           "name": "item",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The status segment's id.",
           "name": "segment",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The `:check` section's id, for its `check`.",
           "name": "health",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "This `:check` run of the section, for its `check`: a check that returns `\"later\"` answers with [`roster.health.answer`](#rosterhealthanswercheck-lines)`(e.check, lines)` (since api 3).",
           "name": "check",
           "required": false,
           "type": "integer"
         },
         {
+          "doc": "The toolbar control's id.",
           "name": "toolbar",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The progress's id, for its `cancel`.",
           "name": "progress",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "For a question's `run` (`\"yes\"`) or `cancel` (`\"no\"`, also when another Plugin's question replaced it).",
           "name": "confirm",
           "required": false,
           "type": "\"yes\"|\"no\""
         },
         {
+          "doc": "The Session on screen; `nil` with none. Only with `inventory.read` or `terminal.read`.",
           "name": "session",
           "required": false,
           "type": "integer"
         },
         {
+          "doc": "The Host of the Session on screen; `nil` with none, for a Quick Connect Session, and without `inventory.read` or `terminal.read`. (A table's function gets the row's Host as `host`: [`TableEvent`](#tableevent).)",
           "name": "session_host",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 7,
+      "summary": "What a row's, a button's, a finder item's, a status segment's, a toolbar control's, a question's, a progress's or a `:check` section's function is called with"
     },
     "HeadAction": {
       "fields": [
         {
+          "doc": "What it does, for its tooltip and screen readers (`\"Plan\"`).",
           "name": "label",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its icon; `info` if left out.",
           "name": "icon",
           "required": false,
           "type": "RowIcon"
         },
         {
+          "doc": "What pressing it runs.",
           "name": "run",
           "required": true,
           "type": "Run"
         },
         {
+          "doc": "One character (`\"P\"`) that runs it: not one a table or graph uses itself (`h j k l H J K L g G n N o O t f m s S / ? q + - = 0`), nor one of the view's table or graph actions' keys, nor another button's (since api 4).",
           "name": "key",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 19,
+      "summary": "A button on a view's or a Host-details section's heading"
     },
     "HealthCheck": {
       "fields": [
         {
+          "doc": "How it went.",
           "name": "level",
           "required": true,
           "type": "\"ok\"|\"warn\"|\"error\""
         },
         {
+          "doc": "What it found.",
           "name": "message",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "What to do about it, in a sentence.",
           "name": "fix",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 27,
+      "summary": "One line of a `:check` section"
     },
     "HealthSection": {
       "fields": [
         {
+          "doc": "Its heading; the id if left out.",
           "name": "title",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Its lines, as they are now. Left out with `check`.",
           "name": "checks",
           "required": false,
           "type": "HealthCheck[]"
         },
         {
+          "doc": "Called on each `:check` (since api 3): returns the section's lines, or `\"later\"` and answers with [`roster.health.answer`](#rosterhealthanswercheck-lines) within 30 seconds, from a `roster.serve.request`'s `done` say. Wins over `checks`.",
           "name": "check",
           "required": false,
           "type": "fun(ctx: HandlerContext): HealthCheck[]|\"later\""
         }
       ],
-      "open": false
+      "open": false,
+      "order": 26,
+      "summary": "A section of `:check` (`roster.health.set`)"
     },
     "HelpPage": {
       "fields": [
         {
+          "doc": "Its title; the topic if left out.",
           "name": "title",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "One line for the index and the topic finder; the title if left out.",
           "name": "summary",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The page, as Markdown (at most 200,000 characters): headings, paragraphs, lists, tables, code, links.",
           "name": "markdown",
           "required": true,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 25,
+      "summary": "A help page (`roster.help.set`)"
     },
     "Host": {
       "fields": [
         {
+          "doc": "Its name in the Inventory, unique.",
           "name": "name",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The group it's in.",
           "name": "group",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its address (an IP or a DNS name).",
           "name": "ip",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "How roster logs in to it over ssh.",
           "name": "ssh",
           "required": true,
           "type": "SshLogin"
         },
         {
+          "doc": "The default Login for its services.",
           "name": "login",
           "required": true,
           "type": "Login"
         },
         {
+          "doc": "Its services by name (`web`, `postgres`). `{}` when there are none.",
           "name": "services",
           "required": true,
           "type": "table<string, Service>"
         },
         {
+          "doc": "Service entries roster left out because it can't use them. `{}` when there are none.",
           "name": "problems",
           "required": true,
           "type": "ServiceProblem[]"
         },
         {
+          "doc": "Its web UI's URL: the `web` service's, else the first service given a URL.",
           "name": "web",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Whether `roster setup` puts this Box's key on it (`false`: password Sessions).",
           "name": "enroll",
           "required": true,
           "type": "boolean"
         },
         {
+          "doc": "`false` for a Host `discover` added and no one has reviewed: it can't be opened until it is.",
           "name": "reviewed",
           "required": true,
           "type": "boolean"
         },
         {
+          "doc": "`mesh:` as roster.yml sets it; `nil` if nothing does.",
           "name": "mesh",
           "required": false,
           "type": "boolean"
         },
         {
+          "doc": "`os:` as roster.yml sets it: `\"windows\"` (setup, revoke and check run PowerShell there) or `\"posix\"`; `nil` if nothing does, which is posix.",
           "name": "os",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "One line; `\"\"` if unset.",
           "name": "title",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "One line; `\"\"` if unset.",
           "name": "description",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "What it is (`esxi`, `linux`); `\"\"` if unset.",
           "name": "type",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its product; `\"\"` if unset.",
           "name": "product",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its MAC address; `\"\"` if unset.",
           "name": "mac",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The older name for `description`, as roster.yml has it.",
           "name": "notes",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The same as `ssh.user` (kept for older code).",
           "name": "user",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The same as `ssh.port`.",
           "name": "port",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "The same as `ssh.auth`.",
           "name": "auth",
           "required": true,
           "type": "LoginRef"
         }
       ],
-      "open": true
+      "open": true,
+      "order": 71,
+      "summary": "A Host, as roster serve's `hosts.list` and `host.get` give it"
     },
     "HostChange": {
       "fields": [
         {
+          "doc": "Its name.",
           "name": "host",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "What happened to it.",
           "name": "change",
           "required": true,
           "type": "\"changed\"|\"added\"|\"removed\""
         },
         {
+          "doc": "For `changed`, the fields that did.",
           "name": "fields",
           "required": true,
           "type": "string[]"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 91,
+      "summary": "A Host in `changes.diff`"
     },
     "HostCheck": {
       "fields": [
         {
+          "doc": "The Host.",
           "name": "host",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Whether every step passed.",
           "name": "ok",
           "required": true,
           "type": "boolean"
         },
         {
+          "doc": "Every step, in order: `inventory`, `ssh-config`, `provider`, `vault-item`, `dns`, `tcp`, `host-key`, `auth`.",
           "name": "steps",
           "required": true,
           "type": "CheckStep[]"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 86,
+      "summary": "`host.check`'s result: the steps of `roster check HOST`"
     },
     "HostList": {
       "fields": [
         {
+          "doc": "Every Host, in `roster.yml` order.",
           "name": "hosts",
           "required": true,
           "type": "Host[]"
         },
         {
+          "doc": "Every group, by name.",
           "name": "groups",
           "required": true,
           "type": "table<string, Group>"
         },
         {
+          "doc": "Why `roster.yml` as it is now doesn't load, while these are the last good Hosts; `nil` when it loads.",
           "name": "error",
           "required": false,
           "type": "InventoryError"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 84,
+      "summary": "`hosts.list`'s result"
     },
     "HostSelectedEvent": {
       "fields": [
         {
+          "doc": "The Host whose Session is on screen now.",
           "name": "host",
           "required": true,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 113,
+      "summary": "`host_selected`'s payload"
     },
     "HttpRequest": {
       "fields": [
         {
+          "doc": "Where: on a site the Plugin was granted (`https://api.example.com/v1/alerts`).",
           "name": "url",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "`GET` (the default), `HEAD`, `POST`, `PUT`, `PATCH` or `DELETE`, in any case.",
           "name": "method",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Headers to send, such as a token of the Plugin's own (`Authorization`). Not the ones that steer the connection (`Host`, `Content-Length`, `Proxy-…`). roster adds only `User-Agent: roster/VERSION` and what HTTP needs.",
           "name": "headers",
           "required": false,
           "type": "table<string, string>"
         },
         {
+          "doc": "The body, at most 256 KB; bytes as they are.",
           "name": "body",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Seconds to wait for the whole answer; at most 30 (the default). 10 seconds to connect.",
           "name": "timeout",
           "required": false,
           "type": "number"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 53,
+      "summary": "What `roster.http.request` sends"
     },
     "HttpResponse": {
       "fields": [
         {
+          "doc": "The status code (`200`, `404`).",
           "name": "status",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "Where it ended, after redirects.",
           "name": "url",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "By lower-case name; a header sent twice has its values joined with `, `.",
           "name": "headers",
           "required": true,
           "type": "table<string, string>"
         },
         {
+          "doc": "The body, at most 1 MB, as bytes: not decompressed, not decoded.",
           "name": "body",
           "required": true,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 54,
+      "summary": "What a site answered"
     },
     "InventoryError": {
       "fields": [
         {
+          "doc": "What's wrong.",
           "name": "message",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The file.",
           "name": "path",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The line, when roster knows it.",
           "name": "line",
           "required": false,
           "type": "integer"
         },
         {
+          "doc": "What to do.",
           "name": "fix",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 85,
+      "summary": "Why `roster.yml` doesn't load right now"
     },
     "InventoryInfo": {
       "fields": [
         {
+          "doc": "`roster.yml`'s full path.",
           "name": "path",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "This Box's name.",
           "name": "box",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "How many Hosts.",
           "name": "host_count",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "The password providers roster has.",
           "name": "providers",
           "required": true,
           "type": "string[]"
         },
         {
+          "doc": "How `roster.yml` is kept: a plain file or a team repo (serve API 28; absent before).",
+          "name": "store",
+          "required": false,
+          "type": "InventoryStore"
+        },
+        {
+          "doc": "roster's version.",
           "name": "roster_version",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "roster serve's API version (not `roster.api_version`).",
           "name": "api_version",
           "required": true,
           "type": "integer"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 83,
+      "summary": "`inventory.info`'s result"
+    },
+    "InventoryStore": {
+      "fields": [
+        {
+          "doc": "A team repo, or a plain file.",
+          "name": "kind",
+          "required": true,
+          "type": "\"repo\"|\"file\""
+        },
+        {
+          "doc": "Which, in a sentence, as `roster check --box` says it.",
+          "name": "note",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "doc": "The git work tree it's in; `nil` outside one.",
+          "name": "repo",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "open": false,
+      "order": 89,
+      "summary": "How `roster.yml` is kept: a plain file or a team repo (serve API 28)"
     },
     "JobProgressEvent": {
       "fields": [
         {
+          "doc": "`\"mesh\"`, `\"discover\"` or `\"check\"`.",
           "name": "kind",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its id within its kind, as that kind's methods name it: the Mesh's job number (`mesh.job { job = N }`), the scan's `\"scan-N\"` (`discover.status { scan = ... }`), the check's `\"check-N\"` (`host.check_job { job = ... }`).",
           "name": "job",
           "required": true,
           "type": "integer|string"
         },
         {
+          "doc": "`\"plan\"`, `\"apply\"` or `\"cut\"` for the Mesh; `\"scan\"` for Discover; `\"check\"` for a check.",
           "name": "action",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "`\"running\"`, `\"stopping\"`, or how it ended: `\"done\"`, `\"stopped\"`, `\"failed\"`.",
           "name": "state",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "How far it has got: Hosts visited, addresses scanned, a check's steps started (of 8).",
           "name": "done",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "Of how many.",
           "name": "total",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "The Host it's on, when it's on one; a check's step (`\"dns\"`, `\"auth\"`, ...).",
           "name": "at",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "A cut's Host; the Host a check checks.",
           "name": "host",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "How it failed: `{ code, message, data? }`, as serve's error.",
           "name": "error",
           "required": false,
           "type": "table"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 117,
+      "summary": "`job_progress`'s payload: serve's `job.progress` notification"
     },
     "KeyContext": {
-      "alias": "\"leader\"|\"list\"|\"list_vim\""
+      "alias": "\"leader\"|\"list\"|\"list_vim\"",
+      "order": 10,
+      "summary": "Where a Plugin's key binding works"
     },
     "LastCommit": {
       "fields": [
         {
+          "doc": "Its hash.",
           "name": "commit",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its subject line.",
           "name": "subject",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The branch's upstream (`origin/main`); `nil` without one.",
           "name": "upstream",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Whether the upstream has it, as this Box last fetched.",
           "name": "pushed",
           "required": true,
           "type": "boolean"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 93,
+      "summary": "The infra repo's last commit"
     },
     "Lesson": {
       "fields": [
         {
+          "doc": "Its heading (at most 100 characters).",
           "name": "title",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Markdown before its steps.",
           "name": "text",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "What to do, in order.",
           "name": "steps",
           "required": false,
           "type": "Step[]"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 29,
+      "summary": "A lesson of a tutorial"
     },
     "Level": {
-      "alias": "\"info\"|\"warn\"|\"error\""
+      "alias": "\"info\"|\"warn\"|\"error\"",
+      "order": 5,
+      "summary": "A notice's level"
     },
     "Link": {
       "fields": [
         {
+          "doc": "Its text (`\"Runbook\"`).",
           "name": "label",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "An `https://` or `http://` address; anything else is refused.",
           "name": "url",
           "required": true,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 35,
+      "summary": "A web page a floating window links to"
     },
     "Login": {
       "fields": [
         {
+          "doc": "The user; `nil` if unset.",
           "name": "user",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The Login; `nil` if unset.",
           "name": "auth",
           "required": false,
           "type": "LoginRef"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 74,
+      "summary": "A Host's default Login for its services (`login:` in roster.yml)"
     },
     "LoginRef": {
-      "alias": "string"
+      "alias": "string",
+      "order": 72,
+      "summary": "A Login reference: where a password is, never the password"
     },
     "Manifest": {
       "fields": [
         {
+          "doc": "How it's known everywhere: lower case letters, digits and `-`, starting with a letter, at most 40. Not `builtin`, `init`, `roster` or a built-in Plugin's name.",
           "name": "name",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its version, shown in `:plugins` (`\"1.0.0\"`).",
           "name": "version",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "One line on what it does, for the install prompt.",
           "name": "description",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Who wrote it, for the install prompt (unverified).",
           "name": "author",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The `roster.api_version` it's written for; above the app's, it doesn't install.",
           "name": "api",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "What it asks for. Each is shown in the install prompt, the risky ones flagged.",
           "name": "permissions",
           "required": false,
           "type": "Permission[]"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 0,
+      "summary": "`roster-plugin.lua`: who the Plugin is and what it asks for"
     },
     "MeshCut": {
       "fields": [
         {
+          "doc": "The Host cut from the Mesh.",
           "name": "host",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The peers whose keys it took off, and that took its off.",
           "name": "confirmed",
           "required": true,
           "type": "string[]"
         },
         {
+          "doc": "The peers that didn't answer, and why: the next cut finishes them.",
           "name": "pending",
           "required": true,
           "type": "table<string, string>"
         },
         {
+          "doc": "What roster left on the cut Host's own side, one sentence each: an earlier `mesh_dir:` that still holds a Mesh key, which roster never removes (serve API 24; absent before).",
           "name": "warnings",
           "required": false,
           "type": "string[]"
         },
         {
+          "doc": "The `mesh: false` written for it as a Pending change.",
           "name": "change",
           "required": true,
           "type": "MeshCutChange"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 98,
+      "summary": "`mesh.cut`'s result"
     },
     "MeshCutChange": {
       "fields": [
         {
+          "doc": "Whether it was written now (`false` when it already was, or couldn't be).",
           "name": "written",
           "required": true,
           "type": "boolean"
         },
         {
+          "doc": "The copy of `roster.yml` from before (since serve API 28 a plain file's too; `nil` before for a file outside git).",
           "name": "backup",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "A Pending change in a team repo, or saved straight to a plain file (serve API 28; absent before).",
+          "name": "kind",
+          "required": false,
+          "type": "\"repo\"|\"file\""
+        },
+        {
+          "doc": "Why nothing was written (before serve API 28, also that it went straight to a file outside git).",
           "name": "note",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Why it couldn't be written (the cut still happened).",
           "name": "error",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "What to do then, in a sentence.",
           "name": "fix",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 99,
+      "summary": "The `mesh: false` a `mesh.cut` writes into `roster.yml`"
     },
     "MeshHost": {
       "fields": [
         {
+          "doc": "Its name.",
           "name": "host",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "`would-change` from a plan, `changed` from an apply, `pending` when it didn't answer.",
           "name": "status",
           "required": true,
           "type": "\"same\"|\"would-change\"|\"changed\"|\"pending\""
         },
         {
+          "doc": "Short phrases: `make key`, `write ssh config`, `add key from orion-2`, …",
           "name": "changes",
           "required": true,
           "type": "string[]"
         },
         {
+          "doc": "Why it's pending.",
           "name": "error",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Brief: the changes left out (it keeps 10).",
           "name": "more",
           "required": false,
           "type": "integer"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 96,
+      "summary": "A Host a Mesh run visited"
     },
     "MeshJob": {
       "fields": [
         {
+          "doc": "Its number.",
           "name": "job",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "What it does.",
           "name": "action",
           "required": true,
           "type": "\"plan\"|\"apply\"|\"cut\""
         },
         {
+          "doc": "A cut's Host.",
           "name": "host",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Where it is.",
           "name": "state",
           "required": true,
           "type": "\"running\"|\"done\"|\"failed\""
         },
         {
+          "doc": "Hosts done so far.",
           "name": "done",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "Hosts in all.",
           "name": "total",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "The Host it's on.",
           "name": "at",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "`mesh.stop` asked it to stop; the Hosts it hadn't got to are pending.",
           "name": "stopped",
           "required": true,
           "type": "boolean"
         },
         {
+          "doc": "Once `done`: what the method itself returns.",
           "name": "result",
           "required": false,
           "type": "MeshResult|MeshCut"
         },
         {
+          "doc": "Once `failed`: why.",
           "name": "error",
           "required": false,
           "type": "ServeError"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 101,
+      "summary": "`mesh.job`'s result: how far a Mesh run has got"
     },
     "MeshLink": {
       "fields": [
         {
+          "doc": "The source Host.",
           "name": "from",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The peer it reaches.",
           "name": "to",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "`password` when the peer asks for one.",
           "name": "kind",
           "required": true,
           "type": "\"key\"|\"password\""
         },
         {
+          "doc": "How it went; `mesh.status` gives none (it never connects), except `no-via` with `brief`. `unreachable`, `no-host-key` and `no-via` are left out.",
           "name": "status",
           "required": false,
           "type": "\"ok\"|\"untested\"|\"unreachable\"|\"no-host-key\"|\"no-via\"|\"pending\"|\"skipped\""
         },
         {
+          "doc": "The status in words.",
           "name": "why",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The Host the source goes through to the peer (a Link's `via:`).",
           "name": "via",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Why roster didn't write it: `\"password-source\"`.",
           "name": "skip",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 95,
+      "summary": "A Link of the Mesh: a source reaching a peer"
     },
     "MeshResult": {
       "fields": [
         {
+          "doc": "`false` for a plan (nothing changed), `true` for an apply.",
           "name": "applied",
           "required": true,
           "type": "boolean"
         },
         {
+          "doc": "Every Link, with how it went.",
           "name": "links",
           "required": true,
           "type": "MeshLink[]"
         },
         {
+          "doc": "Every Host visited.",
           "name": "hosts",
           "required": true,
           "type": "MeshHost[]"
         },
         {
+          "doc": "Hosts kept out, and why (`not reviewed (reviewed: false)`, `mesh: false`).",
           "name": "excluded",
           "required": true,
           "type": "table<string, string>"
         },
         {
+          "doc": "How many Hosts each source reaches, counting the Links that work.",
           "name": "reach",
           "required": true,
           "type": "table<string, integer>"
         },
         {
+          "doc": "Hosts that didn't answer, and why.",
           "name": "pending",
           "required": true,
           "type": "table<string, string>"
         },
         {
+          "doc": "Nothing to change and nothing pending: already in the Mesh.",
           "name": "already",
           "required": true,
           "type": "boolean"
         },
         {
+          "doc": "Words to show (a `ROSTER.md` that isn't roster's, a Host that left `roster.yml`).",
           "name": "warnings",
           "required": true,
           "type": "string[]"
         },
         {
+          "doc": "Earlier cuts not finished yet: a Host, and the peers still to do.",
           "name": "cut_pending",
           "required": true,
           "type": "table<string, string[]>"
         },
         {
+          "doc": "Brief: how many Links there are in all.",
           "name": "link_count",
           "required": false,
           "type": "integer"
         },
         {
+          "doc": "Brief: how many Links have each status.",
           "name": "link_statuses",
           "required": false,
           "type": "table<string, integer>"
         },
         {
+          "doc": "Brief: how many Hosts reach each Host.",
           "name": "reached",
           "required": false,
           "type": "table<string, integer>"
         },
         {
+          "doc": "Brief: the Links worth a look that `links` leaves out (it keeps 1,000).",
           "name": "links_more",
           "required": false,
           "type": "integer"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 94,
+      "summary": "`mesh.plan`'s and `mesh.apply`'s result"
     },
     "MeshStarted": {
       "fields": [
         {
+          "doc": "The job's number, for `mesh.job` and `mesh.stop`.",
           "name": "job",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "What it does.",
           "name": "action",
           "required": true,
           "type": "\"plan\"|\"apply\"|\"cut\""
         },
         {
+          "doc": "How many Hosts it visits.",
           "name": "total",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "A cut's Host.",
           "name": "host",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 97,
+      "summary": "A Mesh run started with `background = true`"
     },
     "MeshStatus": {
       "fields": [
         {
+          "doc": "The Links, without a `status`.",
           "name": "links",
           "required": true,
           "type": "MeshLink[]"
         },
         {
+          "doc": "Hosts kept out, and why.",
           "name": "excluded",
           "required": true,
           "type": "table<string, string>"
         },
         {
+          "doc": "How many Hosts each source reaches.",
           "name": "reach",
           "required": true,
           "type": "table<string, integer>"
         },
         {
+          "doc": "The Hosts roster visits.",
           "name": "members",
           "required": true,
           "type": "string[]"
         },
         {
+          "doc": "Hosts the last run didn't finish, and why.",
           "name": "pending",
           "required": true,
           "type": "table<string, string>"
         },
         {
+          "doc": "Earlier cuts not finished yet.",
           "name": "cut_pending",
           "required": true,
           "type": "table<string, string[]>"
         },
         {
+          "doc": "`roster.yml` changed the Mesh since the last complete apply on this Box.",
           "name": "out_of_date",
           "required": true,
           "type": "boolean"
         },
         {
+          "doc": "Grouped: each meshed group's Hosts that reach each other both ways.",
           "name": "meshed",
           "required": false,
           "type": "table<string, string[]>"
         },
         {
+          "doc": "Brief: how many Links there are in all.",
           "name": "link_count",
           "required": false,
           "type": "integer"
         },
         {
+          "doc": "Brief: how many Links have each status (`asked` for untested ones).",
           "name": "link_statuses",
           "required": false,
           "type": "table<string, integer>"
         },
         {
+          "doc": "Brief: how many Hosts reach each Host.",
           "name": "reached",
           "required": false,
           "type": "table<string, integer>"
         },
         {
+          "doc": "Brief: the Links worth a look that `links` leaves out.",
           "name": "links_more",
           "required": false,
           "type": "integer"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 100,
+      "summary": "`mesh.status`'s result: the Mesh as `roster.yml` asks for it"
     },
     "MeshStop": {
       "fields": [
         {
+          "doc": "The job.",
           "name": "job",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "`false` when it isn't running (over already, or not the latest).",
           "name": "stopping",
           "required": true,
           "type": "boolean"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 103,
+      "summary": "`mesh.stop`'s result"
     },
     "MoveResult": {
       "fields": [
         {
+          "doc": "`false` when it's in that group already.",
           "name": "changed",
           "required": true,
           "type": "boolean"
         },
         {
+          "doc": "The Host as it loads now.",
           "name": "host",
           "required": true,
           "type": "Host"
         },
         {
+          "doc": "The fields written on the Host so it stays the same Host.",
           "name": "pinned",
           "required": true,
           "type": "string[]"
         },
         {
+          "doc": "Where `roster.yml` as it was is kept; `nil` when nothing changed.",
           "name": "backup",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 81,
+      "summary": "What `roster.inventory.move` wrote"
     },
     "NodeAction": {
       "fields": [
         {
+          "doc": "What it does (`\"Check\"`), in the key hints.",
           "name": "label",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "One character that runs it on the selected node, not one the graph uses itself.",
           "name": "key",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Its icon in the node list's buttons.",
           "name": "icon",
           "required": false,
           "type": "RowIcon"
         },
         {
+          "doc": "Only on the nodes whose fields match, as a table action's `when` (since api 3): `{ state = \"live\" }`, or a list of values (`{ kind = { \"esxi\", \"linux\" } }`). It names a node's own fields (`id`, `label`, `kind`, `shape`, `state`, `mark`, `note`, `cluster`, `host`, `detail`); a field the node leaves out matches nothing. Elsewhere its key does nothing and its hint isn't shown.",
           "name": "when",
           "required": false,
           "type": "table<string, string|number|(string|number)[]>"
         },
         {
+          "doc": "What it runs.",
           "name": "run",
           "required": true,
           "type": "NodeRun"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 68,
+      "summary": "Something a graph's selected node can do"
     },
     "NodeEvent": {
       "fields": [
         {
+          "doc": "The node's `id`.",
           "name": "node",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The node's `host`.",
           "name": "host",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The view's id.",
           "name": "view",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The Session on screen, as in a [`HandlerContext`](#handlercontext): only with `inventory.read` or `terminal.read`.",
           "name": "session",
           "required": false,
           "type": "integer"
         },
         {
+          "doc": "The Host of the Session on screen, as in a [`HandlerContext`](#handlercontext).",
           "name": "session_host",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 70,
+      "summary": "What a graph's function gets"
     },
     "NodeMark": {
-      "alias": "\"warn\"|\"error\""
+      "alias": "\"warn\"|\"error\"",
+      "order": 59,
+      "summary": "A node's mark"
     },
     "NodeRun": {
-      "alias": "string|fun(e: NodeEvent): any"
+      "alias": "string|fun(e: NodeEvent): any",
+      "order": 69,
+      "summary": "What a graph's node or action runs"
     },
     "NodeShape": {
-      "alias": "\"dot\"|\"ring\"|\"dashed\"|\"hollow\"|\"square\""
+      "alias": "\"dot\"|\"ring\"|\"dashed\"|\"hollow\"|\"square\"",
+      "order": 57,
+      "summary": "How a node is drawn"
     },
     "NodeState": {
-      "alias": "\"live\"|\"down\""
+      "alias": "\"live\"|\"down\"",
+      "order": 58,
+      "summary": "What a node is doing"
     },
     "NoticeAction": {
       "fields": [
         {
+          "doc": "What it says (`\"Show the plan\"`).",
           "name": "label",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The command line a click runs, as `roster.cmd` would (`\"view mesh-plan\"`); then the notice goes.",
           "name": "run",
           "required": true,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 17,
+      "summary": "A button on a notice"
     },
     "NoticeOptions": {
       "fields": [
         {
+          "doc": "Buttons under its text, at most 2.",
           "name": "actions",
           "required": false,
           "type": "NoticeAction[]"
         },
         {
+          "doc": "An info notice's: whether it follows `ui.messages` (since api 4). Left out, it's quiet unless it has buttons; a warning or an error always shows.",
           "name": "quiet",
           "required": false,
           "type": "boolean"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 14,
+      "summary": "What else a notice has (`roster.notify`, since api 3)"
     },
     "Os": {
-      "alias": "\"windows\"|\"linux\"|\"macos\""
+      "alias": "\"windows\"|\"linux\"|\"macos\"",
+      "order": 3,
+      "summary": "`roster.os`"
     },
     "Permission": {
-      "alias": "\"inventory.read\"|\"inventory.write\"|\"sessions.open\"|\"terminal.read\"|\"terminal.write\"|string"
+      "alias": "\"inventory.read\"|\"inventory.write\"|\"sessions.open\"|\"terminal.read\"|\"terminal.write\"|string",
+      "order": 1,
+      "summary": "A permission's name, as a manifest writes it"
     },
     "Plugin": {
       "fields": [
         {
+          "doc": "Its name, from the manifest.",
           "name": "name",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its version, from the manifest.",
           "name": "version",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "What it runs with: what it asked for and was granted, sorted (`serve:` ones by method).",
           "name": "permissions",
           "required": true,
           "type": "Permission[]"
         },
         {
+          "doc": "Its settings from `init.lua` when it's a Package (`{ \"owner/repo\", config = { … } }`); else `{}`. Anyone can write anything there: check it.",
           "name": "config",
           "required": true,
           "type": "table"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 2,
+      "summary": "`roster.plugin`: the Plugin itself"
     },
     "Progress": {
       "fields": [
         {
+          "doc": "What's going on (`\"Scanning 10.0.0.0/24\"`), at most 80 characters.",
           "name": "title",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "More, for its tooltip (`\"12 Hosts found\"`).",
           "name": "text",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "How much is done, with `total`.",
           "name": "done",
           "required": false,
           "type": "number"
         },
         {
+          "doc": "How much there is; with `done`, shown as a share. Without both, it only shows it's going.",
           "name": "total",
           "required": false,
           "type": "number"
         },
         {
+          "doc": "What stopping it runs: the button and `:cancel ID` call it once.",
           "name": "cancel",
           "required": false,
           "type": "Run"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 37,
+      "summary": "How far something long has got (`roster.progress.set`)"
     },
     "RenameResult": {
       "fields": [
         {
+          "doc": "`false` when `to` is its name already.",
           "name": "changed",
           "required": true,
           "type": "boolean"
         },
         {
+          "doc": "The Host as it loads now.",
           "name": "host",
           "required": true,
           "type": "Host"
         },
         {
+          "doc": "Where `roster.yml` as it was is kept; `nil` when nothing changed.",
           "name": "backup",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 80,
+      "summary": "What `roster.inventory.rename` wrote"
     },
     "ReviewResult": {
       "fields": [
         {
+          "doc": "`false` when it already was.",
           "name": "changed",
           "required": true,
           "type": "boolean"
         },
         {
+          "doc": "The Host as it loads now.",
           "name": "host",
           "required": true,
           "type": "Host"
         },
         {
+          "doc": "Where `roster.yml` as it was is kept; `nil` when nothing changed.",
           "name": "backup",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 82,
+      "summary": "What `roster.inventory.review` wrote"
     },
     "Row": {
       "fields": [
         {
+          "doc": "Unique in the section (at most 100 characters); its place in the list if left out. Keeps the selection on it across `set`s.",
           "name": "id",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Its text.",
           "name": "label",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "A second, quieter text after the label.",
           "name": "detail",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "A short note on the right.",
           "name": "note",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Makes it the Host's row: Enter opens that Host (unless `run` says otherwise) and it lights up while the Host's Session is on screen. Never set it to a Quick Connect Session's `nil` host.",
           "name": "host",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "A badge (at most 40 characters).",
           "name": "badge",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "A count on the right.",
           "name": "count",
           "required": false,
           "type": "number"
         },
         {
+          "doc": "How far it's indented, 0 to 8.",
           "name": "level",
           "required": false,
           "type": "number"
         },
         {
+          "doc": "Its tooltip.",
           "name": "title",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "What Enter runs. With `host` and no `run`, it opens the Host; with neither, nothing.",
           "name": "run",
           "required": false,
           "type": "Run"
         },
         {
+          "doc": "Buttons on the row.",
           "name": "actions",
           "required": false,
           "type": "RowAction[]"
         },
         {
+          "doc": "A glyph before the label, as the app's Folders and groups have (since api 3).",
           "name": "icon",
           "required": false,
           "type": "RowGlyph"
         },
         {
+          "doc": "It folds the rows after it with a higher `level`, as a Folder or group does: `h`/`l`, its chevron and a click fold it, the app keeps what's folded, and its id for `:fold` is `SECTION:ID` (since api 3).",
           "name": "fold",
           "required": false,
           "type": "boolean"
         },
         {
+          "doc": "With `host`: drawn as the Inventory draws that Host (its state, address, Details and Review buttons, then the row's own `actions`); `label` and `note` are used only while the Host isn't in the Inventory (since api 3).",
           "name": "kind",
           "required": false,
           "type": "\"host\""
         },
         {
+          "doc": "Takes a Host dragged onto the row: it runs with `{ section, row, dropped = HOST }` (since api 3). A row with a `host` can always be dragged.",
           "name": "drop",
           "required": false,
           "type": "Run"
         },
         {
+          "doc": "Runs when the row is dragged out of the section onto another part of the Sidebar, as a Host dragged out of a Folder leaves it (since api 3).",
           "name": "drag_out",
           "required": false,
           "type": "Run"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 13,
+      "summary": "A row of a Sidebar section"
     },
     "RowAction": {
       "fields": [
         {
+          "doc": "What it does, for its tooltip and screen readers (`\"Unpin esx-02\"`).",
           "name": "label",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its icon; `info` if left out.",
           "name": "icon",
           "required": false,
           "type": "RowIcon"
         },
         {
+          "doc": "What pressing it runs.",
           "name": "run",
           "required": true,
           "type": "Run"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 18,
+      "summary": "A button on a row"
     },
     "RowGlyph": {
-      "alias": "\"folder\"|\"group\""
+      "alias": "\"folder\"|\"group\"",
+      "order": 21,
+      "summary": "A Sidebar row's glyph (since api 3)"
     },
     "RowIcon": {
-      "alias": "\"close\"|\"edit\"|\"add\"|\"addGroup\"|\"review\"|\"unreview\"|\"info\"|\"copy\"|\"plan\"|\"apply\"|\"cut\"|\"map\""
+      "alias": "\"close\"|\"edit\"|\"add\"|\"addGroup\"|\"review\"|\"unreview\"|\"info\"|\"copy\"|\"plan\"|\"apply\"|\"cut\"|\"map\"",
+      "order": 20,
+      "summary": "A row action's icon"
     },
     "RowTone": {
-      "alias": "\"muted\"|\"warn\"|\"error\""
+      "alias": "\"muted\"|\"warn\"|\"error\"",
+      "order": 49,
+      "summary": "How a table row is marked"
     },
     "Run": {
-      "alias": "string|fun(ctx: HandlerContext): any"
+      "alias": "string|fun(ctx: HandlerContext): any",
+      "order": 6,
+      "summary": "What choosing a row, an action, a finder item or a status segment runs"
     },
     "Section": {
       "fields": [
         {
+          "doc": "Its heading; the id if left out.",
           "name": "title",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Where it goes: Sessions is 100, the Inventory 300. 400 if left out.",
           "name": "order",
           "required": false,
           "type": "number"
         },
         {
+          "doc": "What it says with no rows.",
           "name": "empty",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Its rows, at most 2,000.",
           "name": "rows",
           "required": false,
           "type": "Row[]"
         },
         {
+          "doc": "Buttons on its heading (`\"Dismiss all\"`), at most 4: shown while the heading is selected.",
           "name": "actions",
           "required": false,
           "type": "RowAction[]"
         },
         {
+          "doc": "The count on its heading; the number of rows if left out (since api 3).",
           "name": "count",
           "required": false,
           "type": "number"
         },
         {
+          "doc": "Takes a Host dragged onto the heading or the empty section: it runs with `{ section, dropped = HOST }` (since api 3).",
           "name": "drop",
           "required": false,
           "type": "Run"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 12,
+      "summary": "A Sidebar section (`roster.sidebar.set`)"
     },
     "ServeError": {
       "fields": [
         {
+          "doc": "Its code, in serve-api.md's tables.",
           "name": "code",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "What went wrong.",
           "name": "message",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "More about it, as its row says.",
           "name": "data",
           "required": false,
           "type": "table"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 102,
+      "summary": "An error roster serve answered with"
     },
     "Service": {
       "fields": [
         {
+          "doc": "Its port.",
           "name": "port",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "Its URL, for http and https services.",
           "name": "url",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "`http`, `https`, or `nil` when roster can't tell.",
           "name": "scheme",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Its user: its own, else the Host's `login.user`.",
           "name": "user",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Its Login: its own, else the Host's `login.auth`.",
           "name": "auth",
           "required": false,
           "type": "LoginRef"
         },
         {
+          "doc": "Whether its TLS certificate is checked.",
           "name": "verify",
           "required": true,
           "type": "boolean"
         },
         {
+          "doc": "How `roster web` signs in: `basic`, `bearer`, `vsphere`, `unifi`, `openvpnas`, `hub` or `none`.",
           "name": "login",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "`true` when it has a Login of its own; `false` when it uses the Host's.",
           "name": "override",
           "required": true,
           "type": "boolean"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 75,
+      "summary": "One of a Host's services, resolved"
     },
     "ServiceProblem": {
       "fields": [
         {
+          "doc": "The service's name.",
           "name": "service",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "What's wrong, naming the service.",
           "name": "message",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "What to change.",
           "name": "fix",
           "required": true,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 76,
+      "summary": "A service entry roster left out of a Host"
     },
     "Session": {
       "fields": [
         {
+          "doc": "The Session's id, as its events name it: `roster.terminal.send` and `roster.sessions.show` take it.",
           "name": "session",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "The Host's name; `nil` for a Quick Connect Session (`:quick`), which isn't on a Host.",
           "name": "host",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "doc": "The folder the Session's shell last said it's in, with OSC 7 (since api 6; [Shell integration](plugins.md#shell-integration)): an absolute path such as `/srv/app` (PowerShell's on Windows: `/C:/Users/you`). Only for a Plugin granted `terminal.read`, as it's something the Session printed; `nil` without it, until the shell says one, or when what it said isn't a plain `file://` folder roster takes (no control characters, no invisible format characters such as zero-width spaces or bidi marks, at most 1024 characters). It's the shell's word, never checked: the Host can say any folder, so show it or report it, never use it to reach a file. It changes on every `cd`; read the list again when you need it now.",
+          "name": "cwd",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 114,
+      "summary": "An open Session, as `roster.sessions.list` gives it"
     },
     "SessionExitEvent": {
       "fields": [
         {
+          "doc": "The Session's id.",
           "name": "session",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "The Host's name; `nil` for a Quick Connect Session. A tab closed while it ran has it too (since api 3).",
           "name": "host",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "ssh's exit code; `nil` when it failed to start or its tab was closed.",
           "name": "code",
           "required": false,
           "type": "integer"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 116,
+      "summary": "`session_exit`'s payload"
     },
     "SessionOpenEvent": {
       "fields": [
         {
+          "doc": "The Session's id: `roster.terminal.send` takes it.",
           "name": "session",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "The Host's name; `nil` for a Quick Connect Session (`:quick`), which isn't on a Host: don't badge it or make a row go to it.",
           "name": "host",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 115,
+      "summary": "`session_open`'s payload"
     },
     "SshLogin": {
       "fields": [
         {
+          "doc": "The user.",
           "name": "user",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The port (22 unless set).",
           "name": "port",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "Its Login (`prompt` unless set).",
           "name": "auth",
           "required": true,
           "type": "LoginRef"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 73,
+      "summary": "A Host's ssh login"
     },
     "StatusSegment": {
       "fields": [
         {
+          "doc": "Its text, at most 80 characters.",
           "name": "text",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its tooltip.",
           "name": "title",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "What clicking it runs.",
           "name": "run",
           "required": false,
           "type": "Run"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 22,
+      "summary": "A status bar segment (`roster.status.set`)"
     },
     "Step": {
       "fields": [
         {
+          "doc": "Unique in the tutorial: what the State keeps once it's done.",
           "name": "id",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "What to do (Markdown).",
           "name": "text",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The event that ticks it, or a list of them (any one does).",
           "name": "on",
           "required": true,
           "type": "StepMatch|StepMatch[]"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 30,
+      "summary": "A step of a lesson: done when the app sends a matching event"
     },
     "StepMatch": {
       "fields": [
         {
+          "doc": "The event's name.",
           "name": "event",
           "required": true,
           "type": "TutorEvent"
         },
         {
+          "doc": "Any other key is a field the event must have, equal ignoring case; `\"*\"` means it's there, `\"\"` that it isn't.",
           "name": "[string]",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 31,
+      "summary": "An event a step waits for"
     },
     "Table": {
       "fields": [
         {
+          "doc": "Its columns, left to right (1 to 20).",
           "name": "columns",
           "required": true,
           "type": "Column[]"
         },
         {
+          "doc": "Its rows (at most 2,000 here; `roster.views.update` adds more, up to 10,000).",
           "name": "rows",
           "required": false,
           "type": "TableRow[]"
         },
         {
+          "doc": "The column it's sorted by at first; as given if left out.",
           "name": "sort",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Sorted highest first.",
           "name": "desc",
           "required": false,
           "type": "boolean"
         },
         {
+          "doc": "What it says with no rows.",
           "name": "empty",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "What `Enter` (or a double click) on a row runs. Without it, a row with a `host` opens that Host; others do nothing.",
           "name": "open",
           "required": false,
           "type": "TableRun"
         },
         {
+          "doc": "What can be done to the selected row (at most 8).",
           "name": "actions",
           "required": false,
           "type": "TableAction[]"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 45,
+      "summary": "A table: columns, rows as plain data, and what a row can do"
     },
     "TableAction": {
       "fields": [
         {
+          "doc": "What it does (`\"Keep\"`), on its button and in the key hints.",
           "name": "label",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "One character that runs it on the selected row, not one the table uses itself.",
           "name": "key",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Its button's icon; the label alone if left out.",
           "name": "icon",
           "required": false,
           "type": "RowIcon"
         },
         {
+          "doc": "Only on the rows whose cells match: `{ state = \"up\" }`, or a list of values (`{ state = { \"up\", \"slow\" } }`). A cell needn't be a column, so a row can carry what decides it without showing it.",
           "name": "when",
           "required": false,
           "type": "table<string, string|number|(string|number)[]>"
         },
         {
+          "doc": "What it runs.",
           "name": "run",
           "required": true,
           "type": "TableRun"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 50,
+      "summary": "Something a table's selected row can do"
     },
     "TableEvent": {
       "fields": [
         {
+          "doc": "The row's `id`.",
           "name": "row",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "The row's `host`, or the Host whose details the section is in.",
           "name": "host",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The view's id, in a view.",
           "name": "view",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The section's id, in a Host's details.",
           "name": "section",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 52,
+      "summary": "What a table's function gets"
     },
     "TableRow": {
       "fields": [
         {
+          "doc": "Unique in the table (at most 100 characters): updates and the selection follow it.",
           "name": "id",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "Its value in each column, by the column's `id`; a column it lacks is blank and sorts last.",
           "name": "cells",
           "required": false,
           "type": "table<string, string|number>"
         },
         {
+          "doc": "The Host it's about: `Enter` opens it when the table has no `open`, and actions get it as `e.host`.",
           "name": "host",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Drawn quieter (`\"muted\"`: ended, down) or marked (`\"warn\"`, `\"error\"`).",
           "name": "tone",
           "required": false,
           "type": "RowTone"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 48,
+      "summary": "A row of a table: plain data"
     },
     "TableRun": {
-      "alias": "string|fun(e: TableEvent): any"
+      "alias": "string|fun(e: TableEvent): any",
+      "order": 51,
+      "summary": "What a table's row or action runs"
     },
     "TerminalOutputEvent": {
       "fields": [
         {
+          "doc": "The Session's id.",
           "name": "session",
           "required": true,
           "type": "integer"
         },
         {
+          "doc": "The Host's name; `nil` for a Quick Connect Session.",
           "name": "host",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "The lines it finished since the last one, each ending in `\\n`, as the terminal shows them: no colours or escape sequences, a line the program rewrote (a progress bar) only as it ended up, a long line that wrapped as one. A line is sent when the Session moves past it, so the one with the cursor (a prompt) waits. A line drawn again with the same text in the same place isn't sent again, so the screen a resized Session prints again (ConPTY does on Windows) doesn't repeat what you had. What a full-screen program (`vim`, `top`, `less`) draws isn't sent. At most the last 16 KB.",
           "name": "text",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "What the Session's shell's OSC 133 marks say these lines are (since api 4): `\"prompt\"` (a few lines after its prompt starts), `\"input\"` (the line typed at the prompt: the shell's echo of your command), `\"output\"` (what a command printed), or `nil` (no marks, or nothing they say). All the lines in `text` are of one kind; a batch of several kinds comes as several events, in order. A hint, not a guarantee: the marks come from the Host and anything it prints can forge them, and an `\"output\"` line may be an `ssh` or nested shell echoing what you type. Every line is sent whatever its kind.",
           "name": "kind",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 118,
+      "summary": "`terminal_output`'s payload"
     },
     "Theme": {
       "fields": [
         {
+          "doc": "Shown in the app; the id if left out.",
           "name": "label",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Which OS appearance it suits; the base's if left out.",
           "name": "appearance",
           "required": false,
           "type": "\"dark\"|\"light\""
         },
         {
+          "doc": "The Theme it starts from (a bundled one's id); Roster dark or Roster light by `appearance` if left out.",
           "name": "base",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "UI tokens it changes (`accent`, `bg`, …), as CSS colours.",
           "name": "colors",
           "required": false,
           "type": "table<string, string>"
         },
         {
+          "doc": "Terminal colours it changes (`background`, `foreground`, `cursor`, …).",
           "name": "terminal",
           "required": false,
           "type": "table<string, string>"
         },
         {
+          "doc": "The 16 ANSI colours (`red`, `bright_red`, …); `false` keeps the standard palette. The base's if left out.",
           "name": "ansi",
           "required": false,
           "type": "table<string, string>|false"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 11,
+      "summary": "A Theme, as `init.lua`'s `themes` takes one"
     },
     "Timer": {
-      "alias": "integer"
+      "alias": "integer",
+      "order": 4,
+      "summary": "A timer's id, from `roster.defer` or `roster.every`"
     },
     "ToolbarControl": {
       "fields": [
         {
+          "doc": "What it does, for its tooltip and screen readers (`\"Scan a network\"`), at most 80 characters.",
           "name": "label",
           "required": true,
           "type": "string"
         },
         {
+          "doc": "A word shown beside the icon (at most 20 characters); without an icon, the label is shown.",
           "name": "text",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Its icon.",
           "name": "icon",
           "required": false,
           "type": "ToolbarIcon"
         },
         {
+          "doc": "What pressing it runs.",
           "name": "run",
           "required": true,
           "type": "Run"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 38,
+      "summary": "A control in the toolbar (`roster.toolbar.set`)"
     },
     "ToolbarIcon": {
-      "alias": "\"find\"|\"add\"|\"details\"|\"help\"|\"map\""
+      "alias": "\"find\"|\"add\"|\"details\"|\"help\"|\"map\"",
+      "order": 39,
+      "summary": "A toolbar control's icon"
     },
     "TutorEvent": {
-      "alias": "\"command\"|\"session_open\"|\"session_exit\"|\"host_selected\"|\"help_open\"|\"help_back\"|\"help_forward\"|\"help_search\""
+      "alias": "\"command\"|\"session_open\"|\"session_exit\"|\"host_selected\"|\"help_open\"|\"help_back\"|\"help_forward\"|\"help_search\"",
+      "order": 32,
+      "summary": "The events a tutorial's step can wait for"
     },
     "Tutorial": {
       "fields": [
         {
+          "doc": "Its title; the id if left out.",
           "name": "title",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "One line for `:tutor` and the help index; the title if left out.",
           "name": "summary",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Markdown before the first lesson.",
           "name": "intro",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "At least one.",
           "name": "lessons",
           "required": true,
           "type": "Lesson[]"
         },
         {
+          "doc": "Markdown after the last lesson.",
           "name": "outro",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 28,
+      "summary": "A tutorial (`roster.tutor.set`)"
     },
     "UpdateResult": {
       "fields": [
         {
+          "doc": "`false` when the Host already had those values (nothing written).",
           "name": "changed",
           "required": true,
           "type": "boolean"
         },
         {
+          "doc": "The Host as it loads now.",
           "name": "host",
           "required": true,
           "type": "Host"
         },
         {
+          "doc": "Where `roster.yml` as it was is kept; `nil` when nothing changed.",
           "name": "backup",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "What failed after the write; `nil` when nothing changed.",
           "name": "warnings",
           "required": false,
           "type": "string[]"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 79,
+      "summary": "What `roster.inventory.update` wrote"
     },
     "View": {
       "fields": [
         {
+          "doc": "Its heading; the id if left out.",
           "name": "title",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Where it opens first: `\"panel\"` (the default) or `\"full\"`. The user can move it to the other and widen or narrow it (`␣ z`, `␣ <`, `␣ >`); their choice, and init.lua's `views.ID`, win over it.",
           "name": "place",
           "required": false,
           "type": "ViewPlace"
         },
         {
+          "doc": "Buttons on its heading, at most 4, for what the whole view does (`Plan`, `Apply`): each runs with `{ view }` (since api 3), and its `key` runs it from anywhere in the view (since api 4).",
           "name": "actions",
           "required": false,
           "type": "HeadAction[]"
         },
         {
+          "doc": "A few lines above the rest, in the app's voice; a blank line starts a paragraph.",
           "name": "text",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "Label and value pairs, as a Host's details show them.",
           "name": "facts",
           "required": false,
           "type": "Fact[]"
         },
         {
+          "doc": "A table of rows.",
           "name": "table",
           "required": false,
           "type": "Table"
         },
         {
+          "doc": "A graph of nodes and edges, in place of a table.",
           "name": "graph",
           "required": false,
           "type": "Graph"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 40,
+      "summary": "A side panel or a full view (`roster.views.set`)"
     },
     "ViewOpenOptions": {
       "fields": [
         {
+          "doc": "The id of the node (a graph) or row (a table) to open at.",
           "name": "select",
           "required": false,
           "type": "string"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 16,
+      "summary": "Where a view opens (`roster.views.open`, since api 4)"
     },
     "ViewPlace": {
-      "alias": "\"panel\"|\"full\""
+      "alias": "\"panel\"|\"full\"",
+      "order": 41,
+      "summary": "Where a view goes"
     },
     "ViewUpdate": {
       "fields": [
         {
+          "doc": "A new heading.",
           "name": "title",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "New text; `\"\"` takes it away.",
           "name": "text",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "New facts, all of them.",
           "name": "facts",
           "required": false,
           "type": "Fact[]"
         },
         {
+          "doc": "Rows to add or replace, by `id` (at most 2,000 at once).",
           "name": "rows",
           "required": false,
           "type": "TableRow[]"
         },
         {
+          "doc": "The ids of rows to take away; in a graph, of nodes (their edges go too) and clusters (their nodes stay, loose).",
           "name": "remove",
           "required": false,
           "type": "string[]"
         },
         {
+          "doc": "`true` takes every row of the table away first, in one go (a new scan); `rows` then fill it again (since api 3).",
           "name": "clear",
           "required": false,
           "type": "boolean"
         },
         {
+          "doc": "A graph's nodes to add or replace, by `id`.",
           "name": "nodes",
           "required": false,
           "type": "GraphNode[]"
         },
         {
+          "doc": "A graph's edges to add or replace, by `id`.",
           "name": "edges",
           "required": false,
           "type": "GraphEdge[]"
         },
         {
+          "doc": "A graph's clusters to add or replace, by `id`.",
           "name": "clusters",
           "required": false,
           "type": "GraphCluster[]"
         },
         {
+          "doc": "The ids of a graph's edges to take away.",
           "name": "remove_edges",
           "required": false,
           "type": "string[]"
         },
         {
+          "doc": "A graph's new filter, in place of the one it has and the user's (`{}` shows everything).",
           "name": "filter",
           "required": false,
           "type": "GraphFilter"
         },
         {
+          "doc": "New columns, all of them; the rows keep their cells.",
           "name": "columns",
           "required": false,
           "type": "Column[]"
         },
         {
+          "doc": "Sort by this column now (the user's sort gives way).",
           "name": "sort",
           "required": false,
           "type": "string"
         },
         {
+          "doc": "With `sort`: highest first.",
           "name": "desc",
           "required": false,
           "type": "boolean"
         },
         {
+          "doc": "New actions, all of them: their functions replace the old ones' (`open` stays).",
           "name": "actions",
           "required": false,
           "type": "TableAction[]"
         }
       ],
-      "open": false
+      "open": false,
+      "order": 42,
+      "summary": "What `roster.views.update` changes"
     }
   },
   "values": [
     {
       "path": "roster.api_version",
+      "summary": "The version of the `roster` module this app has",
       "type": "integer"
     },
     {
       "path": "roster.os",
+      "summary": "The OS the app runs on",
       "type": "Os"
     },
     {
       "path": "roster.plugin",
+      "summary": "The Plugin itself: its name, version, what it was granted and its settings",
       "type": "Plugin"
     }
   ]

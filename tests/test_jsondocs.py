@@ -33,9 +33,9 @@ def doc_of(capsys, *argv):
 
 @pytest.mark.parametrize("argv, model", [
     (("hosts",), jsondocs.HostsDoc),
-    (("info", "box"), jsondocs.HostInfoDoc),
-    (("info", "guest"), jsondocs.ResourceInfoDoc),
-    (("resources",), jsondocs.ResourcesDoc),
+    (("hosts", "box"), jsondocs.HostInfoDoc),
+    (("hosts", "guest"), jsondocs.ResourceInfoDoc),
+    (("hosts", "--resources"), jsondocs.ResourcesDoc),
     (("inv", "list"), jsondocs.InventoriesDoc),
     (("inv", "which"), jsondocs.WhichDoc),
 ])

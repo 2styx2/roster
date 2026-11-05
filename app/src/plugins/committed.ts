@@ -20,8 +20,11 @@
 // An `A` while a command runs is a nested shell's (ssh to a Host with integration): the outer
 // command gets no Done, since its end can't be told from the nested shell's. Nor does `exit` or
 // `logout`: a shell that exits sends no `D` for it, so the `D` after it is another shell's.
+// A Done carries the folder the shell said last (OSC 7, osc7.ts) before its `C`, and Dones are
+// made only while the manager says a Plugin listens for `command_done` (#223, #242; Q185).
 import { Terminal } from "@xterm/xterm";
 import { CsiClamp } from "../terminal/csiClamp";
+import { folderOf } from "../session/osc7";
 import { guarded } from "../terminal/xtermGuard";
 
 /** The most text one `terminal_output` or one Done's `output` carries: its last whole lines. */
@@ -48,6 +51,9 @@ export interface Done {
   output: string;
   /** Its exit code; null when the shell didn't say. */
   code: number | null;
+  /** The folder the shell last said it was in (OSC 7) before the command ran (#242, Q185): there
+   * only when it said one roster takes (osc7.ts). The Host's word, never checked. */
+  cwd?: string;
 }
 
 /** What the marks say a line is; null: they say nothing (no marks, or not of a kind). */
@@ -89,6 +95,13 @@ export class CommittedLines {
   private outFrom = 0;
   private outSize = 0;
   private dones: Done[] = [];
+  /** Whether Dones are wanted (#223: a Plugin listens for `command_done`); off, no output is kept. */
+  private collecting = true;
+  /** The running command started (`C`) while Dones weren't wanted: it makes none. */
+  private unwanted = false;
+  /** The folder the shell last said (OSC 7), and the one it had said when the command ran. */
+  private cwd: string | null = null;
+  private commandCwd: string | null = null;
 
   constructor(size: ScreenSize) {
     this.term = new Terminal({ cols: size.cols, rows: size.rows, scrollback: 0, allowProposedApi: false });
@@ -112,6 +125,26 @@ export class CommittedLines {
         return true;
       }),
     );
+    // One roster doesn't take (osc7.ts) means the folder isn't known any more.
+    this.term.parser.registerOscHandler(
+      7,
+      guarded(this.term, (data: string) => {
+        this.cwd = folderOf(data);
+        return true;
+      }),
+    );
+  }
+
+  /** Whether to make Dones (#223): the manager says so, as Plugins start or stop listening for
+   * `command_done`. Off, no command's output is kept and the Dones not taken go; a command that
+   * started while off makes none, even if it ends once they're wanted again. */
+  collectDone(on: boolean) {
+    if (!on) {
+      this.dones = [];
+      this.resetOutput();
+      if (this.phase === "output") this.unwanted = true;
+    }
+    this.collecting = on;
   }
 
   /** Feeds the terminal; resolves once it has taken in `data`. */
@@ -230,6 +263,7 @@ export class CommittedLines {
 
   /** Keeps a line of the running command's output, its last OUTPUT_MAX characters only. */
   private collect(text: string) {
+    if (!this.collecting || this.unwanted) return;
     this.out.push(text);
     this.outSize += text.length + 1;
     while (this.outSize > OUTPUT_MAX && this.outFrom < this.out.length) {
@@ -273,6 +307,8 @@ export class CommittedLines {
         // Twice (a shell's own mark and a snippet's): the first one counts.
         if (this.phase === "output") return;
         this.command = this.phase === "input" ? this.commandLine() : null;
+        this.commandCwd = this.cwd;
+        this.unwanted = !this.collecting;
         // Before the line feed (pwsh's): the row it's on is the command line, sent when committed.
         if (b.cursorX > 0) this.cRow = { row: this.lineStart(b.cursorY), kind: this.phase === "input" ? "input" : null };
         this.phase = "output";
@@ -295,18 +331,19 @@ export class CommittedLines {
           }
         }
         const code = arg !== undefined && /^-?\d+$/.test(arg) ? Number(arg) : null;
-        if (!EXIT.test(this.command ?? "")) {
+        if (this.collecting && !this.unwanted && !EXIT.test(this.command ?? "")) {
           const output = lastLines(
             this.out
               .slice(this.outFrom)
               .map((l) => `${l}\n`)
               .join(""),
           );
-          this.dones.push({ command: this.command, output, code });
+          this.dones.push({ command: this.command, output, code, ...(this.commandCwd !== null ? { cwd: this.commandCwd } : {}) });
           if (this.dones.length > DONES_MAX) this.dones.shift();
         }
         this.phase = "idle";
         this.command = null;
+        this.unwanted = false;
         this.resetOutput();
         return;
       }

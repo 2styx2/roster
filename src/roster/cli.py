@@ -7,14 +7,30 @@ import re
 import shlex
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from . import __version__, boxsync, clihelp, jsonout, mesh
+from . import __version__, aliases, boxsync, clihelp, jsonout, mesh
+from .addhost import cmd_add
 from .claude import write_claude_files
-from .common import die, not_reviewed, program_argv, run_instead, say, ssh_config_file, tcp_ok
-from .completion import DIRS, FILES, GROUPS, HOSTS, INVENTORIES, ONLY, RESOURCES, SHELLS, values
+from .common import (
+    KEY_TAG,
+    KEY_TRAIL,
+    die,
+    find_program,
+    key_name_file,
+    never_look_in_the_current_folder,
+    not_reviewed,
+    program_argv,
+    replace_file,
+    run_instead,
+    say,
+    ssh_config_file,
+    tcp_ok,
+)
+from .completion import COMMANDS, DIRS, FILES, GROUPS, HOSTS, INVENTORIES, ONLY, RESOURCES, SHELLS, values
 from .config import access_label, find_config, is_windows, load_config, matches, selected
 from .discover import DEFAULT_SCAN_PORTS, cmd_discover
 from .errors import ROSTER_ERROR, UNKNOWN_HOST, UNKNOWN_INVENTORY, Problem, inventory_problem
@@ -22,12 +38,17 @@ from .example import EXAMPLE_CONFIG
 from .providers import NO_PASSWORD, PROVIDERS, get_secret, setup_providers
 from .resources import TYPES, fields, login, summary, wifi_uri
 from .sshops import (
+    NameTaken,
+    box_key_re,
     enroll,
     ensure_key,
+    key_ere,
+    key_named,
     password_exec,
     public_key_line,
     record_fingerprints,
     remove_key_script,
+    retag_key_script,
     ssh_ok,
     sudo_wrap,
     write_ssh_config,
@@ -38,11 +59,55 @@ from .winhost import clean
 # ---------------------------------------------------------------- commands
 
 def cmd_init(args):
+    """`roster init`: the commented example (the default), or a new Inventory the --inventory way (T212). A file
+    that's there already is kept; --name names the new one (`roster inv add`)."""
+    from . import newinventory
     path = Path(args.config or "roster.yml").expanduser()
-    if path.exists():
-        die(f"{path} already exists")
-    path.write_text(EXAMPLE_CONFIG)
-    say(f"wrote {path} - edit it, then run: roster setup")
+    how, value = ("blank", None) if args.blank else (None, None)
+    if args.inventory:
+        try:
+            how, value = newinventory.parse_how(args.inventory)
+        except ValueError as e:
+            build_parser().error(f"--inventory {e}")
+    try:
+        if how is None:
+            if path.exists():
+                newinventory.create(path, "blank")           # raises the kept-as-it-is Problem
+            path.write_text(EXAMPLE_CONFIG)
+            say(f"wrote {path} - edit it, then run: roster setup")
+        else:
+            made = newinventory.create(path, how, value)
+            say_made(made, value)
+    except Problem as e:
+        die(f"{e.message}" + (f" ({e.details})" if e.details else "") + (f" - {e.fix}" if e.fix else ""))
+    if args.name:
+        from . import inventories
+        inventories.add(args.name, path)
+        say(f"named {args.name}: {inventories.path_of(args.name)} (`roster --inv {args.name} setup` sets this Box up "
+            f"for it; `roster inv use {args.name}` makes it the active one)")
+    return 0
+
+
+def say_made(made, value):
+    from . import newinventory, store
+    path = made.path
+    if made.how == "blank":
+        say(f"wrote {path}, a blank Inventory - add Hosts under hosts: (or `roster discover CIDR --write`), then "
+            "run: roster setup")
+    elif made.how == "file":
+        say(f"copied {value} to {path} - then run: roster setup")
+    elif made.how == "repo":
+        say(f"cloned {newinventory.shown_url(value)} into {path.parent} - then run: roster setup")
+    elif made.hosts:
+        say(f"wrote {path} with {plural(len(made.hosts), 'Host')} from {value or '~/.ssh/config'} (your ssh config "
+            "is unchanged) - check them, then run: roster setup")
+    else:
+        say(f"no Host in {value or '~/.ssh/config'} to import (only wildcards or Match blocks), so {path} is a blank "
+            "Inventory - add Hosts under hosts:, then run: roster setup")
+    if made.skipped:
+        say(f"skipped      {', '.join(made.skipped)} (patterns and Match blocks aren't single Hosts)")
+    if store.at(path, for_show=True).kind == store.FILE and made.how != "repo":
+        say(f"optional     `git -C {path.parent} init` keeps its history; roster works the same without git")
 
 
 LEFT_OUT = ("left out of this Box's ssh config: another named Inventory ahead of this one has a Host by that name, "
@@ -77,8 +142,21 @@ def refuse_left_out(h):
         die(f"{why} - not running anything: {fix}")
 
 
+def name_taken(cfg):
+    from .errors import BOX_NAME_TAKEN
+    return (f"[{BOX_NAME_TAKEN}] another key's line there is tagged {cfg['tag']}: another Box already uses that "
+            "name, and this Box's setup and revoke would take that line too (one name, one owner), so nothing was "
+            "changed there. Give this Box another box_name:, or run roster setup --force to go ahead")
+
+
 def cmd_setup(cfg, args):
-    hosts = selected(cfg, args.only)
+    # `--host NAME` (#437, Q198; `roster add --setup` too): exactly that Host, never what --only NAME would match too
+    # (a group, type or product by that name)
+    host = getattr(args, "host", None)
+    if host is not None and host not in cfg["hosts"]:
+        die(f"unknown host {host!r} (see `roster hosts`)")
+    hosts = [cfg["hosts"][host]] if host is not None else selected(cfg, args.only)
+    narrowed = bool(args.only or host)      # part of roster.yml: no Mesh, no key-name record
     waiting = [h for h in hosts if not h["reviewed"]]
     hosts = [h for h in hosts if h["reviewed"]]
     if waiting:
@@ -99,12 +177,43 @@ def cmd_setup(cfg, args):
         works = dict(zip([h["name"] for h in key_hosts], ex.map(lambda h: ssh_ok(h["name"]), key_hosts), strict=True))
     todo = [h for h in key_hosts if not works[h["name"]]]
     say(f"key login    {len(key_hosts) - len(todo)} already work, {len(todo)} need the key installed")
+    # T217 (#412): box_name: (or the hostname) changed since this Box's key went on its Hosts: the lines there still
+    # carry the earlier name, so the Hosts where the key works get it re-tagged (found by this Box's own public key)
+    was = key_named(cfg)
+    retag = [h for h in key_hosts if works[h["name"]]] if was not in (None, cfg["box"]) else []
+    if retag:
+        # #423's L1: with no record, only the key's comment says a name (a named Inventory's first setup may never
+        # have been renamed: the key was made by another Inventory's)
+        why = (f"this Box's key is tagged {KEY_TAG}:{was} on its Hosts (box_name:, or the hostname, changed since)"
+               if key_name_file().exists() else
+               f"this Box's key was made as {KEY_TAG}:{was}, so its lines may carry that name")
+        say(f"key tag      {why}: re-tag it as {cfg['tag']} on {plural(len(retag), 'host')} where it works")
 
     failed = {h["name"]: "no answer on SSH port" for h in hosts if h["name"] in no_answer}
     if args.dry_run:
         for h in todo:
             say(f"  would install key on {h['name']} ({h['user']}@{h['ip']}:{h['port']}, auth {h['auth']})")
+        for h in retag:
+            say(f"  would re-tag key on {h['name']}")
         return 0
+
+    # T226 (#435, 2): renamed onto a name another Box's key line has on a Host: the same-name rule (this Box's revoke
+    # and install take a name's lines) would take that Box's line, so that Host is left, said, unless --force
+    taken = cfg["tag_re"] if was not in (None, cfg["box"]) and not getattr(args, "force", False) else None
+    if retag:
+        with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
+            for h, why in zip(retag, ex.map(lambda h: retag_on(h, pub, taken), retag), strict=True):
+                if why is None:
+                    say(f"  ok    {h['name']} (re-tagged)")
+                elif isinstance(why, NoLine):   # (agent) nothing roster can re-tag there: done, said once
+                    say(f"  note  {h['name']}: the key works, but no {KEY_TAG} line for it is in {why.file} (a line "
+                        "written by hand): left as is; change or remove that line by hand")
+                elif why is TAKEN:
+                    failed[h["name"]] = name_taken(cfg)
+                    say(f"  FAIL  {h['name']}: {name_taken(cfg)}")
+                else:
+                    failed[h["name"]] = f"re-tag: {why}"
+                    say(f"  FAIL  {h['name']}: re-tag: {why}")
 
     for ref, group in sorted({(h["auth"], h["group"]) for h in todo}, key=lambda t: (str(t[0]), t[1])):
         try:
@@ -119,7 +228,7 @@ def cmd_setup(cfg, args):
     if todo:
         say(f"installing   key on {len(todo)} hosts...")
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-            futs = {ex.submit(enroll, h, pub, cfg["tag_re"]): h for h in todo}
+            futs = {ex.submit(enroll, h, pub, box_key_re(cfg), taken): h for h in todo}
             for f in cf.as_completed(futs):
                 h = futs[f]
                 try:
@@ -128,15 +237,23 @@ def cmd_setup(cfg, args):
                     say(f"  ok    {h['name']}")
                     for note in notes or ():
                         say(f"        {note}")
+                except NameTaken:
+                    failed[h["name"]] = name_taken(cfg)
+                    say(f"  FAIL  {h['name']}: {name_taken(cfg)}")
                 except Exception as e:
                     failed[h["name"]] = str(e)
                     say(f"  FAIL  {h['name']}: {e}")
 
+    # every key Host of this roster.yml now has the key under this name: a later rename is seen against it
+    if not narrowed and not failed and len(key_hosts) == sum(h["enroll"] for h in hosts):
+        if was != cfg["box"]:
+            replace_file(key_name_file(), f"{cfg['box']}\n")
     write_claude_files(cfg)
     warn_overlaps(cfg)
     if mesh.graph(cfg)["links"]:
-        if args.only:
-            say("mesh         not applied with --only (it covers the whole Mesh): run `roster mesh`")
+        if narrowed:
+            say(f"mesh         not applied with {'--only' if args.only else '--host'} (it covers the whole Mesh): "
+                "run `roster mesh`")
         else:
             say("mesh         applying the Mesh for meshed groups and links (one Host at a time)...")
             failed.update({n: f"mesh: {why}" for n, why in mesh_apply(cfg).items()})
@@ -251,14 +368,14 @@ def mesh_cut_all(cfg, args):
 
 
 def mesh_leftovers(cfg, args):
-    """`roster mesh --find-leftovers` / `--remove-leftovers` (T193, #372's review B1): Mesh entries on the Hosts that
-    this roster.yml doesn't ask for: this Box's own, and an older roster's (no Box in the tag, T199), which may be
-    another Box's Mesh. Never automatic."""
+    """`roster mesh leftovers [--remove]` (was --find-leftovers / --remove-leftovers; T193, #372's review B1): Mesh
+    entries on the Hosts that this roster.yml doesn't ask for: this Box's own, and an older roster's (no Box in the
+    tag, T199), which may be another Box's Mesh. Never automatic."""
     r = mesh.find_leftovers(cfg, say=say)
     older = any(f.get("older") for f in r["hosts"].values())
-    if args.remove_leftovers and older and (others := mesh.others_here()):
+    if args.remove and older and (others := mesh.others_here()):
         die(f"another Inventory's Mesh state is on this Box ({', '.join(others)}), and an older roster's tag doesn't "
-            "say which Inventory a line is from, so --remove-leftovers could take that Inventory's Mesh: remove them "
+            "say which Inventory a line is from, so mesh leftovers --remove could take that Inventory's Mesh: remove them "
             "by hand, or `roster mesh cut --all` from each Inventory when uninstalling")
     for host, found in r["hosts"].items():
         say(f"{host}: {', '.join(mesh.leftover_words(found))}")
@@ -268,8 +385,8 @@ def mesh_leftovers(cfg, args):
         say("no Mesh entries this roster.yml doesn't ask for" + (" on the Hosts that answered" if r["pending"] else ""))
         return 1 if r["pending"] else 0
     say(f"\nMesh entries this roster.yml doesn't ask for, on {plural(len(r['hosts']), 'Host')}. {mesh.leftovers_whose(r)}.")
-    if not args.remove_leftovers:
-        say("`roster mesh --remove-leftovers` removes them, once you know they're leftovers (it asks first)")
+    if not args.remove:
+        say("`roster mesh leftovers --remove` removes them, once you know they're leftovers (it asks first)")
         return 1 if r["pending"] else 0
     if not args.yes:
         ans = input(f"Remove them from {plural(len(r['hosts']), 'Host')}? " + (
@@ -302,7 +419,7 @@ def cmd_mesh(cfg, args):
         say("mesh out of date: run `roster mesh`" if st["out_of_date"] else "mesh up to date")
         if not mesh.load_state()["known"]:         # T193: new here, or roster removed and installed again
             say("no Mesh record on this Box: the Hosts may hold Mesh entries an earlier roster left here (or another "
-                "Box's); `roster mesh --find-leftovers` looks on every Host and changes nothing")
+                "Box's); `roster mesh leftovers` looks on every Host and changes nothing")
         return 0
     if args.action == "cut" and args.all:
         if args.target:
@@ -310,9 +427,9 @@ def cmd_mesh(cfg, args):
         return mesh_cut_all(cfg, args)
     if args.all:
         die("--all goes with cut: roster mesh cut --all")
-    if args.find_leftovers or args.remove_leftovers:
-        if args.action or args.target or args.dry_run or args.rotate:
-            die("--find-leftovers and --remove-leftovers go alone: roster mesh --find-leftovers")
+    if args.action == "leftovers":
+        if args.target or args.dry_run or args.rotate:
+            die("mesh leftovers takes no Host, --dry-run or --rotate: roster mesh leftovers [--remove] [-y]")
         return mesh_leftovers(cfg, args)
     if args.action == "cut":
         if not args.target:
@@ -327,7 +444,8 @@ def cmd_mesh(cfg, args):
         change = mesh.write_cut(cfg, args.target)
         say(f"cut {args.target}: confirmed on {', '.join(r['confirmed']) or 'no Host'}")
         if change.get("written"):
-            say(f"roster.yml   mesh: false for {args.target}, a Pending change (publish it so the cut stays)")
+            say(f"roster.yml   mesh: false for {args.target}, a Pending change (publish it so the cut stays)"
+                if change.get("kind") == "repo" else f"roster.yml   mesh: false for {args.target}, saved in roster.yml")
             boxsync.after_edit(cfg["path"])           # T153: this Box follows, as after serve's mesh.cut
         say(f"note: {change['note']}") if change.get("note") else None
         if change.get("error"):
@@ -416,7 +534,7 @@ def check_windows_key(cfg, h):
     from . import winhost
     from .errors import KEY_FILE
     try:
-        found = winhost.over_key(h, "check", cfg["tag_re"])
+        found = winhost.over_key(h, "check", box_key_re(cfg))
         notes = found.warnings
         if found.admins:
             print(f"note: {h['name']}: {found.files[0] if found.files else 'its key file'}: "
@@ -652,14 +770,14 @@ def show_resource(cfg, r):
             g = cfg["groups"].get(v, {})
             v += f" ({g['title']})" if g.get("title") else ""
         say(f"{label:<12} {v if v != '' else '-'}")
-    say(f"{'secret':<12} " + (f"roster reveal {r['name']}" if r["auth"] else "none"))
+    say(f"{'secret':<12} " + (f"roster vault reveal {r['name']}" if r["auth"] else "none"))
     return 0
 
 
 def cmd_reveal(cfg, args):
     r = cfg["resources"].get(args.name)
     if not r:
-        die(f"unknown resource {args.name!r} (see `roster resources`)")
+        die(f"unknown resource {args.name!r} (see `roster hosts --resources`)")
     if args.wifi and r["type"] != "wifi":
         die(f"{r['name']} is a {r['type']}, not wifi")
     secret = ""
@@ -673,7 +791,8 @@ def cmd_reveal(cfg, args):
 
 
 def cmd_info(cfg, args):
-    h = find_host(cfg, args.host, resources=True)
+    """`roster hosts NAME` (was `roster info`)."""
+    h = find_host(cfg, args.name, resources=True)
     if args.json:
         g = cfg["groups"].get(h["group"], {})
         group = {"name": h["group"], "title": g.get("title", ""), "description": g.get("description", "")} \
@@ -806,23 +925,82 @@ def revoke_on(h, tag_re):
             return str(e)
         from .errors import KEY_FILE
         for w in done.warnings:             # on stderr: the ok/FAIL lines stay one per Host
-            print(f"warning: [{KEY_FILE}] {h['name']}: {w} (roster-managed:{tag_re.rsplit(':', 1)[-1].rstrip('$')})",
+            print(f"warning: [{KEY_FILE}] {h['name']}: {w} (roster-managed:{tag_name(tag_re)})",
                   file=sys.stderr, flush=True)
+        other_names(h, tag_re, done.tags)
         return None
     r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
-                                     remove_script(tag_re)]),
+                                     remove_script(tag_re, h["ssh"]["user"])]),
                        stdin=subprocess.DEVNULL, capture_output=True, text=True)
     subprocess.run(program_argv(["ssh", "-O", "exit", h["name"]]), capture_output=True)  # drop cached connection
     if "ROSTER_OK" in r.stdout:
+        other_names(h, tag_re, [ln.split()[1] for ln in r.stdout.splitlines() if ln.startswith("ROSTER_TAG ")])
         return None
     if winhost.looks_windows(r.stdout + r.stderr):
         return winhost.windows_hint(h["name"])
     return (r.stderr or r.stdout).strip()[:200] or f"no answer (exit {r.returncode})"
 
 
-def remove_script(tag_re):
-    """The POSIX key-removal command: sh with the script as its argument."""
-    return "sh -c " + shlex.quote(remove_key_script(tag_re))
+def tag_name(tag_re):
+    """The Box name in TAG_RE (cfg's tag_re, or box_key_re's, which starts with it)."""
+    m = re.search(r":([A-Za-z0-9_-]+)" + re.escape(KEY_TRAIL), tag_re)
+    return m[1] if m else "?"
+
+
+@dataclass(frozen=True)
+class NoLine:
+    """retag_on: the key works there, but no roster-managed line for it is in FILE (the key file sshd reads there)."""
+    file: str
+
+
+TAKEN = "name taken"        # retag_on: another key's line is under the new name there (T226): nothing changed
+
+
+def retag_on(h, pub, taken=None):
+    """Re-tag this Box's key lines on key Host H with PUB's tag (T217), in place, found by its public key under any
+    roster-managed name, over `ssh NAME` with the key itself: None when done, a NoLine when there's none to re-tag,
+    TAKEN when TAKEN (the new name's tag_re) matches another key's line there, else why not. A Windows Host's
+    warnings go to stderr, as revoke's do."""
+    from . import winhost
+    kind, key = pub.split()[:2]
+    try:
+        if is_windows(h):
+            done = winhost.over_key(h, "retag", key_ere(kind, key), pub=pub, taken=taken or "",
+                                    own=key_ere(kind, key) if taken else "")
+            from .errors import KEY_FILE
+            for w in done.warnings:
+                print(f"warning: [{KEY_FILE}] {h['name']}: {w}", file=sys.stderr, flush=True)
+            if done.taken:
+                return TAKEN
+            return NoLine(done.files[0] if done.files else "its key file") if done.noline else None
+        r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
+                                         "sh -c " + shlex.quote(retag_key_script(pub, h["ssh"]["user"], taken))]),
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
+    except (RuntimeError, ValueError, subprocess.TimeoutExpired) as e:     # ValueError: an ssh that won't take it
+        return str(e)
+    if "ROSTER_TAKEN" in r.stdout.split():
+        return TAKEN
+    none = [ln for ln in r.stdout.splitlines() if ln.split()[:1] == ["ROSTER_NONE"]]
+    if none:
+        return NoLine(none[0].partition(" ")[2].strip() or "~/.ssh/authorized_keys")
+    if "ROSTER_OK" in r.stdout:
+        return None
+    return (r.stderr or r.stdout).strip()[:200] or f"no answer (exit {r.returncode})"
+
+
+def other_names(h, tag_re, names):
+    """#423's M3: revoke took this Box's key line tagged with NAMES; one that isn't this Inventory's name (another
+    Inventory's box_name: for the same key, or this Box's earlier name) is said, on stderr."""
+    mine = tag_name(tag_re)
+    for n in sorted(set(names) - {mine}):
+        print(f"note: {h['name']}: also took this Box's key line tagged {KEY_TAG}:{n} (the same key: this Box's "
+              "earlier name, or another Inventory's box_name:, whose `roster setup` puts it back)",
+              file=sys.stderr, flush=True)
+
+
+def remove_script(tag_re, user):
+    """The POSIX key-removal command for the Login's USER: sh with the script as its argument."""
+    return "sh -c " + shlex.quote(remove_key_script(tag_re, user))
 
 
 def revoke_line(label, h, why):
@@ -843,15 +1021,16 @@ def cmd_revoke(cfg, args):
     keyed = [h for h in selected(cfg, args.only) if h["enroll"]]
     hosts = skip_left_out(keyed)
     warn_os(hosts)
-    if any(not is_windows(h) for h in hosts):
-        check_ssh_takes(remove_script(cfg["tag_re"]))
+    mine = box_key_re(cfg)                  # T217: its key under an earlier name too
+    for user in sorted({h["ssh"]["user"] for h in hosts if not is_windows(h)}):
+        check_ssh_takes(remove_script(mine, user))
     if not args.yes:
         ans = input(f"Remove key '{cfg['tag']}' from {len(hosts)} hosts? This box loses access. [y/N] ")
         if ans.strip().lower() != "y":
             return 1
     bad = 0
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-        for h, why in zip(hosts, ex.map(lambda h: revoke_on(h, cfg["tag_re"]), hosts), strict=True):
+        for h, why in zip(hosts, ex.map(lambda h: revoke_on(h, mine), hosts), strict=True):
             bad += why is not None
             revoke_line("", h, why)
     done = f"\nremoved from {len(hosts) - bad}/{len(hosts)} hosts."
@@ -869,6 +1048,8 @@ def cmd_revoke(cfg, args):
         # never another roster.yml's config.d/roster (#371): its Hosts still need it
         if unnamed_from_elsewhere() is None:
             files.append(str(ssh_config_file()))
+        if key_name_file().is_file():       # the name setup recorded the key's lines under (T226, #435)
+            files.append(str(key_name_file()))
         say(f"{done} To finish, delete {', '.join(files[:-1])} and {files[-1]} on this box.")
     return 1 if bad or len(hosts) < len(keyed) or not hosts else 0
 
@@ -933,8 +1114,8 @@ def cmd_revoke_all(args):
         plan.append((label, cfg, hosts))
     total = sum(len(hosts) for _, _, hosts in plan)
     for _, cfg, hosts in plan:
-        if any(not is_windows(h) for h in hosts):
-            check_ssh_takes(remove_script(cfg["tag_re"]))
+        for user in sorted({h["ssh"]["user"] for h in hosts if not is_windows(h)}):
+            check_ssh_takes(remove_script(box_key_re(cfg), user))
     if not args.yes:
         tags = ", ".join(sorted({f"'{cfg['tag']}'" for _, cfg, _ in plan})) or "this box's key"
         counts = ", ".join(f"{label} {len(hosts)}" for label, _, hosts in plan)
@@ -942,7 +1123,7 @@ def cmd_revoke_all(args):
                     "access. [y/N] ")
         if ans.strip().lower() != "y":
             return 1
-    jobs = [(label, h, cfg["tag_re"]) for label, cfg, hosts in plan for h in hosts]
+    jobs = [(label, h, box_key_re(cfg)) for label, cfg, hosts in plan for h in hosts]
     bad = 0
     with cf.ThreadPoolExecutor(max([cfg["workers"] for _, cfg, _ in plan] or [1])) as ex:
         for (label, h, _), why in zip(jobs, ex.map(lambda j: revoke_on(j[1], j[2]), jobs), strict=True):
@@ -952,6 +1133,7 @@ def cmd_revoke_all(args):
     for _, cfg, _ in plan:
         files += [str(cfg["key"]), str(cfg["pub"])]
     files += [str(ssh_config_file(name)) for _, name, _ in targets if ssh_config_file(name).is_file()]
+    files += [str(key_name_file(name)) for _, name, _ in targets if key_name_file(name).is_file()]
     from .common import ssh_index_file
     if ssh_index_file().is_file():
         files.append(str(ssh_index_file()))
@@ -973,8 +1155,13 @@ def cmd_revoke_all(args):
 AGENT_HELP = "no password: an SSH key you already have (ssh-agent) gets in"
 
 
-def cmd_providers(cfg, args):
-    import shutil
+def cmd_vault_status(cfg, args):
+    """`roster vault status` (was `roster providers`): the providers here, their tools and which groups use them,
+    then each vault's state as `roster check --box`'s Vault section says it (health.vault, the one source) and when
+    `roster vault sync` last synced it."""
+    from . import health, vaultsync
+    checks = health.vault(cfg) if cfg else []
+    synced = {name: vaultsync.last_synced(name) for name in sorted(PROVIDERS) if PROVIDERS[name].get("sync")}
     used = {}
     for h in (cfg or {}).get("hosts", {}).values():
         for ref in {h["ssh"]["auth"], *(s["auth"] for s in h["services"].values())} - {None}:
@@ -986,28 +1173,99 @@ def cmd_providers(cfg, args):
     if args.json:
         rows = [{"name": name, "kind": PROVIDERS[name]["kind"], "help": PROVIDERS[name]["help"],
                  "tool": PROVIDERS[name].get("tool") or None,
-                 "installed": bool(shutil.which(PROVIDERS[name]["tool"])) if PROVIDERS[name].get("tool") else None,
+                 "installed": bool(find_program(PROVIDERS[name]["tool"])) if PROVIDERS[name].get("tool") else None,
                  "used_by": sorted(used.get(name, ()))} for name in sorted(PROVIDERS)]
         rows.append({"name": "agent", "kind": "built-in", "help": AGENT_HELP, "tool": None, "installed": None,
                      "used_by": sorted(used.get("agent", ()))})
         from . import jsondocs
-        jsonout.emit(jsondocs.ProvidersDoc.model_validate({"providers": rows, "unknown": unknown, "ok": not unknown}))
+        jsonout.emit(jsondocs.ProvidersDoc.model_validate({"providers": rows, "unknown": unknown, "ok": not unknown,
+                                                           "vault": checks, "last_sync": synced}))
         return 1 if unknown else 0
     say("password providers (use as  auth: NAME:SPEC  in roster.yml):\n")
     for name in sorted(PROVIDERS):
         p = PROVIDERS[name]
         tool = p.get("tool") or ""
-        installed = "" if not tool else ("  [tool found]" if shutil.which(tool) else f"  [`{tool}` NOT installed]")
+        installed = "" if not tool else ("  [tool found]" if find_program(tool) else f"  [`{tool}` NOT installed]")
         groups = f"  - used by: {', '.join(sorted(used[name]))}" if name in used else ""
         say(f"  {name:<8} {p['kind']:<10} {p['help']}{installed}{groups}")
     say(f"  {'agent':<8} {'built-in':<10} {AGENT_HELP}")
+    if checks:
+        say("\nVault (as `roster check --box` says it)")
+        for c in checks:
+            say(f"  {c['level']:<5}  {c['message']}")
+            if c.get("fix"):
+                say(f"         fix: {c['fix']}")
+    uses = health.provider_uses(cfg) if cfg else {}
+    shown = [name for name in synced if name in uses]
+    if shown:
+        say("\nLast sync (the vault isn't watched: roster sees new or changed items after a sync)")
+    for name in shown:
+        when = synced[name]
+        say(f"  {name}: last synced {vaultsync.ago(when)}; run `roster vault sync` for what changed" if when else
+            f"  {name}: never synced by roster; run `roster vault sync`")
     if unknown:
         say(f"\nUNKNOWN providers used in roster.yml: {', '.join(unknown)}")
         return 1
     return 0
 
 
+def cmd_vault_sync(cfg, args):
+    """`roster vault sync`: each vault roster.yml uses that keeps a local copy, synced, and what changed since the last
+    sync (vaultsync): names and counts, never a value."""
+    from . import fromvault, vaultsync
+    used = sorted(p for p in fromvault.refs(cfg["path"]) if p in PROVIDERS and p not in ("env", "cmd", "prompt"))
+    if not used:
+        say("roster.yml's Logins use no vault: nothing to sync")
+        return 0
+    bad = 0
+    for p in used:
+        try:
+            r = vaultsync.sync(p, interactive=sys.stdin.isatty())
+        except RuntimeError as e:
+            bad += 1
+            say(f"  FAIL  {p}: {e}")
+            if p in fromvault.UNLOCK and isinstance(e, providers_locked()):
+                say(f"        fix: {fromvault.UNLOCK[p]}")
+            continue
+        if r is None:
+            say(f"  ok    {p}: keeps no local copy (it asks its own server or file each time), nothing to sync")
+        elif r["count"] is None:
+            say(f"  ok    {p}: synced")
+        elif r["first"]:
+            say(f"  ok    {p}: synced, {plural(r['count'], 'item')}; first sync, so changes are counted from now on")
+        elif not (r["added"] or r["changed"] or r["removed"]):
+            say(f"  ok    {p}: synced, no change since the last sync")
+        else:
+            parts = [f"{len(r[k])} {k}: {', '.join(r[k])}" for k in ("added", "changed") if r[k]]
+            parts += [f"{r['removed']} removed"] if r["removed"] else []
+            say(f"  ok    {p}: synced; since the last sync, {'; '.join(parts)}")
+    return 1 if bad else 0
+
+
+def providers_locked():
+    from .providers import NotLoggedIn, VaultLocked
+    return (VaultLocked, NotLoggedIn)
+
+
+def cmd_help(parser, args):
+    """`roster help [COMMAND]`, `--man [--install]` (was `roster man`), `--completion SHELL` (was `roster completion`)."""
+    if (args.install or args.prefix) and not args.man:
+        parser.error("--install and --prefix go with --man: roster help --man --install")
+    picked = [f for f, on in (("COMMAND", args.topic), ("--man", args.man), ("--completion", args.completion)) if on]
+    if len(picked) > 1:
+        parser.error(f"roster help takes one of COMMAND, --man and --completion, not {' and '.join(picked)}")
+    if args.completion:
+        from .completion import cmd_completion
+        return cmd_completion(args.completion)
+    if args.man:
+        from .manpage import cmd_man
+        return cmd_man(args)
+    sys.stdout.write(command_parser(parser, args.topic).format_help())
+    return 0
+
+
 def cmd_auth_check(cfg, args):
+    """`roster check --auth` (was `roster auth-check`)."""
     uses = {}                                    # (ref, group) -> [(service, host, user)]
     hosts, resources = selected(cfg, args.only, resources=True)
     if not args.json:
@@ -1039,7 +1297,7 @@ def cmd_auth_check(cfg, args):
 
 
 def auth_check_json(uses):
-    """`roster auth-check --json`: one row per (Login reference, group), never the value it found."""
+    """`roster check --auth --json`: one row per (Login reference, group), never the value it found."""
     rows = []
     for ref, group in sorted(uses, key=lambda t: (t[1], str(t[0]))):
         by_svc = {}
@@ -1069,7 +1327,7 @@ def used_for(uses):
     return ", ".join(f"{svc} ({hs[0] if len(hs) == 1 else f'{len(hs)} hosts'})" for svc, hs in by_svc.items())
 
 
-# `roster bw` (T202, decision Q178): which bw commands run, as a fail-closed allowlist. A command in none of these sets
+# `roster vault bw` (T202, decision Q178): which bw commands run, as a fail-closed allowlist. A command in none of these sets
 # (one a newer bw adds, a typo) is refused, never assumed safe.
 # Read-only means no change to the vault and no file written on this Box: `get attachment` and any `--output` write
 # one, and `receive` writes what a Send from anyone's URL holds, so they need --write.
@@ -1087,14 +1345,14 @@ def bw_command(argv, write):
     run. Nothing after the command is ever repeated: it may hold a password."""
     from .errors import BW_NEEDS_WRITE, BW_NOT_ALLOWED, BW_REFUSED
     if any(a == "--session" or a.startswith("--session=") for a in argv):
-        die(f"[{BW_REFUSED}] roster bw won't put a session key on bw's command line, where other programs can read "
+        die(f"[{BW_REFUSED}] roster vault bw won't put a session key on bw's command line, where other programs can read "
             "it: roster passes this Box's session in bw's environment (drop --session)")
     if "--write" in argv:
         die(f"[{BW_NOT_ALLOWED}] --write is roster's, not bw's: put it before bw's command "
-            "(roster bw --write edit item ...)")
+            "(roster vault bw --write -- edit item ...)")
     cmd = next((a for a in argv if not a.startswith("-")), None)
     if any(a not in BW_FLAGS for a in argv[:argv.index(cmd) if cmd else len(argv)]):
-        die(f"[{BW_NOT_ALLOWED}] roster bw takes only these bw options before the command: "
+        die(f"[{BW_NOT_ALLOWED}] roster vault bw takes only these bw options before the command: "
             f"{', '.join(sorted(BW_FLAGS))}")
     rest = argv[argv.index(cmd) + 1:] if cmd else []
     writes_file = any(a == "--output" or a.startswith("--output=") for a in argv) or \
@@ -1102,17 +1360,17 @@ def bw_command(argv, write):
     if (cmd is None or cmd in BW_READ) and not writes_file:
         return cmd
     if cmd == "serve":
-        die(f"[{BW_REFUSED}] roster bw won't run bw serve: it would hand the unlocked vault to every program on this "
+        die(f"[{BW_REFUSED}] roster vault bw won't run bw serve: it would hand the unlocked vault to every program on this "
             "Box that can reach its port. Run bw serve yourself if you need it")
     if cmd in BW_WRITE or cmd in BW_ACCOUNT or writes_file:
         if not write:
             what = "acts on the vault's account" if cmd in BW_ACCOUNT else \
                 "writes the whole vault out" if cmd == "export" else \
                 "writes a file on this Box" if cmd == "receive" or writes_file else "changes the vault"
-            die(f"[{BW_NEEDS_WRITE}] bw {cmd} {what}, and roster bw is read-only unless you say so: "
-                f"roster bw --write {cmd} ...")
+            die(f"[{BW_NEEDS_WRITE}] bw {cmd} {what}, and roster vault bw is read-only unless you say so: "
+                f"roster vault bw --write -- {cmd} ...")
         return cmd
-    die(f"[{BW_NOT_ALLOWED}] roster bw runs only the bw commands it knows (the first word isn't one of them, and "
+    die(f"[{BW_NOT_ALLOWED}] roster vault bw runs only the bw commands it knows (the first word isn't one of them, and "
         f"isn't repeated here): {', '.join(sorted(BW_READ))}; with --write, {', '.join(sorted(BW_WRITE | BW_ACCOUNT))}")
 
 
@@ -1124,7 +1382,7 @@ def cmd_bw(args):
     from .providers.bitwarden import load_session_file, session_key
     argv = args.args[1:] if args.args[:1] == ["--"] else list(args.args)
     if not argv:
-        die("usage: roster bw [--write] [--] <bw arguments>   e.g.  roster bw list items --search web-01")
+        die("usage: roster vault bw [--write] -- <bw arguments>   e.g.  roster vault bw -- list items --search web-01")
     cmd = bw_command(argv, args.write)
     load_session_file()
     if "--nointeraction" not in argv and cmd not in BW_PROMPTS:  # before a `--`, after which it'd be an argument
@@ -1140,6 +1398,114 @@ def cmd_bw(args):
         die(str(e))
     except FileNotFoundError:
         die("bw (the Bitwarden CLI) isn't installed")
+
+
+# `roster vault op` (T223, #432, decision Q197): the 1Password CLI as `roster vault bw` runs bw (Q178). op's commands are
+# a tree (op item get, op vault user grant), checked against 1Password's CLI reference, as a fail-closed allowlist: a
+# command in none of these sets (one a newer op adds, an alias, a typo) is refused, never assumed safe. Read-only means
+# no change to the vault or the account and no file written on this Box.
+OP_READ = frozenset({"account get", "account list", "completion", "connect server get", "connect server list",
+                     "connect token list", "document get", "document list", "group get", "group list",
+                     "group user list", "help", "inject", "item get", "item list", "item template get",
+                     "item template list", "plugin inspect", "plugin list", "read", "service-account ratelimit",
+                     "user get", "user list", "vault get", "vault list", "vault group list", "vault user list",
+                     "whoami"})
+OP_WRITE = frozenset({"connect group grant", "connect group revoke", "connect server create", "connect server delete",
+                      "connect server edit", "connect token create", "connect token delete", "connect token edit",
+                      "connect vault grant", "connect vault revoke", "document create", "document delete",
+                      "document edit", "events-api create", "group create", "group delete", "group edit",
+                      "group user grant", "group user revoke", "item create", "item delete", "item edit", "item move",
+                      "item share", "plugin clear", "plugin init", "service-account create", "update",
+                      "user confirm", "user delete", "user edit", "user provision", "user reactivate",
+                      "user recovery begin", "user suspend", "vault create", "vault delete", "vault edit",
+                      "vault group grant", "vault group revoke", "vault user grant", "vault user revoke"})
+OP_ACCOUNT = frozenset({"account add", "account forget", "signin", "signout"})  # need --write too
+OP_NEVER = frozenset({"run", "plugin run"})      # start another program with op's sign-in and secrets in its env
+OP_COMMANDS = OP_READ | OP_WRITE | OP_ACCOUNT | OP_NEVER
+OP_GROUPS = frozenset(" ".join(c.split()[:n]) for c in OP_COMMANDS for n in range(1, len(c.split())))
+OP_FLAGS = frozenset({"--debug", "--no-color", "--iso-timestamps", "-h", "--help"})  # op's own options that take no
+#                                                                    value and may come before its command
+
+
+def op_writes_file(a):
+    """Does argument A ask op to write a file here: --out-file in any form, or a short-option cluster with o in it
+    (-o, -fo PATH, -oPATH; pflag reads -abc as -a -b -c)? Over-strict for an odd positional, which fails closed."""
+    return a == "--out-file" or a.startswith("--out-file=") or (a.startswith("-") and not a.startswith("--")
+                                                                 and "o" in a.split("=", 1)[0])
+
+
+def op_command(argv, write):
+    """The op command ARGV runs ("item get"; None for op's bare options, `--help`), or die() saying why it may not run.
+    The command is the words right after op's own valueless options, and must be one op has (or one of its groups,
+    alone, which prints its help): an option among the words could make op take another command than roster checked.
+    Nothing past the command is ever repeated: it may hold a password or a token."""
+    from .errors import OP_NEEDS_WRITE, OP_NOT_ALLOWED, OP_REFUSED
+    for a in argv:
+        flag = a.split("=", 1)[0]
+        if flag == "--session":
+            die(f"[{OP_REFUSED}] roster vault op won't put a session token on op's command line, where other programs "
+                "can read it: op takes your sign-in from its environment (drop --session)")
+        if flag == "--config":
+            die(f"[{OP_REFUSED}] roster vault op won't point op at another configuration folder (--config): it holds "
+                "op's accounts and sign-ins. Drop --config, or run op yourself")
+    if "--write" in argv:
+        die(f"[{OP_NOT_ALLOWED}] --write is roster's, not op's: put it before op's command "
+            "(roster vault op --write -- item edit ...)")
+    start = next((i for i, a in enumerate(argv) if not a.startswith("-")), len(argv))
+    if any(a not in OP_FLAGS for a in argv[:start]):
+        die(f"[{OP_NOT_ALLOWED}] roster vault op takes only these op options before the command: "
+            f"{', '.join(sorted(OP_FLAGS))}; put the others (--account, --format, --vault, ...) after it")
+    words = []
+    for a in argv[start:]:
+        if a.startswith("-"):
+            break
+        if not re.fullmatch(r"[a-z-]+", a):            # "item get" as one argument: op would take it as one word
+            if " ".join(words) in OP_COMMANDS:          # past the command, an argument may hold anything
+                break
+            die(f"[{OP_NOT_ALLOWED}] roster vault op runs only the op commands it knows, one word per argument "
+                "(a word here has a space or another character op's commands don't, and isn't repeated)")
+        if " ".join([*words, a]) not in OP_COMMANDS | OP_GROUPS:
+            break
+        words.append(a)
+    cmd = " ".join(words) or None
+    rest = argv[start + len(words):]
+    if cmd in OP_GROUPS and not all(a in ("-h", "--help") for a in rest):    # alone, a group prints its help
+        die(f"[{OP_NOT_ALLOWED}] roster vault op runs only the op commands it knows, written out in full before any "
+            f"option (op {' '.join(words)} ... isn't one of them, and isn't repeated here)")
+    if cmd is None and start < len(argv):
+        die(f"[{OP_NOT_ALLOWED}] roster vault op runs only the op commands it knows (the first word isn't one of "
+            f"them, and isn't repeated here): {', '.join(sorted(OP_READ))}; with --write, "
+            f"{', '.join(sorted(OP_WRITE | OP_ACCOUNT))}")
+    writes_file = any(op_writes_file(a) for a in rest)
+    if cmd in OP_NEVER:
+        die(f"[{OP_REFUSED}] roster vault op won't run op {cmd}: it starts another program with op's sign-in and your "
+            "secrets in its environment. Run op yourself if you need it")
+    if (cmd is None or cmd in OP_READ or cmd in OP_GROUPS) and not writes_file:
+        return cmd
+    if not write:
+        what = "acts on the account" if cmd in OP_ACCOUNT else \
+            "writes a file on this Box" if writes_file or cmd in ("update", "connect server create") else \
+            "changes the vault or the account"
+        die(f"[{OP_NEEDS_WRITE}] op {cmd} {what}, and roster vault op is read-only unless you say so: "
+            f"roster vault op --write -- {cmd} ...")
+    return cmd
+
+
+def cmd_op(args):
+    """The 1Password CLI, read-only unless --write (op_command). op's sign-in (the app integration, or an
+    OP_SESSION_* / OP_SERVICE_ACCOUNT_TOKEN in your shell) reaches op in its environment, never its command line, and
+    no Bitwarden variable (BW_*) does. op's input and output are the terminal's: roster never reads them."""
+    argv = args.args[1:] if args.args[:1] == ["--"] else list(args.args)
+    if not argv:
+        die("usage: roster vault op [--write] -- <op arguments>   e.g.  roster vault op -- item list --vault Infra")
+    op_command(argv, args.write)
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("BW_")}  # Windows upper-cases env names
+    try:
+        return subprocess.run(program_argv(["op", *argv]), env=env).returncode
+    except ValueError as e:
+        die(str(e))
+    except FileNotFoundError:
+        die("op (the 1Password CLI) isn't installed")
 
 
 def cmd_inv(args):
@@ -1215,11 +1581,15 @@ def cmd_inv(args):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
+    never_look_in_the_current_folder()      # Windows: nothing roster starts looks for its program in the cwd (#424)
     if argv[:1] == ["__complete"]:       # the shell's Tab (completion.py): never an error, never a usage message
         from . import completion
         return completion.main(argv[1:])
+    argv, alias = aliases.rewrite(argv)  # an old name (roster info, roster bw): its new form, said once on stderr
     words = argv[:argv.index("--")] if "--" in argv else argv
     Parser.json_errors = "--json" in words
+    if alias and not alias.silent and not Parser.json_errors:      # with --json, stderr is a JSON error or nothing
+        print(aliases.warning(alias), file=sys.stderr, flush=True)
     try:
         return _main(argv) or 0
     except Problem as e:                 # inventory() raises one with --json: the error as JSON on stderr
@@ -1250,7 +1620,7 @@ class Parser(argparse.ArgumentParser):
     commands_text = ""
 
     def error(self, message):
-        # a value typed onto a flag that takes none (`roster bw --write=VALUE`) may be a password: never repeat it
+        # a value typed onto a flag that takes none (`roster vault bw --write=VALUE`) may be a password: never repeat it
         message = re.sub(r"ignored explicit argument '.*'", "ignored explicit argument (not repeated)", message)
         message = clihelp.suggest(message, self.all_options())
         if Parser.json_errors:
@@ -1293,45 +1663,96 @@ def build_parser():
     only: dict[str, Any] = {"metavar": "LIST", "help": "only these hosts, groups, types or products (comma-separated)"}
     as_json: dict[str, Any] = {"action": "store_true", "help": "print JSON for scripts and tools, never a secret (see "
                "Machine-readable output in docs/cli-reference.md)"}
-    sub.add_parser("init", help="write an example roster.yml")
-    s = sub.add_parser("setup", help="one-time setup of this box")
-    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
+    s = sub.add_parser("init", help="write a new roster.yml: the commented example, a blank one, a copy, the team's "
+                       "repo or the Hosts in ~/.ssh/config. It only makes a new file: to add Hosts to yours, use add or "
+                       "discover")
+    how = s.add_mutually_exclusive_group()
+    how.add_argument("--blank", action="store_true", help="a short roster.yml with an empty group, instead of the "
+                     "commented example (same as --inventory blank)")
+    how.add_argument("--inventory", metavar="HOW", help="blank, file:PATH (a copy of that roster.yml, once it loads), "
+                     "repo:URL (a git clone of the team's repo into roster.yml's folder, which must be empty) or "
+                     "ssh-config[:PATH] (Hosts from ~/.ssh/config, or PATH: HostName, User, Port, IdentityFile)")
+    s.add_argument("--name", metavar="NAME", help="name the new Inventory too (`roster inv add NAME PATH`), e.g. "
+                   "beside one you keep")
+    s = sub.add_parser("setup", help="install this Box's key on the Hosts that aren't set up yet and record their host "
+                       "keys, then sync; run it again after adding Hosts")
+    which = s.add_mutually_exclusive_group()
+    values(which.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
+    values(which.add_argument("--host", metavar="NAME", help="only the Host by exactly this name, never a group, type "
+                              "or product by it (--only would take those too)"), HOSTS)
     s.add_argument("--dry-run", action="store_true", help="show what would happen, change nothing remote")
-    sub.add_parser("sync", help="rewrite ssh config and Claude files from roster.yml")
-    s = sub.add_parser("check", help="test reachability; with HOST, why a Session to it would fail, step by step; "
-                       "with --box, this Box's health")
+    s.add_argument("--force", action="store_true", help="on a renamed Box, go ahead on a Host where another Box's "
+                   "key line has the new name (its line is then this Box's to replace or revoke)")
+    sub.add_parser("sync", help="rewrite this Box's ssh config and Claude files from roster.yml; it touches no Host")
+    s = sub.add_parser("check", help="check: can this Box reach every Host? check HOST: why a Session to it would "
+                       "fail, step by step. check --box: this Box's own health. check --auth: every Login's password "
+                       "source answers")
     values(s.add_argument("host", nargs="?", help="diagnose this one Host: inventory, ssh config, vault, DNS, port, "
                    "host key, login (one connection)"), HOSTS)
     s.add_argument("--box", action="store_true", help="check this Box instead, without connecting anywhere: "
                    "roster.yml, ssh and its config, vault CLIs, askpass, the infra repo")
+    s.add_argument("--auth", action="store_true", help="test each Login's password source (SSH, services, "
+                   "resources) instead, connecting to no Host and printing nothing secret")
     values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
     s.add_argument("--json", **as_json)
-    s = sub.add_parser("hosts", help="list hosts")
-    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
+    s = sub.add_parser("hosts", help="list the Hosts and resources in roster.yml; hosts NAME: everything about one; "
+                       "hosts --resources: only the resources")
+    values(s.add_argument("name", nargs="*", metavar="NAME", help="show everything about this one Host or resource; "
+                          "fuzzy words work"), HOSTS, RESOURCES)
+    s.add_argument("--resources", action="store_true", help="list only the resources (Wi-Fi networks, accounts and "
+                   "secrets with no address); --only then takes resource names, types or groups, --find every field")
+    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS, RESOURCES)
     s.add_argument("--find", metavar="TEXT", help="search name, title, description, type, product, group, ip")
     s.add_argument("--all", action="store_true", help="include unreviewed (scanned) hosts")
     s.add_argument("--long", action="store_true", help="full table: type, product, web URL, description")
-    s.add_argument("--json", **as_json)
-    s = sub.add_parser("resources", help="list Wi-Fi networks, accounts and secrets that aren't hosts")
-    values(s.add_argument("--only", metavar="LIST", help="resource names, types or groups"), ONLY, RESOURCES,
-           GROUPS)
-    s.add_argument("--find", metavar="TEXT", help="search every field")
-    s.add_argument("--json", **as_json)
-    s = sub.add_parser("reveal", help="print a resource's secret (e.g. a Wi-Fi password) - for people, not Claude")
-    values(s.add_argument("name", help="the resource"), RESOURCES)
-    s.add_argument("--wifi", action="store_true", help="print a WIFI:... string for a QR code instead")
-    s = sub.add_parser("info", help="show everything about one host or resource")
-    values(s.add_argument("host", nargs="+", metavar="NAME", help="a host or resource; fuzzy words work"), HOSTS,
-           RESOURCES)
     s.add_argument("--json", **as_json)
     s = sub.add_parser("run", help="run a command on a host")
     s.add_argument("--sudo", action="store_true",
                    help="run it as root with sudo; roster gives sudo the login's password (never shown)")
     values(s.add_argument("host", help="the host to run it on"), HOSTS)
     s.add_argument("command", nargs=argparse.REMAINDER, help="the command, after --")
-    s = sub.add_parser("discover", help="scan networks (nmap if installed) and add what's found to roster.yml")
+    s = sub.add_parser("add", help="add one Host you already know to roster.yml (reviewed), the app's add-Host "
+                       "way")
+    s.add_argument("name", metavar="NAME", nargs="?", help="the new Host's name: letters, digits, . _ - (needed "
+                   "unless --from-vault)")
+    s.add_argument("--ip", metavar="ADDR", help="its address: an IPv4 or IPv6 address or a DNS name (asked for in a "
+                   "terminal when it's missing)")
+    s.add_argument("--user", metavar="USER", help="the SSH user (default: its group's or defaults')")
+    s.add_argument("--auth", metavar="REF", help="its Login: a vault item (bw:ITEM, op:...), env:VAR, prompt, key "
+                   "... (default: its group's or defaults')")
+    values(s.add_argument("--group", metavar="GROUP", help="the group it goes in: an existing one, or a new one "
+                          "(default: the first group; asked in a terminal)"), GROUPS)
+    on = s.add_mutually_exclusive_group()
+    on.add_argument("--enroll", dest="enroll", action="store_true", default=None,
+                    help="install this Box's key on it at setup (asked in a terminal; default: its group's)")
+    on.add_argument("--no-enroll", dest="enroll", action="store_false", help="password logins only, no key")
+    s.add_argument("--os", choices=["windows", "posix"], help="windows for a Windows Host with OpenSSH Server "
+                   "(default: posix)")
+    s.add_argument("--title", metavar="TEXT", help="a one-line title")
+    s.add_argument("--type", metavar="TEXT", help="a free label (nas, switch, esxi, ...)")
+    s.add_argument("--port", type=int, metavar="N", help="its SSH port (default: 22)")
+    s.add_argument("--from-vault", action="store_true", help="fill --ip (and --port) from the --auth item's URI and "
+                   "--user from its username, never reading its password (bw, op); flags given win. With no NAME: list "
+                   "the vault items no Login in roster.yml names (new ones since the last run), and in a terminal "
+                   "add each one [Y/n/edit/skip]")
+    s.add_argument("--json", action="store_true", help="with --from-vault and no NAME: print the list as JSON, add "
+                   "nothing")
+    s.add_argument("--all", action="store_true", help="with --from-vault and no NAME: every item roster.yml doesn't "
+                   "name, not only the new ones")
+    s.add_argument("--mark-seen", action="store_true", help="with --from-vault and no NAME: remember every item "
+                   "listed as seen, so it isn't new next time")
+    s.add_argument("--no-sync", action="store_true", help="with --from-vault and no NAME: don't sync the vault first "
+                   "(bw sync)")
+    s.add_argument("--setup", action="store_true", help="then run setup for it alone (its host key, and this Box's "
+                   "key on it when enrolled) and check it, and say how each went")
+    s.add_argument("--dry-run", action="store_true", help="print the lines it would add; write nothing")
+    s.add_argument("-y", "--yes", action="store_true", help="never ask: a missing value it can't default is an "
+                   "error naming its flag")
+    s = sub.add_parser("discover", help="scan networks (nmap if installed) for Hosts; --write adds the new ones to "
+                       "roster.yml, unreviewed")
     s.add_argument("targets", nargs="+", metavar="CIDR", help="e.g. 10.0.1.0/24 (several allowed)")
-    s.add_argument("--write", action="store_true", help="add new hosts to roster.yml (default: preview only)")
+    s.add_argument("--write", action="store_true", help="add the new Hosts it finds to roster.yml, unreviewed, for you "
+                   "to name and review (default: preview only)")
     values(s.add_argument("--group", metavar="NAME", help="group name for new hosts (default: discovered-YYYYMMDD)"),
            GROUPS)
     s.add_argument("--ports", default=DEFAULT_SCAN_PORTS, help="TCP ports to scan (default: common server, "
@@ -1344,17 +1765,6 @@ def build_parser():
                    help="built-in scanner connect timeout (default: 0.5)")
     s.add_argument("--force", action="store_true", help="allow scanning more than 4096 addresses")
     s.add_argument("--json", **as_json)
-    s = sub.add_parser("bw", help="run the Bitwarden CLI with this box's vault session (bw-session file); "
-                       "read-only unless --write")
-    s.add_argument("--write", action="store_true",
-                   help="allow bw commands that change the vault, write a file here or act on the account "
-                        "(create, edit, delete, export, receive, --output, login, logout, unlock, lock, config, ...)")
-    s.add_argument("args", nargs=argparse.REMAINDER, metavar="BW_ARGS", help="arguments for bw")
-    s = sub.add_parser("providers", help="list password providers (built-in, plugins, roster.yml)")
-    s.add_argument("--json", **as_json)
-    s = sub.add_parser("auth-check", help="test each group's password source, print nothing secret")
-    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
-    s.add_argument("--json", **as_json)
     s = sub.add_parser("web", help="HTTP request to a host's web service, logged in with its stored credentials")
     values(s.add_argument("request", nargs="+", metavar="HOST [SERVICE] METHOD PATH",
                           help="e.g. esxi GET /folder  or  orion3 https GET /api/status"), HOSTS)
@@ -1364,19 +1774,19 @@ def build_parser():
     s.add_argument("--timeout", type=float, default=30, metavar="SECONDS",
                    help="how long to wait for the answer (default: 30)")
     s = sub.add_parser("mesh", help="set up Host-to-Host access (mesh: and links: in roster.yml), one Host at a time")
-    s.add_argument("action", nargs="?", choices=["cut", "status"],
-                   help="cut HOST: take it out of the Mesh now, everywhere; status: who reaches whom (no connections)")
+    s.add_argument("action", nargs="?", choices=["cut", "status", "leftovers"],
+                   help="cut HOST: take it out of the Mesh now, everywhere; status: who reaches whom (no connections); "
+                        "leftovers: look on every Host, once, for Mesh entries this roster.yml doesn't ask for (this "
+                        "Box's, or an older roster's with no Box in the tag); changes nothing without --remove")
     values(s.add_argument("target", nargs="?", metavar="HOST", help="with cut: the Host to cut out"), HOSTS)
     s.add_argument("--dry-run", action="store_true", help="show the plan; change nothing on any Host")
     values(s.add_argument("--rotate", action="append", metavar="HOST", help="replace HOST's Mesh key (repeatable)"),
            HOSTS)
-    s.add_argument("-y", "--yes", action="store_true", help="with cut: don't ask first")
+    s.add_argument("-y", "--yes", action="store_true", help="with cut or leftovers --remove: don't ask first")
     s.add_argument("--all", action="store_true", help="with cut: every Mesh entry off every Host, roster.yml "
                    "unchanged (before removing roster from this Box)")
-    s.add_argument("--find-leftovers", action="store_true", help="look on every Host, once, for Mesh entries this "
-                   "roster.yml doesn't ask for (this Box's, or an older roster's with no Box in the tag); changes nothing")
-    s.add_argument("--remove-leftovers", action="store_true", help="the same, then remove them after a question "
-                   "(-y doesn't ask): an older roster's may be another Box's Mesh")
+    s.add_argument("--remove", action="store_true", help="with leftovers: then remove them after a question (-y "
+                   "doesn't ask): an older roster's may be another Box's Mesh")
     s.add_argument("--json", action="store_true", help="with status or --dry-run: print JSON for scripts and "
                    "tools, never a secret (see Machine-readable output in docs/cli-reference.md)")
     s = sub.add_parser("revoke", help="remove this box's key from all hosts")
@@ -1390,29 +1800,78 @@ def build_parser():
                    help="list (the active one marked *), add NAME PATH, use NAME (make it the active one), "
                         "remove NAME (forget the name; the file stays), which (print the roster.yml roster uses)")
     values(s.add_argument("name", nargs="?", metavar="NAME", help="the Inventory's name: letters, digits, . _ -"),
-           INVENTORIES)
+           INVENTORIES, new_after=("add",))
     values(s.add_argument("path", nargs="?", metavar="PATH", help="with add: its roster.yml"), FILES)
     s.add_argument("--json", **as_json)
+    s = sub.add_parser("vault", help="roster's own views of the vault: status, sync, reveal NAME, and bw -- ARGS "
+                       "and op -- ARGS (the Bitwarden and 1Password CLIs themselves)")
+    vault = s.add_subparsers(dest="vault_cmd", metavar="ACTION", title="actions", prog="roster vault",
+                             help="what to do with the vault (plain `roster vault` lists them)")
+    s = vault.add_parser("status", help="the password providers here (built-in, plugins, roster.yml), whether their "
+                         "tools are installed, unknown ones in use, each vault's state (logged in, locked) and when it "
+                         "last synced")
+    s.add_argument("--json", **as_json)
+    vault.add_parser("sync", help="sync every vault that keeps a local copy (Bitwarden: bw sync), then say which "
+                     "items were added, changed or removed since the last sync: names and counts, never a secret")
+    s = vault.add_parser("reveal", help="print a resource's secret (e.g. a Wi-Fi password) for a person to type in, "
+                         "not for Claude")
+    values(s.add_argument("name", help="the resource"), RESOURCES)
+    s.add_argument("--wifi", action="store_true", help="print a WIFI:... string for a QR code instead")
+    s = vault.add_parser("bw", help="run the Bitwarden CLI itself with this Box's vault session (bw-session file), "
+                         "read-only unless --write; roster never reads what it prints")
+    s.add_argument("--write", action="store_true",
+                   help="allow bw commands that change the vault, write a file here or act on the account "
+                        "(create, edit, delete, export, receive, --output, login, logout, unlock, lock, config, ...)")
+    s.add_argument("args", nargs=argparse.REMAINDER, metavar="BW_ARGS", help="arguments for bw, after --")
+    s = vault.add_parser("op", help="run the 1Password CLI itself with your op sign-in, read-only unless --write; "
+                         "roster never reads what it prints")
+    s.add_argument("--write", action="store_true",
+                   help="allow op commands that change the vault or the account or write a file here (item create, "
+                        "item edit, item delete, item share, --out-file, signin, signout, account add, update, ...)")
+    s.add_argument("args", nargs=argparse.REMAINDER, metavar="OP_ARGS", help="arguments for op, after --")
+    s = sub.add_parser("help", help="this overview; help COMMAND: a command's options and examples; --man: the "
+                       "manual; --completion SHELL: Tab completion")
+    values(s.add_argument("topic", nargs="*", metavar="COMMAND", help="the command (and its action: vault bw) to show "
+                          "the help of"), COMMANDS)
+    s.add_argument("--man", action="store_true", help="show the roster(1) man page")
+    s.add_argument("--install", action="store_true", help="with --man: copy it to PREFIX/share/man/man1/, next to "
+                   "PREFIX/bin/roster (~/.local for uv tool install), where `man roster` finds it")
+    values(s.add_argument("--prefix", metavar="DIR", help="with --man --install: install into DIR/share/man/man1/ "
+                          "instead"), DIRS)
+    s.add_argument("--completion", choices=SHELLS, metavar="SHELL", help="print Tab completion for bash, zsh, fish "
+                   "or powershell (install.sh turns it on)")
+    # run by the app or by ssh, not by hand: kept out of the overview (clihelp.INTERNAL)
     sub.add_parser("serve", help="JSON-RPC API on stdin/stdout for the desktop app (see docs/serve-api.md)")
     s = sub.add_parser("askpass", help="SSH_ASKPASS helper for a `roster serve` password Session (ssh runs it)")
     s.add_argument("prompt", nargs="?", default="", help="the prompt ssh shows")
-    s = sub.add_parser("man", help="show the roster(1) man page, or install it where `man roster` finds it")
-    s.add_argument("--install", action="store_true",
-                   help="copy it to PREFIX/share/man/man1/, next to PREFIX/bin/roster (~/.local for uv tool install)")
-    values(s.add_argument("--prefix", metavar="DIR", help="with --install: install into DIR/share/man/man1/ instead"),
-           DIRS)
-    s = sub.add_parser("completion", help="print Tab completion for bash, zsh, fish or PowerShell (install.sh "
-                       "turns it on)")
-    s.add_argument("shell", choices=SHELLS, help="the shell to print it for")
-    # each command's --help opens with its one-line help as a sentence and ends with examples (clihelp)
-    helps = {a.dest: a.help or "" for a in sub._choices_actions}
-    for name, s in sub.choices.items():
-        s.description = clihelp.description(helps[name])
-        s.epilog = clihelp.examples_text(name) or None
-        s.formatter_class = clihelp.Formatter
+    helps = describe(sub)
     p.commands_text = clihelp.overview(helps)
     p.epilog = clihelp.more()
     return p
+
+
+def describe(sub, prefix=""):
+    """Each command's --help opens with its one-line help as a sentence and ends with examples (clihelp), a command
+    with actions of its own (vault) too. Returns {name: one-line help}."""
+    helps = {a.dest: a.help or "" for a in sub._choices_actions}
+    for name, s in sub.choices.items():
+        s.description = clihelp.description(helps[name])
+        s.epilog = clihelp.examples_text(f"{prefix}{name}") or None
+        s.formatter_class = clihelp.Formatter
+        for a in s._actions:
+            if isinstance(a, argparse._SubParsersAction):
+                describe(a, f"{prefix}{name} ")
+    return helps
+
+
+def command_parser(parser, words):
+    """The parser of `roster WORDS...` (`vault bw`), or a usage error naming the word that isn't a command."""
+    for i, w in enumerate(words):
+        found = next((a.choices for a in parser._actions if isinstance(a, argparse._SubParsersAction)), {})
+        if w not in found:
+            parser.error(f"no help for {' '.join(words[:i + 1])!r}: `roster help` lists the commands")
+        parser = found[w]
+    return parser
 
 
 def inventory(args):
@@ -1433,7 +1892,8 @@ def inventory(args):
 def _main(argv=None):
     parser = build_parser()
     args, extra = parser.parse_known_args(argv)
-    if extra and args.cmd == "bw":       # options before bw's command are bw's: its allowlist judges them, unrepeated
+    passthrough = args.cmd == "vault" and args.vault_cmd in ("bw", "op")
+    if extra and passthrough:                  # options before the tool's command are its own: its allowlist judges them, unrepeated
         args.args = [*extra, *args.args]
     elif extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
@@ -1447,22 +1907,40 @@ def _main(argv=None):
 
     if args.cmd == "init":
         return cmd_init(args)
-    if args.cmd == "completion":
-        from .completion import cmd_completion
-        return cmd_completion(args)
-    if args.cmd == "man":
-        from .manpage import cmd_man
-        return cmd_man(args)
+    if args.cmd == "help":
+        return cmd_help(parser, args)
+    if args.cmd == "vault" and args.vault_cmd is None:     # plain `roster vault`: its actions
+        sys.stdout.write(command_parser(parser, ["vault"]).format_help())
+        return 0
     if args.cmd == "discover":
         if args.json and args.write:
             build_parser().error("--json goes with discover's preview, not --write: drop one of them")
         return cmd_discover(args)
-    if args.cmd == "bw":
-        return cmd_bw(args)
+    if passthrough:
+        return cmd_bw(args) if args.vault_cmd == "bw" else cmd_op(args)
     if args.cmd == "inv":
         return cmd_inv(args)
     if args.cmd == "mesh" and args.json and args.action != "status" and not (args.dry_run and not args.action):
         build_parser().error("--json goes with mesh status or mesh --dry-run: it never applies the Mesh")
+    if args.cmd == "mesh" and args.remove and args.action != "leftovers":
+        build_parser().error("--remove goes with leftovers: roster mesh leftovers --remove")
+    if args.cmd == "hosts" and args.name:
+        listed = [f for f, on in (("--resources", args.resources), ("--find", args.find), ("--all", args.all),
+                                  ("--long", args.long), ("--only", args.only)) if on]
+        if listed:
+            build_parser().error(f"hosts NAME shows one Host or resource: {', '.join(listed)} go{'es' if len(listed) == 1 else ''} "
+                                 "with the list (drop NAME or the flag)")
+    if args.cmd == "check" and args.auth and (args.box or args.host):
+        build_parser().error("check --auth tests the Logins' password sources: it takes no HOST or --box (--only "
+                             "narrows it)")
+    if args.cmd == "add" and args.name is None and not args.from_vault:
+        build_parser().error("roster add needs NAME, the new Host's name")
+    if args.cmd == "add" and args.name is not None:
+        listed = [f for f, on in (("--json", args.json), ("--all", args.all), ("--mark-seen", args.mark_seen),
+                                  ("--no-sync", args.no_sync)) if on]
+        if listed:
+            build_parser().error(f"{', '.join(listed)} go{'es' if len(listed) == 1 else ''} with --from-vault and no "
+                                 "NAME (the list of vault items): drop NAME or the flag")
     if args.cmd == "revoke" and args.all:
         if args.only or args.inv or args.config:
             build_parser().error("revoke --all revokes every Inventory's Hosts: drop --only, --inv and -c")
@@ -1476,15 +1954,22 @@ def _main(argv=None):
     if args.cmd == "serve":
         from .serve import serve
         return serve(args.config, args.inv)  # loads roster.yml itself, so a bad one becomes an API error
-    if args.cmd == "providers":
+    if args.cmd == "vault" and args.vault_cmd == "status":
         try:
             cfg = load_config(find_config(args.config, args.inv))
         except SystemExit:
             cfg = None                              # no roster.yml yet: still list what's available
         setup_providers(cfg)
-        return cmd_providers(cfg, args)
+        return cmd_vault_status(cfg, args)
     cfg = inventory(args)
     setup_providers(cfg)
-    return {"setup": cmd_setup, "sync": cmd_sync, "check": cmd_check, "hosts": cmd_hosts, "info": cmd_info,
-            "run": cmd_run, "revoke": cmd_revoke, "resources": cmd_resources, "reveal": cmd_reveal, "auth-check": cmd_auth_check, "web": cmd_web,
-            "mesh": cmd_mesh}[args.cmd](cfg, args)
+    if args.cmd == "vault":
+        return {"reveal": cmd_reveal, "sync": cmd_vault_sync}[args.vault_cmd](cfg, args)
+    if args.cmd == "check" and args.auth:
+        return cmd_auth_check(cfg, args)
+    if args.cmd == "hosts" and args.name:
+        return cmd_info(cfg, args)
+    if args.cmd == "hosts" and args.resources:
+        return cmd_resources(cfg, args)
+    return {"setup": cmd_setup, "sync": cmd_sync, "check": cmd_check, "hosts": cmd_hosts, "run": cmd_run,
+            "revoke": cmd_revoke, "web": cmd_web, "mesh": cmd_mesh, "add": cmd_add}[args.cmd](cfg, args)

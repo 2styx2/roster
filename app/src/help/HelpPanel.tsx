@@ -6,7 +6,7 @@
 //
 // Prose is Inter; code, names and values are Iosevka; keys are keycaps. Its keycaps are the
 // bindings themselves (`binding-keys`), so `ui.hints = false` never hides them.
-import { createContext, Fragment, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, Fragment, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 import { CloseGlyph } from "../ui/CloseGlyph";
 import { PanelButton } from "../panel/PanelFrame";
 import "./doc.css";
@@ -16,6 +16,7 @@ import { highlight, shellCommand } from "./highlight";
 import type { HelpSnapshot, HelpView } from "./command";
 import type { Block, Def, Inline } from "./doc";
 import { linkKind, pageBody, topics, type HelpContext } from "./pages";
+import { helpText } from "./text";
 
 export interface HelpPanelProps {
   view: HelpView;
@@ -77,7 +78,19 @@ export function HelpPanel({ view, snapshot, ctx, leader, vim, onFind, onOutline,
   }
 
   const page = ctx.pages.find((p) => p.id === at?.page);
-  const blocks = useMemo(() => (at ? pageBody(ctx, at.page) : []), [ctx, at]);
+  // A guide's blocks are empty until the guides' text arrives (T213): read the page again then,
+  // though the place and the context are the same (#431's review F1).
+  const textReady = useSyncExternalStore(helpText.subscribe, helpText.ready);
+  // The text itself decides, not only the snapshot: a wait cancelled after it showed "loading" (a
+  // command or a finder meanwhile, #431's second review N1) leaves `loading` set, and the page
+  // then fills in here in place, with no new snapshot, so it takes no focus.
+  const textFailed = useSyncExternalStore(helpText.subscribe, helpText.failed);
+  const failed = snapshot.failed ?? (snapshot.loading && !textReady ? (textFailed ?? undefined) : undefined);
+  const loading = snapshot.loading && !textReady && failed === undefined;
+  const blocks = useMemo(() => {
+    void textReady;
+    return at ? pageBody(ctx, at.page) : [];
+  }, [ctx, at, textReady]);
   const tags = useMemo(() => new Set(topics(ctx).map((t) => t.tag)), [ctx]);
   const env: RenderEnv = { query, leader, tags, here: at?.anchor ?? at?.page, open: (tag) => view.openTopic(tag) };
 
@@ -240,7 +253,24 @@ export function HelpPanel({ view, snapshot, ctx, leader, vim, onFind, onOutline,
       <div className="help-scroll" ref={scrollRef} tabIndex={0} role="region" aria-label={page?.title ?? at.page}>
         <Env value={env}>
           <article className="help-doc">
-            {page ? blocks.map((b, i) => <BlockView key={i} block={b} target={at.anchor} />) : <p>No help page named {at.page}.</p>}
+            {!page ? (
+              <p>No help page named {at.page}.</p>
+            ) : loading || failed !== undefined ? (
+              // A guide whose text is still on its way (past 150 ms: HelpView waits that long first)
+              // or couldn't load (T213). Still text, no motion: it's gone as soon as the page is here.
+              <>
+                <h1>{page.title}</h1>
+                {failed !== undefined ? (
+                  <p role="alert">
+                    Couldn't load help's guides: {failed}. <code>:help {at.anchor ?? at.page}</code> tries again.
+                  </p>
+                ) : (
+                  <p role="status">Loading this page…</p>
+                )}
+              </>
+            ) : (
+              blocks.map((b, i) => <BlockView key={i} block={b} target={at.anchor} />)
+            )}
           </article>
         </Env>
       </div>

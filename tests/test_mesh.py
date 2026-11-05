@@ -124,6 +124,7 @@ def net(fakes, isolated, write_config, monkeypatch, host_key):
         (d / "home/.ssh/config").write_text("Host *\n    ServerAliveInterval 60\n")
     esx = root / "esx-02"
     (esx / "esxi").touch()
+    (esx / "login").write_text("root\n")       # what `id -un` says there (tests/fakes/host/id)
     shutil.rmtree(esx / "home/.ssh")
     (esx / "etc/ssh/keys-root").mkdir(parents=True)
     (esx / "etc/ssh/keys-root/authorized_keys").write_text("ssh-ed25519 AAAAbox roster-managed:box\n")
@@ -309,6 +310,7 @@ def test_esxi_keeps_its_key_on_a_datastore_and_takes_keys_in_etc_ssh(net):
 @pytest.mark.skipif(WINDOWS, reason="NTFS has no mode bits to keep")
 def test_a_new_authorized_keys_on_esxi_gets_the_sticky_bit_so_it_survives_a_reboot(net):
     net.cfg_path.write_text(CONFIG.replace("esx-02: { ip: 10.0.0.12, user: root }", "esx-02: { ip: 10.0.0.12, user: ops }"))
+    (net.host("esx-02") / "login").write_text("ops\n")           # the login it is there (#445)
     mesh.run(net.cfg(), apply=True)
     ak = net.host("esx-02") / "etc/ssh/keys-ops/authorized_keys"
     assert "roster-mesh:orion-2" in ak.read_text()
@@ -355,6 +357,31 @@ def test_an_esxi_without_a_suitable_datastore_is_pending_without_mesh_dir(net):
     no_datastore(net)
     r = mesh.run(net.cfg(), apply=True)
     assert "no datastore" in r["pending"]["esx-02"]
+
+
+def test_an_esxi_whose_user_isnt_the_login_is_skipped_and_left_as_it_was(net, capsys):
+    """#445 (Q193 (a), #442's review L1): ESXi's sshd reads /etc/ssh/keys-LOGIN/, LOGIN as the Host names the account
+    (`id -un`): when roster.yml's user: isn't that, the Mesh would write a folder sshd doesn't read, so the Host is
+    skipped, said in its own line, and nothing is written there."""
+    (net.host("esx-02") / "login").write_text("Root\n")          # what `id -un` says there
+    before = {k: v for k, v in net.snapshot().items() if k.startswith("esx-02/")}
+    assert main(["mesh"]) == 1
+    out = capsys.readouterr().out
+    assert ("  esx-02: this login is Root on ESXi, not root (its user: in roster.yml), and ESXi's sshd reads its "
+            "keys-Root folder: nothing was changed (set user: as the Host names it)") in out
+    assert {k: v for k, v in net.snapshot().items() if k.startswith("esx-02/")} == before
+    assert not any("roster-mesh:esx-02" in x for p in HOSTS for x in net.mesh_lines(p))
+    assert any("roster-mesh:orion-2" in x for x in net.mesh_lines("orion-3"))   # the rest of the Mesh goes ahead
+
+
+def test_cut_on_an_esxi_whose_user_isnt_the_login_leaves_it_as_it_was(net, capsys):
+    """#445: cut (and mesh leftovers --remove) on that Host change nothing either: it stays pending, said."""
+    mesh.run(net.cfg(), apply=True)
+    (net.host("esx-02") / "login").write_text("Root\n")
+    before = net.ak("esx-02")
+    assert main(["mesh", "cut", "orion-2", "--yes"]) == 1
+    assert "this login is Root on ESXi, not root" in capsys.readouterr().out
+    assert net.ak("esx-02") == before
 
 
 def test_mesh_dir_puts_an_esxi_sources_files_where_it_says(net):
@@ -715,7 +742,7 @@ def test_a_peer_without_a_recorded_host_key_is_left_out(net, isolated):
     kh.write_text("".join(x + "\n" for x in kh.read_text().splitlines() if not x.startswith("10.0.0.30 ")))
     r = mesh.run(net.cfg(), apply=True)
     link = next(x for x in r["links"] if x["to"] == "nas-1")
-    assert link["status"] == "no-host-key" and "roster setup --only nas-1" in link["why"]
+    assert link["status"] == "no-host-key" and "roster setup --host nas-1" in link["why"]
     assert net.mesh_lines("nas-1") == []
 
 
@@ -957,7 +984,10 @@ def test_the_cli_cut_prints_the_cleanup_warnings(net, capsys):
 def test_cut_without_a_git_repo_still_writes_mesh_false(net, capsys):
     assert main(["mesh", "cut", "orion-3", "--yes"]) == 0
     assert net.cfg()["hosts"]["orion-3"]["mesh"] is False
-    assert "isn't in a git repo" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "mesh: false for orion-3, saved in roster.yml" in out     # a plain file (T212): saved, no nag about git
+    assert "git repo" not in out and "Pending" not in out and "publish" not in out
+    assert net.cfg_path.with_name("roster.yml.bak").exists()
 
 
 def test_cut_syncs_this_box_after_writing_mesh_false(net, isolated, capsys):
@@ -1231,7 +1261,7 @@ def test_a_via_link_whose_jump_host_has_no_recorded_host_key_is_not_written(net,
     r = mesh.run(net.cfg(), apply=True)
     link = next(x for x in r["links"] if (x["from"], x["to"]) == ("orion-3", "db-9"))
     assert link["status"] == "no-host-key"
-    assert link["why"] == "no recorded host key for jump-1 (orion-3's hop to db-9) on this Box (roster setup --only jump-1)"
+    assert link["why"] == "no recorded host key for jump-1 (orion-3's hop to db-9) on this Box (roster setup --host jump-1)"
     assert net.mesh_lines("db-9") == []
     assert "ProxyJump" not in net.file("orion-3", "home/.ssh/roster-mesh/config")
 
@@ -1586,7 +1616,7 @@ def test_find_leftovers_reports_what_this_roster_yml_doesnt_ask_for_and_changes_
     net.cfg_path.write_text(DROPPED)
     (net.root / "connections").unlink()
     before = net.snapshot()
-    assert main(["mesh", "--find-leftovers"]) == 0
+    assert main(["mesh", "leftovers"]) == 0
     out = capsys.readouterr().out
     assert net.snapshot() == before
     assert "nas-1: key from orion-2 (from=10.0.0.2)" in out
@@ -1598,7 +1628,7 @@ def test_find_leftovers_reports_what_this_roster_yml_doesnt_ask_for_and_changes_
 def test_find_leftovers_reports_a_former_sources_files(net, capsys):
     mesh.run(net.cfg(), apply=True)
     net.cfg_path.write_text(L3)
-    assert main(["mesh", "--find-leftovers"]) == 0
+    assert main(["mesh", "leftovers"]) == 0
     out = capsys.readouterr().out
     o2 = next(x for x in out.splitlines() if x.startswith("orion-2: "))
     assert "key from orion-3 (from=10.0.0.3)" in o2 and "Mesh key and files in" in o2 and "the Include in ~/.ssh/config" in o2
@@ -1611,15 +1641,15 @@ def test_remove_leftovers_asks_says_whose_they_may_be_and_removes_only_them(net,
     untag(net)                                          # an older roster's: they may be another Box's
     asked = []
     monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or "n")
-    assert main(["mesh", "--remove-leftovers"]) == 1
+    assert main(["mesh", "leftovers", "--remove"]) == 1
     assert "another Box" in asked[0]
     assert any("roster-mesh:orion-2" in x for x in net.mesh_lines("nas-1"))
-    assert main(["mesh", "--remove-leftovers", "-y"]) == 0
+    assert main(["mesh", "leftovers", "--remove", "-y"]) == 0
     assert net.mesh_lines("nas-1") == []
     assert "roster-managed:box" in net.ak("nas-1") and "own@laptop" in net.ak("nas-1")
     assert any("roster-mesh:orion-3" in x for x in net.mesh_lines("orion-2"))     # still asked for: kept
     capsys.readouterr()
-    assert main(["mesh", "--find-leftovers"]) == 0
+    assert main(["mesh", "leftovers"]) == 0
     assert "no Mesh entries" in capsys.readouterr().out
 
 
@@ -1627,7 +1657,7 @@ def test_remove_leftovers_takes_a_former_sources_files_too(net):
     mesh.run(net.cfg(), apply=True)
     net.cfg_path.write_text(L3)
     reinstall()
-    assert main(["mesh", "--remove-leftovers", "-y"]) == 0
+    assert main(["mesh", "leftovers", "--remove", "-y"]) == 0
     assert not any(net.mesh_lines(h) for h in HOSTS)
     assert not (net.host("orion-2") / "home/.ssh/roster-mesh").exists()
     assert mesh.MARK not in net.file("orion-2", "home/.ssh/config")
@@ -1641,7 +1671,7 @@ def test_remove_leftovers_is_refused_with_another_inventorys_mesh_on_this_box(ne
     (mesh.state_file().parent / "mesh-work.json").write_text("{}\n")
     net.cfg_path.write_text(DROPPED)
     with pytest.raises(SystemExit, match="another Inventory"):
-        main(["mesh", "--remove-leftovers", "-y"])
+        main(["mesh", "leftovers", "--remove", "-y"])
     assert net.mesh_lines("nas-1")
 
 
@@ -1650,7 +1680,7 @@ def test_status_says_when_this_box_has_no_mesh_record(net, capsys):
     reinstall()
     assert main(["mesh", "status"]) == 0
     out = capsys.readouterr().out
-    assert "no Mesh record on this Box" in out and "roster mesh --find-leftovers" in out
+    assert "no Mesh record on this Box" in out and "roster mesh leftovers" in out
     mesh.run(net.cfg(), apply=True)
     assert main(["mesh", "status"]) == 0
     assert "no Mesh record" not in capsys.readouterr().out
@@ -1804,7 +1834,7 @@ def test_a_reinstalled_box_with_the_same_roster_yml_takes_the_mesh_as_it_is(net)
 # ---------------------------------------------------------------- whose Mesh it is (T199, #379)
 # Each Box (and named Inventory) tags what it writes with itself: roster-mesh:SOURCE@BOX (BOX/INVENTORY for a named
 # Inventory) in authorized_keys, and the same owner in the Mesh files' headers, so one Box's apply, cut or
-# --remove-leftovers never takes another's.
+# mesh leftovers --remove never takes another's.
 
 # Box L3 (#372's review, second pass): orion-2 only as a peer (L1 meshes it as a source), nas-1 as a source
 L3_BOX = """\
@@ -1957,7 +1987,7 @@ def test_the_one_time_retag_takes_only_a_line_identical_to_this_boxs_own(net, ca
     assert mesh.run(net.cfg())["already"]
     assert theirs in net.mesh_lines("nas-1")
     capsys.readouterr()
-    assert main(["mesh", "--find-leftovers"]) == 0
+    assert main(["mesh", "leftovers"]) == 0
     assert "nas-1: key from orion-2 (from=10.0.0.99), with no Box in its tag" in capsys.readouterr().out
 
 
@@ -2004,11 +2034,11 @@ def test_an_older_rosters_entries_this_box_has_no_record_of_are_kept_and_found_a
     assert all(x in net.mesh_lines(h) for h in HOSTS for x in old[h])          # unknown owner: kept
     assert mesh_files(net, "orion-2")[0] == o2[0]
     capsys.readouterr()
-    assert main(["mesh", "--find-leftovers"]) == 0
+    assert main(["mesh", "leftovers"]) == 0
     out = capsys.readouterr().out
     assert "nas-1: key from orion-2 (from=10.0.0.2), with no Box in its tag" in out
     assert "may be another Box's or another Inventory's Mesh" in out
-    assert main(["mesh", "--remove-leftovers", "-y"]) == 0
+    assert main(["mesh", "leftovers", "--remove", "-y"]) == 0
     assert not any(x.endswith("roster-mesh:orion-2") for x in net.mesh_lines("nas-1"))
 
 
@@ -2130,9 +2160,242 @@ def test_a_windows_host_once_in_the_mesh_is_never_visited_to_take_it_back(win_ne
     assert not any(c.endswith(" win-1") for c in win_net.connections())
 
 
-@pytest.mark.parametrize("argv", [["mesh", "cut", "win-1", "--yes"], ["mesh", "--find-leftovers"],
-                                  ["mesh", "--remove-leftovers", "--yes"]])
+@pytest.mark.parametrize("argv", [["mesh", "cut", "win-1", "--yes"], ["mesh", "leftovers"],
+                                  ["mesh", "leftovers", "--remove", "--yes"]])
 def test_cut_and_leftovers_never_log_in_to_a_windows_host(win_net, argv):
     mesh.run(win_net.cfg(), apply=True)
     main(argv)
     assert not any(c.endswith(" win-1") for c in win_net.connections())
+
+
+# ---------------------------------------------------------------- a renamed Box's own key (T217, #412)
+# box_name: changed (or the hostname) on a Box already set up: its key's lines on the Hosts still carry the earlier
+# name (roster-managed:box). revoke and setup find them by this Box's public key; another Box's line, whose key
+# differs, is never touched, even under the same name.
+
+OTHER_BOXS_KEY = "ssh-ed25519 AAAAother+Box/key= roster-managed:box"
+
+
+def renamed_box(net, isolated):
+    """This Box's key (AAAAbox, made as `box`), now named box2; nas-1 also holds another Box's key named box."""
+    (isolated["home"] / ".ssh/roster_ed25519").write_text("private\n")
+    (isolated["home"] / ".ssh/roster_ed25519.pub").write_text("ssh-ed25519 AAAAbox roster-managed:box\n")
+    add_line(net, "nas-1", OTHER_BOXS_KEY)
+    net.cfg_path.write_text(CONFIG.replace("box_name: box\n", "box_name: box2\n"))
+    main(["sync"])
+
+
+def box_lines(net, host):
+    return [x for x in net.ak(host).splitlines() if "roster-managed:" in x]
+
+
+# On native Windows the stand-in ssh is a batch file, and roster won't hand a batch file the key scripts (their quotes
+# and | are cmd.exe's), as for revoke in test_inventories.py
+key_scripts_run = pytest.mark.skipif(os.name == "nt", reason="the stand-in ssh is a batch file on Windows")
+
+
+@key_scripts_run
+def test_revoke_on_a_renamed_box_takes_its_key_under_the_earlier_name(net, isolated, capsys):
+    renamed_box(net, isolated)
+    hardened = 'from="10.0.0.0/8" ssh-ed25519 AAAAbox roster-managed:box'      # options before it (#423's M1)
+    p = net.host("orion-3") / "home/.ssh/authorized_keys"
+    p.write_text(p.read_text().replace("ssh-ed25519 AAAAbox roster-managed:box\n", hardened + "\n"))
+    capsys.readouterr()
+    assert main(["revoke", "-y"]) == 0
+    err = capsys.readouterr().err
+    assert box_lines(net, "orion-3") == []
+    # M3: said, as it may be another Inventory's name for the same key
+    assert "note: orion-2: also took this Box's key line tagged roster-managed:box" in err
+    assert box_lines(net, "orion-2") == []
+    assert box_lines(net, "nas-1") == [OTHER_BOXS_KEY]          # another Box's key: left
+    assert "ssh-ed25519 AAAAown own@laptop" in net.ak("nas-1")
+    assert box_lines(net, "esx-02") == []                       # T226: ESXi's /etc/ssh/keys-root too
+
+
+@key_scripts_run
+@pytest.mark.skipif(WINDOWS, reason="NTFS has no mode bits to keep")
+def test_revoke_on_esxi_keeps_its_keys_files_sticky_bit(net, isolated, capsys):
+    """T226 (#435, 1): ESXi keeps a file under /etc across a reboot only with the sticky bit: a rewrite keeps it."""
+    ak = net.host("esx-02") / "etc/ssh/keys-root/authorized_keys"
+    ak.write_text("ssh-ed25519 AAAAmine me@laptop\n" + ak.read_text())
+    ak.chmod(0o1600)
+    assert main(["revoke", "-y"]) == 0
+    assert ak.read_text() == "ssh-ed25519 AAAAmine me@laptop\n"
+    assert ak.stat().st_mode & 0o7777 == 0o1600
+
+
+@key_scripts_run
+@pytest.mark.skipif(WINDOWS, reason="NTFS has no mode bits to keep")
+def test_setup_installs_the_key_in_esxis_own_keys_file_with_the_sticky_bit(net, fakes, monkeypatch):
+    """T226 (#435, 1): where the key doesn't work yet, setup's install writes ESXi's /etc/ssh/keys-USER (the file its
+    sshd reads, kept across a reboot), a new one 1600 as ESXi's own; never ~/.ssh, which ESXi rebuilds at boot."""
+    from roster import sshops
+    net.cfg_path.write_text(CONFIG.replace("esx-02: { ip: 10.0.0.12, user: root }", "esx-02: { ip: 10.0.0.12, user: ops }"))
+    (net.host("esx-02") / "login").write_text("ops\n")
+    monkeypatch.setattr(sshops, "get_secret", lambda ref, group: "pw")
+    monkeypatch.setattr(sshops, "password_exec", lambda h, command, pw, **k: (
+        lambda r: (r.returncode, r.stdout, r.stderr))(subprocess.run(
+            [sys.executable, str(fakes / "ssh"), h["name"], command], capture_output=True, text=True)))
+    cfg = net.cfg()
+    pub = "ssh-ed25519 AAAAbox2 roster-managed:box"
+    for _ in range(2):
+        sshops.enroll(cfg["hosts"]["esx-02"], pub, cfg["tag_re"])
+    ak = net.host("esx-02") / "etc/ssh/keys-ops/authorized_keys"
+    assert ak.read_text() == pub + "\n"
+    assert ak.stat().st_mode & 0o7777 == 0o1600
+    assert not (net.host("esx-02") / "home/.ssh/authorized_keys").exists()
+
+
+@key_scripts_run
+def test_revoke_on_esxi_refuses_a_user_that_isnt_the_login(net, isolated, capsys):
+    """#442's review L1: ESXi's sshd reads /etc/ssh/keys-LOGIN/, LOGIN as it names the account: when roster.yml's user:
+    isn't what the Host calls this login, roster would change a file sshd doesn't read, so that Host fails, said."""
+    (net.host("esx-02") / "login").write_text("Root\n")          # what `id -un` says there
+    assert main(["revoke", "-y"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL  esx-02: this login is Root on ESXi, not root (its user: in roster.yml)" in out
+    assert box_lines(net, "esx-02") == ["ssh-ed25519 AAAAbox roster-managed:box"]     # left as it was
+
+
+def setup_box(monkeypatch):
+    """`roster setup` with the stand-in Hosts' key logins: no ssh-keyscan (the host keys are recorded already)."""
+    from roster import cli
+    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())
+
+
+@key_scripts_run
+def test_setup_on_a_renamed_box_retags_its_key_under_the_new_name_once(net, isolated, capsys, monkeypatch):
+    renamed_box(net, isolated)
+    setup_box(monkeypatch)
+    hardened = 'from="10.0.0.0/8" ssh-ed25519 AAAAbox roster-managed:box'      # options before it (#423's M1)
+    p = net.host("orion-3") / "home/.ssh/authorized_keys"
+    p.write_text(p.read_text().replace("ssh-ed25519 AAAAbox roster-managed:box\n", hardened + "\n"))
+    assert main(["setup"]) == 0
+    out = capsys.readouterr().out
+    assert "re-tag" in out and "box2" in out
+    assert "this Box's key was made as roster-managed:box, so its lines may carry that name" in out     # L1
+    assert "ok    orion-2 (re-tagged)" in out and "ok    esx-02 (re-tagged)" in out
+    assert box_lines(net, "esx-02") == ["ssh-ed25519 AAAAbox roster-managed:box2"]  # T226: ESXi's /etc/ssh/keys-root
+    assert box_lines(net, "orion-3") == ['from="10.0.0.0/8" ssh-ed25519 AAAAbox roster-managed:box2']  # options kept
+    for h in ("orion-2", "nas-1"):
+        assert "ssh-ed25519 AAAAbox roster-managed:box2" in box_lines(net, h), h
+        assert "ssh-ed25519 AAAAbox roster-managed:box" not in box_lines(net, h), h
+    assert OTHER_BOXS_KEY in box_lines(net, "nas-1")             # another Box's key: left
+    assert not (net.host("esx-02") / "home/.ssh/authorized_keys").exists()      # never added where it wasn't
+    assert main(["setup"]) == 0                                 # done: no re-tag again
+    assert "re-tag" not in capsys.readouterr().out
+
+
+@key_scripts_run
+def test_renaming_onto_a_name_another_box_uses_needs_force(net, isolated, capsys, monkeypatch):
+    """T226 (#435, 2): box2 is another Box's name on orion-2 (another key): the same-name rule would take that line
+    (this Box's revoke and install take a name's lines), so setup says so there and leaves it; --force goes ahead."""
+    renamed_box(net, isolated)
+    setup_box(monkeypatch)
+    theirs = "ssh-ed25519 AAAAtheirs roster-managed:box2"
+    add_line(net, "orion-2", theirs)
+    assert main(["setup"]) == 1
+    out = capsys.readouterr().out
+    assert ("FAIL  orion-2: [190] another key's line there is tagged roster-managed:box2: another Box already uses "
+            "that name") in out
+    assert box_lines(net, "orion-2") == ["ssh-ed25519 AAAAbox roster-managed:box", theirs]      # as it was
+    assert "ssh-ed25519 AAAAbox roster-managed:box2" in box_lines(net, "orion-3")                # the rest: done
+    from roster.common import key_name_file
+    assert not key_name_file().exists()                                                          # again next time
+    assert main(["setup", "--force"]) == 0
+    assert box_lines(net, "orion-2") == ["ssh-ed25519 AAAAbox roster-managed:box2", theirs]
+
+
+@key_scripts_run
+def test_renaming_onto_a_taken_name_where_the_key_works_from_a_line_of_your_own(net, isolated, capsys, monkeypatch):
+    """#442's review M1: the key works on orion-2 from an untagged line, and another Box's line there has the new name:
+    a FAIL (190), not 'no line', so the new name isn't recorded and this Box's revoke never takes that line."""
+    renamed_box(net, isolated)
+    setup_box(monkeypatch)
+    p = net.host("orion-2") / "home/.ssh/authorized_keys"
+    theirs = "ssh-ed25519 AAAAtheirs roster-managed:box2"
+    p.write_text(p.read_text().replace("ssh-ed25519 AAAAbox roster-managed:box\n", "ssh-ed25519 AAAAbox me@laptop\n")
+                 + theirs + "\n")
+    assert main(["setup"]) == 1
+    assert "FAIL  orion-2: [190]" in capsys.readouterr().out
+    assert box_lines(net, "orion-2") == [theirs] and "ssh-ed25519 AAAAbox me@laptop" in net.ak("orion-2")
+    from roster.common import key_name_file
+    assert not key_name_file().exists()
+
+
+def test_setup_dry_run_on_a_renamed_box_says_it_would_retag_and_changes_nothing(net, isolated, capsys, monkeypatch):
+    renamed_box(net, isolated)
+    setup_box(monkeypatch)
+    before = net.snapshot()
+    assert main(["setup", "--dry-run"]) == 0
+    assert "would re-tag" in capsys.readouterr().out
+    assert net.snapshot() == before
+
+
+@key_scripts_run
+def test_setup_with_a_host_down_retags_the_rest_and_again_next_time(net, isolated, capsys, monkeypatch):
+    renamed_box(net, isolated)
+    setup_box(monkeypatch)
+    net.down("orion-3")
+    main(["setup"])
+    assert "ssh-ed25519 AAAAbox roster-managed:box2" in box_lines(net, "orion-2")
+    net.down("orion-3", False)
+    capsys.readouterr()
+    assert main(["setup"]) == 0
+    assert "re-tag" in capsys.readouterr().out
+    assert "ssh-ed25519 AAAAbox roster-managed:box2" in box_lines(net, "orion-3")
+
+
+# ---------------------------------------------------------------- another Box rotates or cuts a shared source (T217)
+# Box l2 meshes orion-2 -> nas-1 with box's key (orion-2's Mesh files are box's). box rotates that key, or cuts
+# orion-2: l2's own lines for the old key stay on its peers until l2's next `roster mesh`, and l2's `roster check`
+# says so.
+
+OLD_KEY_WORDS = ("nas-1: this Box's line for orion-2's Mesh key is for a key orion-2 no longer has (replaced or "
+                 "removed since, as by the Box whose Mesh files they are), and it still lets that key in "
+                 "(from=10.0.0.2) until this Box's next roster mesh replaces it")
+
+
+def shared_source(net):
+    """box meshes orion-2 -> nas-1; l2, with the same roster.yml, too, with box's key. Returns l2."""
+    mesh.run(net.cfg(), apply=True)
+    l2 = Box(net, CONFIG.replace("box_name: box\n", "box_name: l2\n"))
+    with l2:
+        mesh.run(net.cfg(), apply=True)
+    return l2
+
+
+@pytest.mark.parametrize("how", ["rotate", "cut"])
+def test_another_boxs_rotation_or_cut_of_a_shared_source_is_said_on_this_boxs_check(net, capsys, how):
+    l2 = shared_source(net)
+    if how == "rotate":
+        mesh.run(net.cfg(), apply=True, rotate=["orion-2"])
+    else:
+        assert main(["mesh", "cut", "orion-2", "--yes"]) == 0
+    with l2:
+        r = mesh.drift(net.cfg())
+        assert "replace key from orion-2" in next(h for h in r["hosts"] if h["host"] == "nas-1")["changes"]
+        assert OLD_KEY_WORDS in r["warnings"], r["warnings"]
+        capsys.readouterr()
+        assert main(["check"]) == 1
+        assert f"warning: {OLD_KEY_WORDS}" in capsys.readouterr().out
+        r = mesh.run(net.cfg(), apply=True)                          # its apply replaces it: said no more
+        assert not any("no longer has" in w for w in r["warnings"])
+        assert mesh.run(net.cfg())["already"]
+
+
+def test_another_boxs_rotation_is_said_for_lines_under_this_boxs_earlier_name(net, capsys):
+    """T226 (#435, 3; #423's L3): l2 was renamed l3 since its last apply, so its lines on the peers still carry l2: the
+    drift warning sees those too (its next apply re-tags them, Q175 (e))."""
+    l2 = shared_source(net)
+    mesh.run(net.cfg(), apply=True, rotate=["orion-2"])
+    with l2:
+        net.cfg_path.write_text(CONFIG.replace("box_name: box\n", "box_name: l3\n"))
+        r = mesh.drift(net.cfg())
+        assert OLD_KEY_WORDS in r["warnings"], r["warnings"]
+
+
+def test_this_boxs_own_rotation_plan_says_no_old_key_line(net):
+    mesh.run(net.cfg(), apply=True)
+    r = mesh.run(net.cfg(), rotate=["orion-2"])
+    assert not any("no longer has" in w for w in r["warnings"]), r["warnings"]

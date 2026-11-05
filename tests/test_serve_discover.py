@@ -55,11 +55,12 @@ def net(fakes, isolated, monkeypatch):
 
 @pytest.fixture
 def inventory(write_config):
-    """roster.yml committed in a git repo, so adding to it is a Pending change."""
+    """roster.yml committed in a git repo with a remote, so adding to it is a Pending change."""
     path = write_config(INVENTORY)
     git(path.parent, "init", "-q")
     git(path.parent, "add", path.name)
     git(path.parent, "commit", "-qm", "inventory")
+    git(path.parent, "remote", "add", "origin", str(path.parent.parent / "origin.git"))   # never fetched here
     return path
 
 
@@ -180,7 +181,8 @@ def test_add_into_a_named_group_and_without_a_git_repo(serve, net, inventory):
     r = s.call("discover.add", {"scan": scan, "addresses": ["10.0.0.7"], "group": "found-today"})["result"]
     assert r["group"] == "found-today"
     (inventory.parent / ".git").rename(inventory.parent / "not-git")    # (git's read-only objects: no rmtree on Windows)
-    assert s.call("discover.add", {"scan": scan, "addresses": ["10.0.0.9"]})["error"]["code"] == 70
+    r = s.call("discover.add", {"scan": scan, "addresses": ["10.0.0.9"]})["result"]      # a plain file now (T212)
+    assert r["backup"] == str(inventory.with_name("roster.yml.bak")) and "10.0.0.9" in inventory.read_text()
 
 
 def test_the_builtin_scanner_when_nmap_isnt_installed(monkeypatch):

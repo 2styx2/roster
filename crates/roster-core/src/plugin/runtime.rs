@@ -2109,10 +2109,15 @@ fn api(lua: &Lua, shared: &Rc<Shared>, version: &str, config: &Json) -> mlua::Re
     if may_hear("session_open", g).is_ok() {
         func!(sessions, "list", |lua, s, (): ()| {
             let list = lua.create_table()?;
-            for (id, host) in s.sessions.list() {
+            // The folder is what the Session printed (OSC 7): terminal.read's, as the output is.
+            let reads = s.grants.contains(&Permission::TerminalRead);
+            for open in s.sessions.list() {
                 let one = lua.create_table()?;
-                one.raw_set("session", id)?;
-                one.raw_set("host", host)?;
+                one.raw_set("session", open.session)?;
+                one.raw_set("host", open.host)?;
+                if reads {
+                    one.raw_set("cwd", open.cwd)?;
+                }
                 list.raw_push(one)?;
             }
             Ok(list)

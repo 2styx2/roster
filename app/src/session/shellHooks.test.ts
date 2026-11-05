@@ -2,6 +2,7 @@
 import { Terminal } from "@xterm/xterm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CsiClamp } from "../terminal/csiClamp";
+import { FOLDER_MAX } from "./osc7";
 import { XtermPromptScreen } from "./promptScreen";
 import { HOLD_MS, IDLE_MS, ShellHooks, TokenMask, WINDOW_MS, hookLine, newNonce, promptShell, shellHooksOn, type CursorLine } from "./shellHooks";
 
@@ -282,7 +283,7 @@ describe("ShellHooks: when roster sends the hook line, and what the screen shows
     vi.useFakeTimers();
     const sent: string[] = [];
     const shown: string[] = [];
-    const folders: string[] = [];
+    const folders: (string | null)[] = [];
     let on = enabled;
     let open = session;
     const hooks = new ShellHooks({
@@ -458,6 +459,47 @@ describe("ShellHooks: when roster sends the hook line, and what the screen shows
     print("tc\x1b\\$ ");
     print("\x1b]7;file://web-01/bad%zz\x07");
     expect(folders).toEqual(["/home/user/my src", "/etc", "/bad%zz"]);
+  });
+
+  // Review of #426, L2: a folder roster refuses means the folder isn't known any more (as a
+  // command_done's), and one split across reads is taken up to the longest the parser takes.
+  it("says no folder for an OSC 7 roster refuses, and takes a long one split across reads", () => {
+    const { print, folders } = setup({ enabled: false });
+    print("\x1b]7;file://web-01/srv/a\x07$ ");
+    print("\x1b]7;file://web-01/srv/\u202egpj\x07$ ");
+    const long = `/${"%61".repeat(FOLDER_MAX - 1)}`;
+    print(`\x1b]7;file://web-01${long.slice(0, 1500)}`);
+    print(long.slice(1500, 2600));
+    print(`${long.slice(2600)}\x07$ `);
+    expect(folders).toEqual(["/srv/a", null, `/${"a".repeat(FOLDER_MAX - 1)}`]);
+    // Longer than any the parser takes, still coming: no folder, not the last one.
+    print(`\x1b]7;file://web-01/${"%61".repeat(FOLDER_MAX * 5)}`);
+    expect(folders.at(-1)).toBeNull();
+  });
+
+  // Review of #426, M1: zsh's way of keeping the line out of its history starts the history list
+  // again from its file, which is right only while nothing was typed in that shell.
+  it("after typing, :integrate sends the POSIX line without zsh's history reset, and says the line may stay in history", async () => {
+    const late = setup({ enabled: false });
+    late.print(PROMPT);
+    late.hooks.typed("ls");
+    late.print("ls\r\nfile\r\nuser@web-01:~$ ");
+    vi.advanceTimersByTime(IDLE_MS);
+    const on = late.hooks.integrate();
+    expect(late.sent).toEqual([hookLine("posix", NONCE, { typed: true }) + "\r"]);
+    expect(late.sent[0]).not.toContain("fc -p");
+    expect(late.sent[0]).toContain("history -d");
+    late.print(late.sent[0]!.slice(0, -1) + "\r\n" + A + "user@web-01:~$ " + B);
+    expect(await on).toBe("on-kept");
+    vi.useRealTimers();
+  });
+
+  it("the POSIX line leaves out zsh's history reset once typed in; the others are the same either way", () => {
+    expect(hookLine("posix", NONCE)).toContain("fc -p");
+    expect(hookLine("posix", NONCE, { typed: true })).not.toContain("fc -p");
+    // Only zsh's part changes: fish's and PowerShell's lines are the same either way.
+    expect(hookLine("fish", NONCE, { typed: true })).toBe(hookLine("fish", NONCE));
+    expect(hookLine("pwsh", NONCE, { typed: true })).toBe(hookLine("pwsh", NONCE));
   });
 
   it("sends the line when asked (:integrate), and says whether the marks came back, or why not", async () => {

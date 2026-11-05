@@ -1,4 +1,4 @@
-// Host details (ticket 18, spec stories 79-80, decision Q71): what `roster info HOST` says about a
+// Host details (ticket 18, spec stories 79-80, decision Q71): what `roster hosts HOST` says about a
 // Host, as rows for the panel, and which of its services open in the default browser. Pure: the
 // panel (HostDetails.tsx) draws these, `:open` (commands/table.ts) resolves through resolveOpen.
 // A Login is shown as roster shows it: the user and the vault reference (`bw:esx-02 ssh`, the
@@ -6,7 +6,7 @@
 import type { Host, HostList } from "../backend/types";
 import { parseQuickTarget } from "../quick/target";
 
-/** One line of the panel: roster info's label and value. `data`: something you could paste into
+/** One line of the panel: roster hosts HOST's label and value. `data`: something you could paste into
  * a shell (an address, a reference), so it's set in Iosevka. */
 export interface Fact {
   label: string;
@@ -20,13 +20,13 @@ export function loginLabel(s: { user?: string | null; auth?: string | null }): s
   return `${s.user || "(no user)"}, auth ${s.auth || "none"}`;
 }
 
-/** How Sessions reach the Host, in roster info's words. */
+/** How Sessions reach the Host, in roster hosts HOST's words. */
 function access(h: Host): string {
   if (!h.reviewed) return "not set up yet (reviewed: false)";
   return h.enroll ? `key: ssh ${h.name}` : `password: roster run ${h.name} -- CMD`;
 }
 
-/** roster info's fields in its order (the name is the panel's heading), empty ones left out. */
+/** roster hosts HOST's fields in its order (the name is the panel's heading), empty ones left out. */
 export function hostFacts(h: Host, groups: HostList["groups"]): Fact[] {
   const title = groups[h.group]?.title;
   const login = h.login && (h.login.user || h.login.auth) ? `${loginLabel(h.login)} (default for services)` : "";
@@ -46,7 +46,7 @@ export function hostFacts(h: Host, groups: HostList["groups"]): Fact[] {
   return facts.filter((f): f is [string, string, boolean] => !!f[1]).map(([label, value, data]) => (data ? { label, value, data } : { label, value }));
 }
 
-/** One service row: roster info's columns, and the URL it opens, if it's a web one. */
+/** One service row: roster hosts HOST's columns, and the URL it opens, if it's a web one. */
 export interface ServiceRow {
   name: string;
   port: number;

@@ -1,6 +1,12 @@
-# roster CI: both halves of the repo on every pull request and on pushes to main/dev and tags.
-#   CLI  (repo root): ruff (with its security rules), pyright, pytest on every supported Python and on Windows,
-#        build the wheel.
+# roster CI: both halves of the repo, on pull requests, on pushes to main/dev and tags, and every night.
+#   What runs when (decision Q196, docs/development.md "What CI runs when"): a push to main or dev, a tag, the
+#   nightly schedule and a run by hand run every job (but the install test: Q199), on every supported Python. A pull request runs a PR-sized
+#   set: Python 3.12 only, and only the jobs its changed files need (the `changes` job, scripts/ci_changes.py);
+#   the `CI` job at the end always reports, and fails if any job that ran failed.
+#   Install (install.sh, update.sh, uninstall.sh): scripts/test-install.sh on Ubuntu and Fedora in containers, on
+#        a pull request that touches them, on Monday's nightly run and by hand (it needs the network; decision Q199).
+#   CLI  (repo root): ruff (with its security rules), pyright, pytest on every supported Python and on Windows
+#        (in 3 shards balanced by time, tests/durations-windows.json), build the wheel.
 #        Tests need no network, SSH server or password manager (stand-in bw/op/pass/ssh in tests/fakes).
 #   App  (app/, crates/roster-core, app/src-tauri): tsc + ESLint + Vitest, copy and paste and the Host menu end to end in
 #        headless Chromium (app/e2e); rustfmt, clippy and
@@ -17,11 +23,14 @@ on:
   push:
     branches: [main, dev]
     tags: ["v*"]
+  schedule:
+    - cron: "23 3 * * *"        # nightly, 03:23 UTC, on main: the full set
   workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A pull request's older run gives way to the newer push; a push to main or dev runs to the end.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -32,9 +41,43 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  cli-lint:
-    name: CLI lint (ruff)
+  # Which jobs this run needs. Off a pull request: all of them. On one: what its files need (scripts/ci_changes.py,
+  # tests/test_ci_changes.py). The checkout is the PR's merge commit, so HEAD^1 is the base it merges into.
+  changes:
+    name: Changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cli: ${{ steps.areas.outputs.cli }}
+      windows: ${{ steps.areas.outputs.windows }}
+      frontend: ${{ steps.areas.outputs.frontend }}
+      rust: ${{ steps.areas.outputs.rust }}
+      release: ${{ steps.areas.outputs.release }}
+      install: ${{ steps.areas.outputs.install }}
+      python: ${{ steps.areas.outputs.python }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: areas
+        name: What the change needs
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git diff --name-only HEAD^1 HEAD > files.txt
+          else
+            : > files.txt
+          fi
+          echo "Changed files: $(wc -l < files.txt)"
+          python3 -I scripts/ci_changes.py --event "$GITHUB_EVENT_NAME" --files files.txt --output "$GITHUB_OUTPUT" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # The quick checks, in one job so a run takes fewer of the plan's 20 parallel jobs (T233): each takes seconds.
+  checks:
+    name: Checks (ruff, pyright, Lua types, wheel)
+    runs-on: ubuntu-latest
+    env:
+      LUALS_VERSION: "3.19.2"
+      LUALS_SHA256: 93ad326b10f6c00911dd8c450fa098332dbd8f9f45d1052f5636a2d54479b947
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -48,146 +91,9 @@ jobs:
       - run: uv sync --frozen --python python3.12
       - run: uv run --python python3.12 ruff check src tests scripts app/scripts
       # The type checker (decision Q113): basic over src/roster/, strict for the modules pyproject.toml lists.
-      # The job keeps its name "CLI lint (ruff)", which branch protection may require by name.
       - run: uv run --python python3.12 pyright
       # One version across pyproject.toml, package.json, tauri.conf.json, the Cargo.tomls and the lock files.
       - run: scripts/bump-version.sh --check
-
-  cli-test:
-    name: CLI tests (Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.10", "3.12", "3.13"]   # requires-python >= 3.10
-    env:
-      UV_PYTHON: ${{ matrix.python }}      # overrides .python-version for every uv command
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      # tests/test_completion.py runs roster's Tab completion in each shell it finds: the image has bash and pwsh
-      - name: Install zsh and fish
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zsh fish
-          zsh --version; fish --version; pwsh --version
-      - run: uv sync --frozen
-      - run: uv run pytest --junitxml=report.xml
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: pytest-report-${{ matrix.python }}
-          path: report.xml
-          retention-days: 7
-
-  # roster natively on Windows (ticket 19): the same suite with Windows' Python, OpenSSH, named pipes and ConPTY (vault
-  # sign-in, ticket 63). Tests that run a POSIX shell script on the machine (the remote half of a command) skip
-  # themselves there; the Mesh's stand-in Hosts run theirs with Git for Windows' sh, which the runner has.
-  # It took 15-19 min, nearly all of it pytest (918-1148 s against Linux's 233-266 s), and 62% of that the Mesh
-  # suite: each stand-in Host command starts Python and Git for Windows' sh, whose every fork is slow, so a Mesh
-  # test there takes about 7 times as long as on Linux (#234). So it's two jobs side by side: the Mesh suite on
-  # the runner's 4 cores (pytest-xdist), and the rest one at a time as before, since many of those time how soon
-  # serve answers or notices a change (within a second) and miss it when 4 workers share the cores.
-  # --durations lists the slowest, to measure again.
-  cli-test-windows:
-    name: CLI tests (Windows, ${{ matrix.part }})
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - part: Mesh
-            args: tests/test_mesh.py -n 4
-          - part: the rest
-            args: --ignore=tests/test_mesh.py
-    env:
-      UV_PYTHON: "3.12"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - run: uv sync --frozen
-      - run: uv run pytest ${{ matrix.args }} --durations=10 --junitxml=report.xml
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: pytest-report-windows-${{ strategy.job-index }}
-          path: report.xml
-          retention-days: 7
-
-  cli-build:
-    name: CLI build (wheel + sdist)
-    runs-on: ubuntu-latest
-    needs: [cli-lint, cli-test, cli-test-windows]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: ${{ env.UV_VERSION }}
-      - run: uv build --python python3.12
-      - run: ls -l dist/
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/
-          retention-days: 28
-
-  app-frontend:
-    name: App frontend (tsc, ESLint, Vitest)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: app
-    steps:
-      - uses: actions/checkout@v4
-      # The shell-hook tests run each hook line and rc snippet in the real shell when it's installed, and
-      # skip it when it isn't (app/src/session/shellHooks.shells.test.ts). The image has bash and pwsh;
-      # add zsh, fish and tcsh (#242). fish and pwsh run under a pty (util-linux `script`, in the image).
-      - name: Install zsh, fish and tcsh
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zsh fish tcsh
-          zsh --version; fish --version; tcsh --version; pwsh --version; script --version
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: app/package-lock.json
-      - run: npm ci
-      - run: npm run check
-      # End to end (app/e2e): copy and paste (T158), the real terminal, and a Host row's menu in the whole app
-      # (T173), in headless Chromium through Vite.
-      # The browser is the headless shell playwright-core names, so package-lock.json pins it.
-      - run: npx playwright-core install --with-deps --only-shell chromium
-      - run: npm run e2e
-      # The JS and CSS size budget (docs/app/performance.md, "Bundle size"): a build takes a second or two.
-      - run: npx vite build
-      - run: python3 ../scripts/check-bundle-size.py dist
-
-  plugin-types:
-    name: Plugin and Config types (lua-language-server)
-    runs-on: ubuntu-latest
-    env:
-      LUALS_VERSION: "3.19.2"
-      LUALS_SHA256: 93ad326b10f6c00911dd8c450fa098332dbd8f9f45d1052f5636a2d54479b947
-    steps:
-      - uses: actions/checkout@v4
       # The example Plugins, type-checked against the generated stubs (examples/plugins/types/roster.lua,
       # ticket 70): a pinned release, checked against its digest.
       - name: Install lua-language-server
@@ -220,10 +126,159 @@ jobs:
           mkdir -p "$RUNNER_TEMP/one" && cp examples/init.lua "$RUNNER_TEMP/one/"
           check one "$RUNNER_TEMP/one"
           check split examples/init-split
+      # The CLI's wheel and sdist build (release.yml builds the ones a release ships).
+      - run: uv build --python python3.12
+      - run: ls -l dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 28
+
+  cli-test:
+    name: CLI tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # requires-python >= 3.10: 3.10, 3.12 and 3.13 off a pull request, 3.12 alone on one (ci_changes.py)
+        python: ${{ fromJSON(needs.changes.outputs.python) }}
+    env:
+      UV_PYTHON: ${{ matrix.python }}      # overrides .python-version for every uv command
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      # tests/test_completion.py runs roster's Tab completion in each shell it finds: the image has bash and pwsh
+      - name: Install zsh and fish
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsh fish
+          zsh --version; fish --version; pwsh --version
+      - run: uv sync --frozen
+      # On the runner's 4 cores (pytest-xdist); every test is safe beside others (docs/development.md, "Tests").
+      - run: uv run pytest -n auto --durations=10 --junitxml=report.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytest-report-${{ matrix.python }}
+          path: report.xml
+          retention-days: 7
+
+  # roster natively on Windows (ticket 19): the same suite with Windows' Python, OpenSSH, named pipes and ConPTY (vault
+  # sign-in, ticket 63). Tests that run a POSIX shell script on the machine (the remote half of a command) skip
+  # themselves there; the Mesh's stand-in Hosts run theirs with Git for Windows' sh, which the runner has.
+  # The suite there takes 47-58 min of test time (each stand-in Host command starts Python and Git for Windows'
+  # sh, whose every fork is slow: a Mesh test takes about 7 times as long as on Linux, #234), so it runs in 3 shards
+  # side by side, each on the runner's 4 cores. conftest.py's --shard balances them by the time each test took
+  # (tests/durations-windows.json, T233: a test it doesn't know counts as the average); each shard writes its tests'
+  # times (--store-durations), and the nightly run merges them into a new file (windows-durations, below).
+  cli-test-windows:
+    name: CLI tests (Windows, ${{ matrix.shard }}/3)
+    runs-on: windows-latest
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      UV_PYTHON: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --frozen
+      - run: >-
+          uv run pytest --shard ${{ matrix.shard }}/3 -n 4 --durations=10 --junitxml=report.xml
+          --store-durations durations.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytest-report-windows-${{ matrix.shard }}
+          path: |
+            report.xml
+            durations.json
+          retention-days: 7
+
+  # The nightly run (and a run by hand) merges the three shards' times into a fresh tests/durations-windows.json, an
+  # artifact, and says in its summary how even the shards ran. Refresh the committed file from it when they drift
+  # apart (docs/development.md, "Tests"): `gh run download RUN -n windows-durations -D tests`.
+  windows-durations:
+    name: Windows shard times
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: cli-test-windows
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.cli-test-windows.result == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pytest-report-windows-*
+          path: reports
+      - run: >-
+          python3 -I scripts/shard_durations.py durations-windows.json
+          reports/pytest-report-windows-{1,2,3}/durations.json --summary "$GITHUB_STEP_SUMMARY"
+      - run: git diff --no-index --stat tests/durations-windows.json durations-windows.json || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-durations
+          path: durations-windows.json
+          retention-days: 28
+
+  app-frontend:
+    name: App frontend (tsc, ESLint, Vitest)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      # The shell-hook tests run each hook line and rc snippet in the real shell when it's installed, and
+      # skip it when it isn't (app/src/session/shellHooks.shells.test.ts). The image has bash and pwsh;
+      # add zsh, fish and tcsh (#242). fish and pwsh run under a pty (util-linux `script`, in the image).
+      - name: Install zsh, fish and tcsh
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsh fish tcsh
+          zsh --version; fish --version; tcsh --version; pwsh --version; script --version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      # End to end (app/e2e): copy and paste (T158), the real terminal, and a Host row's menu in the whole app
+      # (T173), in headless Chromium through Vite.
+      # The browser is the headless shell playwright-core names, so package-lock.json pins it.
+      - run: npx playwright-core install --with-deps --only-shell chromium
+      - run: npm run e2e
+      # The JS and CSS size budget (docs/app/performance.md, "Bundle size"): a build takes a second or two.
+      - run: npx vite build
+      - run: python3 ../scripts/check-bundle-size.py dist
 
   app-rust:
     name: App Rust (fmt, clippy, cargo test)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
       # What Tauri needs to build on Linux (app/src-tauri): WebKitGTK 4.1, GTK, D-Bus, appindicator, rsvg.
@@ -237,6 +292,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - run: cargo fmt --all --check
       # The Tauri crate embeds the built frontend (app/dist) at compile time; clippy only needs it to exist.
       - name: Stub the frontend build for clippy
@@ -264,6 +321,8 @@ jobs:
   core-test-windows:
     name: Core tests (Windows)
     runs-on: windows-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
       # tests/fake_serve.py stands in for roster serve; the tests run it as python3, which Windows lacks.
@@ -278,6 +337,8 @@ jobs:
           python3 --version
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: cargo test
         shell: pwsh
         run: |
@@ -299,6 +360,10 @@ jobs:
   app-windows:
     name: App Windows release build
     runs-on: windows-latest
+    needs: changes
+    # On a pull request only when it touches what the build builds (ci_changes.py "release"); release.yml's dry run
+    # covers its own files (docs/releasing.md).
+    if: needs.changes.outputs.release == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -308,6 +373,8 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - run: npm ci
         working-directory: app
       - run: npm run tauri build -- --no-bundle
@@ -324,6 +391,8 @@ jobs:
   app-linux:
     name: App Linux release build
     runs-on: ubuntu-22.04
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Install the Tauri system packages
@@ -339,6 +408,8 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - run: npm ci
         working-directory: app
       - run: npm run tauri build -- --no-bundle
@@ -348,3 +419,44 @@ jobs:
           name: roster-app-linux
           path: target/release/roster-app
           retention-days: 14
+
+  # install.sh, update.sh and uninstall.sh on a fresh box, in a container (scripts/test-install.sh; #444, decision
+  # Q199): a new user's whole roster life, against a stand-in Host. It needs the network (apt or dnf, astral.sh,
+  # Bitwarden), so it runs on a pull request that touches the install scripts, on Monday's nightly run and by hand
+  # (ci_changes.py "install"). The runner has podman.
+  install-test:
+    name: Install test (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: changes
+    if: needs.changes.outputs.install == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [ubuntu, fedora]
+    steps:
+      - uses: actions/checkout@v4
+      - run: podman --version
+      - run: scripts/test-install.sh ${{ matrix.distro }}
+
+  # One check that always reports, under one name: green when every job that ran passed (a job the change didn't
+  # need is skipped, and that's fine), red when one failed or was cancelled. Branch protection can require "CI".
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [changes, checks, cli-test, cli-test-windows, windows-durations, app-frontend, app-rust, core-test-windows,
+            app-windows, app-linux, install-test]
+    if: always()
+    steps:
+      - name: Every job that ran passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | python3 -Ic '
+          import json, sys
+          bad = {name: job["result"] for name, job in json.load(sys.stdin).items()
+                 if job["result"] not in ("success", "skipped")}
+          for name, result in bad.items():
+              print(f"::error::{name}: {result}")
+          sys.exit(1 if bad else 0)'

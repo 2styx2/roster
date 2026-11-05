@@ -1,0 +1,6 @@
+#!/bin/sh
+# A stand-in Host's id (tests/fakes/ssh, FAKE_HOSTS): `id -un` says FAKE_HOST_ROOT/login when the Host has one (the
+# account it logged in as), else this machine's id.
+if [ "$1" = -un ] && [ -f "$FAKE_HOST_ROOT/login" ]; then cat "$FAKE_HOST_ROOT/login"; exit 0; fi
+for d in /usr/bin /bin; do [ -x "$d/id" ] && exec "$d/id" "$@"; done
+exec id "$@"

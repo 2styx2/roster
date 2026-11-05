@@ -76,12 +76,12 @@ def test_hosts_check_auth_check_and_info_report_the_problem(write_config, capsys
     write_config(HOSTS)
     monkeypatch.setattr(cli, "tcp_ok", lambda *a, **k: True)       # no network
     monkeypatch.setattr(cli, "ssh_ok", lambda *a, **k: True)
-    for argv in (["hosts"], ["check"], ["auth-check"]):
+    for argv in (["hosts"], ["check"], ["check", "--auth"]):
         cli.main(argv)
         err = capsys.readouterr().err
         assert "warning: box1 service 'web': login: 'appliance' isn't a login type roster knows" in err, argv
         assert "fix: set login: to one of" in err, argv
-    assert cli.main(["info", "box1"]) == 0
+    assert cli.main(["hosts", "box1"]) == 0
     out = capsys.readouterr().out
     assert "problems" in out and "service 'web': login: 'appliance'" in out
 

@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from ..common import die, program_argv, run, say, time_left, user_config_dir
+from ..common import die, filter_env, program_argv, run, run_filtered, say, time_left, user_config_dir
 
 # ---------------------------------------------------------------- password providers
 #
@@ -58,7 +58,8 @@ class SignOutFailed(SecretError):
 
 
 class VaultLocked(SecretError):
-    """The vault is locked and this process may not unlock it by itself (see MANUAL_UNLOCK)."""
+    """The vault is locked and this process may not unlock it by itself (see MANUAL_UNLOCK), or has nothing to unlock
+    it with (no terminal to ask in, no password variable): 14, never 35 (#437)."""
 
 
 # What can go wrong signing in (`roster serve`'s vault.login). `step`: where the sign-in carries on (the provider
@@ -117,11 +118,12 @@ class ItemNotFound(SecretError):
 
 
 class SeveralItems(SecretError):
-    """More than one item matches. matches: [{name, revised, uris}]; exact: they all have that exact name."""
+    """More than one item matches. matches: [{name, revised, uris}]; exact: they all have that exact name. total:
+    how many items match when that's more than MATCHES shows (Bitwarden: some of them aren't logins), else None."""
 
-    def __init__(self, message, item, matches, exact):
+    def __init__(self, message, item, matches, exact, total=None):
         super().__init__(message)
-        self.item, self.matches, self.exact = item, matches, exact
+        self.item, self.matches, self.exact, self.total = item, matches, exact, total
 
 
 class NoField(SecretError):
@@ -187,6 +189,14 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
 #             "targets": fn(ctx) -> [target], where the provider can save: each {id, kind, label, save_to}
 #             "resolve": fn(setting, field, ctx) -> the target a save_to setting names (UnknownTarget,
 #                        ReadOnlyTarget); field(part) names the setting for messages
+#             "login_fields": fn(spec, ctx) -> {"uri", "username"} (each None when the item has none): an
+#                             item's address and user, read without its password ever reaching roster (Q190)
+#             "items": fn(ctx, mapped) -> [{id, name, keys, uris, username}]: every login item, read without a
+#                      password, TOTP seed or note ever reaching roster (Q191); keys: what a Login may name it by
+#                      (its id, name, path). MAPPED(item) says it's in roster.yml: its uris and username may be left
+#                      out then (one more CLI call each, for op and kp)
+#             "sync": fn(ctx) -> {"previous": ISO time or None}: fetch what changed on the server (`bw sync`);
+#                     roster add --from-vault, and `roster vault sync` (vaultsync.py)
 #             "box_paths": settings naming files on this Box (e.g. kp's database); a change to one
 #                          from vault.configure locks the provider (what it holds was for the old one)
 PROVIDER_SETTINGS = {}    # name -> settings dict from roster.yml `providers:`
@@ -209,6 +219,14 @@ def register(name, help="", tool=""):
                            "kind": "built-in" if fn.__module__.startswith("roster.") else "plugin"}
         return fn
     return deco
+
+
+def check_item_name(name):
+    """An item name that starts with '-' would reach the vault CLI as an option (`bw get item --session=KEY` puts a
+    key on the command line, Q178 (c)): refused before any CLI runs."""
+    if str(name).startswith("-"):
+        raise SecretError(f"a vault item's name can't start with '-' ({str(name)[:1]}...): the vault CLI would take it "
+                          "as an option - use the item's id")
 
 
 def split_field(spec, default="password"):
@@ -235,22 +253,39 @@ class Ctx:
             raise SecretError(f"needs input ({prompt.strip().rstrip(':')}) but there's no terminal to ask in")
         return getpass.getpass(f"  {prompt}")
 
-    def run(self, args, env=None, shell=False, interactive=False, timeout=120, input=None, floor=1):
+    def run(self, args, env=None, shell=False, interactive=False, timeout=120, input=None, floor=1, discard=False):
         """Run a helper command, capturing output. A missing tool becomes a friendly error.
         INPUT goes to its stdin (the way to hand a tool a secret: never in args). The timeout is held to serve's
-        deadline (common.time_left), but never below FLOOR; past it, TimedOut."""
+        deadline (common.time_left), but never below FLOOR; past it, TimedOut. DISCARD: its stdout goes to the null
+        device, never into roster (only the exit code and stderr come back)."""
         tool = args if isinstance(args, str) else args[0]
         stdin = {} if input is not None else {"stdin": None if interactive else subprocess.DEVNULL}
         try:
             if not shell:
                 args = program_argv(args)
-            return run(args, shell=shell, text=True, timeout=time_left(timeout, floor),
-                       input=input, env={**os.environ, **(env or {})}, **stdin)
+            return run(args, shell=shell, text=True, timeout=time_left(timeout, floor), input=input,
+                       env={**os.environ, **(env or {})}, stdout=subprocess.DEVNULL if discard else subprocess.PIPE,
+                       **stdin)
         except FileNotFoundError:
             raise CliMissing(not_installed(self.provider, tool))
         except subprocess.TimeoutExpired:
             raise TimedOut(f"`{tool}` timed out")
         except ValueError as e:                     # program_argv: a batch file and an argument cmd.exe acts on
+            raise SecretError(str(e))
+
+    def run_filtered(self, args, filt, env=None, timeout=120, floor=1):
+        """ARGS's stdout straight into FILT's stdin, never into roster (common.run_filtered, Q191): returns (ARGS's
+        exit code and stderr, FILT's stdout and stderr). FILT gets next to no environment (common.filter_env), so
+        not ENV's session key either. Errors as run()'s."""
+        tool = args[0]
+        try:
+            return run_filtered(program_argv(args), program_argv(filt), timeout=time_left(timeout, floor),
+                                env={**os.environ, **(env or {})}, filter_env=filter_env())
+        except FileNotFoundError:
+            raise CliMissing(not_installed(self.provider, tool))
+        except subprocess.TimeoutExpired:
+            raise TimedOut(f"`{tool}` timed out")
+        except ValueError as e:
             raise SecretError(str(e))
 
 
@@ -281,7 +316,7 @@ def get_secret(ref, group):
     name = name.strip()
     if name not in PROVIDERS:
         raise SecretError(f"unknown password source {name!r} in auth {ref!r} - available: "
-                          f"{', '.join(sorted(PROVIDERS))} (see `roster providers`)")
+                          f"{', '.join(sorted(PROVIDERS))} (see `roster vault status`)")
     cache_key = (ref, group) if name == "prompt" else ref
     with _secret_lock:
         if cache_key in _secrets:
@@ -535,6 +570,69 @@ def delete_item(provider, item_id):
         for ref in [r for r in _secrets if str(r[0] if isinstance(r, tuple) else r).startswith(provider + ":")]:
             del _secrets[ref]
     fn(item_id, Ctx(provider, None))
+
+
+def login_fields(provider, spec, interactive=True):
+    """{uri, username} of the vault item SPEC in PROVIDER (`roster add --from-vault`, vault.item_fields, Q190), each
+    None when the item has none. Only a provider that can read them without the password reaching roster has this
+    (bw's `bw get uri` / `bw get username`; op's overview and username field, Q197); any other is Unsupported. INTERACTIVE=False (`roster add -y`): never
+    asks, not even for a master password."""
+    fn = _vault_op(provider, "login_fields")
+    if not fn:
+        raise Unsupported(f"provider '{provider}' can't give an item's address and username without roster reading "
+                          "its password too, so roster doesn't ask it")
+    name, _ = split_field(spec)
+    if not name:
+        raise SecretError(f"{provider}: needs an item name or id")
+    check_item_name(name)
+    ctx = Ctx(provider, None)
+    ctx.interactive = ctx.interactive and interactive
+    with _secret_lock:
+        found = fn(name, ctx)
+    return {"uri": found.get("uri") or None, "username": found.get("username") or None}
+
+
+def _listing_ctx(provider, interactive):
+    """A Ctx for listing or syncing: never asks unless INTERACTIVE, and its unlock doesn't sync by itself (the caller
+    syncs, or chose not to)."""
+    ctx = Ctx(provider, None)
+    ctx.interactive = ctx.interactive and interactive
+    ctx.settings = {**ctx.settings, "sync": False}
+    return ctx
+
+
+def can_list(provider):
+    """Can PROVIDER list its items without a password reaching roster (an "items" hook)?"""
+    return bool(_vault_op(provider, "items"))
+
+
+def vault_items(provider, mapped=None, interactive=False):
+    """Every login item in PROVIDER's vault as [{id, name, keys, uris, uri, username, revised}] (uri: the first of uris,
+    or None; revised: its revision date when the provider says, for `roster vault sync`), never a password, TOTP seed, note or custom field (Q191: Bitwarden's through roster's filter process).
+    MAPPED(item) -> True: a Login in roster.yml names it, so its uris and username may stay empty. INTERACTIVE=False
+    never asks, not even for the master password. Unsupported for a provider with no "items" hook."""
+    fn = _vault_op(provider, "items")
+    if not fn:
+        raise Unsupported(f"provider '{provider}' can't list its items without roster reading their passwords too, "
+                          "so roster doesn't ask it")
+    with _secret_lock:
+        found = fn(_listing_ctx(provider, interactive), mapped or (lambda item: False))
+    return [{"id": i["id"], "name": i["name"], "keys": sorted(set(i.get("keys") or (i["id"], i["name"]))),
+             "uris": list(i.get("uris") or []), "uri": (i.get("uris") or [None])[0],
+             "username": i.get("username") or None, "revised": i.get("revised") or None} for i in found]
+
+
+def sync_vault(provider, interactive=False):
+    """Fetch what changed in PROVIDER's vault on its server (`bw sync`): {provider, previous} (the sync before this
+    one, an ISO time, or None when it never synced or can't say), or None for a provider with nothing to sync (a
+    local file, a CLI that always asks the server). The one sync `roster add --from-vault` and `roster vault sync`
+    (vaultsync.py) use. Raises SecretError (e.g. the sync failed, or the vault is locked)."""
+    fn = _vault_op(provider, "sync")
+    if not fn:
+        return None
+    with _secret_lock:
+        done = fn(_listing_ctx(provider, interactive))
+    return {"provider": provider, "previous": done.get("previous")}
 
 
 # ---- extension points

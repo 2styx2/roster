@@ -61,7 +61,7 @@ def test_matches_every_word(write_config):
 def test_key_tag_pattern_includes_old_fleet_tag(write_config):
     cfg = load_config(write_config("box_name: ws1\ngroups:\n  a: {user: u, hosts: {h: 1.2.3.4}}\n"))
     assert cfg["tag"] == "roster-managed:ws1"
-    assert "fleet-managed" in cfg["tag_re"] and cfg["tag_re"].endswith(":ws1$")
+    assert "fleet-managed" in cfg["tag_re"] and cfg["tag_re"].endswith(":ws1[[:space:]]*$")
 
 
 def test_find_config_order(isolated, monkeypatch):

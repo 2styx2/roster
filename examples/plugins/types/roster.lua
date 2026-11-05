@@ -1,5 +1,5 @@
 ---@meta roster
--- roster's Plugin API, roster.api_version 5: LuaCATS annotations for lua-language-server.
+-- roster's Plugin API, roster.api_version 6: LuaCATS annotations for lua-language-server.
 -- Generated from crates/roster-core/src/plugin/api.rs by `cargo run -p roster-core --example gen_plugin_api`; don't edit.
 -- The reference: docs/plugin-api.md (`:help plugin-api`).
 
@@ -561,6 +561,7 @@
 ---@field box string This Box's name.
 ---@field host_count integer How many Hosts.
 ---@field providers string[] The password providers roster has.
+---@field store? roster.InventoryStore How `roster.yml` is kept: a plain file or a team repo (serve API 28; absent before).
 ---@field roster_version string roster's version.
 ---@field api_version integer roster serve's API version (not `roster.api_version`).
 
@@ -606,10 +607,17 @@
 ---@field details? string The raw text, when there is one (ssh's stderr).
 ---@field data? table What the code's row says it carries.
 
+--- How `roster.yml` is kept: a plain file or a team repo (serve API 28)
+---@class roster.InventoryStore
+---@field kind "repo"|"file" A team repo, or a plain file.
+---@field note string Which, in a sentence, as `roster check --box` says it.
+---@field repo? string The git work tree it's in; `nil` outside one.
+
 --- `changes.diff`'s result: the Pending changes
 ---@class roster.ChangesDiff
 ---@field path string `roster.yml`'s path.
----@field repo string The infra repo's top folder.
+---@field repo? string The infra repo's top folder; `nil` for a plain file.
+---@field kind? "repo"|"file" `file` for a plain file, whose edits are saved already: no diff, `count` 0 (serve API 28; absent before).
 ---@field diff string git's diff of `roster.yml` against the last commit; `""` for none. A `cmd:` reference in it reaches a Plugin cut to `cmd:` (the rest of its line), an `env:` one to `env:`.
 ---@field hosts roster.HostChange[] The Hosts it changes.
 ---@field groups roster.GroupChange[] The groups it changes.
@@ -687,8 +695,9 @@
 --- The `mesh: false` a `mesh.cut` writes into `roster.yml`
 ---@class roster.MeshCutChange
 ---@field written boolean Whether it was written now (`false` when it already was, or couldn't be).
----@field backup? string The copy of `roster.yml` from before; `nil` when it isn't in a git repo.
----@field note? string Why nothing was written, or that it went straight to a file outside git.
+---@field backup? string The copy of `roster.yml` from before (since serve API 28 a plain file's too; `nil` before for a file outside git).
+---@field kind? "repo"|"file" A Pending change in a team repo, or saved straight to a plain file (serve API 28; absent before).
+---@field note? string Why nothing was written (before serve API 28, also that it went straight to a file outside git).
 ---@field error? string Why it couldn't be written (the cut still happened).
 ---@field fix? string What to do then, in a sentence.
 
@@ -805,6 +814,7 @@
 ---@class roster.Session
 ---@field session integer The Session's id, as its events name it: `roster.terminal.send` and `roster.sessions.show` take it.
 ---@field host? string The Host's name; `nil` for a Quick Connect Session (`:quick`), which isn't on a Host.
+---@field cwd? string The folder the Session's shell last said it's in, with OSC 7 (since api 6; Shell integration): an absolute path such as `/srv/app` (PowerShell's on Windows: `/C:/Users/you`). Only for a Plugin granted `terminal.read`, as it's something the Session printed; `nil` without it, until the shell says one, or when what it said isn't a plain `file://` folder roster takes (no control characters, no invisible format characters such as zero-width spaces or bidi marks, at most 1024 characters). It's the shell's word, never checked: the Host can say any folder, so show it or report it, never use it to reach a file. It changes on every `cd`; read the list again when you need it now.
 
 --- `session_open`'s payload
 ---@class roster.SessionOpenEvent
@@ -843,6 +853,7 @@
 ---@field command? string The command line as the shell showed it after its prompt; `nil` when it couldn't be read (the shell sent no `B` mark, or the line scrolled away or was reflowed by a resize before it ran).
 ---@field output string What it printed, each line ending in `\n`, as `terminal_output` sent it (its last line too, if it didn't end in a line feed). At most the last 16 KB.
 ---@field code? integer Its exit code; `nil` when the shell didn't say.
+---@field cwd? string The folder the shell last said it was in (OSC 7) before the command ran, so a `cd`'s is the folder it left (since api 6); `nil` when it said none roster takes. As `Session`'s `cwd`: the shell's word, never checked.
 
 ---@class roster.module
 ---@field api_version integer The version of the `roster` module this app has
@@ -1499,7 +1510,7 @@ function roster.sessions.show(session, line) end
 
 --- The Sessions open now, in the order they opened.
 --- Permission: inventory.read or terminal.read. Since: api 4.
----@return roster.Session[] # Each open Session's id and Host, oldest open first.
+---@return roster.Session[] # Each open Session's id and Host (and, with `terminal.read`, its folder), oldest open first.
 function roster.sessions.list() end
 
 --- Opens a Session on a Host, as `:connect HOST`.

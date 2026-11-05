@@ -3,7 +3,7 @@
 // drives how you reach them: the topic finder (␣ ?), `:help TOPIC` with Tab completion, links,
 // Ctrl+O back, search, and Esc back to where you were. user-event writes Ctrl+Space as
 // {Control>} {/Control}.
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
@@ -13,6 +13,11 @@ import type { Config, ConfigReport } from "./config/types";
 import { memoryPlatform } from "./platform/memory";
 import { builtinRegistries } from "./registries";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { helpText } from "./help/text";
+
+// The guides' text is a chunk the app loads on the first :help (T213; App.lazyHelp.test.tsx
+// drives that); these read it.
+beforeAll(() => helpText.load());
 
 const hosts = makeHosts(12);
 const LEADER = "{Control>} {/Control}";

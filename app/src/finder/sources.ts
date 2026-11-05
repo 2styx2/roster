@@ -51,6 +51,9 @@ export interface FinderSourceDef extends Entry {
   /** The Finder opened on it: a source that fetches its items (a Plugin's function, ticket 79)
    * starts now and registers again with them. */
   open?(): void;
+  /** Its items or matches changed without it registering again (`:helpgrep` once the guides'
+   * text has loaded, T213): the Finder asks again. */
+  subscribe?(listener: () => void): () => void;
   /** The matches for `query`, best first; by default searchItems over `items`. */
   search?(ctx: FinderContext, query: string): FinderItem[];
   /** The item selected on opening, in the empty query's list (default the first). */

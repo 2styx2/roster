@@ -35,6 +35,7 @@ The app hands each one to the Plugins as their `job_progress` event ([Plugins](p
 |---|---|
 | queued (every worker busy) | it never runs; it answers `5` |
 | waiting for a lock (`roster.yml`, the vault) or for an unlock sent before it | it stops waiting at once and answers `5`; nothing was done |
+| running: `inventory.create` cloning a repo (API 28): git is killed and the folder it was making taken away; it answers `5` |
 | running: `host.check`, or `mesh.plan`, `mesh.apply`, `mesh.cut` waiting for their job | the job stops at its next step or Host, as `jobs.stop` would; the request answers with what was done. A check stops only if no other request waits for it and none asked for it with `background: true` (API 22): a request that joined another's check leaves it running and answers when it ends |
 | running: anything else | nothing: it runs to its end, so nothing is half-written, and its answer says what it did (the app's check after a timeout, `host.get {settled: true}` or `vault.status`, sees it) |
 | `vault.lock`, `vault.logout` | never cancelled: locking always succeeds |
@@ -58,11 +59,13 @@ A Plugin can never send `$/cancel` (it isn't a method a Plugin may be granted), 
 
 <!-- END generated:methods -->
 
-<!-- BEGIN generated:methods inventory.info hosts.list host.get -->
+<!-- BEGIN generated:methods inventory.info inventory.create hosts.list host.get -->
 
 | Method | Params | Result | Errors | Since API |
 |---|---|---|---|---|
-| `inventory.info` | none | `{path, box, host_count, providers: [names], roster_version, api_version}` |  | 1 |
+| `inventory.info` | none | `{path, box, host_count, providers: [names], store, roster_version, api_version}` |  | 1 |
+| `inventory.info` | none | `store: {kind, note, repo}` (T212): how `roster.yml` is kept, as the disk and git say now. `kind` is `repo` (committed in a git repo with a remote: edits are Pending changes until `changes.publish`) or `file` (a plain file: every edit is saved straight to it, and there's nothing to pull or publish); `note` says which in a sentence; `repo` is the git work tree it's in (`null` outside one) |  | 28 |
+| `inventory.create` | `{how: blank\|file\|repo, folder, source?, name?}`: `folder` absolute (or `~/...`); `source` the `roster.yml` to copy (`file`) or the git URL (`repo`); `name` when the folder's name is taken (`-32602` with `data.field: "name"`) | `{path, name, how, hosts, restart: true}`: `path` the new `roster.yml`, `hosts` how many it has; the app restarts serve (as after `inventories.use`) | `5`, `140`, `143`, `170`-`172`, `174` | 28 |
 | `hosts.list` | none | `{hosts: [Host, ...], groups: {name: {title, description}}, error}`, hosts in `roster.yml` order. `error` (API 8) is `null`, or why `roster.yml` as it is now doesn't load while these are the last good ones |  | 1 |
 | `host.get` | `{name}` (exact Host name) | one Host | `2` | 1 |
 | `host.get` | `{name, settled: true}` | the Host once no write to `roster.yml` is under way: it waits for one as another write would (the app's check after a `host.add` it stopped waiting for) | `2`, `4` | 20 |
@@ -309,7 +312,7 @@ Errors are JSON-RPC errors. The `code` is stable; the `message` uses roster's us
 | `30` | The Host's ssh user is discover's placeholder `CHANGE-ME`: "no SSH user for esx (user: CHANGE-ME in roster.yml)" |
 | `31` | The Login's provider isn't set up on this box: "keeper's ssh Login uses 'keeper:', which isn't set up on this box". `data.provider` |
 | `32` | No vault item by that name: "no vault item named 'esx shh' (ssh Login of esx) - did you mean: 'esx ssh'". `data.near` lists similar item names (names only) |
-| `33` | Several vault items match: "2 vault items are named 'esx ssh' (ssh Login of esx): ...". `data.matches` is `[{name, revised, uris}]`: names, last-edited dates and URIs, never a value |
+| `33` | Several vault items match: "2 vault items are named 'esx ssh' (ssh Login of esx): ...". `data.matches` is `[{name, revised, uris}]`: names, last-edited dates and URIs, never a value (`revised` is `null` for KeePassXC, whose listing has no date; Bitwarden's comes from Q191's filter, the owner's ruling). When some of the Bitwarden items that match aren't logins, the message says "N vault items match 'ITEM' (...), some of them aren't logins" and `matches` holds the login ones only (Q191 (p)) |
 | `34` | The item has no password, or no such `#FIELD`: "vault item 'esx ssh' has no password (ssh Login of esx)". `data.field` |
 | `35` | The provider failed some other way; the message is the provider's |
 | `36` | askpass: the Host asked something roster won't answer (an expired password, an OTP); the prompt is in the message |
@@ -399,26 +402,44 @@ One person may have several Inventories, the team's for work and their own for h
 | `160` | A note, not an error: an `os: windows` Host is left out of the Mesh (its scripts are sh). It's the start of that Host's reason in `excluded` (`mesh.plan`, `mesh.apply`, `mesh.status`), never an error code |
 | `161` | `roster run` on an `os: windows` Host: the command isn't PowerShell; nothing ran. A CLI error, never a serve answer |
 | `162` | A `box.check` warning (topic `E222`): this Box's name is an OS image's default hostname, so another Box likely has it too; Boxes with the same name are one owner |
-| `164` | `roster bw`: a bw command that changes the vault, writes it out (`export`) or a file (`receive`, `get attachment`, `--output`) or acts on the account, without `--write`; bw didn't run. A CLI error, never a serve answer |
-| `165` | `roster bw`: a bw command (or an option before it) roster bw doesn't know, or `--write` among bw's arguments; bw didn't run. A CLI error |
-| `166` | `roster bw`: `bw serve`, or `--session` on bw's command line, always refused; bw didn't run. A CLI error |
+| `164` | `roster vault bw`: a bw command that changes the vault, writes it out (`export`) or a file (`receive`, `get attachment`, `--output`) or acts on the account, without `--write`; bw didn't run. A CLI error, never a serve answer |
+| `165` | `roster vault bw`: a bw command (or an option before it) roster vault bw doesn't know, or `--write` among bw's arguments; bw didn't run. A CLI error |
+| `166` | `roster vault bw`: `bw serve`, or `--session` on bw's command line, always refused; bw didn't run. A CLI error |
+| `170` | `roster init`: a `roster.yml` is there already, so it's kept as it is and nothing is written (T212). A CLI error so far |
+| `171` | `roster init`: the `roster.yml` to import isn't there or doesn't load, or a cloned repo has none at its top; nothing written (or the clone is kept, and said). A CLI error so far |
+| `172` | `roster init`: git couldn't clone the team's repo (not installed, a bad URL or access, or the folder isn't empty). A CLI error so far |
+| `173` | `roster init`: the ssh config to import Hosts from can't be read; nothing written. A CLI error so far |
+| `174` | `roster init`: the folder for the new `roster.yml` can't be made or written in; nothing written. A CLI error so far |
+| `184` | `roster add`: another Host has that address and SSH port already; `data.host`, `data.group` (T220). A CLI error: the app's `host.add` allows it |
+| `185` | `roster add` without a terminal (or with `--yes`): a value it can't default is missing, and the message names its flag (T220). A CLI error |
+| `186` | `vault.item_fields` (and `roster add --from-vault`): the provider (any but Bitwarden and 1Password) can't give an item's address and username without roster reading its password, so it isn't asked (T220, API 29) |
+| `187` | `roster add --from-vault` (no NAME): the vault couldn't list its items or sync (T221). A CLI error so far |
+| `188` | `roster add --from-vault` (no NAME): roster.yml uses no vault that can list its items without roster reading their passwords (T221). A CLI error so far |
+| `190` | `roster setup` on a renamed Box: a Host's key file has another key's line under the new name (another Box uses it), so that Host is left as it is; `setup --force` goes ahead (T226). A CLI error |
+| `196` | `roster vault op`: an op command that changes the vault or the account (`item create`, `item edit`, `item delete`, `item share`, `signin`, `signout`, `account add`, …) or writes a file here (`update`, `connect server create`, any `--out-file`/`-o`), without `--write`; op didn't run (T223). A CLI error, never a serve answer |
+| `197` | `roster vault op`: an op command roster vault op doesn't know (or an option among its words, or before it, that isn't one of op's valueless ones), or `--write` among op's arguments; op didn't run. A CLI error |
+| `198` | `roster vault op`: `op run`, `op plugin run`, `--session` or `--config` on op's command line, always refused; op didn't run. A CLI error |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 
 ## Editing: Pending changes
 
-A Pending change is an edit to `roster.yml` made on this box and not Published yet: `roster.yml`'s uncommitted diff in the infra repo (a git clone). These methods need `roster.yml` committed in a git repo (`70` otherwise). Publishing commits and pushes them (`changes.publish`).
+A Pending change is an edit to `roster.yml` made on this box and not Published yet: `roster.yml`'s uncommitted diff in the infra repo (a git clone). Publishing commits and pushes them (`changes.publish`). That's when `roster.yml` is committed in a git repo with a remote (`inventory.info`'s `store.kind: repo`). Since API 28 (T212) a `roster.yml` that isn't (`store.kind: file`: outside a repo, no git on the Box, not committed, or a repo with no remote) is a plain file: every write below (and `discover.add`, `mesh.cut`'s `mesh: false`) saves straight to it, with `backup` beside it (`roster.yml.bak`, or in the git dir inside a repo), and `inventory.pull`, `changes.diff` and `changes.discard` answer that there's nothing pending instead of `70`. See [A plain file or a team repo](cli-reference.md#a-plain-file-or-a-team-repo).
 
 <!-- BEGIN generated:methods inventory.pull host.verify_login host.update changes.diff changes.discard changes.publish -->
 
 | Method | Params | Result | Errors | Since API |
 |---|---|---|---|---|
 | `inventory.pull` | none | `{updated, upstream, commits, ahead, from?, to?, message?, sync?}`: the repo fast-forwarded to its upstream (`upstream: null` when the branch has none: nothing to pull), then `roster sync` when it updated (`sync`, T150, as `changes.publish`'s). Refuses uncommitted changes (`71`, `data.files`) and a diverged branch (`72`, `data.ahead`/`behind`); a failed fetch is `73`. Never merges, rebases or stashes | `70`-`73` | 5 |
+| `inventory.pull` | none | a plain file (`inventory.info`'s `store.kind: file`, T212) has nothing to pull: `{updated: false, upstream: null, commits: 0, ahead: 0, message}`, never an error |  | 28 |
 | `host.verify_login` | `{host, changes}` | `{host, ok, steps}` like `host.check`, with steps `user`, `provider`, `vault-item`, `dns`, `tcp`, `host-key`, `auth`, run against the Host as `changes` would leave it | `2` | 5 |
 | `host.update` | `{host, changes}` | `{changed, host, backup, warnings, sync}`: the edit written into `roster.yml`, `host` as it loads now, `backup` the file as it was, `warnings` what failed after the write (recording a moved Host's key), `sync: {ok, error?, fix?}` (T150) the `roster sync` after it, as `changes.publish`'s (left out when nothing changed) | `2`, `70`, `74`, `75` | 5 |
 | `changes.diff` | none | `{path, repo, diff, hosts: [{host, change: changed\|added\|removed, fields}], groups: [{group, change}], count, message, last_commit}`: git's diff of `roster.yml` against the last commit, the commit message `changes.publish` would write, and `last_commit: {commit, subject, upstream, pushed}` (the branch's last commit, and whether its upstream has it as this box last fetched) | `70` | 5 |
+| `changes.diff` | none | `kind` (T212): `repo`, or `file` for a plain file, whose edits are saved already: then `repo: null`, `diff: ""`, `count: 0` and `last_commit: null`, never an error |  | 28 |
 | `changes.discard` | none | `{discarded, backup, sync?}`: `roster.yml` back as the last commit has it (index and working tree), then `roster sync` (`sync`, T150, as `changes.publish`'s; left out when there was nothing to discard) | `70` | 5 |
+| `changes.discard` | none | a plain file (T212) has nothing to discard: `{discarded: false, backup: null}` |  | 28 |
 | `changes.publish` | `{message?}` | `{commit, upstream, message, hosts, groups: [{group, change}], pulled, sync: {ok, error?, fix?}}`: commits `roster.yml` alone and pushes it to the branch's upstream, then runs `roster sync` | `1`, `70`, `73`, `90`-`96` | 7 |
+| `changes.publish` | `{message?}` | as above, in a repo; a plain file (T212) is error `90`: every edit is saved to it already, so there's nothing to publish | `1`, `70`, `73`, `90`-`96` | 28 |
 
 <!-- END generated:methods -->
 
@@ -438,7 +459,7 @@ The key a new address offers comes from `host.scan_key {address, port?}` (its se
 
 | Method | Params | Result | Errors | Since API |
 |---|---|---|---|---|
-| `host.add` | `{name, group, address, user?, port?, type?, title?, description?, enroll?, auth? \| password + item?, host_key?, provider?, save_to?}` | `{added: true, host, backup, verify, item, warnings, sync}`: `host` as `roster.yml` has it now, `verify` the test login (`{host, ok, steps}`, or `null` without a Login), `item` the Vault item it made (`{provider, id, name, target}`, or `null`), `sync: {ok, error?, fix?}` (T150) the `roster sync` after the Host is written, so a Session to it opens straight away: a failed sync doesn't undo the add (`ok: false`, its `error` and `fix`) | `80`, `81`, `74`, `61`, `11`, `12`, `14`, `30`-`35`, `40`-`48`, `60`, `62`, `64`, `65` | 6 |
+| `host.add` | `{name, group, address, user?, port?, type?, title?, description?, enroll?, auth? \| password + item?, host_key?, provider?, save_to?}` | `{added: true, host, backup, verify, item, warnings, sync}`: `host` as `roster.yml` has it now, `verify` the test login (`{host, ok, steps}`, or `null` without a Login), `item` the Vault item it made (`{provider, id, name, target}`, or `null`), `sync: {ok, error?, fix?}` (T150) the `roster sync` after the Host is written, so a Session to it opens straight away: a failed sync doesn't undo the add (`ok: false`, its `error` and `fix`). Since API 29 (T220) its checks are `roster add`'s (addhost.py): `80` also for an address that's neither an IP address nor a DNS name | `80`, `81`, `74`, `61`, `11`, `12`, `14`, `30`-`35`, `40`-`48`, `60`, `62`, `64`, `65` | 6 |
 | `host.review` | `{host, reviewed?}` | `{changed, host, backup, sync?}`: `reviewed: true` set on that Host and nothing else (`changed: false` if it already was). `reviewed: false` (API 9) un-reviews it, for a review made by mistake: where the Host's own `reviewed: true` sits over an unreviewed group or defaults, its line is taken out again, so the text goes back to what it was. `sync` (T150): the `roster sync` after a change, as `host.add`'s | `2`, `70`, `74` | 6 |
 
 <!-- END generated:methods -->
@@ -611,19 +632,20 @@ The Bitwarden CLI holds one account at a time, so signing in to another one mean
 |---|---|
 | `13` | The provider has no account to sign out of; roster doesn't try. KeePassXC: "KeePassXC has no account to sign out of: it opens a local database file. To use another one, change vault.kp.database in init.lua"; `env`, `cmd`: "provider 'env' has no account to sign out of - its Logins come from this box itself". Nothing was forgotten |
 | `15` | The CLI isn't signed in, so there's no account to sign out of: "the Bitwarden CLI isn't signed in on this box - there's no account to sign out of". `data.fix`: sign in from the lock screen. Everything was forgotten anyway |
-| `16` | `bw logout` failed some other way; the message has bw's words. `data.fix`: see the message; `roster bw --write logout` in a terminal shows the same. Everything was forgotten anyway |
+| `16` | `bw logout` failed some other way; the message has bw's words. `data.fix`: see the message; `roster vault bw --write -- logout` in a terminal shows the same. Everything was forgotten anyway |
 
 ## Saving to the vault: `vault.create_item`
 
 "Save to vault" (the add-Host form, Quick Connect) creates the Vault item a new Login points at. The order is: verify the login, create the Vault item, then add the Pending change. If that last step fails, `vault.undo_create` takes the item back out, so nothing stray is left.
 
-<!-- BEGIN generated:methods vault.create_item vault.undo_create vault.targets -->
+<!-- BEGIN generated:methods vault.create_item vault.undo_create vault.targets vault.item_fields -->
 
 | Method | Params | Result | Errors | Since API |
 |---|---|---|---|---|
 | `vault.create_item` | `{name, password, username?, uri?, provider?, save_to?}` | `{provider, id, name, target}` | `14`, `60`-`62`, `64`, `65` | 4 |
 | `vault.undo_create` | `{id}` (from `vault.create_item`) | `{provider, id}` | `14`, `62`, `63` | 4 |
 | `vault.targets` | `{provider?}` | `{provider, targets: [{id, kind, label, organization?, collection?, save_to}], default, from, problem}` | `14` | 10 |
+| `vault.item_fields` | `{item, provider?}`: `item` the item's name or id (as after `bw:` or `op:` in auth), `provider` the vault (default: the Inventory's, as vault.status's) | `{provider, item, address?, port?, user?, note?}`: `note` says why the item's URI gave no address (another scheme than ssh, sftp, http or https, or a host that isn't an address) | `13`, `14`, `11`, `12`, `31`, `32`, `33`, `35`, `186` | 29 |
 
 <!-- END generated:methods -->
 
@@ -640,7 +662,7 @@ The Bitwarden CLI holds one account at a time, so signing in to another one mean
 
 | Code | Meaning |
 |---|---|
-| `60` | An item named exactly that already exists. `data.matches`: `[{name, revised, uris}]` |
+| `60` | An item named exactly that already exists. `data.matches`: `[{name, revised, uris}]`, as for 33 |
 | `61` | The provider can only read Logins: "provider 'op' can't save to the vault - ..." |
 | `62` | The vault CLI refused the create or delete (no rights to the collection, an organization policy, the server). The message has bw's words with any value cut out |
 | `63` | `vault.undo_create`: this `serve` didn't create that item, or it's already undone |
@@ -661,7 +683,7 @@ Host-to-Host access set up from this Box (API 15; [The Mesh](mesh.md)). The app'
 |---|---|---|---|---|
 | `mesh.plan` | `{rotate?: [host], background?: bool}` (`background` since API 17) | a Mesh result with `applied: false`: what `mesh.apply` would do. Changes nothing anywhere. With `background: true`, `{job, action, total}` at once, and the result comes in `mesh.job` | `1`, `110`, `111` | 15 |
 | `mesh.apply` | `{rotate?: [host], background?: bool}` (`background` since API 17) | a Mesh result with `applied: true`; `rotate` replaces those sources' keys everywhere. With `background: true`, `{job, action, total}` at once, and the result comes in `mesh.job` | `1`, `110`, `111` | 15 |
-| `mesh.cut` | `{host, background?: bool}` (`background` since API 17) | `{host, confirmed: [host], pending: {host: why}, warnings: [text], change}`: HOST's key off every peer and every peer's off HOST, at once. `warnings` (since API 24): what roster left on HOST's own side, an earlier `mesh_dir:` that still holds a Mesh key (roster never removes one), one sentence each. `change` is the `mesh: false` written for HOST as a Pending change: `{written: true, backup}` (`backup: null` and a `note` when `roster.yml` isn't in a git repo), `{written: false, note}` when it already was, or `{written: false, error, fix}` when it couldn't be written (the cut still happened); a written one has `sync` (T150), the `roster sync` after it, as `host.add`'s. With `background: true`, `{job, action, total, host}` at once, and the result comes in `mesh.job` | `1`, `2`, `111` | 15 |
+| `mesh.cut` | `{host, background?: bool}` (`background` since API 17) | `{host, confirmed: [host], pending: {host: why}, warnings: [text], change}`: HOST's key off every peer and every peer's off HOST, at once. `warnings` (since API 24): what roster left on HOST's own side, an earlier `mesh_dir:` that still holds a Mesh key (roster never removes one), one sentence each. `change` is the `mesh: false` written for HOST as a Pending change: `{written: true, backup, kind}` (since API 28 `kind` is `repo`, or `file` for a plain file it was saved straight to, with `backup` beside it, T212), `{written: false, note}` when it already was, or `{written: false, error, fix}` when it couldn't be written (the cut still happened); a written one has `sync` (T150), the `roster sync` after it, as `host.add`'s. With `background: true`, `{job, action, total, host}` at once, and the result comes in `mesh.job` | `1`, `2`, `111` | 15 |
 | `mesh.status` | `{brief?: bool, grouped?: bool}` (`brief` since API 17, `grouped` since API 19) | `{links, excluded, reach, members, pending, cut_pending, out_of_date}`: the Links as `roster.yml` asks for them (no `status`), `members` the Hosts roster visits, `out_of_date: true` when `roster.yml` changed the Mesh since the last complete apply on this Box. `brief: true` keeps it small when every pair of hundreds of Hosts is a Link: `links` only those worth a look (with a `via`, `no-via` marked), at most 1000 (`links_more` counts the rest), and `link_count`, `link_statuses` and `reached` for the rest. `grouped: true` (for a map, such as the Topology Plugin's, that draws who reaches whom) keeps every Link but says each meshed group once: `meshed: {group: [host]}`, the Hosts of each meshed group that reach each other both ways (two or more, in `roster.yml` order), and `links` without the pairs those cover, so 2,000 meshed Hosts are 2,000 names, not 98,000 Links. Not with `brief` | `-32602` | 15 |
 | `mesh.job` | `{job?, brief?: bool}` | `{job, action, host?, state, done, total, at, stopped, result?, error?}`, or `null` when there's no job (or `job` isn't the latest). `state` is `running`, `done` (with `result`, as the method itself returns it; `brief` makes a plan's or apply's as small as `mesh.status`'s brief) or `failed` (with `error`: `{code, message, data?}`, as an error response's). `done` of `total` Hosts so far; `at` the Host it's on. `stopped`: `mesh.stop` asked it to stop; the Hosts it hadn't got to are pending |  | 17 |
 | `mesh.stop` | `{job}` | `{job, stopping}`: `stopping: false` when that job isn't running (over already, or not the latest) |  | 17 |

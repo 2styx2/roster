@@ -213,6 +213,21 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .error h1 { font-size: var(--text-lg); font-weight: 600; margin: 0; color: var(--error); overflow-wrap: anywhere; }
 .error p { margin: 0; }
 .error .problem-message, .error .problem-facts, .error .problem-actions { margin: 0; overflow-wrap: anywhere; }
+/* No Inventory yet (T212): the three ways to make one, on the bare window. */
+.first-run { width: min(480px, 100%); display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.first-run h1 { font-size: var(--text-lg); font-weight: 600; margin: 0; }
+.first-run p { margin: 0; }
+.first-run form { display: flex; flex-direction: column; gap: 10px; align-self: stretch; }
+.first-run-ways { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.first-run-ways legend { padding: 0 0 2px; color: var(--muted); font-size: var(--text-xs); }
+.first-run-way { display: flex; align-items: baseline; gap: 8px; font-size: var(--text-sm); }
+.first-run-way > span { display: flex; flex-direction: column; }
+.first-run-way .muted, .first-run .edit-note { font-size: var(--text-xs); }
+.first-run-refusal p { margin: 0; overflow-wrap: anywhere; }
+.first-run-status { margin: 0; font-size: var(--text-sm); }
+.first-run button[aria-disabled="true"] { opacity: 0.6; }
+.first-run button[aria-disabled="true"]:active { transform: none; }
+.first-run-refusal > p:first-child { color: var(--error); }
 
 /* ---------- Standard layout: [Sidebar | workspace | side panel], command line, status bar ---------- */
 
@@ -634,6 +649,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .edit-field input.mono { font-family: var(--font-mono); }
 .edit-field input[aria-invalid="true"] { border-color: var(--error); }
 .edit-field-problem { color: var(--error); font-size: var(--text-xs); }
+/* A warning, not a refusal (#437: another Host's address and port): warn, never error. Empty, it
+   stays in the tree as the live region it is, taking back the field's gap. */
+.edit-field-warn { color: var(--warn); font-size: var(--text-xs); }
+.edit-field-warn:empty { margin-top: -3px; }
 .edit-note { margin: 0; color: var(--muted); }
 /* "Save to vault" says what it saves before its fields (ticket 15). */
 .save-panel > .edit-note { margin-bottom: 12px; }
@@ -649,6 +668,16 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .add-login { display: flex; flex-direction: column; gap: 8px; margin: 2px 0 0; padding: 8px 0 0; border: 0; border-top: 1px solid var(--line); min-width: 0; }
 .add-login legend { padding: 0; color: var(--muted); font-size: var(--text-xs); }
 .add-ways { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+/* "Fill from this item" (#437): a small button beside what it said, under the item field. */
+.add-fill { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.add-fill button { height: 24px; padding: 0 8px; font-size: var(--text-xs); }
+.add-ref { white-space: nowrap; }
+/* While it reads it stays focusable (aria-disabled, review of #458): it looks like a disabled one. */
+.add-fill button[aria-disabled="true"] { opacity: 0.6; }
+.add-fill button[aria-disabled="true"]:active { transform: none; }
+@media (hover: hover) and (pointer: fine) {
+  .add-fill button[aria-disabled="true"]:hover { background: var(--raised); }
+}
 .add-way, .add-check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); }
 /* Save to (ticket 35): one place per line, like a short list; a long one scrolls in place. */
 .add-save-to { display: flex; flex-direction: column; gap: 4px; min-width: 0; }

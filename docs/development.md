@@ -3,7 +3,8 @@
 ```bash
 uv sync                  # creates .venv with dev tools
 uv run pytest            # no network or SSH server needed; temp folders are deleted when each test ends (below)
-uv run pytest tests/test_mesh.py -n 4   # the slow Mesh suite on 4 workers (pytest-xdist), as CI's Windows job runs it
+uv run pytest -n auto    # on every core (pytest-xdist), as CI runs it; every test is safe beside others
+uv run pytest --shard 2/3 -n 4   # the 2nd of CI's three Windows shards, balanced by tests/durations-windows.json
 uv run ruff check src tests scripts app/scripts   # with flake8-bandit's security rules (S)
 uv run pyright           # the type checker: basic over src/roster/, strict for the modules listed in pyproject.toml
 uv build                 # wheel + sdist in dist/
@@ -31,7 +32,16 @@ src/roster/
   sshops.py         keys, fingerprints, ssh config, key install/removal, password logins
   resources.py      Wi-Fi networks, accounts and secrets with no address: the field schema per type
   claude.py         ROSTER.md, CLAUDE.md import, .claude/settings.json
+  aliases.py        the CLI's old names (T222, Q194): one table, each old command line rewritten to its new form
+                    before the parser sees it, with one stderr line naming it (none for `roster completion`)
   boxsync.py        `roster sync` for this Box after roster changed roster.yml: serve's writes and the CLI's (discover --write, mesh cut)
+  addhost.py        adding one Host (T220, Q190): the one implementation behind serve's host.add and `roster add`
+                    (checks, the write through store.py, this Box's sync), and a vault item's address and user
+                    without its password (`--from-vault`, vault.item_fields)
+  fromvault.py      `roster add --from-vault` with no NAME (T221, Q191): the vault items no Login in roster.yml names,
+                    new ones since the last run (the seen file), and the walk adding each through addhost
+  vaultsync.py      `roster vault sync` (T222, Q194): each vault roster.yml uses, synced, and the items added, changed
+                    or removed since the last sync, from a snapshot of ids and revision dates (vault-sync/, 0600)
   discover.py       nmap / built-in scanning, type guessing, merging into roster.yml; Scan: serve's discover.* scan
   serve.py          `roster serve`: JSON-RPC API for the desktop app, method table, the roster.yml watcher (inventory.changed);
                     requests answered concurrently on workers, a lock per resource each method claims (LOCKS, decision Q112),
@@ -43,12 +53,15 @@ src/roster/
                     the job.progress notification; serve's exit stops every job and records it
   edit.py           editing one Host in roster.yml as text, adding, removing, renaming or moving one, and groups (comments and other entries kept), checked before it's written
   changes.py        Pending changes: the infra repo's git (pull fast-forward only, roster.yml's diff, discard, the .bak, publish)
+  store.py          how roster.yml is kept (T212, Q182): a team repo or a plain file, decided per file; every write saves
+                    through it (serve, add, discover --write, mesh cut), and pull/diff/discard/publish ask it
+  newinventory.py   a new Inventory (`roster init --inventory`): blank, a copy, a clone, Hosts from an ssh config
   clihelp.py        `roster --help`'s command groups, each command's description and examples (tested to parse),
                     and the nearest name for a mistyped command or option
-  completion.py     Tab completion: `roster completion SHELL`'s scripts and the hidden `roster __complete` helper that
+  completion.py     Tab completion: `roster help --completion SHELL`'s scripts and the hidden `roster __complete` helper that
                     walks the parser and reads names from the local roster.yml (decision Q183)
   manpage.py        roster(1): generated from the parser (cli.build_parser) and docs/cli-reference.md into
-                    roster.1 (committed, shipped in the wheel); `roster man`. Regenerate: uv run python -m roster.manpage
+                    roster.1 (committed, shipped in the wheel); `roster help --man`. Regenerate: uv run python -m roster.manpage
   errors.py         the stable error codes and Problem (code, message, fix): what serve, askpass and check report
   mesh.py           the Mesh: who reaches whom (mesh:, links:), plan/apply over ssh one Host at a time, cut, status,
                     drift for `roster check`; the sh it runs on Hosts (docs/mesh.md)
@@ -60,9 +73,12 @@ src/roster/
   web.py            roster web: HTTP requests logged in with a service's stored credentials
   winhost.py        Windows Hosts (os: windows): the PowerShell scripts setup, revoke and check send on stdin (the key file, its ACL)
   winpipe.py        Windows named pipes for askpass: a pipe only this user can open (its DACL), the client end (ctypes, stdlib only)
+  winfile.py        Windows: read a secret's file only if it's this user's alone (its owner and DACL, through one handle; #411)
   providers/        password providers: registry + plugins + templates, builtin, bitwarden, onepassword,
                     keepassxc (a local .kdbx through keepassxc-cli);
                     bw_login: `bw login` driven a step at a time on a PTY (serve's vault.login); ConPTY on Windows
+                    bw_items_filter: the stdlib-only filter `bw list items` is piped into, so roster reads only each
+                    item's id, name, URIs, username and revision date (Q191, Q194)
 examples/           commented roster.yml and init.lua, provider plugin template, example Plugins and the Plugin API's types
 plugins/            the first-party Plugins (mesh, discover, topology), installed as Packages with dir = "plugins/NAME" (Q94)
 scripts/            gen-serve-api.py: docs/serve-api.md's method tables from serve's docstrings (Params:, Result:,
@@ -82,17 +98,35 @@ tests/              pytest suite + fake password-manager CLIs
 app/                the roster app (frontend + app/src-tauri); its Rust core is crates/roster-core (app/README.md)
 ```
 
-The Plugin API (the `roster` Lua module) is declared once, in `crates/roster-core/src/plugin/api.rs`. `cargo run -p roster-core --example gen_plugin_api` writes `docs/plugin-api.md`, the lua-language-server stubs `examples/plugins/types/roster.lua` and `crates/roster-core/tests/fixtures/plugin-api.json` (the help's topics) from it; `--check` only says whether they're current, and `cargo test` fails when they aren't or when the runtime and api.rs disagree. To type-check the example and first-party Plugins as CI does, run [lua-language-server](https://luals.github.io/) 3.19.2: `lua-language-server --check examples/plugins --checklevel=Hint` and `lua-language-server --check plugins --checklevel=Hint`.
+The Plugin API (the `roster` Lua module) is declared once, in `crates/roster-core/src/plugin/api.rs`. `cargo run -p roster-core --example gen_plugin_api` writes `docs/plugin-api.md`, the lua-language-server stubs `examples/plugins/types/roster.lua` and `crates/roster-core/tests/fixtures/plugin-api.json` (the help's topics, and the data `:help plugin-types` writes the stubs from: the app doesn't bundle `roster.lua`) from it; `--check` only says whether they're current, and `cargo test` fails when they aren't or when the runtime and api.rs disagree. To type-check the example and first-party Plugins as CI does, run [lua-language-server](https://luals.github.io/) 3.19.2: `lua-language-server --check examples/plugins --checklevel=Hint` and `lua-language-server --check plugins --checklevel=Hint`.
 
 Tests never leave folders in the temp dir (ticket 109: once 37k of them filled /tmp). A roster-core test takes its folder from `common::temp("what")` (`crates/roster-core/tests/common/mod.rs`, a `tempfile::TempDir` that reads as a `Path`), which deletes it when the test ends, failing or not; a helper that makes one returns that guard (or something holding it), never a bare path, and nothing builds a path under `std::env::temp_dir()` itself (`tests/temp_cleanup.rs` checks both). A pytest test uses `tmp_path`; anything else it, serve or a program it runs makes with `tempfile` or in `$TMPDIR` lands in a folder of the test's own that `conftest.py` deletes afterwards. CI runs `cargo test` in a fresh temp dir and fails if a `roster-core-*` folder is left in it. To try that locally: `mkdir -p ~/scratch-tmp && TMPDIR=~/scratch-tmp cargo test; ls -A ~/scratch-tmp`.
 
-The app's checks are in [app/README.md](../app/README.md#development) (`npm run check` in `app/`, `cargo test` at the root). CI runs both halves on every pull request (`.github/workflows/ci.yml`); [CONTRIBUTING.md](../CONTRIBUTING.md) has the branch model. Besides Linux, it runs pytest on Windows, as two jobs side by side: the Mesh suite on 4 workers (its stand-in Hosts run under Git for Windows' slow-forking `sh`, which took the one job to 15-19 min), and the rest one at a time, since many of those time how soon serve answers. A test that hangs fails after 120 s anywhere (pytest-timeout, `pyproject.toml`). It also runs roster-core's `cargo test` on Windows (`Core tests (Windows)`): the core's `cfg(windows)` code, such as the junctions in a Plugin's "stays inside its folder" rule, only runs there. That job tests the core only (the Tauri crate is built by the Windows release build), keeps its own Rust cache, and runs `tests/fake_serve.py` with the Python it installs. It also builds the frontend and checks its JS and CSS against their budget (`scripts/check-bundle-size.py`, [performance.md](app/performance.md#bundle-size)).
+The app's checks are in [app/README.md](../app/README.md#development) (`npm run check` in `app/`, `cargo test` at the root). CI (`.github/workflows/ci.yml`) runs both halves; [CONTRIBUTING.md](../CONTRIBUTING.md) has the branch model. pytest runs on every core (pytest-xdist, `-n auto`), so a test must pass beside others: its own HOME and temp folder (`conftest.py`'s `isolated`), no fixed port, and no tight time limit on how soon something happens that a busy machine misses. Besides Linux, it runs pytest on Windows, in three shards side by side (`--shard K/3`, each on 4 workers): there each stand-in Host command starts Python and Git for Windows' slow-forking `sh`, so the suite takes 47 to 58 minutes of test time. The shards are balanced by time, not count (T233): `conftest.py` deals the tests out longest first, each to the shard with the least so far, by the seconds each took in `tests/durations-windows.json` plus a second each (what a test costs there beyond its own time: without it, the shard of quick tests ran longest); a test the file doesn't know (a new one) counts as the file's average, so adding a test needs no entry, and a name the file has that's gone is ignored. Each Windows shard writes its tests' times (`--store-durations durations.json`, beside its `report.xml` in the `pytest-report-windows-K` artifact), and the nightly run's `Windows shard times` job merges the three into a fresh file (the `windows-durations` artifact, `scripts/shard_durations.py`) and puts each shard's test time in its summary. When the shards drift apart (more than a minute or so of wall time: about 4 minutes of test time on 4 workers), refresh the committed file in a pull request: `gh run download RUN -R 2styx2/roster -n windows-durations -D tests`. A test that hangs fails after 120 s anywhere (pytest-timeout, `pyproject.toml`). It also runs roster-core's `cargo test` on Windows (`Core tests (Windows)`): the core's `cfg(windows)` code, such as the junctions in a Plugin's "stays inside its folder" rule, only runs there. That job tests the core only (the Tauri crate is built by the Windows release build), keeps its own Rust cache, and runs `tests/fake_serve.py` with the Python it installs. It also builds the frontend and checks its JS and CSS against their budget (`scripts/check-bundle-size.py`, [performance.md](app/performance.md#bundle-size)).
+
+### What CI runs when
+
+A push to `main` or `dev`, a tag, the nightly schedule (03:23 UTC, on `main`) and a run by hand run every job, with pytest on Python 3.10, 3.12 and 3.13. A pull request runs a PR-sized set (decision Q196): Python 3.12 only, and only the jobs its changed files need. The `Changes` job works that out (`scripts/ci_changes.py`, tested in `tests/test_ci_changes.py`); the halves read each other's files, so a path runs every job that reads it:
+
+| A pull request that touches | runs |
+|---|---|
+| `src/`, `tests/`, `pyproject.toml`, `uv.lock` (the CLI) | pytest on Linux and on Windows |
+| `app/` (the frontend) | the frontend, Rust and pytest on Linux (`tests/` checks `app/src` files) |
+| `crates/`, `Cargo.toml`, `Cargo.lock`, `app/src-tauri/`, `app/package*.json` | the frontend, Rust, pytest on Linux, and the Windows and Linux release builds |
+| `plugins/` | the frontend and Rust |
+| `docs/`, `examples/`, a `*.md` at the root | the frontend, Rust and pytest on Linux (each checks the docs) |
+| `tests/vectors/` | pytest on Linux and Windows, the frontend and Rust |
+| `install.sh`, `update.sh`, `uninstall.sh`, `install-lib.sh`, `scripts/test-install.sh` | pytest on Linux and Windows, and the install test (`scripts/test-install.sh` on Ubuntu and Fedora, in containers) |
+| `.github/workflows/release.yml` | the release builds (and release.yml's own dry run, [releasing.md](releasing.md)) |
+| `.github/workflows/ci.yml`, `scripts/`, or anything else | everything |
+
+The install test needs the network (apt or dnf, astral.sh, Bitwarden), so off a pull request it runs only on Monday's nightly run and on a run by hand, not on every push or tag (decision Q199). `Checks` (ruff, pyright, one version, the lua-language-server checks and the wheel build) always runs: one job, since each takes seconds, so a run takes fewer of the free plan's 20 parallel jobs (T233). The release builds, `App Windows release build` and `App Linux release build`, run on a pull request only when it touches what they build; every push to `dev` runs them. A pull request's older run is cancelled when a newer push comes; a push to `main` or `dev` runs to the end. The Rust jobs restore the cache `dev`'s last run saved and don't save their own, so pull requests don't push `dev`'s cache out of the 10 GB GitHub keeps. The last job, `CI`, always reports: green when every job that ran passed, red when one failed or was cancelled, so branch protection can require that one name.
 
 ## Languages and types
 
 The CLI and `roster serve` are Python; the app's core is Rust (decision Q113, [ADR 0009](adr/0009-python-cli-rust-where-it-falls-short.md)). Every new data shape in the CLI or serve (a serve method's params and result, a `roster.yml` key, a `--json` document) is a Pydantic model, and new or rewritten modules pass the type checker in strict mode. Existing dicts move over when a ticket touches them, not in one sweep.
 
-- **The type checker is pyright** (`uv run pyright`, pinned in the dev group; CI's `CLI lint` job runs it beside ruff). It checks `src/roster/` in basic mode; a module that is new or rewritten goes on the `strict` list in `pyproject.toml`'s `[tool.pyright]` in the same pull request (`models.py` is the first). What it finds is fixed, or silenced on its line with the rule and a reason (`# pyright: ignore[reportAttributeAccessIssue] - Windows only`), never for a whole file.
+- **The type checker is pyright** (`uv run pyright`, pinned in the dev group; CI's `Checks` job runs it beside ruff). It checks `src/roster/` in basic mode; a module that is new or rewritten goes on the `strict` list in `pyproject.toml`'s `[tool.pyright]` in the same pull request (`models.py` is the first). What it finds is fixed, or silenced on its line with the rule and a reason (`# pyright: ignore[reportAttributeAccessIssue] - Windows only`), never for a whole file.
 - **roster.yml loads into models** (`models.py`): `config.load_inventory(path)` returns an `Inventory` of `Host`s (with their `SshLogin`, `Login` and `Service`s), `Group`s, `Link`s and resources (`WifiResource`, `AccountResource`, `SecretResource`), read-only. New code reads those. `load_config(path)` is the same Inventory as the dicts the older code reads (`Inventory.as_config()`), keys unchanged; a module moves to the models when a ticket touches it. serve's params and results are models in `servemodels.py` (`hosts.list` and `host.get` so far: a method moves there when a ticket touches it), and every `--json` document is one in `jsondocs.py` (`jsonout.emit` takes only a model). Each dumps with `exclude_unset` (an optional key that isn't set is left out, as the dicts did) in the field order the dicts had: the output is byte for byte what it was. Their fields' `description=` is what docs/serve-api.md's object tables say (`scripts/gen-serve-api.py`); a field without one fails the generator. A key roster doesn't know stays on its Host (`shell_hooks`, a team's own).
 - **A model's error is roster's own:** config.py makes its checks first, with their usual messages; whatever the models still refuse (`workers: lots`) stops with `error: PATH: KEY: what's wrong` (code 1 in serve and `--json`), never a Pydantic traceback, and never the value that failed. No repr shows an `auth:` or a key roster doesn't know: anything that could hold a secret is `Field(repr=False)` (`SecretStr` for a value a vault returns).
 - **Pydantic is imported lazily:** only when roster.yml is loaded (inside `config.parse_inventory`), so `roster --help`, `roster --version` and `roster askpass` don't pay for it (`tests/test_models.py` checks `import roster.cli` doesn't load it). Measure a change to that with `python -X importtime -c "import roster.cli"`.

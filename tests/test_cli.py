@@ -28,10 +28,10 @@ def test_init_hosts_info(capsys, isolated):
     assert (isolated["work"] / "roster.yml").exists()
     rc, out = run(capsys, "hosts", "--find", "orion prod")
     assert rc == 0 and "orion-web-01" in out and "orion-dev-01" not in out
-    rc, out = run(capsys, "info", "core", "switch")
+    rc, out = run(capsys, "hosts", "core", "switch")
     assert "net-sw-core-01" in out and "Uplinks" in out
     with pytest.raises(SystemExit, match="did you mean"):
-        main(["info", "orion"])
+        main(["hosts", "orion"])
 
 
 HOSTS_YML = """\
@@ -88,16 +88,41 @@ def test_setup_skips_unreviewed_hosts(capsys, write_config):
     assert rc == 0 and "skipping     1 hosts with reviewed: false" in out
 
 
+SAME_NAME_YML = ("groups:\n  nas:\n    user: u\n    enroll: false\n    auth: env:PW\n    hosts:\n"
+                 "      nas: 127.0.0.1\n      backup-01: {ip: 127.0.0.2, type: nas}\n")
+
+
+def test_setup_host_sets_up_exactly_that_host_never_its_group_or_type(capsys, write_config, monkeypatch):
+    scanned = []                                                 # #437 (1): --only nas would take backup-01 too
+    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: scanned.extend(h["name"] for h in hosts) or set())
+    write_config(SAME_NAME_YML)
+    rc, out = run(capsys, "setup", "--host", "nas", "--dry-run")
+    assert rc == 0 and scanned == ["nas"] and "1 hosts from" in out
+
+
+def test_setup_host_names_an_unknown_host(capsys, write_config):
+    write_config(SAME_NAME_YML)
+    with pytest.raises(SystemExit, match="unknown host 'backup'"):
+        main(["setup", "--host", "backup"])
+
+
+def test_setup_host_and_only_dont_go_together(capsys, write_config):
+    write_config(SAME_NAME_YML)
+    with pytest.raises(SystemExit) as e:
+        main(["setup", "--host", "nas", "--only", "nas"])
+    assert e.value.code == 2 and "not allowed with argument" in capsys.readouterr().err
+
+
 def test_providers_flags_unknown(capsys, write_config):
     write_config("groups:\n  g: {user: u, auth: 'keeper:x', hosts: {h1: 10.0.0.1}}\n")
-    rc, out = run(capsys, "providers")
+    rc, out = run(capsys, "vault", "status")
     assert rc == 1 and "UNKNOWN providers used in roster.yml: keeper" in out
 
 
 def test_providers_lists_keepassxc(capsys, write_config):
     write_config("providers:\n  kp: {database: roster.kdbx}\n"
                  "groups:\n  g: {user: u, auth: 'kp:g ssh', hosts: {h1: 10.0.0.1}}\n")
-    rc, out = run(capsys, "providers")
+    rc, out = run(capsys, "vault", "status")
     assert rc == 0 and re.search(r"^  kp +built-in +KeePassXC, a local \.kdbx.*used by: g$", out, re.M)
 
 
@@ -106,7 +131,7 @@ def test_auth_check(capsys, write_config, monkeypatch):
     write_config("groups:\n"
                  "  a: {user: u, auth: 'env:GOOD_PW', hosts: {h1: 10.0.0.1}}\n"
                  "  b: {user: u, auth: 'env:MISSING_PW', hosts: {h2: 10.0.0.2}}\n")
-    rc, out = run(capsys, "auth-check")
+    rc, out = run(capsys, "check", "--auth")
     assert rc == 1
     assert "ok    a" in out and "FAIL  b" in out and "MISSING_PW is not set" in out
 
@@ -196,15 +221,15 @@ def _bw_session_file(isolated, text="fake-session-key\n"):
 
 def test_bw_uses_the_session_file_without_a_roster_yml(capfd, isolated, fakes):
     _bw_session_file(isolated)
-    assert main(["bw", "sync"]) == 0
+    assert main(["vault", "bw", "sync"]) == 0
     assert "Syncing complete." in capfd.readouterr().out
 
 
 def test_bw_without_a_session_reports_the_locked_vault(capfd, isolated, fakes):
-    assert main(["bw", "sync"]) == 1
+    assert main(["vault", "bw", "sync"]) == 1
     assert "Vault is locked." in capfd.readouterr().err
 
 
 def test_bw_needs_arguments(isolated):
-    with pytest.raises(SystemExit, match="usage: roster bw"):
-        main(["bw"])
+    with pytest.raises(SystemExit, match="usage: roster vault bw"):
+        main(["vault", "bw"])

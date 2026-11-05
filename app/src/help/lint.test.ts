@@ -2,7 +2,7 @@
 // somewhere, and no two topics share a name. A typo in `[x](keyboard.md#tow-modes)` fails here
 // instead of shipping as plain text. tests/test_docs.py checks the Markdown in docs/ the same way
 // for what GitHub shows.
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { defaultConfig } from "../config/fixture";
 import { defaultOptions, keymapOf } from "../keymap";
 import { builtinRegistries } from "../registries";
@@ -10,6 +10,11 @@ import { HelpView, registerHelp } from "./command";
 import { blockLinks, slug } from "./doc";
 import pluginApi from "../../../crates/roster-core/tests/fixtures/plugin-api.json";
 import { findTopic, linkKind, pageBody, topicIndex, type HelpContext, helpContext } from "./pages";
+import { helpText } from "./text";
+
+// The guides' text is a chunk the app loads on the first :help (T213; App.lazyHelp.test.tsx
+// drives that); these read it.
+beforeAll(() => helpText.load());
 
 /** The files a guide may link to, from the repo's root, and the Markdown among them. */
 const UP = "../../../";

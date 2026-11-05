@@ -16,7 +16,7 @@ Building needs the WebKitGTK 4.1 development packages; `build` prints the comman
 | Fedora (also the WSL Fedora image) | `sudo dnf install -y webkit2gtk4.1-devel openssl-devel libxdo-devel librsvg2-devel libappindicator-gtk3-devel && sudo dnf group install -y development-tools` | `sudo dnf install -y webkit2gtk4.1 gtk3 libsoup3` |
 | Debian, Ubuntu | `sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev librsvg2-dev libayatana-appindicator3-dev libssl-dev build-essential pkg-config` | `sudo apt-get install -y libwebkit2gtk-4.1-0 libgtk-3-0` |
 
-CI builds the Linux app on every pull request (`App Linux release build` in `.github/workflows/ci.yml`, Ubuntu 22.04 like the release build, so its glibc runs on newer distros); `fetch` takes that binary and says which libraries are still missing (`ldd`). The release workflow also makes the `.AppImage` and `.deb` ([releasing.md](../../releasing.md)).
+CI builds the Linux app on every push to `dev` or `main`, and on a pull request that touches the Rust or the Tauri build (`App Linux release build` in `.github/workflows/ci.yml`, Ubuntu 22.04 like the release build, so its glibc runs on newer distros); `fetch` takes that binary and says which libraries are still missing (`ldd`). The release workflow also makes the `.AppImage` and `.deb` ([releasing.md](../../releasing.md)).
 
 ## Run it with its own data
 

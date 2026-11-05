@@ -18,6 +18,8 @@ export interface ToolbarContext {
   quickConnect: boolean;
   /** The Host details panel is on screen (ticket 18). */
   detailsShown?: boolean;
+  /** roster.yml is a plain file (T212): every edit is saved, so there are no Pending changes to show. */
+  plain?: boolean;
 }
 
 export type ToolbarIcon = "find" | "quick" | "add" | "changes" | "publish" | "cmdline" | "keys" | "help" | "lock" | "mode" | "sidebar" | "details" | "map";
@@ -83,6 +85,7 @@ export const builtinControls: readonly ToolbarControlDef[] = [
     command: "changes",
     byDefault: true,
     count: (c) => (c.pendingCount > 0 ? c.pendingCount : null),
+    when: (c) => !c.plain,
   }),
   control({
     id: "publish",

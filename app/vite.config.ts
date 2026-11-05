@@ -1,12 +1,13 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { helpTags, jsonPick } from "./scripts/help-plugin.mjs";
 import { thirdPartyNotices } from "./scripts/notices-plugin.mjs";
 
 // Tauri dev expects a fixed port (1420, strictPort). Browser runs in WSL use another one,
 // e.g. `npm run dev -- --port 5179`, so the two never collide (docs/app/dev/testing.md).
 export default defineConfig({
-  plugins: [react(), thirdPartyNotices],
+  plugins: [react(), thirdPartyNotices, jsonPick, helpTags],
   clearScreen: false,
   server: {
     port: 1420,

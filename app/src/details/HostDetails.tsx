@@ -1,4 +1,4 @@
-// The Host details panel (ticket 18, spec stories 79-80, decision Q71): what `roster info HOST`
+// The Host details panel (ticket 18, spec stories 79-80, decision Q71): what `roster hosts HOST`
 // shows, as a side panel opposite the Sidebar, closed until asked for (`:info HOST`, the tree's and
 // the Picker's info control, the toolbar's toggle, `␣ i`). Each web service has an Open button that
 // hands its URL to the default browser (`:open SERVICE` does the same). Logins show their vault

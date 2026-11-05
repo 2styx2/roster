@@ -5,7 +5,7 @@
 #   app/scripts/linux-run.sh build            build it from this checkout (tauri build --no-bundle); needs the
 #                                             WebKitGTK 4.1 dev packages (it prints the command when they're missing)
 #   app/scripts/linux-run.sh fetch [RUN_ID]   or take CI's build instead (artifact roster-app-linux) with
-#                                             `gh run download`: RUN_ID, else this branch's latest green CI run,
+#                                             `gh run download`: RUN_ID, else this branch's latest green CI run with a build,
 #                                             else dev's
 #   app/scripts/linux-run.sh run [opts]       start it (OPENS A WINDOW) and wait until it's closed
 #   app/scripts/linux-run.sh measure [opts]   the same with the paste text on the clipboard; open the Host
@@ -126,15 +126,21 @@ case "$what" in
     ;;
   fetch)
     run_id="${1:-}"
-    if [ -z "$run_id" ]; then
+    tmp="$(mktemp -d)"
+    if [ -n "$run_id" ]; then
+      gh run download "$run_id" -R 2styx2/roster -n roster-app-linux -D "$tmp"
+    else
+      # A pull request builds the app only when it touches the Rust or the Tauri build (docs/development.md,
+      # "What CI runs when"), so a green run may have no build: then dev's, which every push builds.
+      got=""
       for b in "$(git -C "$repo" branch --show-current)" dev; do
         run_id="$(gh run list -R 2styx2/roster -w CI -b "$b" -s success -L 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)"
-        [ -n "$run_id" ] && break
+        if [ -n "$run_id" ] && gh run download "$run_id" -R 2styx2/roster -n roster-app-linux -D "$tmp" 2>/dev/null; then
+          got=1; break
+        fi
       done
+      [ -n "$got" ] || { rm -rf "$tmp"; echo "No green CI run with a Linux build found; pass a RUN_ID." >&2; exit 1; }
     fi
-    [ -n "$run_id" ] || { echo "No green CI run found; pass a RUN_ID." >&2; exit 1; }
-    tmp="$(mktemp -d)"
-    gh run download "$run_id" -R 2styx2/roster -n roster-app-linux -D "$tmp"
     mkdir -p "$dir/bin"
     install -m 755 "$tmp/roster-app" "$bin"
     rm -rf "$tmp"

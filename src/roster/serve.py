@@ -21,20 +21,20 @@ import os
 import queue
 import re
 import secrets
-import shutil
 import signal
 import sys
 import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 from . import (
     __version__,
+    addhost,
     askpass,
     boxsync,
-    changes,
     diagnose,
     discover,
     edit,
@@ -44,6 +44,7 @@ from . import (
     jobs,
     mesh,
     providers,
+    store,
 )
 from .common import (
     current_deadline,
@@ -52,12 +53,14 @@ from .common import (
     deadline_at,
     die_message,
     failure_text,
+    find_program,
     known_hosts_label,
+    never_look_in_the_current_folder,
     not_reviewed,
     ssh_config_file,
     ssh_path,
 )
-from .config import find_config, load_config, load_inventory
+from .config import find_config, load_config, load_inventory, locate_config
 from .errors import (  # noqa: F401 (the codes are part of serve's API)
     ALREADY_SIGNED_OUT,
     BUSY,
@@ -73,6 +76,7 @@ from .errors import (  # noqa: F401 (the codes are part of serve's API)
     INVALID_HOST,
     INVENTORIES_UNREADABLE,
     INVENTORY_ERROR,
+    INVENTORY_THERE,
     ITEM_EXISTS,
     LOGIN_NOT_SEEN,
     MESH_BUSY,
@@ -121,7 +125,7 @@ from .sshops import (
     sync_fix,
 )
 
-API_VERSION = 27            # bump when a method or result changes in a way the app has to know about
+API_VERSION = 29            # bump when a method or result changes in a way the app has to know about
 
 # JSON-RPC's own error codes
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
@@ -251,12 +255,18 @@ def inventory_info(state, params):
     """Which roster.yml, on which box, and which roster and serve API answer: the app's first call.
 
     Params: none
-    Result: `{path, box, host_count, providers: [names], roster_version, api_version}`
+    Result: `{path, box, host_count, providers: [names], store, roster_version, api_version}`
     Since: API 1
+    Params: none
+    Result: `store: {kind, note, repo}` (T212): how `roster.yml` is kept, as the disk and git say now. `kind` is
+        `repo` (committed in a git repo with a remote: edits are Pending changes until `changes.publish`) or `file`
+        (a plain file: every edit is saved straight to it, and there's nothing to pull or publish); `note` says
+        which in a sentence; `repo` is the git work tree it's in (`null` outside one)
+    Since: API 28
     """
     cfg = state.inventory()
     return {"path": str(cfg["path"]), "box": cfg["box"], "host_count": len(cfg["hosts"]),
-            "providers": sorted(PROVIDERS), **versions()}
+            "providers": sorted(PROVIDERS), "store": store.at(cfg["path"], for_show=True).view(), **versions()}
 
 
 def hosts_list(state, params):
@@ -339,7 +349,7 @@ def session_prepare(state, params):
     if not h["reviewed"]:
         raise RpcError(NOT_REVIEWED, not_reviewed(h))
     diagnose.check_user(h)
-    ssh = shutil.which("ssh")         # absolute: the app spawns it with `wsl.exe --exec`, where PATH is thin
+    ssh = find_program("ssh")         # absolute: the app spawns it with `wsl.exe --exec`, where PATH is thin
     if ssh is None:
         raise RpcError(NOT_SET_UP, "no ssh client on this box's PATH - install OpenSSH (openssh-client)")
     if not in_ssh_config(h["name"]):
@@ -443,7 +453,7 @@ def known_key(h):
         raise RpcError(HOST_KEY_UNKNOWN, f"roster hasn't seen {h['name']}'s host key before",
                        {"address": h["ip"], "port": h["ssh"]["port"]},
                        fix="compare its fingerprint with the Host's console or owner, then trust it when the app "
-                           f"asks, or run `roster setup --only {h['name']}`")
+                           f"asks, or run `roster setup --host {h['name']}`")
 
 
 # An app Session never trusts a host key on its own (Q60): the key must already be in roster's known hosts, put
@@ -679,10 +689,131 @@ def inventories_use(state, params):
     return {"active": name, "path": str(chosen.path), "restart": True}
 
 
+def inventory_create(state, params):
+    """A new Inventory, for the app's first run when this serve found none (T212, decision Q182): one of
+    `roster init --inventory`'s ways, written by serve (ADR 0001: the app never writes roster.yml). It goes to
+    FOLDER/roster.yml and is named (`roster inv add`, NAME or the folder's name) and made the active one, so the
+    serve the app starts next finds it. A clone never asks anything (no terminal): a repo that needs a passphrase or
+    a password fails (`172`), and `roster init --inventory repo:URL` in a terminal is the way then. One at a time on
+    this Box, whichever serve (a lock file in roster's config folder; `170` while another runs, or when an Inventory
+    turns up meanwhile). `$/cancel` stops a clone under way: git is killed, the folder it was making taken away,
+    and the answer is `5`.
+
+    Params: `{how: blank|file|repo, folder, source?, name?}`: `folder` absolute (or `~/...`); `source` the
+        `roster.yml` to copy (`file`) or the git URL (`repo`); `name` when the folder's name is taken (`-32602` with
+        `data.field: "name"`)
+    Result: `{path, name, how, hosts, restart: true}`: `path` the new `roster.yml`, `hosts` how many it has; the
+        app restarts serve (as after `inventories.use`)
+    Errors: 5, 140, 143, 170-172, 174
+    Since: API 28
+    """
+    from . import newinventory
+    if state.path is not None:
+        raise RpcError(INVENTORY_THERE, f"this roster serve runs on {state.path} already, so it makes no other "
+                                        "Inventory", {"path": str(state.path)},
+                       fix="`roster init --inventory ... --name NAME` in a terminal makes another one beside it")
+    how = params.get("how")
+    if how not in ("blank", "file", "repo"):
+        raise RpcError(INVALID_PARAMS, "params.how must be blank, file or repo")
+    folder = params.get("folder")
+    if not isinstance(folder, str) or not folder.strip():
+        raise RpcError(INVALID_PARAMS, "params.folder: the folder for roster.yml")
+    given = params.get("source") if isinstance(params.get("source"), str) else ""
+    if re.search(r"[\x00-\x1f\x7f\"']", folder + given):     # they go into messages, inventories.json, the ssh config
+        raise RpcError(INVALID_PARAMS, "params.folder and params.source can't hold a quote or a control character")
+    folder = Path(folder.strip()).expanduser()
+    if not folder.is_absolute():
+        raise RpcError(INVALID_PARAMS, "params.folder must be a full path (or ~/...): this serve's own folder "
+                                       "isn't one you chose")
+    source = params.get("source")
+    if how != "blank":
+        if not isinstance(source, str) or not source.strip():
+            raise RpcError(INVALID_PARAMS, f"params.source: the {'roster.yml to copy' if how == 'file' else 'git URL'}")
+        source = source.strip()
+        try:
+            newinventory.parse_how(f"{how}:{source}")
+        except ValueError as e:
+            raise RpcError(INVALID_PARAMS, f"params.source: {e}") from None
+    name = params.get("name") or folder.name
+    if not isinstance(name, str) or inventories.name_problem(name):
+        raise RpcError(INVALID_PARAMS, f"params.name: {inventories.name_problem(str(name))}")
+    try:
+        inv = inventories.load()
+    except SystemExit as e:
+        raise RpcError(INVENTORIES_UNREADABLE, die_message(e),
+                       fix=f"fix {inventories.list_file()}, or delete it to forget every named Inventory") from None
+    taken = [x.name for x in inv.inventories if inventories.same_name(x.name, name)]
+    if taken:                                       # the field to change, for the app's form (#417 L4)
+        raise RpcError(INVALID_PARAMS, f"params.name: there's already an Inventory named '{taken[0]}'",
+                       {"field": "name", "name": taken[0]},
+                       fix="give it another name, or pick another folder (its name names the Inventory); "
+                           f"`roster inv remove {taken[0]}` forgets the other one")
+    target = folder / "roster.yml"
+    stop = threading.Event()
+    on_cancel(stop.set)                             # the app's Cancel: a clone under way stops (#417 L5)
+    with state.lock, first_run_lock():              # one at a time on this Box, whichever serve (#417 L3)
+        if state.path is not None:                  # another create got here first
+            raise RpcError(INVENTORY_THERE, f"this roster serve made {state.path} already", {"path": str(state.path)})
+        made = newinventory.create(target, how, source, interactive=False, stop=stop)
+        state.path = made.path.resolve()            # this serve makes no other
+        try:
+            inventories.add(name, made.path)
+            inventories.use(name)
+        except SystemExit as e:
+            raise RpcError(ROSTER_ERROR, f"{made.path} was made, but couldn't be named {name}: {die_message(e)}",
+                           {"path": str(made.path)}, fix=f"`roster inv add NAME {made.path}` in a terminal") from None
+    hosts = len(load_config(made.path)["hosts"])
+    return {"path": str(made.path.resolve()), "name": inventories.canonical(name), "how": how, "hosts": hosts,
+            "restart": True}
+
+
+FIRST_RUN_STALE = 600       # s: a lock older than this is a serve that died making one, and is taken over
+
+
+@contextmanager
+def first_run_lock():
+    """inventory.create one at a time on this Box: a lock file in roster's config folder (O_EXCL), so two app windows
+    (or two serves) can't both make and name one (#417 L3). After it's taken, an Inventory found now means one was
+    made meanwhile: 170."""
+    from .common import user_config_dir
+    lock = user_config_dir() / "inventory.create.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            break
+        except FileExistsError:
+            try:
+                old = time.time() - lock.stat().st_mtime > FIRST_RUN_STALE
+            except OSError:
+                old = True
+            if not old:
+                raise RpcError(INVENTORY_THERE, "another first run is making an Inventory on this Box right now",
+                               {"lock": str(lock)}, fix="wait for it, then Retry") from None
+            lock.unlink(missing_ok=True)
+    else:
+        raise RpcError(INVENTORY_THERE, "another first run is making an Inventory on this Box right now",
+                       {"lock": str(lock)}, fix="wait for it, then Retry")
+    try:
+        os.write(fd, f"{os.getpid()}\n".encode())
+        os.close(fd)
+        try:
+            found = locate_config(None, None)
+        except SystemExit:
+            found = None
+        if found is not None and Path(found).exists():
+            raise RpcError(INVENTORY_THERE, f"an Inventory was made meanwhile: {found}", {"path": str(found)},
+                           fix="Retry: roster starts on it")
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
+
+
 METHODS = {
     "inventory.info": inventory_info,
     "inventories.list": inventories_list,
     "inventories.use": inventories_use,
+    "inventory.create": inventory_create,
     "box.check": box_check,
     "hosts.list": hosts_list,
     "host.get": host_get,
@@ -716,8 +847,12 @@ def inventory_pull(state, params):
         rebases or stashes
     Errors: 70-73
     Since: API 5
+    Params: none
+    Result: a plain file (`inventory.info`'s `store.kind: file`, T212) has nothing to pull: `{updated: false,
+        upstream: null, commits: 0, ahead: 0, message}`, never an error
+    Since: API 28
     """
-    result = changes.pull(inventory_path(state))
+    result = store.at(inventory_path(state)).pull()
     state.reload()
     if result["updated"]:
         result["sync"] = sync_box(state)
@@ -794,10 +929,9 @@ def host_update(state, params):
         if at is None or time.monotonic() - at > VERIFIED_FOR:
             raise RpcError(NOT_VERIFIED, f"{h['name']}'s new address, user or Login hasn't passed a test login",
                            fix="test the login (host.verify_login) with these values, then save again")
-    repo = changes.Repo(state.path)
+    repo = store.at(state.path)
     old_text, new_text, _ = edit.edited(repo.path, h["name"], wanted)
-    backup = repo.backup(old_text)
-    edit.replace_file(repo.path, new_text)
+    backup = repo.save(old_text, new_text)
     state.verified.pop(key, None)
     warnings = []
     if pin:                     # it moved: the key it was verified with is now recorded for its new address
@@ -821,8 +955,12 @@ def changes_diff(state, params):
         branch's last commit, and whether its upstream has it as this box last fetched)
     Errors: 70
     Since: API 5
+    Params: none
+    Result: `kind` (T212): `repo`, or `file` for a plain file, whose edits are saved already: then `repo: null`,
+        `diff: ""`, `count: 0` and `last_commit: null`, never an error
+    Since: API 28
     """
-    return changes.diff(inventory_path(state))
+    return store.at(inventory_path(state)).diff()
 
 
 def changes_discard(state, params):
@@ -833,8 +971,11 @@ def changes_discard(state, params):
         then `roster sync` (`sync`, T150, as `changes.publish`'s; left out when there was nothing to discard)
     Errors: 70
     Since: API 5
+    Params: none
+    Result: a plain file (T212) has nothing to discard: `{discarded: false, backup: null}`
+    Since: API 28
     """
-    result = changes.discard(inventory_path(state))
+    result = store.at(inventory_path(state)).discard()
     state.reload()
     if result["discarded"]:
         result["sync"] = sync_box(state)
@@ -850,11 +991,16 @@ def changes_publish(state, params):
         commits `roster.yml` alone and pushes it to the branch's upstream, then runs `roster sync`
     Errors: 1, 70, 73, 90-96
     Since: API 7
+    Params: `{message?}`
+    Result: as above, in a repo; a plain file (T212) is error `90`: every edit is saved to it already, so there's
+        nothing to publish
+    Errors: 1, 70, 73, 90-96
+    Since: API 28
     """
     message = params.get("message")
     if message is not None and not isinstance(message, str):
         raise RpcError(INVALID_PARAMS, "params.message must be a string")
-    result = changes.publish(inventory_path(state), message)
+    result = store.at(inventory_path(state)).publish(message)
     state.reload()
     result["sync"] = sync_box(state)
     return result
@@ -1004,7 +1150,6 @@ def still_offered(asked, key, label, outcome, who, again):
 # and forgotten by vault.lock. Nothing is written to roster.yml.
 
 QUICK_USER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")
-QUICK_ADDRESS = re.compile(r"[A-Za-z0-9_.:%][A-Za-z0-9_.:%-]*")     # a name, IPv4 or IPv6 (no brackets, no '-' first)
 
 
 def quick_target(params):
@@ -1013,7 +1158,7 @@ def quick_target(params):
     if not isinstance(user, str) or not QUICK_USER.fullmatch(user):
         raise RpcError(INVALID_PARAMS, "params.user must be a user name (letters, digits, '.', '_', '-'; not "
                                        "starting with '-')")
-    if not isinstance(address, str) or not QUICK_ADDRESS.fullmatch(address):
+    if not edit.good_address(address):          # the rule host.add and `roster add` write by (Q190)
         raise RpcError(INVALID_PARAMS, "params.address must be a host name or an IP address")
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise RpcError(INVALID_PARAMS, "params.port must be a number from 1 to 65535")
@@ -1050,7 +1195,7 @@ def quick_prepare(state, params):
     save = save_param(params, password)
     if save:
         saving_provider(state, params)
-    ssh = shutil.which("ssh")
+    ssh = find_program("ssh")
     if ssh is None:
         raise RpcError(NOT_SET_UP, "there's no ssh on this box's PATH - install OpenSSH's client")
     if state.askpass is None:
@@ -1253,8 +1398,7 @@ def save_held(state, repo, hid, password, item, change, what):
     made = make_item(password=password, **item)
     try:                                        # until roster.yml is written, any failure takes the item back out
         old_text, new_text = change(repo.path)
-        backup = repo.backup(old_text)
-        edit.replace_file(repo.path, new_text)
+        backup = repo.save(old_text, new_text)
     except BaseException as e:
         raise take_back(made, write_failed(what, repo.path, e)) from None
     forget_held(state, hid)
@@ -1346,7 +1490,7 @@ def save_quick(state, params):
     except ValueError as e:
         raise RpcError(INVALID_PARAMS, f"params: {e}") from None
     state.fresh()
-    repo = changes.Repo(state.path)
+    repo = store.at(state.path)
     _, _, h = edit.added(repo.path, group, name, fields)      # a dry run: the name and group, before the vault
     made, backup = save_held(state, repo, hid, password,
                              {"provider": provider, "item": item, "user": q["user"], "address": q["address"],
@@ -1395,7 +1539,7 @@ def save_login(state, params):
                                      "Login) - nothing was saved",
                        fix=f"open a new Session to {name} and save from there")
     wanted = {"auth": f"{provider}:{item}"}
-    repo = changes.Repo(state.path)
+    repo = store.at(state.path)
     edit.edited(repo.path, name, wanted)        # a dry run: the edit must be possible before the vault is touched
     made, backup = save_held(state, repo, hid, password,
                              {"provider": provider, "item": item, "user": h["ssh"]["user"], "address": h["ip"],
@@ -1420,7 +1564,7 @@ def ssh_value(path):
 
 
 def host_add(state, params):
-    """Add a Host to roster.yml as a Pending change (edit.added). With a Login (an existing vault item in auth, or
+    """Add a Host to roster.yml as a Pending change (addhost.add, the one `roster add` uses: T220, Q190). With a Login (an existing vault item in auth, or
     a password typed into the form) it's a verified add (Q43): the test login first; then, for a typed password,
     the Vault item; then the Host. Nothing is written when the test login fails, and the item is taken back out
     when writing the Host fails. Without a Login the Host goes in unreviewed, as discover adds them.
@@ -1431,7 +1575,8 @@ def host_add(state, params):
         `verify` the test login (`{host, ok, steps}`, or `null` without a Login), `item` the Vault item it made
         (`{provider, id, name, target}`, or `null`), `sync: {ok, error?, fix?}` (T150) the `roster sync` after the
         Host is written, so a Session to it opens straight away: a failed sync doesn't undo the add (`ok: false`,
-        its `error` and `fix`)
+        its `error` and `fix`). Since API 29 (T220) its checks are `roster add`'s (addhost.py): `80` also for an
+        address that's neither an IP address nor a DNS name
     Errors: 80, 81, 74, 61, 11, 12, 14, 30-35, 40-48, 60, 62, 64, 65
     Since: API 6
     """
@@ -1450,8 +1595,7 @@ def add_host(state, params):
     if typed:
         fields["auth"] = f"{typed['provider']}:{typed['item']}"
     state.fresh()
-    repo = changes.Repo(state.path)
-    _, _, h = edit.added(repo.path, group, name, fields)      # a dry run: the name, group and user, before the network
+    h = addhost.add(state.path, group, name, fields, dry_run=True)["host"]   # every check, before the network
     login = typed is not None or diagnose.stored_password(h) is not None
     fields["reviewed"] = login
     verify = None
@@ -1475,23 +1619,29 @@ def add_host(state, params):
         finally:
             del password
         made = {"provider": typed["provider"], **made}
+    warnings = []
+
+    def after():                                # the Host is in roster.yml now: what follows can't un-add it
+        if verify and verify.get("host_key"):
+            k = verify["host_key"]
+            try:
+                record_host_key(h, k["type"], k["base64"])
+            except Exception as e:
+                warnings.append(f"{name} was added, but its host key couldn't be recorded in {known_hosts_label()} "
+                                f"({failure_text(e)}) - run `roster sync`, or test the login again before connecting")
+        state.reload()
+        return sync_box(state)
+
+    written_in = []                             # set once the Host is in roster.yml: then the item stays
+
     try:                                        # until the Host is written, any failure takes the item back out
-        old_text, new_text, _ = edit.added(repo.path, group, name, fields)
-        backup = repo.backup(old_text)
-        edit.replace_file(repo.path, new_text)
+        written = addhost.add(state.path, group, name, fields, sync=after, on_write=written_in.append)
     except BaseException as e:
-        raise take_back(made, write_failed(f"{name} wasn't added", repo.path, e)) from None
-    warnings = []                               # the Host is in roster.yml now: what follows can't un-add it
-    if verify and verify.get("host_key"):
-        k = verify["host_key"]
-        try:
-            record_host_key(h, k["type"], k["base64"])
-        except Exception as e:
-            warnings.append(f"{name} was added, but its host key couldn't be recorded in {known_hosts_label()} "
-                            f"({failure_text(e)}) - run `roster sync`, or test the login again before connecting")
-    state.reload()
-    return {"added": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "verify": verify,
-            "item": made, "warnings": warnings, "sync": sync_box(state)}
+        if written_in:
+            raise
+        raise take_back(made, write_failed(f"{name} wasn't added", state.path, e)) from None
+    return {"added": True, "host": state.inventory()["hosts"][name], "backup": written["backup"], "verify": verify,
+            "item": made, "warnings": warnings, "sync": written["sync"]}
 
 
 def write_failed(what, path, e):
@@ -1549,24 +1699,24 @@ def host_review(state, params):
         raise RpcError(UNKNOWN_HOST, f"unknown host {name!r}")
     if h["reviewed"] == wanted:
         return {"changed": False, "host": h, "backup": None}
-    repo = changes.Repo(state.path)
+    repo = store.at(state.path)
     old_text, new_text, _ = edit.reviewed(repo.path, name, wanted)
-    backup = repo.backup(old_text)
-    edit.replace_file(repo.path, new_text)
+    backup = repo.save(old_text, new_text)
     state.reload()
     return {"changed": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "sync": sync_box(state)}
 
 
 # ---------------------------------------------------------------- the Live Inventory (ticket 28, decision Q45)
 # Removing, renaming and moving Hosts, and adding, renaming and deleting groups: each a text edit of roster.yml
-# (edit.py) written as a Pending change, like host.update. Removing a Host never touches the vault.
+# (edit.py) written as a Pending change, like host.update (saved straight to a plain file: store.py, T212). Removing a
+# Host never touches the vault.
 
 def write_edit(state, old_text, new_text):
-    """Write an edit of roster.yml (a Pending change), keeping what it replaced as the backup; load it again and
+    """Write an edit of roster.yml (a Pending change in a repo, saved in place in a plain file: store.py), keeping what
+    it replaced as the backup; load it again and
     sync this Box (T150). Returns `{backup, sync}`, for the result."""
-    repo = changes.Repo(state.path)
-    backup = repo.backup(old_text)
-    edit.replace_file(repo.path, new_text)
+    repo = store.at(state.path)
+    backup = repo.save(old_text, new_text)
     state.reload()
     return {"backup": str(backup), "sync": sync_box(state)}
 
@@ -1579,9 +1729,9 @@ def name_param(params, key):
 
 
 def live_repo(state):
-    """roster.yml as it is now, loaded, and in a git repo (Pending changes need one: 70)."""
+    """roster.yml as it is now, loaded, and how it's kept (store.at: a repo or a plain file, T212)."""
     state.fresh()
-    return changes.Repo(state.path)
+    return store.at(state.path)
 
 
 def host_remove(state, params):
@@ -2017,7 +2167,7 @@ def vault_logout(state, params):
 
 
 SIGN_OUT_FIXES = {ALREADY_SIGNED_OUT: "sign in from the lock screen",
-                  SIGN_OUT_FAILED: "see the message; `roster bw --write logout` in a terminal shows the same"}
+                  SIGN_OUT_FAILED: "see the message; `roster vault bw --write -- logout` in a terminal shows the same"}
 
 
 def sign_out_error(e):
@@ -2191,6 +2341,30 @@ def vault_targets(state, params):
             "problem": problem and {"code": problem.code, "message": problem.message, "fix": (problem.data or {}).get("fix")}}
 
 
+def vault_item_fields(state, params):
+    """What a vault item says about its Host (T220, Q190), for an add-Host form's "fill from a vault item": the
+    address and SSH port from its URI, the user from its username (addhost.vault_fields, as `roster add
+    --from-vault`). Never the password: only a provider that gives these fields without it (Bitwarden's `bw get uri`
+    and `bw get username`; 1Password's item overview and username field, never `--reveal`) can answer; any other
+    is `186`. A field the item doesn't have is left out.
+
+    Params: `{item, provider?}`: `item` the item's name or id (as after `bw:` or `op:` in auth), `provider` the vault (default:
+        the Inventory's, as vault.status's)
+    Result: `{provider, item, address?, port?, user?, note?}`: `note` says why the item's URI gave no address
+        (another scheme than ssh, sftp, http or https, or a host that isn't an address)
+    Errors: 13, 14, 11, 12, 31, 32, 33, 35, 186
+    Since: API 29
+    """
+    provider = vault_provider(state, params)
+    item = params.get("item")
+    if not isinstance(item, str) or not item.strip() or "\n" in item or "#" in item or item.strip().startswith("-"):
+        raise RpcError(INVALID_PARAMS, "params.item must be a vault item's name or id: one line, no '#', not "
+                                       "starting with '-'")
+    item = item.strip()
+    return {"provider": provider, "item": item, **addhost.vault_fields(f"{provider}:{item}")}
+
+
+METHODS["vault.item_fields"] = vault_item_fields
 METHODS["vault.create_item"] = vault_create_item
 METHODS["vault.undo_create"] = vault_undo_create
 METHODS["vault.targets"] = vault_targets
@@ -2466,7 +2640,8 @@ def mesh_cut(state, params):
     Result: `{host, confirmed: [host], pending: {host: why}, warnings: [text], change}`: HOST's key off every peer
         and every peer's off HOST, at once. `warnings` (since API 24): what roster left on HOST's own side, an
         earlier `mesh_dir:` that still holds a Mesh key (roster never removes one), one sentence each. `change` is the `mesh: false` written for HOST as a Pending change: `{written: true,
-        backup}` (`backup: null` and a `note` when `roster.yml` isn't in a git repo), `{written: false, note}` when
+        backup, kind}` (since API 28 `kind` is `repo`, or `file` for a plain file it was saved straight to, with
+        `backup` beside it, T212), `{written: false, note}` when
         it already was, or `{written: false, error, fix}` when it couldn't be written (the cut still happened); a
         written one has `sync` (T150), the `roster sync` after it, as `host.add`'s.
         With `background: true`, `{job, action, total, host}` at once, and the result comes in `mesh.job`
@@ -2746,7 +2921,7 @@ METHODS["discover.add"] = discover_add
 # to check what a step that timed out did: changes.CHECK_TIMEOUT, bitwarden's lookup after a create; and UNDO_TIME
 # to take a new Vault item back out). So serve
 # always answers before the app gives up, and the answer says what happened. Other methods: the app's 60 s.
-DEADLINES = {"host.add": 100, "changes.publish": 110, "inventory.pull": 45, "host.check": 45,
+DEADLINES = {"inventory.create": 75, "host.add": 100, "changes.publish": 110, "inventory.pull": 45, "host.check": 45,
              "host.verify_login": 45, "vault.create_item": 45, "quick.save": 45,
              "host.save_login": 45, "box.check": 45, "mesh.plan": 240, "mesh.apply": 240, "mesh.cut": 60}
 AFTER_DEADLINE = 40
@@ -2874,7 +3049,8 @@ LOCKS = {
         "inventory.reload")},
     **{m: [("inventory", False), ("vault", True)] for m in ("host.add", "quick.save", "host.save_login")},
     **{m: [("vault", True)] for m in (
-        "session.prepare", "session.fill", "quick.prepare", "vault.status", "vault.targets", "vault.create_item",
+        "session.prepare", "session.fill", "quick.prepare", "vault.status", "vault.targets", "vault.item_fields",
+        "vault.create_item",
         "vault.undo_create")},
     # vault.lock and vault.logout aren't here: they forget first and then wait, never refused (vault_lock); nor is
     # host.check: its job shares the vault (check_job), not the request waiting for it
@@ -2918,7 +3094,7 @@ class claimed:
 # Locking is never cancelled (Q112 (k)).
 
 NEVER_CANCELLED = {"vault.lock", "vault.logout", "$/cancel"}
-CANCEL_RUNNING = {"host.check", "mesh.plan", "mesh.apply", "mesh.cut"}     # each registers on_cancel(its job's stop)
+CANCEL_RUNNING = {"host.check", "mesh.plan", "mesh.apply", "mesh.cut", "inventory.create"}     # each registers on_cancel(its job's stop)
 UNLOCK_LANE = {"vault.unlock"}  # a worker of its own: never queued behind 8 busy ones (Q112 (r))
 _request = threading.local()    # the Request this worker thread is answering
 MOVED = threading.Condition()   # notified when a request ends or is cancelled (vault.status waits on it)
@@ -3240,6 +3416,7 @@ class Server:
 
 
 def serve(config_arg, inv=None):
+    never_look_in_the_current_folder()      # Windows: nothing serve starts looks for its program in the cwd (#424)
     # The app speaks UTF-8 JSON lines, whatever this box's locale (Windows' is often cp1252 for a pipe), and "\n"
     # ends a line on Windows too. A password with an accent comes through as typed.
     for stream in (sys.stdin, sys.stdout):
