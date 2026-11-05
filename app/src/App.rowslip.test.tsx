@@ -31,7 +31,7 @@ describe("a row's own trouble, said by the row (round 20)", () => {
     const user = await ready();
     await user.click(within(inventory()).getByRole("treeitem", { name: /^switch-4-003/ }));
     expect(slip()).toHaveAttribute("data-row-slip", "inventory:switch-4-003");
-    expect(slip()).toHaveTextContent(/switch-4-003 isn.t reviewed yet, so it can.t be opened\. (:review switch-4-003 marks it reviewed|Set reviewed: true for it in roster\.yml)/);
+    expect(slip()).toHaveTextContent(/switch-4-003 isn.t reviewed yet, so it can.t be opened\. (:review switch-4-003 marks it reviewed|Add reviewed: true to it in roster\.yml)/);
     expect(messageLine()).not.toHaveTextContent(/isn't reviewed/);
     // The next key ends it; :messages still has it.
     await user.keyboard("{Escape}");

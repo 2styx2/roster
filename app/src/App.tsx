@@ -4425,7 +4425,7 @@ function Workspace({
 export function notReviewedMessage(name: string, canReview: boolean): string {
   return canReview
     ? `${name} isn't reviewed yet, so it can't be opened. :review ${name} marks it reviewed.`
-    : `${name} isn't reviewed yet, so it can't be opened. Set reviewed: true for it in roster.yml (:help adding-hosts).`;
+    : `${name} isn't reviewed yet, so it can't be opened. Add reviewed: true to it in roster.yml (:help adding-hosts).`;
 }
 
 /** Service entries roster left out of their Hosts (a bad port, url or login type in roster.yml):

@@ -335,7 +335,7 @@ export function Picker({
       setNotice(
         onReview && review
           ? `${host.name} isn't reviewed yet, so it can't be opened. ${review} marks it reviewed.`
-          : `${host.name} isn't reviewed yet, so it can't be opened. Set reviewed: true for it in roster.yml (:help adding-hosts).`,
+          : `${host.name} isn't reviewed yet, so it can't be opened. Add reviewed: true to it in roster.yml (:help adding-hosts).`,
       );
       return;
     }

@@ -748,6 +748,11 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius);
   box-shadow: 0 8px 24px var(--shadow), 0 2px 8px var(--shadow); overflow-wrap: anywhere;
 }
+/* A command, file or setting in it is one thing you'd type, so it never breaks across lines
+   (round 21: "(:help / adding-hosts)"). */
+.sb-slip .message-cmd { white-space: nowrap; }
+/* The Host's name can be longer than the slip: it alone may break. */
+.sb-slip .sb-slip-name { white-space: normal; }
 @media (forced-colors: active) {
   .row-menu, .sb-slip { border-color: CanvasText; }
   .sidebar .row-menu-item:focus { outline: 2px solid Highlight; outline-offset: -2px; }

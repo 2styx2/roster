@@ -6,7 +6,7 @@ const commands = (text: string) => messageParts(text).filter((p) => p.command).m
 describe("the commands a message names (round 18)", () => {
   it("marks each command with at most one lowercase argument, not the sentence's punctuation", () => {
     expect(commands("Not a command: blah. :help commands lists them.")).toEqual(["blah", ":help commands"]);
-    expect(commands("Set reviewed: true for it in roster.yml (:help adding-hosts).")).toEqual([":help adding-hosts"]);
+    expect(commands("Add reviewed: true to it in roster.yml (:help adding-hosts).")).toEqual([":help adding-hosts"]);
     expect(commands("Pick another name, or edit that Host (:edit HOST).")).toEqual([":edit"]);
     expect(commands("Run :config, then :source.")).toEqual([":config", ":source"]);
     expect(commands("E13: at 10:30, see https://example.test")).toEqual([]);
@@ -33,5 +33,13 @@ describe("the files a message names (round 19)", () => {
     expect(messageParts(text).some((p) => p.file)).toBe(false);
     expect(files("Set it in init.lua (:help config).")).toEqual(["init.lua"]);
     expect(files("a newer roster. Update it")).toEqual([]);
+  });
+
+  it("marks a setting with its yes/no value as data too (round 21)", () => {
+    const text = "linux-1-024 isn't reviewed yet, so it can't be opened. Add reviewed: true to it in roster.yml (:help adding-hosts).";
+    expect(files(text)).toEqual(["reviewed: true", "roster.yml"]);
+    expect(messageParts(text, true).map((p) => p.text).join("")).toBe(text);
+    expect(files("Note: true enough.")).toEqual([]);
+    expect(files("Saved: 3 Hosts.")).toEqual([]);
   });
 });

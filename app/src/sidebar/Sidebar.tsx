@@ -1109,7 +1109,7 @@ function RowSlip({ slip, done }: { slip: RowSlipData; done: (() => void) | undef
       {slip.name && slip.text.includes(slip.name)
         ? slip.text.split(slip.name).map((part, i) => (
             <Fragment key={i}>
-              {i > 0 && <code className="message-cmd">{slip.name}</code>}
+              {i > 0 && <code className="message-cmd sb-slip-name">{slip.name}</code>}
               <MessageText text={part} files />
             </Fragment>
           ))
