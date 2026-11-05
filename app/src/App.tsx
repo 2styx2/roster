@@ -2437,7 +2437,8 @@ function Workspace({
       // A Host's row has its menu; a group's (or a Plugin row's) has its actions.
       if (!row?.menu && !row?.actions?.length)
         return setMessage(
-          "This row has no menu: move the cursor to a Host or a group",
+          // Says what has one, true for any row (round 17: on a group without actions it said "or a group").
+          "This row has no menu. A Host has one: move the cursor to a Host.",
         );
       setRowMenu({ row: row.id, at: null });
     },
