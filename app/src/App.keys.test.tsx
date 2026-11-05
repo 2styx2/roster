@@ -314,6 +314,14 @@ describe("The Key bindings panel", () => {
     expect(shown.map((r) => r.textContent)).toEqual([expect.stringMatching(/Close the Session/)]);
   });
 
+  it("keeps each description whole in its tooltip, since a row is one line (round 18)", async () => {
+    const user = await ready({ bindings: { leader: { t: "next" } } });
+    await user.keyboard(`${LEADER}K`);
+    const [builtin, config] = rowOf("Next Session").map((r) => r.querySelector("td"));
+    expect(builtin).toHaveAttribute("title", "Next Session");
+    expect(config).toHaveAttribute("title", "Next Session init.lua");
+  });
+
   it("shows a changed Leader as coming from the Config", async () => {
     const user = await ready({ options: { leader: "Ctrl+b" } });
     await user.keyboard("{Control>}b{/Control}K");

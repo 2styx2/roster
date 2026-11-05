@@ -195,6 +195,22 @@ describe("Plugins' UI (ticket 73)", () => {
   });
 });
 
+describe("the Key bindings panel's rows (round 18)", () => {
+  const body = (selector: string) =>
+    rules(stylesCss)
+      .filter(([s, , at]) => at.length === 0 && s.split(",").some((x) => x.trim() === selector))
+      .map(([, b]) => b)
+      .join(";");
+  it("are one line each: the description is cut with an ellipsis, the keys never wrap", () => {
+    expect(stylesCss).toMatch(/\.keys-panel tbody tr:not\(\.group\)\s*\{\s*display:\s*flex;/);
+    const desc = body(".keys-panel td:first-child");
+    expect(desc).toMatch(/white-space\s*:\s*nowrap/);
+    expect(desc).toMatch(/text-overflow\s*:\s*ellipsis/);
+    expect(body(".keys-keys")).toMatch(/white-space\s*:\s*nowrap/);
+    expect(body(".keys-list")).toMatch(/flex-wrap\s*:\s*nowrap/);
+  });
+});
+
 describe("the Finder's list", () => {
   it("stacks its rows: it never takes the Picker's column grid", () => {
     // Round 2 made .picker-list a grid; the Finder, which reuses the class, laid every row side by side.
