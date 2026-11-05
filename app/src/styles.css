@@ -740,7 +740,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .keys-panel header { display: flex; align-items: center; padding: 10px 10px 8px 14px; }
 .keys-panel h2 { margin: 0; font-size: var(--text-md); font-weight: 600; }
 .keys-filter { margin: 0 12px 8px; height: 28px; padding: 0 8px; font-size: var(--text-sm); }
-.keys-scroll { flex: 1; overflow: auto; }
+.keys-scroll { flex: 1; overflow: auto; scroll-padding-bottom: 24px; }
+/* More below: the last 24 px fade into the footer's edge, as the tree's (round 20: the footer
+   sliced the last row at 480 × 320). A mask on the scroller: it moves nothing. */
+.keys-scroll[data-more="below"] { mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent); }
 .keys-panel table { width: 100%; border-collapse: collapse; }
 .keys-panel td { padding: 6px 0; border-top: 1px solid var(--line); vertical-align: top; line-height: 20px; }
 /* Every row is one line (Q220 e; round 18 still found three wrapping at 1280): each row lays out
@@ -764,10 +767,13 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .keys-panel tr.named td { background: var(--hover); }
 .panel-foot .keys-option { display: inline; margin: 0; color: var(--text); }
 /* Two lines at most, never cut mid-token (round 12: "…:con…"); in a short window one line, cut at
-   its end (whole in its tooltip), so the rows keep the room (round 19: 54 px at 480 × 320). */
+   its end (whole in its tooltip), so the rows keep the room (round 19: 54 px at 480 × 320). The
+   command comes first and never gives way: only the words after it are cut (round 20). */
 .keys-panel .panel-foot { text-wrap: balance; }
 @media (max-height: 480px) {
-  .keys-panel .panel-foot { padding-block: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .keys-panel .panel-foot { display: flex; align-items: baseline; gap: 0.3em; padding-block: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .keys-panel .panel-foot > code { flex: none; }
+  .keys-panel .panel-foot > .panel-foot-rest { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 }
 .panel-foot {
   margin: 0; padding: 8px 14px; border-top: 1px solid var(--line); font-size: var(--text-xs); color: var(--muted);

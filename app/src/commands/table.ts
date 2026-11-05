@@ -237,7 +237,8 @@ export const builtinCommands: readonly CommandDef[] = [
     source: BUILTIN,
     area: "Hosts",
     arg: "host",
-    label: (h) => (h ? `Connect to ${h} in this tab` : "Open a Host in this tab, if its Session has ended"),
+    // One title with the Picker's key for it (picker.chooseHere, round 20).
+    label: (h) => (h ? `Connect to ${h} in this tab` : "Reopen here, if its Session ended"),
     run: (ctx, h) => ctx.connect(h ?? "", true),
   },
   {
