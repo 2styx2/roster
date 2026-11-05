@@ -1515,8 +1515,10 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
    can click, quiet like the empty Inventory's help line (round 18). */
 .key-help-link {
   /* 3 px above and below, given back by the margin, so it's a 24 px target (round 19: 21 px)
-     on the line's own baseline. */
-  height: auto; padding: 3px 4px; margin: -3px -4px; display: inline; vertical-align: baseline;
+     on the line's own baseline. Across, its 4 px are kept and 2 px more before it, so its 4 px
+     focus ring (2 px halo, 2 px apricot) clears the "." of "trust it." by 2 px (round 21: a
+     -4 px margin had laid the ring over it). */
+  height: auto; padding: 3px 4px; margin: -3px 0 -3px 2px; display: inline; vertical-align: baseline;
   background: transparent; border-color: transparent; color: var(--muted);
   font: 500 var(--text-xs) var(--font-mono); white-space: nowrap;
   text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px;
