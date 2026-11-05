@@ -1,7 +1,8 @@
 // A Plugin's graph in a view (ticket 77, decision Q99): a map of nodes and edges drawn on one
 // canvas (draw.ts) from the pure scene (scene.ts), and the same graph as two tables (lists.ts).
 //
-// Keyboard first: h j k l (or the arrows) go to the nearest node that way, / searches and n N go
+// Keyboard first: h j k l (or the arrows) go to the nearest node that way, / searches (opening
+// empty, as the Picker does, #475) and n N go
 // through the matches, Enter opens a node (or opens and closes a collapsed cluster), o collapses
 // or opens the selected node's cluster and O all of them, + - zoom and 0 fits it all, H J K L pan,
 // t switches to the nodes' list and the edges' list, f goes to the filter (clusters, kinds or states
@@ -497,7 +498,11 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
       case "0":
         return fit;
       case "/":
-        return () => search.current?.focus();
+        // Empty, as the Picker opens (#475): a new name never adds to the last one.
+        return () => {
+          setQuery("");
+          search.current?.focus();
+        };
       case "n":
         return () => nextMatch(false);
       case "N":

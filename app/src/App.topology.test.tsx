@@ -107,6 +107,28 @@ describe("the Topology view", () => {
     await notice(new RegExp(`topology: Cut ${meshed} from \\d+ Hosts\\.`));
   }, TEST);
 
+  it("after Enter opens a Session beside the map, :topology hands the keys back to the map, so / searches it (#475)", async () => {
+    const user = await ready();
+    await open(user);
+    await user.keyboard(`/${meshed}{Enter}{Enter}`);
+    // The Session has the keys now; the map stays open beside it.
+    await waitFor(() => expect(graph()).not.toHaveFocus(), WAIT);
+    await user.keyboard(`${LEADER}:topology{Enter}`);
+    await waitFor(() => expect(graph()).toHaveFocus(), WAIT);
+    await user.keyboard("/");
+    expect(screen.getByRole("searchbox", { name: "Search Topology" })).toHaveFocus();
+  }, TEST);
+
+  it("/ opens the map's search empty, as the Picker opens, so a new name doesn't add to the last (#475)", async () => {
+    const user = await ready();
+    await open(user);
+    await user.keyboard(`/${meshed}{Enter}`);
+    expect(foot()).toMatch(new RegExp(`^${meshed}`));
+    await user.keyboard(`/${loose}{Enter}`);
+    expect(screen.getByRole("searchbox", { name: "Search Topology" })).toHaveValue(loose);
+    expect(foot()).toMatch(new RegExp(`^${loose}`));
+  }, TEST);
+
   it(":tutor topology teaches the map on the demo's Hosts and its made-up Mesh, and each step ticks as you do it (#233)", async () => {
     const user = await ready();
     await user.keyboard(`${LEADER}:tutor topology{Enter}`);
@@ -138,19 +160,13 @@ describe("the Topology view", () => {
     await ticked(3);
 
     // Lesson 3: reach. demo-01's details count what it reaches; demo-05's say why it's pending.
-    // The map is still open beside the Session, which has the keys: a click hands them back, and
-    // the search still holds demo-03, so it's cleared first.
-    const find = async (name: string) => {
-      await user.keyboard("/");
-      await user.clear(document.querySelector(".graph-search") as HTMLInputElement);
-      await user.keyboard(`${name}{Enter}i`);
-    };
-    await user.click(await open(user));
-    await find("demo-01");
+    // The map is still open beside the Session: :topology hands it the keys back (#475).
+    await open(user);
+    await user.keyboard("/demo-01{Enter}i");
     await ticked(4);
     expect(await screen.findByText("3 Hosts directly", undefined, WAIT)).toBeInTheDocument();
-    await user.click(await open(user));
-    await find("demo-05");
+    await open(user);
+    await user.keyboard("/demo-05{Enter}i");
     await ticked(5);
     expect(await screen.findByText(/no answer: ssh: connect to host 10\.0\.0\.15 port 22/, undefined, WAIT)).toBeInTheDocument();
   }, TEST);

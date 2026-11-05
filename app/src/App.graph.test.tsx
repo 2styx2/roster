@@ -296,7 +296,7 @@ describe("a Plugin's graph", () => {
     expect(foot()).not.toMatch(/^web: 2 nodes|^Moving/);
     expect(document.querySelector(".graph-foot .dt-keys")?.textContent).not.toMatch(/put back/);
     // Opened, its nodes are where the cluster took them.
-    await user.keyboard("/{Escape}web-1{Enter}");
+    await user.keyboard("/web-1{Enter}");
     expect(foot()).toMatch(/^web: 2 nodes, collapsed/);
     await user.keyboard("{Enter}");
     await waitFor(async () => expect((await saved())?.nodes["web-1"]).toEqual(after.nodes["web-1"]));

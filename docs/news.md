@@ -31,6 +31,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **"roster too old" only for a roster with no `serve` command** (#479): the app said a roster was too old for any start-up error that said both "invalid choice" and "serve"; now only argparse's own `invalid choice: 'serve'` does, and any other one shows as the failure it is, with roster's words.
 - **Copy path is left out when roster didn't name the path** (#487): for a `roster.yml` that didn't load because a `-c` value shaped like a token named no file, the error offered to copy the words "(not repeated)".
 
+### Fixed
+
+**App**
+
+- **The Topology map takes the keys back, and `/` starts a new search** (#475): with a Session opened from the map beside it, `:topology` (or `:view topology`, or the map's key) hands the keys back to the map, so a `/` typed next searches the map instead of going to the shell; asking for any open view again does the same. `/` on a map opens its search empty, as the Picker does, so typing a new name no longer adds to the last one.
+
 ## v0.6.0
 
 ### New
