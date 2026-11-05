@@ -233,6 +233,9 @@ export function ConnectCard({
   const keysNote = useId();
   // Whether to save the password once it logs in: a choice, not a secret, so plain state.
   const [save, setSave] = useState(false);
+  // Quick Connect's key question: Enter connects only once the key is marked checked, so a
+  // password typed and entered never trusts a key nobody read (owner, after round 14).
+  const [checkedKey, setCheckedKey] = useState(false);
   const question =
     (phase === "asking" || phase === "trusting") &&
     hostKey !== null &&
@@ -254,6 +257,8 @@ export function ConnectCard({
         trustButton.current
       )?.focus({
         focusVisible: true,
+        // The card opens at its top, its question in view; focus doesn't scroll it (round 14).
+        preventScroll: true,
       } as FocusOptions);
     if (asking) asked.current = true;
     else if (asked.current) {
@@ -368,12 +373,12 @@ export function ConnectCard({
           height="3.1"
           rx="0.6"
         />
-        {/* The edge plugs into the ring's gap, which faces it (owner, after round 13: every
+        {/* The edge comes to the ring's gap, which faces it, and reaches the ring as it closes (owner, after round 13: every
             glyph at the gap read as a spinner): connecting is an edge arriving at an open node. */}
         {/* The route, faint and dashed, under the edge: 40% reads as part-way, not as a broken line
             (round 13). */}
-        <line className="connect-route" x1="8.4" y1="6" x2="63.2" y2="6" />
-        <line className="connect-edge" x1="8.4" y1="6" x2="63.2" y2="6" />
+        <line className="connect-route" x1="8.4" y1="6" x2="61" y2="6" />
+        <line className="connect-edge" x1="8.4" y1="6" x2="61" y2="6" />
         {/* The Host's ring is open while connecting (the Sidebar's connecting node, Q186); a
             closed ring fades in over it when the shell answers, then fills for a key login. */}
         {/* One arc, its 50° gap facing the edge (on the card; the Sidebar's node keeps the logo's
@@ -483,9 +488,17 @@ export function ConnectCard({
             className="quick-login"
             onSubmit={(e) => {
               e.preventDefault();
-              connectQuick();
+              if (checkedKey) connectQuick();
             }}
           >
+            <label className="add-check quick-checked">
+              <input
+                type="checkbox"
+                checked={checkedKey}
+                onChange={(e) => setCheckedKey(e.target.checked)}
+              />
+              I've checked this key
+            </label>
             <label className="quick-password">
               <span>
                 Password for <span className="connect-name">{quick.user}</span>
@@ -512,11 +525,18 @@ export function ConnectCard({
               </label>
             )}
             <div className="key-actions">
-              <button type="submit" className="primary" ref={trustButton}>
+              <button
+                type="submit"
+                className={checkedKey ? "primary" : undefined}
+                aria-disabled={!checkedKey || undefined}
+                ref={trustButton}
+              >
                 Trust and connect
-                <span className="btn-keys" aria-hidden="true">
-                  <Keys keys="Enter" />
-                </span>
+                {checkedKey && (
+                  <span className="btn-keys" aria-hidden="true">
+                    <Keys keys="Enter" />
+                  </span>
+                )}
               </button>
               <button type="button" onClick={() => answers.cancel()}>
                 Cancel

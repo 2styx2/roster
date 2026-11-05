@@ -39,7 +39,12 @@ describe("Quick Connect", () => {
     const field = within(q).getByLabelText("Password for root");
     expect(field).toHaveAttribute("type", "password");
     expect(field).toHaveFocus();
+    // Enter connects only once the key is marked checked (round 14): an unread key is never trusted.
     await user.keyboard(`${FAKE_HOST_PASSWORD}{Enter}`);
+    expect(backend.quickConnects()).toEqual([]);
+    await user.click(within(q).getByRole("checkbox", { name: "I've checked this key" }));
+    await user.click(field);
+    await user.keyboard("{Enter}");
     expect(field).toHaveValue("");
     await within(pane("root@10.0.0.5")).findByText("Connected to root@10.0.0.5", { exact: false });
     expect(backend.quickConnects()).toEqual([
@@ -93,7 +98,9 @@ describe("Quick Connect", () => {
     const backend = backendAt();
     const user = await ready(backend);
     await user.keyboard(`{Control>} {/Control}:open root@10.0.0.5{Enter}`);
-    await question("root@10.0.0.5");
+    const q = await question("root@10.0.0.5");
+    await user.click(within(q).getByRole("checkbox", { name: "I've checked this key" }));
+    await user.click(within(q).getByLabelText("Password for root"));
     await user.keyboard(`${FAKE_HOST_PASSWORD}{Enter}`);
     await within(pane("root@10.0.0.5")).findByText("Connected to root@10.0.0.5", { exact: false });
     const host = hosts.hosts.find((h) => h.reviewed)!.name;

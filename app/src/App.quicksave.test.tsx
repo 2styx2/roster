@@ -40,6 +40,7 @@ const pane = () => screen.getByRole("group", { name: `Session ${LABEL}` });
 async function connect(user: ReturnType<typeof userEvent.setup>, { save = true, password = FAKE_HOST_PASSWORD } = {}) {
   await user.keyboard(`{Control>} {/Control}:connect ${LABEL}{Enter}`);
   const q = await within(pane()).findByRole("alertdialog", { name: `Quick Connect to ${LABEL}` });
+  await user.click(within(q).getByRole("checkbox", { name: "I've checked this key" }));
   if (save) await user.click(within(q).getByRole("checkbox", { name: /save to vault/i }));
   await user.click(within(q).getByLabelText("Password for root"));
   await user.keyboard(`${password}{Enter}`);

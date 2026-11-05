@@ -415,9 +415,11 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* Sessions keep three rows of room from the start (owner, after round 13), so the first three
    Sessions opened never move the tree under the pointer; past three, the list grows (or, held
    while the pointer is on the tree, scrolls inside that room). */
-.sb-section[data-section="sessions"] > .sb-empty { margin: 0 8px 0 24px; height: calc(3 * var(--row-h) + 2px); line-height: calc(var(--row-h) + 2px); }
-.sb-section[data-section="sessions"] > .sb-rows { min-height: calc(3 * var(--row-h) + 2px); }
-.sb-section[data-section="sessions"] > .sb-rows:not(:has(> .sb-row)) { display: none; }
+.sb-section[data-section="sessions"] > .sb-empty { margin: 0 8px 0 24px; height: var(--row-h); line-height: var(--row-h); }
+/* A reserved slot: a faint hollow node and the number ␣ N will go to, where the next Session lands. */
+.sb-slot { height: var(--row-h); display: flex; align-items: center; padding: 0 8px 0 12px; opacity: 0.45; }
+.sb-slot-node { width: 7px; height: 7px; margin-left: 4px; border-radius: 50%; border: 1px dashed var(--muted); flex: none; }
+.sb-slot-key { margin-left: auto; display: flex; }
 .sb-section { margin-top: 10px; }
 .sb-heading { display: flex; align-items: center; height: calc(var(--row-h) - 2px); border-radius: var(--radius); color: var(--muted); }
 .sidebar .sb-heading-button {
@@ -997,6 +999,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .picker-footer:has(.picker-detail[data-cut]) .picker-hint-word { display: none; }
 /* A name too long for one line takes two, whole (round 12: one line still cut the longest). */
 .picker-footer:has(.picker-detail[data-cut]) { height: auto; min-height: 34px; padding-block: 6px; }
+/* The list gives the footer's second line its room, so the panel never overflows (round 14). */
+.picker:has(.picker-detail[data-cut]) .picker-list { min-height: calc(var(--list-h, 18px) - 18px); }
 .picker-detail[data-cut] { white-space: normal; }
 .picker-detail[data-cut] > .host-name {
   overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 16px;
@@ -1216,6 +1220,10 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .connect-host-closed { fill: none; stroke: var(--accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke; opacity: 0; transition: opacity var(--dur-fade) var(--ease-out); }
 .connect-host-fill { fill: var(--accent); opacity: 0; transition: opacity var(--dur-fade) var(--ease-out); }
 .connect-card.leaving :is(.connect-host-closed, .connect-host-fill) { opacity: 1; }
+/* While connecting the edge stops just short of the ring's gap, so the ring still reads open; as
+   the ring closes it reaches the ring's outline (52.6 → 53.8 units, the draw token's 120 ms),
+   never inside it (round 14). */
+.connect-card.leaving .connect-edge { transform: scaleX(1.0228); }
 
 .connect-cmd { font-family: var(--font-mono); }
 /* How long it has been, from 3 s: data, so Iosevka, in tabular figures so it doesn't jitter. */
@@ -1259,7 +1267,11 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .connect-card.key-question .key-actions { padding-top: 12px; border-top: 1px solid var(--line); }
 .connect-card.key-question .connect-title .muted { color: var(--text); }
 /* The question stays in view when a short window scrolls the card (round 13). */
-.connect-card.key-question > .connect-title { position: sticky; top: -16px; z-index: 1; padding-block: 4px; background: var(--panel); }
+.connect-card.key-question > .connect-title {
+  position: sticky; top: -16px; z-index: 1; padding-block: 4px; background: var(--panel);
+  /* The card's full width, so nothing scrolls into view beside it (round 14). */
+  align-self: stretch; margin-inline: -20px; padding-inline: 20px;
+}
 /* Its status line takes room only while it speaks ("Recording the key…"), so the card ends at
    its buttons; the form is the card's measure, as the fingerprint is, with its field kept short. */
 .connect-card.key-question .connect-phase:empty { display: none; }
