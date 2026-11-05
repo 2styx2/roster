@@ -646,7 +646,7 @@ def in_process(write_config, method, params, state=None):
 
 def test_a_create_that_times_out_after_saving_counts_as_made_and_can_be_undone(write_config, vault, monkeypatch):
     from roster import serve as rpc
-    monkeypatch.setitem(rpc.DEADLINES, "vault.create_item", 2)
+    monkeypatch.setattr(rpc.METHODS["vault.create_item"], "deadline", 2)
     monkeypatch.setenv("FAKE_BW_CREATE_HANG", "30")
     state, r = in_process(write_config, "vault.create_item", {"name": "box ssh", "password": NEW_PW})
     made = r["result"]
@@ -659,7 +659,7 @@ def test_a_create_that_times_out_after_saving_counts_as_made_and_can_be_undone(w
 
 def test_a_create_that_times_out_before_saving_says_nothing_was_saved(write_config, vault, monkeypatch):
     from roster import serve as rpc
-    monkeypatch.setitem(rpc.DEADLINES, "vault.create_item", 2)
+    monkeypatch.setattr(rpc.METHODS["vault.create_item"], "deadline", 2)
     monkeypatch.setenv("FAKE_BW_SLOW", json.dumps({"create": 30}))
     _, r = in_process(write_config, "vault.create_item", {"name": "box ssh", "password": NEW_PW})
     err = r["error"]
@@ -669,7 +669,7 @@ def test_a_create_that_times_out_before_saving_says_nothing_was_saved(write_conf
 
 def test_a_create_that_times_out_and_cant_be_checked_says_so(write_config, vault, monkeypatch):
     from roster import serve as rpc
-    monkeypatch.setitem(rpc.DEADLINES, "vault.create_item", 2)
+    monkeypatch.setattr(rpc.METHODS["vault.create_item"], "deadline", 2)
     monkeypatch.setenv("FAKE_BW_CREATE_HANG", "30")
     from roster.providers import bitwarden
 

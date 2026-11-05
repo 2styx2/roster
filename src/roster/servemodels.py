@@ -13,10 +13,8 @@ from typing import Any, ClassVar, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .errors import Problem
+from .errors import INVALID_PARAMS, Problem
 from .models import Group, Host
-
-INVALID_PARAMS = -32602     # JSON-RPC's (serve.py has the full list)
 
 P = TypeVar("P", bound="Params")
 

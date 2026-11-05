@@ -48,10 +48,12 @@ src/roster/
   vaultsync.py      `roster vault sync` (T222, Q194): each vault roster.yml uses, synced, and the items added, changed
                     or removed since the last sync, from a snapshot of ids and revision dates (vault-sync/, 0600)
   discover.py       nmap / built-in scanning, type guessing, merging into roster.yml; Scan: serve's discover.* scan
-  serve.py          `roster serve`: JSON-RPC API for the desktop app, method table, the roster.yml watcher (inventory.changed);
-                    requests answered concurrently on workers, a lock per resource each method claims (LOCKS, decision Q112),
-                    `$/cancel` (Request, Server.cancel), the unlock's own lane;
-                    each method's docstring is its row in docs/serve-api.md (scripts/gen-serve-api.py)
+  serve.py          `roster serve`: JSON-RPC API for the desktop app, the roster.yml watcher (inventory.changed); one
+                    method registry (`@method`: deadline, locks, lane, what a cancel stops, whether it holds a secret);
+                    requests answered concurrently on workers, a lock per resource each method claims (decision Q112),
+                    `$/cancel` (Request, Server.cancel), the unlock's own lane; each method's docstring is its row in
+                    docs/serve-api.md, and the registry and errors.py are docs/serve-contract.json and the app's
+                    serveContract.ts (scripts/gen-serve-api.py)
   servemodels.py    serve's params and results as Pydantic models (T174: hosts.list, host.get so far); with models.py,
                     the object tables in docs/serve-api.md are generated from them
   jobs.py           serve's job manager: background work (a Mesh run, a scan, a Host's check) with ids, state, progress, a stop, and
@@ -67,7 +69,9 @@ src/roster/
                     walks the parser and reads names from the local roster.yml (decision Q183)
   manpage.py        roster(1): generated from the parser (cli.build_parser) and docs/cli-reference.md into
                     roster.1 (committed, shipped in the wheel); `roster help --man`. Regenerate: uv run python -m roster.manpage
-  errors.py         the stable error codes and Problem (code, message, fix): what serve, askpass and check report
+  errors.py         the stable error codes (JSON-RPC's too) and Problem (code, message, fix): what serve, askpass, check
+                    and a die() report (errors.Exit: die(msg, code=) keeps its code for serve and --json); imports
+                    nothing else of roster's
   mesh.py           the Mesh: who reaches whom (mesh:, links:), plan/apply over ssh one Host at a time, cut, status,
                     drift for `roster check`; the sh it runs on Hosts (docs/mesh.md)
   diagnose.py       a Host's Login checked before ssh runs, `roster check HOST` / host.check's steps, host.verify_login, host.scan_key
@@ -81,13 +85,16 @@ src/roster/
   winfile.py        Windows: read a secret's file only if it's this user's alone (its owner and DACL, through one handle; #411)
   providers/        password providers: registry + plugins + templates, builtin, bitwarden, onepassword,
                     keepassxc (a local .kdbx through keepassxc-cli);
+                    problems: SecretError and its kinds, each with its errors.py code (and fix, where one fits);
                     bw_login: `bw login` driven a step at a time on a PTY (serve's vault.login); ConPTY on Windows
                     bw_items_filter: the stdlib-only filter `bw list items` is piped into, so roster reads only each
                     item's id, name, URIs, username and revision date (Q191, Q194)
 examples/           commented roster.yml and init.lua, provider plugin template, example Plugins and the Plugin API's types
 plugins/            the first-party Plugins (mesh, discover, topology), installed as Packages with dir = "plugins/NAME" (Q94)
 scripts/            gen-serve-api.py: docs/serve-api.md's method tables from serve's docstrings (Params:, Result:,
-                    Errors:, Since:). Regenerate: uv run python scripts/gen-serve-api.py (--check: is it current?);
+                    Errors:, Since:), and the contract the app and the core read from serve's registry and errors.py
+                    (docs/serve-contract.json, app/src/backend/serveContract.ts). Regenerate: uv run python
+                    scripts/gen-serve-api.py (--check: is it current?);
                     check-links.py: the docs' external links, weekly in .github/workflows/links.yml;
                     bump-version.sh: one version everywhere;
                     news_check.py and news_section.py: the news reminder on pull requests and a Release's notes;

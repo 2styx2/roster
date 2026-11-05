@@ -271,7 +271,7 @@ def test_host_add_stays_within_its_deadline_and_writes_nothing_when_it_runs_out(
                                                                                   monkeypatch):
     import time
     state = unlocked_state(box)
-    monkeypatch.setitem(rpc.DEADLINES, "host.add", 3)
+    monkeypatch.setattr(rpc.METHODS["host.add"], "deadline", 3)
     monkeypatch.setenv("FAKE_BW_SLOW", json.dumps({"list": 60}))
     start = time.monotonic()
     r = add_in_process(state, sshd)
@@ -301,17 +301,6 @@ def test_a_vault_item_saved_by_a_create_that_timed_out_is_used_for_the_add(box, 
     made = next(i for i in json.loads(vault.read_text()) if i["name"] == "nas ssh")
     assert res["item"] == {"provider": "bw", "id": made["id"], "name": "nas ssh", "target": {"id": "personal", "kind": "personal", "label": "Personal vault"}}
     assert res["host"]["ssh"]["auth"] == "bw:nas ssh"
-
-
-def test_every_deadline_ends_before_the_app_gives_up():
-    import re
-    from pathlib import Path
-    core = (Path(__file__).parents[1] / "crates" / "roster-core" / "src" / "backend.rs").read_text()
-    table = core[core.index("pub const CALL_SECS"):]
-    app = {m: int(s) for m, s in re.findall(r'\("([\w.]+)", (\d+)\)', table[:table.index("];")])}
-    assert "host.add" in app, "roster-core's CALL_SECS table moved"
-    for method, secs in rpc.DEADLINES.items():
-        assert secs + rpc.AFTER_DEADLINE < app.get(method, 60), method
 
 
 def test_the_typed_password_never_reaches_any_output(app, box, sshd, vault):

@@ -277,7 +277,8 @@ def render_group(group, entries, note, needs_user, indent):
 def cmd_discover(args):
     """`roster discover`: scan, then preview (or --write) the new Hosts as a group. With --json, the preview is one
     JSON document (discover.plan's numbers and discover.status's Found records) and say()'s lines are dropped."""
-    from .errors import TOO_MANY_ADDRESSES, Problem, inventory_problem
+    from .config import inventory_problem
+    from .errors import TOO_MANY_ADDRESSES, Problem
     nets = []
     for t in args.targets:
         try:

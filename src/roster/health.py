@@ -81,7 +81,7 @@ def roster_version(api_version):
 def inventory(path, cfg, error):
     out = []
     if error is not None:
-        from .errors import inventory_problem
+        from .config import inventory_problem
         p = inventory_problem(error, path)
         last = "; the app shows the last good one" if cfg else ""
         out.append(check("inventory", "error", f"roster.yml doesn't load: {error}{last}", p.fix, "E1"))

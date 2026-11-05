@@ -33,9 +33,22 @@ PING = handler("""Answer at once.
     """)
 
 
-def test_committed_doc_is_what_the_generator_writes():
-    assert DOC.read_text(encoding="utf-8") == gen.render(DOC.read_text(encoding="utf-8"), serve.METHODS), \
-        "docs/serve-api.md's method tables are out of date: run  uv run python scripts/gen-serve-api.py"
+def test_committed_doc_and_contract_are_what_the_generator_writes():
+    for path, text in gen.outputs().items():
+        assert path.read_text(encoding="utf-8") == text, \
+            f"{path.name} is out of date: run  uv run python scripts/gen-serve-api.py"
+
+
+def test_the_contract_has_every_method_and_code():
+    """docs/serve-contract.json is what the app and the Rust core read: every serve method, every errors.py code by
+    its name."""
+    from roster import errors
+    c = gen.contract()
+    assert set(c["methods"]) == set(serve.METHODS)
+    assert c["methods"]["session.fill"] == {"since": 25, "forms": [25, 26], "deadline": None}
+    assert c["methods"]["host.add"]["deadline"] == serve.METHODS["host.add"].deadline
+    assert c["codes"]["HOST_KEY_UNKNOWN"] == errors.HOST_KEY_UNKNOWN and c["json_rpc"]["INVALID_PARAMS"] == -32602
+    assert c["api_version"] == serve.API_VERSION
 
 
 def test_a_region_becomes_the_table_of_its_methods_and_prose_stays():

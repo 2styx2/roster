@@ -65,14 +65,14 @@ def blocker(monkeypatch, name="test.slow"):
         started.set()
         go.wait(10)
         return {"slow": True}
-    monkeypatch.setitem(rpc.METHODS, name, slow)
+    monkeypatch.setitem(rpc.METHODS, name, rpc.Method(slow))
     return started, go
 
 
 def test_a_queued_request_cancelled_never_runs(state, monkeypatch):
     started, go = blocker(monkeypatch)
     ran = []
-    monkeypatch.setitem(rpc.METHODS, "test.write", lambda st, params: ran.append(1) or {})
+    monkeypatch.setitem(rpc.METHODS, "test.write", rpc.Method(lambda st, params: ran.append(1) or {}))
     out = Out()
     server = rpc.Server(state, out, workers=1, quick_workers=1)
     server.submit(req(1, "test.slow"))
@@ -130,7 +130,7 @@ def test_a_request_waiting_for_a_lock_gives_up_at_once_when_cancelled(state, mon
 def test_locking_is_never_cancelled(state, monkeypatch, method):
     started, go = blocker(monkeypatch)
     ran = []
-    monkeypatch.setitem(rpc.METHODS, method, lambda st, params: ran.append(1) or {"locked": []})
+    monkeypatch.setattr(rpc.METHODS[method], "fn", lambda st, params: ran.append(1) or {"locked": []})
     out = Out()
     server = rpc.Server(state, out, workers=1, quick_workers=1)
     server.submit(req(1, "test.slow"))
@@ -167,7 +167,7 @@ def test_cancel_as_a_notification_gets_no_answer(state, monkeypatch):
 
 def test_a_running_waiting_mesh_run_stops_its_job_when_cancelled(state, monkeypatch):
     stopped = []
-    monkeypatch.setitem(rpc.METHODS, "test.waits", lambda st, params: waits(st))
+    monkeypatch.setitem(rpc.METHODS, "test.waits", rpc.Method(lambda st, params: waits(st), cancel="running"))
     started, go = threading.Event(), threading.Event()
 
     def waits(st):
@@ -175,7 +175,6 @@ def test_a_running_waiting_mesh_run_stops_its_job_when_cancelled(state, monkeypa
         started.set()
         go.wait(10)
         return {"stopped": bool(stopped)}
-    monkeypatch.setattr(rpc, "CANCEL_RUNNING", rpc.CANCEL_RUNNING | {"test.waits"})
     out = Out()
     server = rpc.Server(state, out)
     server.submit(req(1, "test.waits"))
@@ -187,8 +186,9 @@ def test_a_running_waiting_mesh_run_stops_its_job_when_cancelled(state, monkeypa
 
 def test_the_running_cancellable_methods_are_the_waiting_forms_of_jobs():
     # and inventory.create's clone (T212, #417 L5): stopped and tidied, nothing kept
-    assert rpc.CANCEL_RUNNING == {"host.check", "mesh.plan", "mesh.apply", "mesh.cut", "inventory.create"}
-    assert not rpc.CANCEL_RUNNING & {m for m, claims in rpc.LOCKS.items() if claims}
+    running = {name for name, m in rpc.METHODS.items() if m.cancel == "running"}
+    assert running == {"host.check", "mesh.plan", "mesh.apply", "mesh.cut", "inventory.create"}
+    assert not any(rpc.METHODS[name].claims({}) for name in running)
 
 
 # ---------------------------------------------------------------- the unlock and vault.status (Q112 (r))
@@ -196,7 +196,7 @@ def test_the_running_cancellable_methods_are_the_waiting_forms_of_jobs():
 def test_an_unlock_is_never_queued_behind_busy_workers(state, monkeypatch):
     started, go = blocker(monkeypatch)
     unlocked = threading.Event()
-    monkeypatch.setitem(rpc.METHODS, "vault.unlock", lambda st, params: unlocked.set() or {"status": "unlocked"})
+    monkeypatch.setattr(rpc.METHODS["vault.unlock"], "fn", lambda st, params: unlocked.set() or {"status": "unlocked"})
     out = Out()
     server = rpc.Server(state, out, workers=1, quick_workers=1)
     server.submit(req(1, "test.slow"))
@@ -216,8 +216,8 @@ def test_vault_status_waits_for_an_unlock_asked_before_it(state, monkeypatch):
         go.wait(10)
         st.unlocked.add("bw")
         return {"status": "unlocked"}
-    monkeypatch.setitem(rpc.METHODS, "vault.unlock", unlock)
-    monkeypatch.setitem(rpc.METHODS, "vault.status", lambda st, params: seen.append(set(st.unlocked)) or {})
+    monkeypatch.setattr(rpc.METHODS["vault.unlock"], "fn", unlock)
+    monkeypatch.setattr(rpc.METHODS["vault.status"], "fn", lambda st, params: seen.append(set(st.unlocked)) or {})
     # the unlock's lane hasn't picked it up yet: the status check must still see it coming
     lane_go = threading.Event()
     real_run = rpc.Server.run
@@ -250,8 +250,8 @@ def test_vault_status_doesnt_wait_for_a_cancelled_unlock(state, monkeypatch):
         return real_run(self, record)
     monkeypatch.setattr(rpc.Server, "run", run)
     ran = []
-    monkeypatch.setitem(rpc.METHODS, "vault.unlock", lambda st, params: ran.append(1) or {})
-    monkeypatch.setitem(rpc.METHODS, "vault.status", lambda st, params: {"status": "locked"})
+    monkeypatch.setattr(rpc.METHODS["vault.unlock"], "fn", lambda st, params: ran.append(1) or {})
+    monkeypatch.setattr(rpc.METHODS["vault.status"], "fn", lambda st, params: {"status": "locked"})
     out = Out()
     server = rpc.Server(state, out)
     server.submit(req(1, "vault.unlock", {"password": "hunter2"}))

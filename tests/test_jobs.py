@@ -6,6 +6,8 @@ import time
 import pytest
 
 from roster import jobs
+from roster.common import die
+from roster.errors import Problem
 
 
 def collect():
@@ -65,10 +67,21 @@ def test_a_job_that_raises_ends_failed_with_the_error():
     m = jobs.Jobs()
 
     def work(job):
-        raise jobs.Failed(3, "it broke", {"why": "x"})
+        raise Problem(3, "it broke", {"why": "x"}, details="the server said no")
     job = m.start("mesh", "plan", work)
     job.wait(5)
-    assert job.view()["state"] == "failed" and job.error == {"code": 3, "message": "it broke", "data": {"why": "x"}}
+    assert job.view()["state"] == "failed"
+    assert job.error == {"code": 3, "message": "it broke", "data": {"why": "x", "details": "the server said no"}}
+
+
+def test_a_job_that_dies_keeps_the_code_of_its_die():
+    m = jobs.Jobs()
+
+    def work(job):
+        die("the key is of another type", code=201)
+    job = m.start("mesh", "plan", work)
+    job.wait(5)
+    assert job.error == {"code": 201, "message": "the key is of another type"}
 
 
 def test_progress_is_pushed_a_few_times_a_second_not_on_every_step():

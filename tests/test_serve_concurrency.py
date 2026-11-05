@@ -181,16 +181,15 @@ def test_host_get_settled_waits_for_a_write_under_way(state):
 
 
 def test_the_quick_reads_are_the_ones_that_take_no_lock():
-    assert not set(rpc.QUICK) & set(rpc.LOCKS)
-    assert set(rpc.QUICK) <= set(rpc.METHODS)
-    assert set(rpc.LOCKS) <= set(rpc.METHODS)
-    assert rpc.quick({"method": "host.get", "params": {"name": "x"}})
-    assert not rpc.quick({"method": "host.get", "params": {"name": "x", "settled": True}})
+    quick = [name for name, m in rpc.METHODS.items() if m.lane == "quick"]
+    assert "hosts.list" in quick and not any(rpc.METHODS[name].claims({}) for name in quick)
+    assert rpc.lane({"method": "host.get", "params": {"name": "x"}}) == "quick"
+    assert rpc.lane({"method": "host.get", "params": {"name": "x", "settled": True}}) == "general"
 
 
 def test_the_server_answers_a_quick_read_while_every_worker_is_busy(state, monkeypatch):
     gate = threading.Event()
-    monkeypatch.setitem(rpc.METHODS, "test.slow", lambda state, params: gate.wait(5) and {"slow": True})
+    monkeypatch.setitem(rpc.METHODS, "test.slow", rpc.Method(lambda state, params: gate.wait(5) and {"slow": True}))
     out = []
     server = rpc.Server(state, out.append, workers=2, quick_workers=1)
     for i in range(3):
@@ -269,7 +268,7 @@ def test_vault_lock_forgets_at_once_then_waits_for_the_holders_and_never_fails(s
 
 
 def test_vault_logout_never_waits_with_a_busy_answer_either(state):
-    assert "vault.logout" not in rpc.LOCKS and "vault.lock" not in rpc.LOCKS
+    assert not rpc.METHODS["vault.logout"].claims({}) and not rpc.METHODS["vault.lock"].claims({})
 
 
 def test_a_writer_that_gives_up_lets_the_readers_it_held_back_go(state):
@@ -311,7 +310,7 @@ def test_host_verify_login_reloads_before_it_shares_the_vault(state, monkeypatch
 
 def test_a_reload_for_a_read_waits_only_so_long_for_a_write(state, monkeypatch):
     # review 6: mesh.plan's and mesh.apply's reload waited for roster.yml with no limit, never answering 4
-    monkeypatch.setitem(rpc.DEADLINES, "mesh.plan", 0.1)          # what's left of its deadline is its wait
+    monkeypatch.setattr(rpc.METHODS["mesh.plan"], "deadline", 0.1)          # what's left of its deadline is its wait
     release = holder(state.lock, "changes.publish")
     answer = []
     t = threading.Thread(target=lambda: answer.append(call(state, "mesh.plan")), daemon=True)
@@ -395,8 +394,8 @@ def test_a_worker_outlives_a_request_that_raises(state):
 def test_closing_refuses_whats_queued_before_any_clean_up(state, monkeypatch):
     # review 5: a vault.login queued when stdin closed ran after end_sign_in, and its `bw login` outlived serve
     gate, started, ran, out = threading.Event(), threading.Event(), [], []
-    monkeypatch.setitem(rpc.METHODS, "test.slow", lambda st, params: started.set() or gate.wait(5) and {})
-    monkeypatch.setitem(rpc.METHODS, "vault.login", lambda st, params: ran.append(1) or {})
+    monkeypatch.setitem(rpc.METHODS, "test.slow", rpc.Method(lambda st, params: started.set() or gate.wait(5) and {}))
+    monkeypatch.setattr(rpc.METHODS["vault.login"], "fn", lambda st, params: ran.append(1) or {})
     server = rpc.Server(state, out.append, workers=1, quick_workers=1)
     server.submit(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "test.slow"}))
     started.wait(5)
@@ -511,3 +510,25 @@ def test_reloading_while_a_box_setting_locks_a_provider_leaves_both_whole(state,
     finally:
         providers.PROVIDERS.pop(added, None)
     assert errors == []
+
+
+# ---------------------------------------------------------------- how a method's failure is answered
+
+def test_a_die_inside_a_method_answers_with_its_own_code(state, monkeypatch):
+    # a die() with a code of its own (`error: [201] ...` on the command line) was answered as 3, the code in its text
+    from roster.common import die
+
+    def dies(st, params):
+        die("the key is of another type", code=201, fix="make a new one")
+    monkeypatch.setitem(rpc.METHODS, "test.dies", rpc.Method(dies))
+    assert call(state, "test.dies")["error"] == {"code": 201, "message": "the key is of another type",
+                                                 "data": {"fix": "make a new one"}}
+
+
+def test_a_method_holding_a_password_never_answers_or_logs_its_failure_in_its_own_words(state, monkeypatch, capsys):
+    def fails(st, params):
+        raise ValueError(params["password"])
+    monkeypatch.setitem(rpc.METHODS, "test.fails", rpc.Method(fails, sensitive="saving it"))
+    assert call(state, "test.fails", {"password": "pw-1"})["error"] == {"code": -32603,
+                                                                       "message": "saving it failed: ValueError"}
+    assert "pw-1" not in capsys.readouterr().err

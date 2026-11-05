@@ -1,11 +1,19 @@
-"""Stable error codes and the Problem they come in: what `roster serve`, the askpass channel and
-`roster check HOST` report when opening a Session can't work (docs/app/errors.md is the catalog).
-The app switches on the code; the message is roster's usual wording, ready to show to a person, and never
-holds a secret. `fix` says what to do about it, in a sentence."""
+"""Stable error codes and the Problem they come in: what `roster serve`, the askpass channel, `roster check HOST`
+and the CLI's die() report (docs/app/errors.md is the catalog). The app switches on the code; the message is
+roster's usual wording, ready to show to a person, and never holds a secret. `fix` says what to do about it, in a
+sentence.
 
-import re
+Nothing else of roster's is imported here: serve, the CLI, the providers and the askpass helper take their codes from
+this module, and a provider's kinds of failure carry their own (providers/problems.py). The app and the Rust core
+read them by name from docs/serve-contract.json (scripts/gen-serve-api.py)."""
 
-from . import providers
+# ---- JSON-RPC's own codes, which serve answers with too
+PARSE_ERROR = -32700
+INVALID_REQUEST = -32600
+METHOD_NOT_FOUND = -32601
+INVALID_PARAMS = -32602
+INTERNAL_ERROR = -32603
+JSON_RPC = ("PARSE_ERROR", "INVALID_REQUEST", "METHOD_NOT_FOUND", "INVALID_PARAMS", "INTERNAL_ERROR")
 
 # ---- the codes (docs/serve-api.md lists them all)
 INVENTORY_ERROR = 1         # roster.yml wasn't found or doesn't load (catalog row 1)
@@ -36,12 +44,11 @@ NO_PROVIDER = 31            # the Login's provider (the `keeper:` in keeper:ITEM
 ITEM_NOT_FOUND = 32         # no vault item by that name (row 8); data.near: similar item names
 SEVERAL_ITEMS = 33          # several vault items match (row 9); data.matches: [{name, revised, uris}]
 NO_FIELD = 34               # the item has no password, or no such #FIELD (row 10)
-# 35 LOOKUP_FAILED          the provider failed some other way; the message is the provider's
-# 36 UNEXPECTED_PROMPT      askpass: the Host asked something other than the Login password (row 18)
-# 37 TOKEN_SPENT            askpass: the one-time token is used, expired or cleared by vault.lock
-# 38 NO_SERVE               askpass: the helper couldn't reach `roster serve`
+LOOKUP_FAILED = 35          # the provider failed some other way; the message is the provider's
+UNEXPECTED_PROMPT = 36      # askpass: the Host asked something other than the Login password (row 18)
+TOKEN_SPENT = 37            # askpass: the one-time token is used, expired or cleared by vault.lock
+NO_SERVE = 38               # askpass: the helper couldn't reach `roster serve`
 PASSWORD_NEEDED = 39        # session.prepare: the Host's Login is auth: prompt, so the app asks for its password (T16)
-from .askpass import LOOKUP_FAILED, NO_SERVE, TOKEN_SPENT, UNEXPECTED_PROMPT  # noqa: E402,F401 (stdlib-only helper)
 
 # host.check's network and Host steps (rows 11-17, 19)
 NO_DNS = 40                 # the address doesn't resolve (row 15)
@@ -214,6 +221,15 @@ KEY_TOO_OLD = 207           # a warning (check --box, box.check): this Box's key
 NEW_KEY_REFUSED = 208       # setup --rotate: a Host it reached refused the new key, so no old key line went anywhere
 
 
+# The vault's own state, not an item's: the codes a provider's failure keeps wherever it's reported
+VAULT_CODES = (WRONG_PASSWORD, NOT_LOGGED_IN, CLI_MISSING, UNSUPPORTED, VAULT_LOCKED, ALREADY_SIGNED_OUT,
+               SIGN_OUT_FAILED)
+# The CLI's plain refusals: a die()'s text never shows these, which name no catalog row of their own
+PLAIN = (INVENTORY_ERROR, UNKNOWN_HOST, ROSTER_ERROR)
+# data.path of a roster.yml roster won't repeat (a -c value shaped like a token, #484 N3)
+PATH_NOT_REPEATED = "(not repeated)"
+
+
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""
 
@@ -222,40 +238,53 @@ class Problem(Exception):
         self.code, self.message, self.fix, self.details = code, message, fix, details
         self.data = data if fix is None else {**(data or {}), "fix": fix}
 
+    def as_error(self):
+        """The Problem as a JSON-RPC error object: {code, message, data?}, with the raw `details` (git's or ssh's
+        own words, for the app's "Details") in data."""
+        err = {"code": self.code, "message": self.message}
+        if self.data is not None:
+            err["data"] = self.data
+        if self.details:
+            err["data"] = {**err.get("data", {}), "details": self.details}
+        return err
 
-VAULT_ERRORS = {providers.WrongPassword: WRONG_PASSWORD, providers.NotLoggedIn: NOT_LOGGED_IN,
-                providers.CliMissing: CLI_MISSING, providers.Unsupported: UNSUPPORTED,
-                providers.VaultLocked: VAULT_LOCKED, providers.NotSignedIn: ALREADY_SIGNED_OUT,
-                providers.SignOutFailed: SIGN_OUT_FAILED}
+
+class Exit(SystemExit):
+    """A die(): roster refusing on the command line, as the Problem it is. Python prints its text, `error: MESSAGE`
+    (`error: [CODE] MESSAGE` when TAG and the code isn't PLAIN), and exits 1; serve and --json answer with the
+    Problem."""
+
+    def __init__(self, problem, tag=True):
+        shown = f"[{problem.code}] " if tag and problem.code not in PLAIN else ""
+        super().__init__(f"error: {shown}{problem.message}")
+        self.problem = problem
+
+
+def die_message(e):
+    """The text of a die() (SystemExit("error: ...")), without the prefix."""
+    msg = str(e.code) if e.code is not None else "exited"
+    return msg.removeprefix("error: ")
+
+
+def problem_of(e: BaseException) -> "Problem":
+    """Any exception as the Problem to answer with: a Problem as it is, a die() with its code (3 when it has none of
+    its own), anything else -32603 with its type and words (so never for code that may hold a secret)."""
+    if isinstance(e, Problem):
+        return e
+    if isinstance(e, Exit):
+        return e.problem
+    if isinstance(e, SystemExit):
+        return Problem(ROSTER_ERROR, die_message(e))
+    return Problem(INTERNAL_ERROR, f"{type(e).__name__}: {e}")
+
 
 def vault_problem(e):
-    """A provider's SecretError about the vault itself (locked, not logged in, ...) as a Problem. Shared by the CLI
-    and serve, so it carries no fix only one of them could act on (serve adds the lock screen's: sign_out_error)."""
-    return Problem(VAULT_ERRORS.get(type(e), ROSTER_ERROR), str(e))
+    """A provider's SecretError as a Problem: its own code, data and fix (providers/problems.py), else 3. Shared by
+    the CLI and serve, so the vault's state carries no fix only one of them could act on (serve adds the lock
+    screen's: sign_out_error)."""
+    return Problem(getattr(e, "code", None) or ROSTER_ERROR, str(e), getattr(e, "data", None),
+                   fix=getattr(e, "fix", None))
 
-
-def write_problem(e):
-    """A failed vault.create_item / vault.undo_create as a Problem, with its fix. Names only, never a value."""
-    if isinstance(e, providers.ItemExists):
-        return Problem(ITEM_EXISTS, str(e), {"matches": e.matches},
-                       fix="point the Login at the existing item, or pick another name (`<host> <what it opens>`)")
-    if isinstance(e, providers.CantWrite):
-        return Problem(CANT_WRITE, str(e), fix="save to a provider that can write (bw, kp), or make the item by hand")
-    if isinstance(e, providers.WriteFailed):
-        return Problem(WRITE_FAILED, str(e), fix="see the message; check your rights to the vault or collection")
-    if isinstance(e, providers.UnknownTarget):
-        return Problem(UNKNOWN_TARGET, str(e), fix="fix the setting the message names, or pick where to save it")
-    if isinstance(e, providers.ReadOnlyTarget):
-        return Problem(READ_ONLY_TARGET, str(e),
-                       fix="save it somewhere you can write to, or ask an organization admin for write access")
-    return vault_problem(e)
-
-
-SIGN_IN_ERRORS = {providers.CodeRejected: CODE_REJECTED, providers.MethodUnsupported: METHOD_UNSUPPORTED,
-                  providers.RateLimited: RATE_LIMITED, providers.ServerUnreachable: SERVER_UNREACHABLE,
-                  providers.AlreadyLoggedIn: ALREADY_LOGGED_IN, providers.BrowserLoginFailed: SSO_FAILED,
-                  providers.BadServer: BAD_SERVER, providers.ApiKeyRejected: API_KEY_REJECTED,
-                  providers.WrongLogin: WRONG_PASSWORD, providers.LoginError: SIGN_IN_FAILED}
 
 SIGN_IN_FIXES = {
     WRONG_PASSWORD: "check the email, the master password and the server, then try again",
@@ -275,10 +304,7 @@ SIGN_IN_FIXES = {
 def sign_in_problem(e, login_id=None):
     """A failed vault.login step as a Problem. data.step (with data.login) is where the sign-in carries on, when
     it does; without it the sign-in is over. Never holds a value the person typed (the provider scrubs them)."""
-    if isinstance(e, providers.WrongPassword) or type(e) in VAULT_ERRORS:
-        code = VAULT_ERRORS.get(type(e), WRONG_PASSWORD)
-    else:
-        code = next((c for cls, c in SIGN_IN_ERRORS.items() if isinstance(e, cls)), SIGN_IN_FAILED)
+    code = getattr(e, "code", None) or SIGN_IN_FAILED
     step = getattr(e, "step", None)
     data = {"step": step, "login": login_id} if step else None
     fix = SIGN_IN_FIXES.get(code) or (str(e) if code in (NOT_LOGGED_IN, CLI_MISSING) else None)
@@ -289,43 +315,31 @@ def login_problem(e, h, what="ssh"):
     """A SecretError from looking up Host H's Login as a Problem naming the Host, with its fix.
     Item names, revision dates and URIs may be shown; a value never is (providers never put one in)."""
     where = f"{what} Login of {h['name']}"
-    if isinstance(e, providers.ItemNotFound):
+    code = getattr(e, "code", None)
+    if code == ITEM_NOT_FOUND:
         near = f" - did you mean: {', '.join(repr(n) for n in e.near)}" if e.near else ""
         return Problem(ITEM_NOT_FOUND, f"no vault item named '{e.item}' ({where}){near}", {"near": e.near},
                        fix=f"fix the name in {h['name']}'s auth: in roster.yml, or rename the item in the vault")
-    if isinstance(e, providers.SeveralItems):
+    if code == SEVERAL_ITEMS:
         how = "are named" if e.exact else "match"
         listed = "; ".join(f"'{m['name']}'" + (f" ({about})" if (about := ", ".join(
             ([f"edited {m['revised']}"] if m.get("revised") else []) + list(m["uris"]))) else "")
             for m in e.matches)
-        total = getattr(e, "total", None)
-        if total:                               # bw found more than its login rows show (Q191 (p))
-            head = f"{total} vault items match '{e.item}' ({where}), some of them aren't logins"
+        if e.total:                             # bw found more than its login rows show (Q191 (p))
+            head = f"{e.total} vault items match '{e.item}' ({where}), some of them aren't logins"
             text = head + (f": {listed}" if listed else "")
         else:
             text = f"{len(e.matches)} vault items {how} '{e.item}' ({where}): {listed}"
         return Problem(SEVERAL_ITEMS, text,
                        {"matches": e.matches},
                        fix="delete or rename the extra items in the vault, or use the item's id in auth:")
-    if isinstance(e, providers.NoField):
+    if code == NO_FIELD:
         what_ = "password" if e.field == "password" else f"field '{e.field}'"
         return Problem(NO_FIELD, f"vault item '{e.item}' has no {what_} ({where})", {"field": e.field},
                        fix=f"add the {what_} to the item in the vault, or fix the #FIELD in auth:")
-    if type(e) in VAULT_ERRORS:                 # the vault, not the item: its message already says what to run
-        code = VAULT_ERRORS[type(e)]
+    if code in VAULT_CODES:                     # the vault, not the item: its message already says what to run
         return Problem(code, str(e), fix="unlock the vault" if code == VAULT_LOCKED else str(e))
     return Problem(LOOKUP_FAILED, f"{e} ({where})", fix="see the message; `roster check --auth` tests every Login")
-
-
-def inventory_problem(message, path=None):
-    """roster.yml didn't load (row 1). data: path (or None) and, for a YAML error, the line it's at."""
-    m = re.search(r"line (\d+)", message)
-    from .config import HIDDEN_PATH, shown_path
-    shown = shown_path(path) if path else None      # a token typed as -c PATH is never repeated (#484 M1)
-    data = {"path": (shown or "(not repeated)") if path else None} | ({"line": int(m.group(1))} if m else {})
-    where = (shown or f"the roster.yml at {HIDDEN_PATH}" if path else "roster.yml") + (f" at line {data['line']}" if m else "")
-    return Problem(INVENTORY_ERROR, message, data, fix=f"fix {where}, or make one if there's none yet: "
-                                                                 "`roster init --blank` (`roster init --help`: the others)")
 
 
 def unknown_provider(h, auth, what="ssh"):
