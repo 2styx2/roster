@@ -22,6 +22,7 @@ import {
 import { Announce } from "../ui/Announce";
 import { addressCut, countOf, formatCount } from "../ui/format";
 import { Keys } from "../ui/Keys";
+import { ToolbarIconSvg } from "../chrome/toolbar";
 import { prefixFill } from "../ui/completion";
 import { searchHosts } from "./match";
 import {
@@ -97,6 +98,13 @@ export interface PickerProps {
   /** How each Host with a Session stands (sidebar/sections.ts `hostLights`): its node is drawn as
    * in the Sidebar (taste.md: the accent means live). */
   live?: ReadonlyMap<string, Light | "connecting">;
+  /** Nine or more Sessions are open: as in the Sidebar, only the on-screen Host's node keeps its
+   * edge stub, so stubs stay a signal, not a texture (Q219 a, extended to the Picker by Q235). */
+  manySessions?: boolean;
+  /** Add a Host (`:host add`), offered when nothing matches; left out on a roster that can't. */
+  onAdd?: () => void;
+  /** Its keys ("␣ +"), shown beside it, or null. */
+  addKeys?: string | null;
 }
 
 /** `text` with what the query's terms matched wrapped in <mark>: each term as one run where it
@@ -139,16 +147,19 @@ export function marked(text: string, query: string): React.ReactNode {
 function HostNode({
   host,
   how,
+  many,
 }: {
   host: Host;
   how: Light | "connecting" | undefined;
+  /** Nine or more Sessions are open: another live Host's node keeps its colour, not its stub. */
+  many: boolean;
 }) {
   if (!host.reviewed || how === undefined)
     return <StateDot dot={hostDot(host)} />;
   return how === "connecting" ? (
     <StateDot dot="connecting" />
   ) : (
-    <StateDot dot={hostDot(host)} lit={how} />
+    <StateDot dot={hostDot(host)} lit={how} stub={!(many && how === "live")} />
   );
 }
 
@@ -166,6 +177,9 @@ export function Picker({
   onClose,
   onQuick,
   quickFirst = false,
+  manySessions = false,
+  onAdd,
+  addKeys = null,
   onInfo,
   onHelp,
   live,
@@ -391,9 +405,12 @@ export function Picker({
               onMouseMove={() => current !== 0 && setIndex(0)}
               onClick={() => onQuick?.(quick)}
             >
-              {/* A node like every row's: a ring, the password login a box that isn't in the
-                  Inventory starts with (its Session's row will show the same). */}
-              <StateDot dot="password" />
+              {/* Quick Connect's own glyph, as the title bar draws it (round 19: a closed ring here
+                  read as a password-login Host): this Box's square, an edge and an open ring, the
+                  ring where every row's node sits. */}
+              <span className="quick-node" aria-hidden="true">
+                <ToolbarIconSvg name="quick" />
+              </span>
               <span className="quick-label">Quick Connect</span>
               <span className="host-name">{formatQuickTarget(quick)}</span>
               <span className="quick-note">not in the Inventory</span>
@@ -416,7 +433,7 @@ export function Picker({
                 choose(host);
               }}
             >
-              <HostNode host={host} how={live?.get(host.name)} />
+              <HostNode host={host} how={live?.get(host.name)} many={manySessions} />
               {/* The name and, on an unreviewed Host, its badge beside it, as in the Sidebar (round
                   18: a column of its own kept ~100 px empty on every other row while groups were cut). */}
               <div className="host-cell">
@@ -446,13 +463,21 @@ export function Picker({
                   ? addressCut(host.ip, IP_CHARS)
                   : marked(host.ip, query)}
               </span>
-              <span className="host-group" title={host.group}>
+              {/* With no type, the group takes the type's cell too (round 19: cut beside an empty
+                  cell); it still starts at the group column, so the columns stay shared. An empty
+                  address keeps its cell: the group can't start left of its column. */}
+              <span
+                className={`host-group${host.type ? "" : " wide"}`}
+                title={host.group}
+              >
                 {/* Cut once, at its end, by the column (round 12: a middle cut then an end cut read "fieldwork…-…"). */}
                 {host.group}
               </span>
-              <span className="host-type" title={host.type}>
-                {host.type}
-              </span>
+              {host.type && (
+                <span className="host-type" title={host.type}>
+                  {host.type}
+                </span>
+              )}
             </li>
           ))}
           <li
@@ -472,11 +497,43 @@ export function Picker({
             {query.trim() === "" && hosts.hosts.length === 0
               ? "The Inventory has no Hosts yet. Add them to roster.yml and they show up here."
               : `No Hosts match “${query}”.`}
+            {/* What you can do next (round 19: the line offered only Quick Connect, or nothing):
+                add the Host, with its keys, where this roster can; reach it by user@address where
+                Quick Connect is on (the form in Iosevka, something you type). */}
             {query.trim() !== "" && (
               <span className="picker-empty-next">
-                {onQuick
-                  ? "To reach a box that isn't in the Inventory, type user@address."
-                  : "Names, addresses, groups and types were searched; Backspace widens the search."}
+                {onAdd || onQuick ? (
+                  <>
+                    {onAdd && (
+                      <>
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          className="picker-empty-add"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={onAdd}
+                        >
+                          Add a Host
+                        </button>
+                        {addKeys && (
+                          <span className="key-hint">
+                            {" "}
+                            <Keys keys={addKeys} />
+                          </span>
+                        )}
+                        {onQuick ? ", or type " : "."}
+                      </>
+                    )}
+                    {onQuick && (
+                      <>
+                        {onAdd ? "" : "Type "}
+                        <code>user@address</code> to connect to a box that isn't in the Inventory.
+                      </>
+                    )}
+                  </>
+                ) : (
+                  "Names, addresses, groups and types were searched; Backspace widens the search."
+                )}
               </span>
             )}
           </p>

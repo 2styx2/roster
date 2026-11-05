@@ -1015,6 +1015,7 @@ export function Sidebar({
         <RowMenu
           key={`${menu.row}:${menu.at ? `${menu.at.x},${menu.at.y}` : "keys"}`}
           label={menuRow.label}
+          what={menuRow.host !== undefined ? "HOST" : menuRow.id.startsWith("group:") ? "GROUP" : "NAME"}
           entries={menuEntries}
           at={menu.at}
           anchor={menuAnchor}

@@ -306,8 +306,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* The digit that opens the row (Startify's numbers), as a key. */
 .recent-key { display: flex; justify-content: flex-end; font: var(--text-sm) var(--font-mono); font-variant-numeric: tabular-nums; color: var(--muted); }
 .empty { min-width: 0; max-width: 100%; }
-.empty-path { max-width: min(56ch, calc(100% - 32px)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-sm); direction: rtl; }
-.empty-path code { direction: ltr; unicode-bidi: isolate; }
+/* Cut in its middle as the status bar's path is (round 19): the first folder and the file name
+   stay, the folders between give way from their start; the whole path is its tooltip. */
+.empty-path { display: flex; max-width: min(56ch, calc(100% - 32px)); min-width: 0; color: var(--muted); font-size: var(--text-sm); }
+.empty-path .path-text { display: flex; min-width: 0; white-space: nowrap; font-family: var(--font-mono); font-size: 0.95em; }
 .empty-hint { font-size: var(--text-sm); color: var(--muted); }
 
 .statusbar {
@@ -347,12 +349,13 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .statusbar .path::before { content: ""; width: 0; height: var(--statusbar-h); }
 .statusbar .path-text { flex: 1 1 auto; min-width: calc(var(--keep, 8ch) - 1px); display: flex; white-space: nowrap; }
 /* Cut in its middle (round 18): the first folder and the file name stay, the folders between are
-   cut from their start ("~/…ventory/roster.yml"), as .empty-path is: an rtl box with ltr text. */
-.statusbar .path-base { flex: none; }
+   cut from their start ("~/…ventory/roster.yml"): an rtl box with ltr text. The empty Inventory's
+   pane draws it the same way (.empty-path, PathText). */
+.path-base { flex: none; }
 /* The folders between give way, down to "…/"; the first folder and the file name never. */
-.statusbar .path-head { flex: none; }
-.statusbar .path-dir { flex: 0 1 auto; min-width: 2ch; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
-.statusbar .path-dir > span { direction: ltr; unicode-bidi: isolate; }
+.path-head { flex: none; }
+.path-dir { flex: 0 1 auto; min-width: 2ch; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
+.path-dir > span { direction: ltr; unicode-bidi: isolate; }
 .statusbar .count { font-variant-numeric: tabular-nums; }
 /* The Session on screen (`session` segment): its node and its name in Iosevka, in the text colour,
    the one thing in the line you're inside of. It gives way after the path and the hints. */
@@ -539,18 +542,18 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   background: var(--accent);
 }
 /* The App-mode cursor: raised, with the accent outline and no bar. */
-.sb-row.cursor, .sb-heading.cursor > .sb-heading-button { background: var(--raised); box-shadow: inset 0 0 0 1px var(--accent); color: var(--text); }
+.sb-row.cursor, .sb-heading.cursor { background: var(--raised); box-shadow: inset 0 0 0 1px var(--accent); color: var(--text); }
 /* While a row menu is open its focused item wears the accent outline: the row keeps the raised
    style without it, so one thing at a time is the cursor (round 18). */
-.sidebar[data-menu] .sb-row.cursor, .sidebar[data-menu] .sb-heading.cursor > .sb-heading-button { box-shadow: inset 0 0 0 1px var(--raised-line); }
-/* On a heading the cursor is its button's, inset like a row's, so its actions (+) sit outside it
-   (round 16: the outline wrapped the whole heading, wider than the rows). */
-.sb-heading.cursor { color: var(--text); }
+.sidebar[data-menu] .sb-row.cursor, .sidebar[data-menu] .sb-heading.cursor { box-shadow: inset 0 0 0 1px var(--raised-line); }
+/* On a heading the cursor is the whole heading row, the rows' own width, so its actions (+) sit
+   inside it, as a row's buttons do (round 19: on the title alone it stopped short of the +; round
+   16's wider outline is gone, the heading and the rows share their box). */
 .sidebar .sb-heading-button { margin-inline: 2px; }
 /* Forced colours drop fills and box-shadows: keep the bar and the cursor visible. */
 @media (forced-colors: active) {
   .sb-row.live::before { forced-color-adjust: none; background: Highlight; }
-  .sb-row.cursor, .sb-heading.cursor > .sb-heading-button { outline: 1px solid Highlight; outline-offset: -1px; }
+  .sb-row.cursor, .sb-heading.cursor { outline: 1px solid Highlight; outline-offset: -1px; }
 }
 .sidebar .sb-item {
   flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 8px; color: inherit;
@@ -731,7 +734,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 @media (hover: hover) and (pointer: fine) {
   .sidebar .row-menu-item:hover:not(:focus) { background: var(--hover); }
 }
-.row-menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
+/* Where the menu's groups split: a rule you can see, 4px above and below, so the one larger gap
+   reads as a split and not as a slip (round 19: --line on the panel was 1.05:1 in Roster dark,
+   invisible). The menu's own border's tone. */
+.row-menu-sep { height: 1px; margin: 4px 6px; background: var(--line-strong); }
 @media (forced-colors: active) {
   .row-menu { border-color: CanvasText; }
   .sidebar .row-menu-item:focus { outline: 2px solid Highlight; outline-offset: -2px; }
@@ -1025,10 +1031,13 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   /* Zero-width edge tracks: with the 12px gap they're the row's side padding, so the node sits
      12px from the row's edge and 12px from the name, as in the Sidebar (a subgrid row's own
      padding would push its first cell into the gap). */
-  /* The name is the column you scan: it takes two parts of the spare room (at least 20 characters; the footer shows it whole when cut), the group one part (at least 10); the
-     address up to 22, the group up to 18 and the type up to 10 take only what they need, and
-     give way before it. */
-  grid-template-columns: 0 8px minmax(20ch, 2fr) fit-content(22ch) minmax(10ch, 1fr) fit-content(10ch) 0;
+  /* The name is the column you scan: it takes the spare room (at least 20 characters; the footer
+     shows it whole when cut). The address (up to 22), the group (up to 18) and the type (up to 10)
+     take only what they need. Round 19 (Q235, amends Q222 b with the owner's permission): the
+     group's share was a fixed third of the spare room, so it was cut at 131 px beside an empty
+     name column and short groups kept room they didn't use; now it takes what its widest value
+     needs, up to 18ch (~160 px, a bit over 2:3 of the name's at 1280 in the worst case). */
+  grid-template-columns: 0 8px minmax(20ch, 1fr) fit-content(22ch) fit-content(18ch) fit-content(10ch) 0;
 }
 /* No badge column: an unreviewed Host's badge sits beside its name, as in the Sidebar (round 18:
    its own column, empty on every other row, kept ~100 px from the group). */
@@ -1055,6 +1064,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* Each keeps a word's room: the name gives way first (its whole text is in the footer when cut). */
 .picker-row > .host-group { min-width: min(12ch, max-content); }
 .picker-row > .host-type { min-width: min(7ch, max-content); }
+/* A Host with no type: its group takes the empty type cell too, from its own column's start. */
+.picker-row > .host-group.wide { grid-column: span 2; contain: inline-size; } /* sizes nothing: it only fills */
 .picker-row.unreviewed { cursor: not-allowed; }
 .picker-row.unreviewed .host-name { color: var(--muted); }
 .picker-row .host-cell > .badge { flex: none; }
@@ -1073,7 +1084,11 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 /* Quick Connect (ticket 14): a box that isn't in the Inventory, offered first while the query reads
    as user@address[:port]. The address is data (Iosevka); the words around it are the app's. */
-.picker-row.quick-row { grid-template-columns: 8px auto minmax(0, 1fr) auto; column-gap: 12px; padding: 8px 12px; }
+/* Its node is Quick Connect's glyph (the title bar's: this Box's square, an edge, an open ring),
+   14px, set so its ring is centred where every row's node is (16px in) and the words start where
+   the names do (round 19). */
+.picker-row.quick-row { grid-template-columns: 14px auto minmax(0, 1fr) auto; column-gap: 12px; padding: 8px 12px 8px 5px; }
+.picker-row .quick-node { display: flex; color: var(--muted); }
 .picker-row.quick-row > :first-child { grid-column-start: auto; }
 .picker-row .quick-label { font-size: var(--text-sm); }
 .picker-row .quick-note { font-size: var(--text-sm); color: var(--muted); }
@@ -1090,6 +1105,10 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
    content (round 12: the held height left ~400 px empty). */
 .picker:has(.picker-empty) .picker-list, .picker-list.few { min-height: 0; }
 .picker-empty-next { display: block; margin-top: 4px; font-size: var(--text-sm); }
+.picker-empty-next code { color: var(--text); }
+/* Add a Host as a link-like action in the sentence: the text colour, underlined on hover. */
+.picker-empty-add { padding: 0; border: 0; background: none; font: inherit; color: var(--text); text-decoration: underline 1px var(--muted); text-underline-offset: 3px; cursor: pointer; }
+@media (hover: hover) and (pointer: fine) { .picker-empty-add:hover { text-decoration-color: var(--text); } }
 /* The sizer: the Inventory's widest address, group and type, invisible and zero high, so the
    columns are sized by every Host and hold still as a query narrows the list. */
 .picker-row.picker-sizer { visibility: hidden; height: 0; min-height: 0; padding-block: 0; overflow: hidden; }

@@ -8,3 +8,14 @@ export function headPart(path: string): string {
   const lead = (/^[/\\]/.test(dir) ? /^[/\\][^/\\]*[/\\]/ : /^[^/\\]*[/\\]/).exec(dir)?.[0] ?? "";
   return lead.length < dir.length ? lead : "";
 }
+
+/** A path's folder part with its last separator ("~/team/"). */
+export function dirPart(path: string): string {
+  const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return i < 0 ? "" : path.slice(0, i + 1);
+}
+
+/** A path's file name ("roster.yml"). */
+export function basePart(path: string): string {
+  return path.slice(dirPart(path).length);
+}

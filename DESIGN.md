@@ -266,7 +266,7 @@ The one recurring geometry is the network's: **nodes** (6 to 7px circles whose f
 - **Dashed ring:** unreviewed.
 - **Hollow grey:** ended.
 - **Open apricot ring** (a short gap at its upper right, where the logo's Host sits): connecting.
-- **Edge stub:** a short 1px edge leaving a node whose Host has a Session, toward this Box (the one on screen apricot, others Paper), so "has a Session" is a shape too (Q213). Not on the Sessions list's own rows, where every row is a Session (Q228).
+- **Edge stub:** a short 1px edge leaving a node whose Host has a Session, toward this Box (the one on screen apricot, others Paper), so "has a Session" is a shape too (Q213). Not on the Sessions list's own rows, where every row is a Session (Q228). With nine or more Sessions open, only the on-screen Host's node keeps it, in the Sidebar and the Picker alike; other live Hosts keep their colour (Q219 a, Q235).
 
 With no Session open, the pane draws up to six recent Hosts (on a first launch, the Inventory's first reviewed Hosts, titled "In the Inventory") as a map under the mark: this Box's name and Sea Glass square, a hairline edge from the square to each Host's node (brighter under the pointer), and each Host a Sidebar-style row (node, Iosevka name, muted address), above Find a Host.
 
@@ -308,7 +308,9 @@ Machined and tactile, with a terminal's crispness: every control is a precise, q
 
 ### Picker (signature)
 - **Container:** Panel Graphite, Strong Hairline border, 10px radius, Overlay shadow, over a dimmed backdrop.
-- **Rows:** one shared grid (subgrid) of node, name (an unreviewed Host's badge beside it, as in the Sidebar), IP, group and type, with a minimum height of 34px and 12px gaps. The node follows the Sidebar's rule (muted at rest, apricot when the Host has a Session). The Host name is Iosevka in Paper and the other columns are muted. A column is as wide as its widest value in the whole Inventory, so it holds still while you type; an IPv6 address drops whole groups from its middle. Under 600px only the node, name and IP stay.
+- **Rows:** one shared grid (subgrid) of node, name (an unreviewed Host's badge beside it, as in the Sidebar), IP, group and type, with a minimum height of 34px and 12px gaps. The node follows the Sidebar's rule (muted at rest, apricot when the Host has a Session). The Host name is Iosevka in Paper and the other columns are muted. A column is as wide as its widest value in the whole Inventory, so it holds still while you type; an IPv6 address drops whole groups from its middle. The name takes the spare room; the group takes what it needs up to 18ch, and on a Host with no type it also takes the empty type cell, from its own column's start (Q235). Under 600px only the node, name and IP stay.
+- **Quick Connect row:** Quick Connect's own glyph (this Box's square, an edge, an open muted ring, as in the title bar), its ring where the rows' nodes sit (Q235).
+- **No match:** what was searched, then what you can do: Add a Host with its keys where this roster can add one, and `user@address` (Iosevka) where Quick Connect is on (Q235).
 - **Selected:** a raised fill with a 1px accent outline (the Sidebar cursor's), since it's the row Enter opens. It reveals the info button. Rows never wrap (Q214).
 - **Detail:** when the selected row cuts its Host's name, the footer's free room (left of the count) shows the name whole, in Iosevka; otherwise it says nothing. An address never shrinks below its text (an IPv6 one drops whole groups first); the name, then the group, give way (Q221).
 - **Matches:** what the query matched is underlined in the text colour (never the accent).

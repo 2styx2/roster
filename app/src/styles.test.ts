@@ -232,3 +232,18 @@ describe("the Finder's list", () => {
     expect(stylesCss).toMatch(/\.picker-list\.finder-list\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column/);
   });
 });
+
+describe("the Sidebar's cursor and menus (round 19)", () => {
+  const body = (selector: string) =>
+    rules(stylesCss)
+      .filter(([s, , at]) => at.length === 0 && s.split(",").map((x) => x.trim()).includes(selector))
+      .map(([, b]) => b)
+      .join(";");
+  it("outlines a heading's whole row, so its + sits inside the cursor", () => {
+    expect(body(".sb-heading.cursor")).toMatch(/box-shadow:\s*inset 0 0 0 1px var\(--accent\)/);
+    expect(stylesCss).not.toMatch(/\.sb-heading\.cursor\s*>\s*\.sb-heading-button/);
+  });
+  it("draws a menu's group split as a rule you can see, the border's tone", () => {
+    expect(body(".row-menu-sep")).toMatch(/background:\s*var\(--line-strong\)/);
+  });
+});

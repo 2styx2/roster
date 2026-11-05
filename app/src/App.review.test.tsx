@@ -135,7 +135,15 @@ describe("S7: an empty Inventory says what to do", () => {
     start(empty);
     const main = await screen.findByRole("main", { name: /workspace/i });
     expect(within(main).queryByRole("button", { name: "Add a Host" })).toBeNull();
-    expect(main).toHaveTextContent("This roster is too old to add Hosts here. Add them to roster.yml:");
+    expect(main).toHaveTextContent("Adding Hosts here needs a newer roster. Update roster on this Box, or add them to roster.yml:");
+    // Nothing on screen offers what the line says can't be done (round 19).
+    expect(document.querySelector('[data-control="add"]')).toBeNull();
+    expect(within(screen.getByRole("group", { name: "Inventory" })).queryByRole("button", { name: "Add a Host" })).toBeNull();
+    // The path is cut in its middle, as the status bar's: its first folder and file name stay.
+    const path = main.querySelector(".empty-path");
+    expect(path?.querySelector(".path-head")).toHaveTextContent(/^~\/$/);
+    expect(path?.querySelector(".path-base")).toHaveTextContent(/^roster\.yml$/);
+    expect(path).toHaveAttribute("title", "~/team-inventory/roster.yml");
     expect(within(main).getByText("roster.yml", { selector: "code" })).toBeInTheDocument();
   });
 
@@ -145,7 +153,9 @@ describe("S7: an empty Inventory says what to do", () => {
     expect(main).toHaveTextContent(/No Hosts in the Inventory yet/);
     expect(main).toHaveTextContent("~/team-inventory/roster.yml");
     expect(within(main).queryByRole("button", { name: /find a host/i })).toBeNull();
-    expect(within(screen.getByRole("group", { name: "Inventory" })).getByText(/None yet: add them in roster\.yml\./)).toBeInTheDocument();
+    expect(within(screen.getByRole("group", { name: "Inventory" })).getByText((_, el) => el?.classList.contains("sb-empty") === true && el.textContent === "None yet: add them in roster.yml.")).toBeInTheDocument();
+    // The file is data, in Iosevka, as the pane sets it (round 19).
+    expect(within(screen.getByRole("group", { name: "Inventory" })).getByText("roster.yml", { selector: ".sb-empty code" })).toBeInTheDocument();
     await user.keyboard(`${LEADER}f`);
     const picker = screen.getByRole("dialog", { name: "Find a Host" });
     expect(picker).toHaveTextContent("The Inventory has no Hosts yet. Add them to roster.yml and they show up here.");

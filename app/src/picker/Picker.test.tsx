@@ -133,13 +133,80 @@ describe("Picker", () => {
     expect(document.querySelector(".picker-sizer .badge")).toBeNull();
   });
 
-  it("gives the Quick Connect row a node, as every row has, and says what to type (round 18)", async () => {
+  it("gives the Quick Connect row Quick Connect's own glyph, and says what to type (round 18, 19)", async () => {
     const { user } = setup({ onQuick: vi.fn() });
     expect(screen.getByRole("combobox")).toHaveAttribute("placeholder", "Find a Host, or type user@address");
     await user.keyboard("root@10.0.0.9");
     const quick = rows()[0]!;
     expect(quick).toHaveTextContent(/Quick Connect/);
-    expect(quick.querySelector("svg.dot")).toHaveAttribute("data-shape", "ring");
+    // Not a Host's closed ring (a password login): the title bar's square, edge and open ring.
+    expect(quick.querySelector("svg.dot")).toBeNull();
+    const glyph = quick.querySelector(".quick-node svg");
+    expect(glyph?.querySelector("rect")).not.toBeNull();
+    expect(glyph?.querySelectorAll("path")).toHaveLength(2);
+  });
+
+  describe("with nothing matching (round 19)", () => {
+    const next = () => document.querySelector(".picker-empty-next");
+    it("offers Add a Host with its keys, and user@address in Iosevka, where each can be done", async () => {
+      const onAdd = vi.fn();
+      const { user } = setup({ onQuick: vi.fn(), onAdd, addKeys: "␣ +" });
+      await user.keyboard("zzzz");
+      expect(next()).toHaveTextContent(/Add a Host.*, or type user@address to connect to a box that isn't in the Inventory\./);
+      expect(next()?.querySelector("code")).toHaveTextContent(/^user@address$/);
+      expect(next()?.querySelector(".keycap")).not.toBeNull();
+      await user.click(screen.getByRole("button", { name: "Add a Host" }));
+      expect(onAdd).toHaveBeenCalledOnce();
+    });
+    it("says only what this roster can do", async () => {
+      const { user } = setup({ onAdd: vi.fn() });
+      await user.keyboard("zzzz");
+      expect(next()).toHaveTextContent(/^Add a Host\.$/);
+      expect(next()?.querySelector("code")).toBeNull();
+    });
+    it("without either, says what was searched", async () => {
+      const { user } = setup();
+      await user.keyboard("zzzz");
+      expect(screen.queryByRole("button", { name: "Add a Host" })).toBeNull();
+      expect(next()).toHaveTextContent(/Backspace widens the search/);
+    });
+  });
+
+  describe("edge stubs with nine or more Sessions (Q219 a, extended by Q235)", () => {
+    const live = new Map([
+      ["esxi-02", "current" as const],
+      ["proxmox-01", "live" as const],
+    ]);
+    const stubOf = (name: string) => screen.getByRole("option", { name: new RegExp(`^${name}`) }).querySelector("line.stub");
+    it("keeps every live Host's stub with fewer Sessions", () => {
+      setup({ live });
+      expect(stubOf("esxi-02")).not.toBeNull();
+      expect(stubOf("proxmox-01")).not.toBeNull();
+    });
+    it("drops other live Hosts' stubs, keeping their colour, and keeps the on-screen Host's", () => {
+      setup({ live, manySessions: true });
+      expect(stubOf("esxi-02")).not.toBeNull();
+      expect(stubOf("proxmox-01")).toBeNull();
+      expect(screen.getByRole("option", { name: /^proxmox-01/ }).querySelector("svg.dot")).toHaveClass("on");
+    });
+  });
+
+  it("lets a Host with no type give its type cell to its group, never its address cell (round 19)", () => {
+    render(
+      <Picker
+        hosts={{ ...list, hosts: [host("bare", { ip: "", type: "", group: "a-long-group-name" }), ...list.hosts] }}
+        recent={[]}
+        vim
+        onOpen={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const bare = screen.getByRole("option", { name: /^bare/ });
+    expect(bare.querySelector(".host-group")).toHaveClass("wide");
+    expect(bare.querySelector(".host-type")).toBeNull();
+    // The empty address keeps its cell, so the group starts at its own column as on every row.
+    expect(bare.querySelector(".host-ip")).not.toBeNull();
+    expect(screen.getByRole("option", { name: /^esxi-02/ }).querySelector(".host-group")).not.toHaveClass("wide");
   });
 
   it("closes with Esc, even from the list", async () => {

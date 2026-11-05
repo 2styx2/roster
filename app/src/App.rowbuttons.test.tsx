@@ -39,7 +39,7 @@ describe("a Sidebar row's buttons (Q88)", () => {
     expect(selectedRows()).toEqual([rowOf("subnet-2")]);
   });
 
-  it("follow the cursor in App mode, and stay where it left them", async () => {
+  it("follow the cursor in App mode, and go with it when App mode ends (round 19)", async () => {
     const { user } = await ready();
     await user.click(item("subnet-1"));
     await user.keyboard(LEADER);
@@ -51,7 +51,11 @@ describe("a Sidebar row's buttons (Q88)", () => {
     expect(selectedRows()).toEqual([next]);
     await user.keyboard("{Escape}");
     expect(document.querySelector(".sidebar .cursor")).toBeNull();
-    expect(selectedRows()).toEqual([next]);
+    // Kept selected, its name in the text colour read as another live Session (Q235): outside App
+    // mode it's drawn as any row, and App mode starts on it again.
+    expect(selectedRows()).toEqual([]);
+    await user.keyboard(LEADER);
+    expect(document.querySelector(".sidebar .sb-row.cursor")).toBe(next);
   });
 
   it("select a heading too, whose buttons then show", async () => {

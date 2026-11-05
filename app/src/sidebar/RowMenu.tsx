@@ -20,6 +20,8 @@ const MARGIN = 4;
 export interface RowMenuProps {
   /** The Host's name: the menu's name. */
   label: string;
+  /** What the row's name is, as its commands' hints write it in its place: HOST, GROUP or NAME. */
+  what?: string;
   entries: readonly MenuEntry[];
   /** The pointer, else null: under `anchor`. */
   at: { x: number; y: number } | null;
@@ -30,13 +32,17 @@ export interface RowMenuProps {
   close(): void;
 }
 
-/** An item's command as a hint: its words up to the row's own name, which "…" stands for
- * (`:group rename …`, `:folder add …`, `:host add`). Round 18: the first word alone gave ":group"
- * for both Rename and Delete. */
-export function commandHint(command: string, subject: string): string {
+/** An item's command as a hint: its words up to the row's own name, then the argument's shape in
+ * its place (`:check HOST`, `:group rename NAME`, `:folder remove HOST NAME`, `:host add`). Round
+ * 18: the first word alone gave ":group" for both Rename and Delete; round 19: a closing "…" read
+ * as cut text. `what` names the row's kind: HOST on a Host's row, GROUP on a group's, else NAME. */
+export function commandHint(command: string, subject: string, what = "NAME"): string {
   const at = subject === "" ? -1 : command.indexOf(` ${subject}`);
-  const ends = at >= 0 && (command.length === at + subject.length + 1 || command[at + subject.length + 1] === " ");
-  return ends ? `:${command.slice(0, at)} …` : `:${command}`;
+  const end = at + subject.length + 1;
+  const ends = at >= 0 && (command.length === end || command[end] === " ");
+  if (!ends) return `:${command}`;
+  const more = command.slice(end).trim() === "" ? "" : " NAME";
+  return `:${command.slice(0, at)} ${what}${more}`;
 }
 
 /** Where the menu goes: at the point, moved (or flipped) to stay in the window. */
@@ -58,6 +64,7 @@ export function placeMenu(
 
 export function RowMenu({
   label,
+  what = "NAME",
   entries,
   at,
   anchor,
@@ -245,7 +252,7 @@ export function RowMenu({
               // A Plugin's own action has no `:` form worth showing (its first word is "plugins").
               !entry.command.startsWith("plugins") && (
                 <span className="row-menu-cmd key-hint" aria-hidden="true">
-                  {commandHint(entry.command, label)}
+                  {commandHint(entry.command, label, what)}
                 </span>
               )
             )}

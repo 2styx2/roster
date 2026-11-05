@@ -171,7 +171,8 @@ import { NO_DEFAULTS, PanelLayout, type PanelPlace } from "./panel/layout";
 import { PanelFrame } from "./panel/PanelFrame";
 import { FitLine } from "./chrome/FitLine";
 import { MessageText } from "./ui/MessageText";
-import { headPart } from "./chrome/path";
+import { basePart, headPart } from "./chrome/path";
+import { PathText } from "./chrome/PathText";
 import { registerPanel } from "./panel/command";
 import { GraphMemory } from "./graph/memory";
 import { registerViews, sectionsFor, ViewHost } from "./view/views";
@@ -250,6 +251,7 @@ import {
   logView,
   quiet,
   registerMessages,
+  slip,
   shownText,
   spokenText,
   type Message,
@@ -685,14 +687,22 @@ function Workspace({
   const [keyState, setKeyState] = useState<KeyState>(terminalMode);
   const keyRef = useRef<KeyState>(terminalMode);
   const [cursor, setCursor] = useState<string | null>(null);
-  // The Sidebar's selected row (decision Q88): the one last clicked, or where j/k left the cursor.
-  // Its buttons show; in App mode the cursor row is the selected one.
-  const [selected, setSelected] = useState<string | null>(null);
+  // The Sidebar's selected row (decision Q88): the one last clicked. Its buttons show; in App mode
+  // the cursor row is the selected one. Where j/k left the cursor isn't drawn outside App mode
+  // (round 19: kept selected, its name in the text colour read as another live Session); App mode
+  // starts there again (`lastStop`, Q232 a).
+  const [selected, setSelectedNow] = useState<string | null>(null);
+  const [lastStop, setLastStop] = useState<string | null>(null);
+  const setSelected = useCallback((id: string | null) => {
+    setSelectedNow(id);
+    setLastStop(id);
+  }, []);
   // A Host row's open menu (T166, Q156).
   const [rowMenu, setRowMenu] = useState<OpenMenu | null>(null);
   const moveTo = (id: string | null) => {
     setCursor(id);
-    setSelected(id);
+    setSelectedNow(null);
+    setLastStop(id);
   };
   const [viewMode, setViewMode] = useState<ViewMode>(options.defaultMode);
   const [layouts, setLayouts] = useState<Layouts>(
@@ -1274,7 +1284,11 @@ function Workspace({
   );
   // The Inventory heading's "Add a Host" (iteration 3 feedback): its keys, or why it can't.
   const addApi = conn.state === "ready" ? conn.info.inventory.api_version : 0;
-  const addTooOld = `Adding a Host needs a newer roster (API version ${ADD_API_VERSION}; this one speaks ${addApi})`;
+  // Said in the app's words, not serve's API numbers (round 19): what to do instead, in the text
+  // colour, since nothing broke. The + controls aren't offered then (toolbar, Inventory heading),
+  // so only a typed `:host add` or its keys can still get here.
+  const addTooOld =
+    "Adding Hosts here needs a newer roster. Update roster on this Box, or add them to roster.yml.";
   const addKeys = hintFor(keymap, "host add");
   const addHost = useMemo(
     () => ({
@@ -2451,7 +2465,7 @@ function Workspace({
     list: (move) => {
       if (move !== "choose") return moveTo(moveCursor(rows, cursor, move));
       const row = rows.find((r) => r.id === cursor);
-      if (row) setSelected(row.id);
+      if (row) setLastStop(row.id);
       // Enter on a group, Folder or heading folds it and stays in the Sidebar.
       setMode(
         row && staysInAppMode(row.command)
@@ -2568,7 +2582,7 @@ function Workspace({
       setEditing(host);
     },
     addHost: (inGroup) => {
-      if (!canAdd) return setMessage(addTooOld);
+      if (!canAdd) return setMessage(slip(addTooOld));
       if (editing === null && !changesView && !adding) rememberFocus();
       const selected = ctx.selectedHost();
       const group =
@@ -2984,7 +2998,7 @@ function Workspace({
     e.preventDefault();
     e.stopPropagation();
     if (before.mode === "terminal" && r.state.mode === "app") {
-      setCursor(firstStop(rows, selected));
+      setCursor(firstStop(rows, lastStop));
     }
     setMode(r.state);
     if (r.action) run(r.action);
@@ -3051,6 +3065,7 @@ function Workspace({
     pendingCount,
     sidebarShown,
     quickConnect: quickConnects,
+    canAdd,
     detailsShown: detailsHost !== undefined,
     plain,
   };
@@ -3312,17 +3327,7 @@ function Workspace({
             {/* Cut in its middle: its first folder and its file name stay ("~/…/roster.yml"), the
                 folders between give way from their start (round 10: "…/infra-c..." lost roster.yml;
                 round 18: the start went first). */}
-            <span className="path-text">
-              <span className="path-head">{headPart(info.inventory.path)}</span>
-              <span className="path-dir">
-                <span>
-                  {dirPart(info.inventory.path).slice(
-                    headPart(info.inventory.path).length,
-                  )}
-                </span>
-              </span>
-              <span className="path-base">{basePart(info.inventory.path)}</span>
-            </span>
+            <PathText path={info.inventory.path} />
           </span>
         );
       case "changes":
@@ -3519,7 +3524,7 @@ function Workspace({
               // Tab (or a screen reader) reached the tree: it's App mode, as after the Leader.
               if (keyRef.current.mode !== "terminal") return;
               beforeTree.current = from;
-              setCursor(firstStop(rows, selected));
+              setCursor(firstStop(rows, lastStop));
               setMode({ mode: "app", pending: [] });
             }}
             onTreeBlur={(to) => {
@@ -3583,14 +3588,17 @@ function Workspace({
                   </p>
                 </>
               ) : (
-                // Why there's no button, in one plain line, and the way that works.
-                <p className="empty-hint" title={addHost.tooOld}>
-                  This roster is too old to add Hosts here. Add them to{" "}
-                  <code>roster.yml</code>:
+                // Why there's no button, in the words `:host add` answers with, and the way that
+                // works (round 19: the title bar's and the Inventory's + aren't offered either).
+                <p className="empty-hint">
+                  Adding Hosts here needs a newer roster. Update roster on this Box, or add them
+                  to <code>roster.yml</code>:
                 </p>
               )}
+              {/* Cut in its middle as the status bar's is (round 19: cut from its start it lost
+                  its first folder, "…owalczyk/work/…"), whole in the tooltip. */}
               <p className="empty-path" title={info.inventory.path}>
-                <code>{info.inventory.path}</code>
+                <PathText path={info.inventory.path} />
               </p>
               {/* The next action, with its command (taste.md: an empty state carries it). */}
               <button
@@ -3753,7 +3761,10 @@ function Workspace({
               {spokenMessage ? (
                 <span className="visually-hidden">{spokenMessage}</span>
               ) : (
-                <MessageText text={shownText(message, allMessages)} />
+                <MessageText
+                  text={shownText(message, allMessages)}
+                  files={typeof message !== "string" && message.kind === "slip"}
+                />
               )}
             </div>
           </div>
@@ -4307,6 +4318,16 @@ function Workspace({
           hosts={conn.hosts}
           recent={appState.recentHosts}
           live={liveHosts}
+          manySessions={sessions.tabs.length >= 9}
+          {...(canAdd
+            ? {
+                onAdd: () => {
+                  closeOverlay();
+                  run("host add");
+                },
+                addKeys: addHost.keys,
+              }
+            : {})}
           vim={options.vim}
           keymap={keymap}
           onClose={closeOverlay}
@@ -4515,11 +4536,6 @@ function mapKey(
   }
 }
 
-/** A path's folder part with its last separator ("~/team/"), and its file name ("roster.yml"). */
-function dirPart(path: string): string {
-  const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return i < 0 ? "" : path.slice(0, i + 1);
-}
 /** How much of a status segment's text stays when the bar runs out of room: 6 characters, or all
  * of a shorter one (the segment's --keep, round 18). */
 function keepChars(text: string): CSSProperties {
@@ -4530,9 +4546,6 @@ function keepChars(text: string): CSSProperties {
 function pathKeep(path: string): CSSProperties {
   const least = [...headPart(path)].length + 2 + [...basePart(path)].length;
   return { "--keep": `${Math.min(least, [...path].length)}ch` } as CSSProperties;
-}
-function basePart(path: string): string {
-  return path.slice(dirPart(path).length);
 }
 
 /** Where the idle map's edges end: past the 48px edge column and the row's 10px padding, at the

@@ -159,7 +159,8 @@ describe("a Host row's menu (T166, Q156)", () => {
     await user.keyboard("{Shift>}{F10}{/Shift}");
     expect(menu()).toHaveAccessibleName("subnet-1");
     const hints = within(menu()).getAllByRole("menuitem").map((m) => m.querySelector(".row-menu-cmd")?.textContent);
-    expect(hints).toEqual([":host add …", ":group rename …", ":group delete …"]);
+    // The argument's shape where the group's name goes, not a "…" that reads as cut (round 19).
+    expect(hints).toEqual([":host add GROUP", ":group rename GROUP", ":group delete GROUP"]);
     // The row under the menu drops its accent outline: the focused item is the cursor now.
     expect(document.querySelector(".sidebar")).toHaveAttribute("data-menu");
   });
