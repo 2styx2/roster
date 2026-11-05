@@ -16,6 +16,9 @@ export interface ToolbarContext {
   sidebarShown: boolean;
   /** roster can Quick Connect (API 12, ticket 14). */
   quickConnect: boolean;
+  /** This roster can add Hosts (API 6); left out, it can. On one too old to, Add a Host isn't
+   * offered (round 19: a live + that only refused contradicted the pane). */
+  canAdd?: boolean;
   /** The Host details panel is on screen (ticket 18). */
   detailsShown?: boolean;
   /** roster.yml is a plain file (T212): every edit is saved, so there are no Pending changes to show. */
@@ -81,7 +84,7 @@ export const builtinControls: readonly ToolbarControlDef[] = [
     byDefault: true,
     when: (c) => c.quickConnect,
   }),
-  control({ id: "add", label: () => "Add a Host", icon: "add", command: "host add", byDefault: true }),
+  control({ id: "add", label: () => "Add a Host", icon: "add", command: "host add", byDefault: true, when: (c) => c.canAdd !== false }),
   control({
     id: "changes",
     label: (c) => (c.pendingCount > 0 ? `Pending changes: ${c.pendingCount}` : "Pending changes"),

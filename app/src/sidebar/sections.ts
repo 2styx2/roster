@@ -297,20 +297,22 @@ export const inventorySection: SidebarSectionDef = {
           ? `None yet: \`${addHost.keys}\` adds one.`
           : "None yet: + adds one."
         : "None yet: add them in roster.yml.",
-    // "Add a Host" is always shown, last so hover's "New group" never moves it (iteration 3
-    // feedback: `␣ +` alone was too hard to find). On a roster too old for it, it stays and says why.
-    ...(live || addHost
+    // "Add a Host" is always shown where this roster can add one, last so hover's "New group" never
+    // moves it (iteration 3 feedback: `␣ +` alone was too hard to find). On a roster too old for it,
+    // it isn't offered, as the title bar's isn't (round 19: a + that only refused contradicted the
+    // empty line and the pane); the empty line says where Hosts come from instead.
+    ...(live || (addHost && !addHost.tooOld)
       ? {
           actions: [
             ...(live ? [{ label: "New group", icon: "addGroup" as const, command: "group new" }] : []),
-            ...(addHost
+            ...(addHost && !addHost.tooOld
               ? [
                   {
                     label: "Add a Host",
                     icon: "add" as const,
                     command: "host add",
                     pinned: true,
-                    ...(addHost.tooOld ? { title: addHost.tooOld } : addHost.keys ? { keys: addHost.keys } : {}),
+                    ...(addHost.keys ? { keys: addHost.keys } : {}),
                   },
                 ]
               : []),

@@ -306,8 +306,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 /* The digit that opens the row (Startify's numbers), as a key. */
 .recent-key { display: flex; justify-content: flex-end; font: var(--text-sm) var(--font-mono); font-variant-numeric: tabular-nums; color: var(--muted); }
 .empty { min-width: 0; max-width: 100%; }
-.empty-path { max-width: min(56ch, calc(100% - 32px)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-sm); direction: rtl; }
-.empty-path code { direction: ltr; unicode-bidi: isolate; }
+/* Cut in its middle as the status bar's path is (round 19): the first folder and the file name
+   stay, the folders between give way from their start; the whole path is its tooltip. */
+.empty-path { display: flex; max-width: min(56ch, calc(100% - 32px)); min-width: 0; color: var(--muted); font-size: var(--text-sm); }
+.empty-path .path-text { display: flex; min-width: 0; white-space: nowrap; font-family: var(--font-mono); font-size: 0.95em; }
 .empty-hint { font-size: var(--text-sm); color: var(--muted); }
 
 .statusbar {
@@ -347,12 +349,13 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .statusbar .path::before { content: ""; width: 0; height: var(--statusbar-h); }
 .statusbar .path-text { flex: 1 1 auto; min-width: calc(var(--keep, 8ch) - 1px); display: flex; white-space: nowrap; }
 /* Cut in its middle (round 18): the first folder and the file name stay, the folders between are
-   cut from their start ("~/…ventory/roster.yml"), as .empty-path is: an rtl box with ltr text. */
-.statusbar .path-base { flex: none; }
+   cut from their start ("~/…ventory/roster.yml"): an rtl box with ltr text. The empty Inventory's
+   pane draws it the same way (.empty-path, PathText). */
+.path-base { flex: none; }
 /* The folders between give way, down to "…/"; the first folder and the file name never. */
-.statusbar .path-head { flex: none; }
-.statusbar .path-dir { flex: 0 1 auto; min-width: 2ch; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
-.statusbar .path-dir > span { direction: ltr; unicode-bidi: isolate; }
+.path-head { flex: none; }
+.path-dir { flex: 0 1 auto; min-width: 2ch; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
+.path-dir > span { direction: ltr; unicode-bidi: isolate; }
 .statusbar .count { font-variant-numeric: tabular-nums; }
 /* The Session on screen (`session` segment): its node and its name in Iosevka, in the text colour,
    the one thing in the line you're inside of. It gives way after the path and the hints. */

@@ -79,12 +79,18 @@ describe("The Inventory heading's + (iteration 3 feedback: add-Host was hard to 
     expect(plus()).toHaveAttribute("title", "Add a Host");
   });
 
-  it("stays on a roster too old to add Hosts, and says so instead of opening a form", async () => {
+  it("isn't offered on a roster too old to add Hosts, here or in the title bar (round 19)", async () => {
     const { user } = await ready({ ...(fixtures.add as FakeScenario), apiVersion: 5 });
-    const why = "Adding a Host needs a newer roster (API version 6; this one speaks 5)";
-    expect(plus()).toHaveAttribute("title", why);
-    await user.click(plus());
-    expect(screen.getByRole("status")).toHaveTextContent(why);
+    // A live + that only refused contradicted the screen: neither + is there.
+    expect(within(heading()).queryByRole("button", { name: "Add a Host" })).toBeNull();
+    expect(document.querySelector('[data-control="add"]')).toBeNull();
+    // Its keys still answer, in plain words and the text colour (a slip, not a warning).
+    await user.keyboard(`${LEADER}+`);
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Adding Hosts here needs a newer roster. Update roster on this Box, or add them to roster.yml.");
+    expect(status).not.toHaveTextContent(/API/);
+    expect(status).toHaveClass("slip");
+    expect(within(status).getByText("roster.yml", { selector: "code" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Add a Host" })).toBeNull();
   });
 });
@@ -275,7 +281,7 @@ describe("the add form", () => {
   it("needs a roster that can add Hosts", async () => {
     const { user } = await ready({ ...(fixtures.edit as FakeScenario), apiVersion: 5 });
     await user.keyboard(`${LEADER}:host add{Enter}`);
-    expect(await screen.findByText(/Adding a Host needs a newer roster \(API version 6; this one speaks 5\)/)).toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent("Adding Hosts here needs a newer roster.");
   });
 });
 
