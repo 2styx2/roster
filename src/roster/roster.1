@@ -4,7 +4,7 @@ roster \- give this box (and Claude) access to the hosts in roster.yml
 .SH SYNOPSIS
 .nf
 roster init [\-\-blank | \-\-inventory HOW] [\-\-name NAME]
-roster setup [\-\-only LIST] [\-\-dry\-run]
+roster setup [\-\-only LIST] [\-\-dry\-run] [\-\-force]
 roster sync
 roster check [\-\-box] [\-\-only LIST] [\-\-json] [host]
 roster hosts [\-\-only LIST] [\-\-find TEXT] [\-\-all] [\-\-long] [\-\-json]
@@ -64,15 +64,18 @@ blank, file:PATH (a copy of that roster.yml, once it loads), repo:URL (a git clo
 name the new Inventory too (`roster inv add NAME PATH`), e.g. beside one you keep
 .SS setup
 .PP
-\fBroster setup [\-\-only LIST] [\-\-dry\-run]\fR
+\fBroster setup [\-\-only LIST] [\-\-dry\-run] [\-\-force]\fR
 .PP
-One\-time per box: key, fingerprints, key install, SSH config, Claude files (\fB\-\-only\fR, \fB\-\-dry\-run\fR)
+One\-time per box: key, fingerprints, key install, SSH config, Claude files (\fB\-\-only\fR, \fB\-\-dry\-run\fR). After a rename, it re\-tags this Box's key where it works; a Host where another key's line already has the new name fails with 190 and is left as it is, unless \fB\-\-force\fR
 .TP
 \fB\-\-only LIST\fR
 only these hosts, groups, types or products (comma\-separated)
 .TP
 \fB\-\-dry\-run\fR
 show what would happen, change nothing remote
+.TP
+\fB\-\-force\fR
+on a renamed Box, go ahead on a Host where another Box's key line has the new name (its line is then this Box's to replace or revoke)
 .SS sync
 .PP
 \fBroster sync\fR
@@ -351,7 +354,7 @@ with status or \-\-dry\-run: print JSON for scripts and tools, never a secret (s
 .PP
 \fBroster revoke [\-\-only LIST] [\-\-all] [\-y]\fR
 .PP
-Remove this box's key from every host (its line under any name it had, found by its public key: the key is one per Box, so revoking one Inventory also takes it off a machine another Inventory lists, under any \fBbox_name:\fR, and says so: \fBroster setup\fR for that Inventory puts it back, or use \fB\-\-all\fR); it names this box's files to delete only once every Host of this \fBroster.yml\fR has lost the key (never with \fB\-\-only\fR, and never another \fBroster.yml\fR\&'s \fBconfig.d/roster\fR), and exits 1 when a Host was skipped or none was reached. \fB\-\-all\fR: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host \fBssh NAME\fR doesn't reach (left out, or its Inventory not synced here) is skipped and said. See Named Inventories. On an \fBos: windows\fR Host it cleans both files an administrator's key could be in. A Host it couldn't revoke is listed with why
+Remove this box's key from every host (its line under any name it had, found by its public key: the key is one per Box, so revoking one Inventory also takes it off a machine another Inventory lists, under any \fBbox_name:\fR, and says so: \fBroster setup\fR for that Inventory puts it back, or use \fB\-\-all\fR); it names this box's files to delete (with \fB~/.config/roster/key\-name*\fR, the name setup recorded for its key's lines) only once every Host of this \fBroster.yml\fR has lost the key (never with \fB\-\-only\fR, and never another \fBroster.yml\fR\&'s \fBconfig.d/roster\fR), and exits 1 when a Host was skipped or none was reached. \fB\-\-all\fR: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host \fBssh NAME\fR doesn't reach (left out, or its Inventory not synced here) is skipped and said. See Named Inventories. On an \fBos: windows\fR Host it cleans both files an administrator's key could be in. A Host it couldn't revoke is listed with why
 .TP
 \fB\-\-only LIST\fR
 only these hosts, groups, types or products (comma\-separated)

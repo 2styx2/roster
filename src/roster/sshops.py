@@ -12,6 +12,7 @@ from typing import Any
 
 from .common import (
     KEY_TAG,
+    KEY_TRAIL,
     LEGACY_KEY_TAGS,
     SSH_UNSAFE,
     WINDOWS,
@@ -55,7 +56,12 @@ def ere_literal(text):
     return re.sub(r"([.\[\]()*+?{}|^$\\])", r"\\\1", text)
 
 
-TAGS_ERE = "(" + "|".join((KEY_TAG,) + LEGACY_KEY_TAGS) + "):[A-Za-z0-9_-]+$"     # a roster-managed tag, any Box name
+# KEY_TRAIL for awk, with no bracket class (#442's M2): a space, tab or CR. In the program's own regex literal as
+# escapes; in RE (through ENVIRON, where awk may not read escapes) as the characters, which the shell makes ($W)
+AWK_TRAIL_LITERAL = "[ \\t\\r]*$"
+AWK_TRAIL_SH = "W=$(printf ' \\t\\r'); "
+# a roster-managed tag, any Box name
+TAGS_ERE = "(" + "|".join((KEY_TAG,) + LEGACY_KEY_TAGS) + "):[A-Za-z0-9_-]+" + KEY_TRAIL
 
 
 def key_ere(kind, key):
@@ -429,61 +435,112 @@ def password_exec(h, command, password, timeout=15, stdin=None):
         c.close()
 
 
-# Both rewrite authorized_keys as a new file next to it, then mv it into place: a run cut short leaves the old file
-# whole (rewritten in place, it could be left empty and lock everyone out). cp -p first keeps its mode and owner.
+# Which file sshd reads this account's keys from ($f, and $F as messages name it): ~/.ssh/authorized_keys, or on ESXi
+# (uname VMkernel) its own /etc/ssh/keys-USER/authorized_keys, which it keeps across a reboot (its home isn't kept),
+# as the Mesh's scripts do (T226, #435). USER is the Login's user ($U), as sshd's %u: one the Host names otherwise
+# (`id -un`: another case, a directory account's form) is refused, as the key would go where sshd doesn't look
+# (#442's review L1).
+AK_FILE = ('if [ "$(uname -s 2>/dev/null)" = VMkernel ]; then ESXI=1; f=/etc/ssh/keys-$U/authorized_keys; F=$f; '
+           'L=$(id -un 2>/dev/null) || L=; '
+           '[ "$L" = "$U" ] || { echo "this login is ${L:-unknown} on ESXi, not $U (its user: in roster.yml), and '
+           'ESXi\'s sshd reads its keys-${L:-LOGIN} folder: nothing was changed (set user: as the Host names it)" '
+           '>&2; exit 1; }; '
+           'else ESXI=; f=$HOME/.ssh/authorized_keys; F="~/.ssh/authorized_keys"; fi; ')
+# All three rewrite authorized_keys as a new file next to it, then mv it into place: a run cut short leaves the old
+# file whole (rewritten in place, it could be left empty and lock everyone out). cp -p first keeps its mode and owner
+# (and ESXi's sticky bit, without which ESXi drops a file under /etc at the next boot).
 # The new file is a new inode: on an SELinux-enforcing Host it may lack the old one's label (ssh_home_t) and sshd
 # would refuse it. So the old file's context is copied (chcon --reference) before the mv, and restorecon sets the
 # policy's after it. Both only where they exist, and never fatal (ESXi's busybox, macOS, Alpine have neither).
-REPLACE_AK = ("f=~/.ssh/authorized_keys; [ -L \"$f\" ] && f=$(readlink -f \"$f\"); "
+REPLACE_AK = ("[ -L \"$f\" ] && f=$(readlink -f \"$f\"); "
               "rm -f \"$f.roster\"; cp -p \"$f\" \"$f.roster\"; ")
 KEEP_LABEL = ("{ command -v chcon >/dev/null 2>&1 && chcon --reference=\"$f\" \"$f.roster\" 2>/dev/null; } "
               "|| true; ")
 RELABEL = "{ command -v restorecon >/dev/null 2>&1 && restorecon -F \"$f\" 2>/dev/null; } || true; "
+# 600, as sshd wants it; on ESXi a file roster makes gets 1600 (its own keys file's mode) and an existing one keeps
+# its mode (cp -p), sticky bit and all
+KEY_MODE = ("if [ -z \"$ESXI\" ]; then chmod 600 \"$f.roster\"; "
+            "elif [ -n \"$NEW\" ]; then chmod 1600 \"$f.roster\"; fi; ")
+# ESXi saves /etc to its boot bank hourly: saved now, so a reboot before then keeps the change
+BACKUP = "if [ -n \"$ESXI\" ] && [ -x /sbin/auto-backup.sh ]; then /sbin/auto-backup.sh >/dev/null 2>&1 || true; fi; "
 
 
-def add_key_script(pub, tag_re):
-    # Drops any older key from this same box, appends the current one. Safe to re-run.
-    return ("set -e; umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; " + REPLACE_AK +
+def key_script_head(user):
+    return f"set -e; U={shlex.quote(user)}; " + AK_FILE
+
+
+def taken_guard(name_re, own):
+    """T226 (#435, 2): when a line NAME_RE matches holds a key OWN doesn't (another Box's key under the name this Box
+    is being renamed to), ROSTER_TAKEN, and the script stops there with nothing changed."""
+    if name_re is None:
+        return ""
+    return (f"if grep -E -- {shlex.quote(name_re)} \"$f\" | grep -q -v -E -- {shlex.quote(own)}; then "
+            "echo ROSTER_TAKEN; exit 0; fi; ")
+
+
+def add_key_script(pub, tag_re, user, taken=None):
+    """Drops any older key from this same box, appends the current one. Safe to re-run. TAKEN (this Box's name's
+    tag_re, on a renamed Box): a line it matches with another key stops it (ROSTER_TAKEN)."""
+    return (key_script_head(user) + "umask 077; d=${f%/*}; mkdir -p \"$d\"; NEW=; [ -f \"$f\" ] || NEW=1; "
+            "touch \"$f\"; " + taken_guard(taken, key_ere(*pub.split()[:2])) + REPLACE_AK +
             f"grep -v -E -- {shlex.quote(tag_re)} \"$f\" > \"$f.roster\" || true; "
-            f"printf '%s\\n' {shlex.quote(pub)} >> \"$f.roster\"; "
-            "chmod 600 \"$f.roster\"; " + KEEP_LABEL + "mv -f \"$f.roster\" \"$f\"; " + RELABEL +
-            "chmod 700 ~/.ssh; echo ROSTER_OK")
+            f"printf '%s\\n' {shlex.quote(pub)} >> \"$f.roster\"; " + KEY_MODE + KEEP_LABEL +
+            "mv -f \"$f.roster\" \"$f\"; " + RELABEL + BACKUP +
+            "[ -n \"$ESXI\" ] || chmod 700 \"$d\"; echo ROSTER_OK")
 
 
-def retag_key_script(pub):
+def retag_key_script(pub, user, taken=None):
     """T217: this Box's key lines (PUB's key under any roster-managed name, options and all) get PUB's tag, in place:
     their options stay, every other line stays as it is (never matched by name: #423's review L2), and nothing is
-    added. ROSTER_NONE when there's no such line (a key file roster doesn't manage, as ESXi's, or a line written by
-    hand); a grep that fails (2: unreadable) is a failure, never "no line"."""
+    added; a second copy of one (#423's S2) goes, as the install's rewrite took it. ROSTER_NONE FILE when there's
+    no such line (a line written by hand); a grep that fails (2: unreadable) is a failure, never "no line". TAKEN
+    (the new name's tag_re): a line it matches with another key stops it, as ROSTER_TAKEN, before anything changes."""
     kind, key, tag = pub.split()[:3]
     found = key_ere(kind, key)
-    return ("set -e; [ -f ~/.ssh/authorized_keys ] || { echo ROSTER_NONE; exit 0; }; rc=0; "
-            f"grep -q -E -- {shlex.quote(found)} ~/.ssh/authorized_keys || rc=$?; "
-            "[ $rc -eq 1 ] && { echo ROSTER_NONE; exit 0; }; "
-            "[ $rc -eq 0 ] || { echo \"grep couldn't read authorized_keys (exit $rc)\" >&2; exit 1; }; "
+    # the line with a space before it, so the key matches at its start too; awk's own trail (#442's M2: mawk 1.3.3,
+    # Debian 10's and Ubuntu 18.04's awk, has no [[:space:]] and reads it as a set of letters)
+    awk_re = " " + found.removeprefix("(^| )").removesuffix(KEY_TRAIL)
+    return (key_script_head(user) + "[ -f \"$f\" ] || { echo \"ROSTER_NONE $F\"; exit 0; }; rc=0; NEW=; " +
+            # the new name first (#442's M1): a Host where no line of this key is tagged may still hold another
+            # Box's line under it, which this Box's revoke would take once the new name is recorded
+            taken_guard(taken, found) +
+            f"grep -q -E -- {shlex.quote(found)} \"$f\" || rc=$?; "
+            "[ $rc -eq 1 ] && { echo \"ROSTER_NONE $F\"; exit 0; }; "
+            "[ $rc -eq 0 ] || { echo \"grep couldn't read $F (exit $rc)\" >&2; exit 1; }; "
             "umask 077; " + REPLACE_AK +
-            # the line with a space before it, so the key matches at its start too; ENVIRON, so awk keeps every \
-            f"RE={shlex.quote(' ' + found.removeprefix('(^| )'))} TAG={shlex.quote(tag)} "
+            # ENVIRON, so awk keeps every \
+            AWK_TRAIL_SH + f"RE={shlex.quote(awk_re)}\"[$W]*\\$\" TAG={shlex.quote(tag)} "
             "awk 'BEGIN { re = ENVIRON[\"RE\"]; t = ENVIRON[\"TAG\"] } "
-            f"(\" \" $0) ~ re {{ sub(/ {TAGS_ERE[:-1]}$/, \" \" t) }} {{ print }}' \"$f\" > \"$f.roster\"; "
-            "chmod 600 \"$f.roster\"; " + KEEP_LABEL + "mv -f \"$f.roster\" \"$f\"; " + RELABEL + "echo ROSTER_OK")
+            # the tag is what changes; whatever follows it (a CR, a space: #423's S1) stays
+            f"(\" \" $0) ~ re {{ s = $0; sub(/{AWK_TRAIL_LITERAL}/, \"\", s); w = substr($0, length(s) + 1); "
+            f"sub(/ {TAGS_ERE.removesuffix(KEY_TRAIL)}$/, \" \" t, s); if (seen[s]++) next; $0 = s w }} {{ print }}' "
+            "\"$f\" > \"$f.roster\"; " +
+            KEY_MODE + KEEP_LABEL + "mv -f \"$f.roster\" \"$f\"; " + RELABEL + BACKUP + "echo ROSTER_OK")
 
 
-def remove_key_script(tag_re):
+def remove_key_script(tag_re, user):
     # each line it takes says its tag's name first (ROSTER_TAG NAME), so revoke can say when one had another name
-    return ("set -e; [ -f ~/.ssh/authorized_keys ] || { echo ROSTER_OK; exit 0; }; " + REPLACE_AK +
-            f"grep -E -- {shlex.quote(tag_re)} \"$f\" | sed -n 's/.*:\\([A-Za-z0-9_-]*\\)$/ROSTER_TAG \\1/p' || true; "
+    return (key_script_head(user) + "[ -f \"$f\" ] || { echo ROSTER_OK; exit 0; }; " + REPLACE_AK +
+            f"grep -E -- {shlex.quote(tag_re)} \"$f\" "
+            "| sed -n 's/.*:\\([A-Za-z0-9_-]*\\)[[:space:]]*$/ROSTER_TAG \\1/p' || true; "
             f"grep -v -E -- {shlex.quote(tag_re)} \"$f\" > \"$f.roster\" || true; " +
-            KEEP_LABEL + "mv -f \"$f.roster\" \"$f\"; " + RELABEL + "echo ROSTER_OK")
+            KEEP_LABEL + "mv -f \"$f.roster\" \"$f\"; " + RELABEL + BACKUP + "echo ROSTER_OK")
 
 
-def enroll(h, pub, tag_re):
+class NameTaken(RuntimeError):
+    """T226 (#435, 2): a Host's key file has another key's line under the name this Box is being renamed to."""
+
+
+def enroll(h, pub, tag_re, taken=None):
     """Put this Box's key line PUB on Host H, logging in with its Login's password: the notes to show under its `ok`
-    (on a Windows Host, the file it wrote and any warning). RuntimeError when it can't."""
+    (on a Windows Host, the file it wrote and any warning). RuntimeError when it can't; NameTaken when TAKEN (this Box's
+    name's tag_re, on a renamed Box) is given and another key's line is under that name there."""
     from . import winhost
     pw = get_secret(h["ssh"]["auth"], h["group"])
     if is_windows(h):
-        done = winhost.install(h, pub, tag_re, pw)
+        done = winhost.install(h, pub, tag_re, pw, taken or "", key_ere(*pub.split()[:2]) if taken else "")
+        if done.taken:
+            raise NameTaken(pub.split()[2])
         if not ssh_ok(h["name"]):
             raise RuntimeError(f"key written to {', '.join(done.files) or 'its key file'} but key login still fails "
                                "(check that file's permissions and encoding, and whether sshd_config's Match Group "
@@ -491,7 +548,9 @@ def enroll(h, pub, tag_re):
         from .errors import KEY_FILE
         return ([f"key file {f}" for f in done.files] + ([f"note: {winhost.admins_note(h['name'])}"] if done.admins else [])
                 + [f"warning: [{KEY_FILE}] {w}" for w in done.warnings])
-    _, out, err = password_exec(h, "sh -c " + shlex.quote(add_key_script(pub, tag_re)), pw)
+    _, out, err = password_exec(h, "sh -c " + shlex.quote(add_key_script(pub, tag_re, h["ssh"]["user"], taken)), pw)
+    if "ROSTER_TAKEN" in out.split():
+        raise NameTaken(pub.split()[2])
     if "ROSTER_OK" not in out:
         if winhost.looks_windows(out + err):
             raise RuntimeError(winhost.windows_hint(h["name"]))

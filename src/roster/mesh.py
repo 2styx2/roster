@@ -433,8 +433,9 @@ if [ -n "$UNT" ]; then
     done
 fi
 grep -vxFf "$W" "$H" | while read -r l; do t=${l##*:}; echo "DROP ${t%%@*}"; done
-# each with its key and from=, so the Box can say when its line is for a key the source no longer has (T217)
-grep -vxFf "$W" "$H" | while read -r l; do
+# each with its key and from=, so the Box can say when its line is for a key the source no longer has (T217); the
+# lines this Box wrote before (OL: under an earlier owner, #435) too
+{ grep -vxFf "$W" "$H"; cat "$OL"; } | while read -r l; do
   t=${l##*:}; f=$(printf '%s\n' "$l" | sed -n 's/^from="\([^"]*\)".*/\1/p'); k=$(printf '%s\n' "$l" | awk '{ print $(NF-1) }')
   echo "OLDLINE ${t%%@*} $k $f"
 done

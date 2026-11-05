@@ -902,13 +902,17 @@ def test_revoke_all_names_every_file_to_delete_once_every_host_is_done(two, caps
     run(capsys, "--inv", "home", "sync")
     done = []
     monkeypatch.setattr("roster.cli.revoke_on", lambda h, tag_re: done.append(h["name"]))
+    from roster.common import key_name_file
+    for name in (None, "work", "home"):                     # T226 (#435, 4): the names setup recorded go too
+        key_name_file(name).parent.mkdir(parents=True, exist_ok=True)
+        key_name_file(name).write_text("box\n")
     code, out, _ = run(capsys, "revoke", "--all", "-y")
     assert sorted(done) == ["build-pi", "nas-1", "pi"] and code == 0
     summary = out.split("\nremoved from ")[1]
     assert summary.startswith("3/3 hosts in 3 Inventories. To finish, delete ")
     d = ssh(isolated)
     for f in (d / "roster_ed25519", d / "roster-inventories/work", d / "roster-inventories/home", d / "config.d/roster",
-              d / "config.d/roster.inventories"):
+              d / "config.d/roster.inventories", *(key_name_file(n) for n in (None, "work", "home"))):
         assert str(f) in summary
 
 
@@ -1126,7 +1130,13 @@ def test_revoke_names_the_files_to_delete_only_when_every_host_of_the_file_was_r
     code, out, _ = run(capsys, "-c", str(a), "revoke", "--only", "pi", "-y")
     assert code == 0 and "removed from 1/1 hosts" in out and "To finish, delete" not in out
     code, out, _ = run(capsys, "-c", str(a), "revoke", "-y")
+    from roster.common import key_name_file
+    assert code == 0 and "To finish, delete" in out and str(key_name_file(None)) not in out    # none recorded
+    key_name_file(None).parent.mkdir(parents=True, exist_ok=True)
+    key_name_file(None).write_text("box\n")
+    code, out, _ = run(capsys, "-c", str(a), "revoke", "-y")
     assert code == 0 and "To finish, delete" in out and str(ssh(isolated) / "config.d/roster") in out
+    assert str(key_name_file(None)) in out                  # T226 (#435, 4): the name setup recorded goes too
 
 
 @revoke_runs

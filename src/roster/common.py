@@ -15,6 +15,9 @@ from typing import IO, Any, NoReturn, cast
 
 KEY_TAG = "roster-managed"
 LEGACY_KEY_TAGS = ("fleet-managed",)       # tags used by earlier versions; still recognized
+# the end of a Box key line's ERE: spaces or a CR may follow the tag (a file edited on Windows), and sshd still reads
+# the line (T226, #435). POSIX only: winhost's script trims each line first, and .NET has no [[:space:]]
+KEY_TRAIL = "[[:space:]]*$"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")   # \Z: a trailing newline is not part of a name
 WINDOWS = os.name == "nt"                  # roster running natively on Windows (not in WSL)
 

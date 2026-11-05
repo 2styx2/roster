@@ -188,6 +188,9 @@ NO_ITEM_FIELDS = 186        # the vault can't give an item's address and user wi
 LIST_FAILED = 187           # the vault couldn't list its items (bw list items, its filter, op item list, kp ls) or sync
 NO_LISTABLE_VAULT = 188     # roster.yml uses no vault that can list its items without roster reading their passwords
 
+# A Box's key (T226, #435, decision Q193; catalog row 251)
+BOX_NAME_TAKEN = 190        # setup on a renamed Box: another key's line on that Host has the new name; --force goes on
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""

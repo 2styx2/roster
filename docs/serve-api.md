@@ -415,6 +415,7 @@ One person may have several Inventories, the team's for work and their own for h
 | `186` | `vault.item_fields` (and `roster add --from-vault`): the provider can't give an item's address and username without roster reading its password, so it isn't asked (T220, API 29) |
 | `187` | `roster add --from-vault` (no NAME): the vault couldn't list its items or sync (T221). A CLI error so far |
 | `188` | `roster add --from-vault` (no NAME): roster.yml uses no vault that can list its items without roster reading their passwords (T221). A CLI error so far |
+| `190` | `roster setup` on a renamed Box: a Host's key file has another key's line under the new name (another Box uses it), so that Host is left as it is; `setup --force` goes ahead (T226). A CLI error |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 
