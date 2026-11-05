@@ -38,7 +38,7 @@ import {
 import { capabilities } from "./backend/capabilities";
 import { publishChecked } from "./backend/afterTimeout";
 import { CommandLine } from "./cmdline/CommandLine";
-import { complete, runLine, type CommandContext, type Commands, type FoldHow } from "./commands/table";
+import { complete, runLine, type CommandContext, type Commands } from "./commands/table";
 import { deriveConfig, layoutWarnings, registerConfig, type ConfigWarning } from "./config/apply";
 import { ConfigToast } from "./config/ConfigToast";
 import { initLuaReloader } from "./config/source";
@@ -76,7 +76,7 @@ import { afterPull, pullGate, syncFailed } from "./edit/pull";
 import { forgetTypedOnLock } from "./lock/forgetOnLock";
 import { LockGate, noAccountWords, serverName, SIGN_OUT_WHAT, signOutQuestion } from "./lock/LockScreen";
 import { useVault } from "./lock/useVault";
-import { actionsOf, chordOf, defaultOptions, keymapOf, type CommandLine as Line, type Keymap, type Options } from "./keymap";
+import { actionsOf, chordOf, defaultOptions, keyHint, keymapOf, keysFor, type CommandLine as Line, type Options } from "./keymap";
 import { Picker } from "./picker/Picker";
 import { builtinRegistries, type Registries } from "./registries";
 import { BUILTIN } from "./registry";
@@ -86,9 +86,12 @@ import { SavePanel } from "./quick/SavePanel";
 import { HostDetails } from "./details/HostDetails";
 import { resolveOpen, webServices, webUrl } from "./details/details";
 import { Tabs } from "./session/tabs";
+import { isLive } from "./session/status";
+import { useLatest } from "./app/latest";
 import { SessionList } from "./plugins/sessionList";
 import { shellHooksOn, type IntegrateResult } from "./session/shellHooks";
-import { allRows, moveCursor, Sidebar, type OpenMenu, type SidebarRow } from "./sidebar/Sidebar";
+import { Sidebar } from "./sidebar/Sidebar";
+import { allRows, foldStep, moveCursor, type FoldHow, type OpenMenu, type SidebarRow } from "./sidebar/model";
 import { hostMenu } from "./sidebar/hostMenu";
 import { sectionBuilder } from "./sidebar/sections";
 import { cancelCommand, packagesCommand, pluginsCommand } from "./plugins/command";
@@ -163,19 +166,6 @@ function asProblem(e: unknown): BackendProblem {
   if (e instanceof BackendStartError) return e.problem;
   const message = e instanceof Error ? e.message : String(e);
   return { kind: "failed", message, hint: "Retry, or run the backend command in a terminal to see why.", detail: null };
-}
-
-/** The first key bound to `line` after the Leader, as the status bar hints write it. */
-function hintFor(keymap: Keymap, line: Line): string | null {
-  const key = Object.entries(keymap.leader).find(([, b]) => b.action === line)?.[0];
-  return key ? `␣ ${key}` : null;
-}
-
-/** The global keys (no Leader) bound to any of `lines`. */
-function globalKeysFor(keymap: Keymap, lines: readonly Line[]): string[] {
-  return Object.entries(keymap.global)
-    .filter(([, b]) => lines.includes(b.action))
-    .map(([k]) => k);
 }
 
 export interface AppProps {
@@ -634,10 +624,6 @@ function Workspace({
   const openPackages = useRef(() => {});
   useEffect(() => registries.commands.register(packagesCommand(plugins, () => openPackages.current())), [registries, plugins]);
   useEffect(() => registries.commands.register(cancelCommand(plugins)), [registries, plugins]);
-  useEffect(() => {
-    tabs.setOutputTap({ output: (id, host, data, size) => plugins.output(id, host, data, size) });
-    return () => tabs.setOutputTap(null);
-  }, [tabs, plugins]);
   // `:tutor` (ticket 55): on the demo Inventory, what happens is fed to the tutorial running, whose
   // steps tick themselves; what a step ticks is said once (the page shows it as a ✓).
   const tutorRef = useRef(tutor);
@@ -666,7 +652,7 @@ function Workspace({
     const events: [() => void, () => void][] = [];
     const order = openOrder.current;
     for (const t of sessions.tabs) {
-      const ended = t.status.state === "ended" || t.status.state === "failed";
+      const ended = !isLive(t.status);
       const host = t.quick ? null : t.host;
       now.set(t.id, { state: ended ? "ended" : "live", host });
       if (!ended && before.get(t.id)?.state !== "live") {
@@ -751,14 +737,9 @@ function Workspace({
       live = false;
     };
   }, [backend, connInfo, configuresVault, vaultSettingsKey, checkVault, setMessage]);
-  // A password Host whose vault turns out locked (session.prepare code 14) brings up the lock
-  // screen; the tab opens by itself once the vault is unlocked again.
-  // `vault` is a new object each render; its `lock` is stable, so the handler is set once.
   const lockVault = vault.lock;
-  useEffect(() => tabs.setVaultLockedHandler(() => void lockVault()), [tabs, lockVault]);
   const asksAboutKeys = caps.has("hostKey");
   const quickConnects = caps.has("quickConnect");
-  useEffect(() => tabs.setAsksAboutKeys(asksAboutKeys), [tabs, asksAboutKeys]);
   const vaultUnlocked = vault.view.state === "unlocked";
   const backendReady = conn.state === "ready";
   useEffect(() => {
@@ -787,14 +768,6 @@ function Workspace({
   const hostByName = useMemo(() => new Map((hosts?.hosts ?? []).map((h) => [h.name, h])), [hosts]);
   // Shell hooks (ticket 121): init.lua's terminal.shell_hooks and each Host's shell_hooks.
   const shellHooksInit = config?.terminal.shellHooks ?? null;
-  useEffect(
-    () =>
-      tabs.setShellHooks(
-        (tab) => shellHooksOn(shellHooksInit, tab.quick ? undefined : hostByName.get(tab.host)?.shell_hooks),
-        (size) => new XtermPromptScreen(size),
-      ),
-    [tabs, shellHooksInit, hostByName],
-  );
   const groupNames = useMemo(() => {
     const names = Object.keys(hosts?.groups ?? {});
     for (const h of hosts?.hosts ?? []) if (!names.includes(h.group)) names.push(h.group);
@@ -822,7 +795,7 @@ function Workspace({
     [sectionDefs, layout.sections],
   );
   // The Inventory heading's "Add a Host" (iteration 3 feedback): its keys, or why it can't.
-  const addKeys = hintFor(keymap, "host add");
+  const addKeys = keyHint(keymap, "host add");
   const addHost = useMemo(() => ({ keys: addKeys, tooOld: caps.has("add") ? null : caps.needsNewer("add") }), [addKeys, caps]);
   // Kept between renders: a Session's events rebuild only the sections that show Sessions (#62).
   const [buildSections] = useState(sectionBuilder);
@@ -936,20 +909,28 @@ function Workspace({
   // A nested ssh (ticket 120): the watch follows it to an Inventory Host (the breadcrumb), read at
   // the shell's C mark against the Inventory as it is then.
   const canNestedFill = caps.has("nestedFill");
-  const inventoryNow = useRef<readonly Host[]>([]);
-  inventoryNow.current = hosts?.hosts ?? [];
-  useEffect(
-    () =>
-      tabs.setFillPrompts(
-        canFill
-          ? {
-              userOf: (host) => hostByName.get(host)?.ssh.user ?? null,
-              watch: (size, user, nonce) => new PromptWatch(size, user, { hosts: () => inventoryNow.current, fill: canNestedFill }, nonce),
-            }
-          : null,
-      ),
-    [tabs, canFill, canNestedFill, hostByName],
-  );
+  const inventoryNow = useLatest<readonly Host[]>(hosts?.hosts ?? []);
+  // What Sessions work with: a password Host whose vault turns out locked (session.prepare code 14)
+  // brings up the lock screen, and the tab opens by itself once it's unlocked again; Plugins hear
+  // every Session's output; a new Host's key is asked about; shell hooks and prompt fills.
+  useEffect(() => {
+    tabs.configure({
+      onVaultLocked: () => void lockVault(),
+      outputTap: { output: (id, host, data, size) => plugins.output(id, host, data, size) },
+      asksAboutKeys,
+      shellHooks: {
+        on: (tab) => shellHooksOn(shellHooksInit, tab.quick ? undefined : hostByName.get(tab.host)?.shell_hooks),
+        screen: (size) => new XtermPromptScreen(size),
+      },
+      fillPrompts: canFill
+        ? {
+            userOf: (host) => hostByName.get(host)?.ssh.user ?? null,
+            watch: (size, user, nonce) => new PromptWatch(size, user, { hosts: inventoryNow.get, fill: canNestedFill }, nonce),
+          }
+        : null,
+    });
+    return () => tabs.configure({ outputTap: null });
+  }, [tabs, plugins, lockVault, asksAboutKeys, shellHooksInit, hostByName, canFill, canNestedFill, inventoryNow]);
   const canEdit = caps.has("edit");
   const canPublish = caps.has("publish");
   // T212: a plain roster.yml saves every edit straight away; a team repo's are Pending changes
@@ -1434,7 +1415,7 @@ function Workspace({
     if (now.name !== to) setMessage(afterSwitch(now, to));
   };
   /** Sessions a switch leaves open (ended ones stay too, but aren't open). */
-  const openSessions = () => sessions.tabs.filter((t) => t.status.state !== "ended" && t.status.state !== "failed").length;
+  const openSessions = () => sessions.tabs.filter((t) => isLive(t.status)).length;
   /** The Pending changes now, asked again (a switch is blocked by them); the last count if roster can't say. */
   const pendingNow = async () => (canEdit ? ((await backend.pendingChanges().catch(() => null))?.count ?? pendingCount) : 0);
   const closeChanges = () => {
@@ -1449,32 +1430,10 @@ function Workspace({
 
   const cursorRow = () => rows.find((r) => r.id === cursor) ?? null;
 
-  /** h, l and the chevrons: fold or unfold a row, or move to its parent or first child. */
   const fold = (given: string | null, how: FoldHow) => {
-    const id = given === null ? null : currentFoldId(given);
-    const row = id === null ? cursorRow() : (rows.find((r) => r.id === id) ?? null);
-    const target = id ?? row?.id;
-    if (!target) return;
-    const isFolded = row ? row.folded === true : folded.has(target);
-    const foldable = row ? row.foldable === true : true;
-    if (foldable && (how === "toggle" || (how === "fold") !== isFolded)) {
-      const next = how === "toggle" ? !isFolded : how === "fold";
-      store.update((s) => setFolded(s, target, next));
-      // The cursor doesn't vanish into a folded row.
-      if (next && cursor !== null && ancestorsOf(cursor).includes(target)) moveTo(target);
-      return;
-    }
-    if (id !== null || !row) return;
-    if (how === "fold" && row.parent) moveTo(row.parent);
-    if (how === "unfold" && foldable) {
-      const child = rows[rows.indexOf(row) + 1];
-      if (child?.parent === row.id) moveTo(child.id);
-    }
-  };
-  const ancestorsOf = (id: string): string[] => {
-    const out: string[] = [];
-    for (let r = rows.find((x) => x.id === id); r?.parent; r = rows.find((x) => x.id === r?.parent)) out.push(r.parent);
-    return out;
+    const step = foldStep(rows, folded, cursor, given === null ? null : currentFoldId(given), how);
+    if (step && "fold" in step) store.update((s) => setFolded(s, step.fold, step.folded));
+    if (step?.moveTo) moveTo(step.moveTo);
   };
 
   // What commands act on. Rebuilt each render, so it always sees the current state.
@@ -2098,7 +2057,7 @@ function Workspace({
     <Toolbar
       controls={toolbarControls}
       ctx={toolbarCtx}
-      keysFor={(command) => hintFor(keymap, command)}
+      keysFor={(command) => keyHint(keymap, command)}
       leader={options.leader}
       run={(line) => {
         setMode(terminalMode);
@@ -2157,17 +2116,17 @@ function Workspace({
   }
 
   const { info } = conn;
-  const reconnectKey = hintFor(keymap, "reconnect");
+  const reconnectKey = keyHint(keymap, "reconnect");
   const appMode = keyState.mode === "app" && overlay === null;
-  const findKeys = hintFor(keymap, "find");
-  const sourceKeys = hintFor(keymap, "source");
+  const findKeys = keyHint(keymap, "find");
+  const sourceKeys = keyHint(keymap, "source");
   const hints = [
     [findKeys, "find"],
-    [hintFor(keymap, "keys"), "keys"],
-    [hintFor(keymap, "statusbar"), "hide this bar"],
+    [keyHint(keymap, "keys"), "keys"],
+    [keyHint(keymap, "statusbar"), "hide this bar"],
   ].filter((h): h is [string, string] => h[0] !== null);
 
-  const modeKeys = [hintFor(keymap, "mode"), hintFor(keymap, "focus"), ...globalKeysFor(keymap, ["mode", "focus"])].filter(
+  const modeKeys = [keyHint(keymap, "mode"), keyHint(keymap, "focus"), ...keysFor(keymap, "mode", { leader: false }), ...keysFor(keymap, "focus", { leader: false })].filter(
     (k): k is string => k !== null,
   );
   /** The pieces the layout places at `at`, in order. The title bar is drawn by `frame` above
@@ -2308,7 +2267,7 @@ function Workspace({
   );
 
   // Every docked panel and view goes in a frame: docked or full window, its width, its edge.
-  const panelKeys = hintFor(keymap, "panel");
+  const panelKeys = keyHint(keymap, "panel");
   const framed = (id: string, title: string, kind: string, node: ReactNode, extra: { side?: "left" | "right"; fallback?: PanelPlace } = {}) => (
     <PanelFrame key={`panel:${id}`} id={id} title={title} kind={kind} layout={panelLayout} keys={panelKeys} {...extra}>
       {node}
@@ -2332,7 +2291,7 @@ function Workspace({
             selected={appMode ? cursor : selected}
             onSelect={setSelected}
             leaderHint={options.leader}
-            findKeys={hintFor(keymap, "find")}
+            findKeys={keyHint(keymap, "find")}
             run={(line) => {
               setMode(terminalMode);
               run(line);
@@ -2346,7 +2305,7 @@ function Workspace({
                 reviewed: h ? h.reviewed : null,
                 caps,
                 folders: commands.get("folder") !== undefined,
-                keys: (command) => hintFor(keymap, command),
+                keys: (command) => keyHint(keymap, command),
               });
             }}
             onTreeFocus={(from) => {
@@ -2413,9 +2372,9 @@ function Workspace({
               copy={copy}
               addressOf={(name) => hostByName.get(name)?.ip ?? null}
               canSave={canSave}
-              saveKeys={hintFor(keymap, "save")}
+              saveKeys={keyHint(keymap, "save")}
               canFill={canFill}
-              fillKeys={hintFor(keymap, "fill")}
+              fillKeys={keyHint(keymap, "fill")}
               reveal={reveal}
             />
           )}
@@ -2426,7 +2385,7 @@ function Workspace({
             groups={conn.hosts.groups}
             onOpen={(service, url) => openWeb(detailsHost.name, service, url)}
             onClose={() => setDetails(null)}
-            cmdlineKeys={hintFor(keymap, "cmdline")}
+            cmdlineKeys={keyHint(keymap, "cmdline")}
             leader={options.leader}
             sections={sectionsFor(detailsList, detailsHost.name)}
           />,
@@ -2612,7 +2571,7 @@ function Workspace({
             key={changesView.step}
             changes={pending}
             step={changesView.step}
-            editKeys={hintFor(keymap, "edit")}
+            editKeys={keyHint(keymap, "edit")}
             leader={options.leader}
             canPublish={canPublish}
             rows={errorRows}
@@ -2798,7 +2757,7 @@ function Workspace({
             // A command name: its label and key. A Session's number: its Host.
             const [id = "", arg = ""] = candidate.split(" ");
             const command = commands.get(id);
-            if (command && arg === "") return { label: command.label(), keys: hintFor(keymap, id) };
+            if (command && arg === "") return { label: command.label(), keys: keyHint(keymap, id) };
             const tab = command?.arg === "number" ? sessions.tabs[Number(arg) - 1] : undefined;
             return tab ? { label: tab.host, keys: null } : null;
           }}
@@ -2904,7 +2863,7 @@ function Workspace({
       )}
     </div>
   );
-  const lockKey = hintFor(keymap, "lock");
+  const lockKey = keyHint(keymap, "lock");
   const lockHint = (
     <>
       Locks after {options.idleLockMinutes} minutes idle.

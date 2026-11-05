@@ -4,10 +4,10 @@
 // will. Sections only say what rows they have; buildSections folds them by State, finds each
 // row's parent, and raises the on-screen Host's first row (the others are "also").
 import type { Host, HostList } from "../backend/types";
-import { connectPhase, linkOf, statusText } from "../session/Sessions";
+import { connectPhase, isLive, linkOf, statusText } from "../session/status";
 import { tabFacts, type Tab, type TabsSnapshot } from "../session/tabs";
 import { BUILTIN, Registry, type Entry } from "../registry";
-import { headingId, type Dot, type SidebarRow, type SidebarSection } from "./Sidebar";
+import { headingId, type Dot, type SidebarRow, type SidebarSection } from "./model";
 import type { HostBadge } from "../view/status";
 
 /** What a section can build from. */
@@ -91,7 +91,7 @@ export function sectionBuilder(): SectionBuild {
       })
       .filter((s): s is SidebarSection => s !== null);
     const active = ctx.sessions.tabs.find((t) => t.id === ctx.sessions.active);
-    return active ? markOnScreen(sections, active.host, isLive(active)) : sections;
+    return active ? markOnScreen(sections, active.host, isLive(active.status)) : sections;
   };
 }
 
@@ -115,9 +115,6 @@ function foldSection(section: SidebarSection, folded: ReadonlySet<string>): Side
   return { ...section, rows, folded: folded.has(heading) };
 }
 
-/** A Session that's connected or connecting: not ended, not refused. */
-const isLive = (tab: Tab) => tab.status.state !== "ended" && tab.status.state !== "failed";
-
 /** The on-screen Host is raised where it first shows (a section may have raised its own row
  * already: Sessions raises the tab on screen) and brighter ("also") everywhere else. The raised
  * row is `live` while its Session is (the accent bar, decision Q53). */
@@ -139,7 +136,7 @@ function markOnScreen(sections: SidebarSection[], host: string, live: boolean): 
 }
 
 function dotOf(tab: Tab, host: Host | undefined): Dot {
-  if (tab.status.state === "ended" || tab.status.state === "failed") return "ended";
+  if (!isLive(tab.status)) return "ended";
   // Until the shell answers it's connecting: the node fills (or rings) once it's live (issue #78).
   if (connectPhase(tab)) return "connecting";
   // How the Session logged in, once it has; until then an enrolled Host will use this Box's key
@@ -180,7 +177,7 @@ export const sessionsSection: SidebarSectionDef = {
               ...(tab.cwd ? { detail: folderName(tab.cwd) } : {}),
               ...(facts ? { title: facts } : {}),
               raised: tab.id === sessions.active,
-              ...(tab.id === sessions.active && isLive(tab) ? { live: true } : {}),
+              ...(tab.id === sessions.active && isLive(tab.status) ? { live: true } : {}),
               command: `session ${i + 1}`,
               actions: [{ label: `Close ${tab.label}`, icon: "close", command: `close ${i + 1}` }],
             };

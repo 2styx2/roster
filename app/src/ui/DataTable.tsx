@@ -8,11 +8,10 @@
 // It draws only the rows on screen (table.ts windowOf), so thousands of rows cost a screenful. It
 // moves from a key, so nothing animates: rows changed by an update are simply there.
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import type { TableModel } from "../view/views";
-import { RowActionGlyph } from "../sidebar/Sidebar";
+import { RowActionGlyph } from "./icons";
 import { countOf } from "./format";
 import { Keys } from "./Keys";
-import { actionApplies, filterRows, MIN_CH, nextSort, sortRows, splitMiddle, windowOf, type Sort, type TableColumn, type TableRow } from "./table";
+import { actionApplies, filterRows, MIN_CH, nextSort, sortRows, splitMiddle, windowOf, type Sort, type TableColumn, type TableModel, type TableRow } from "./table";
 
 export interface DataTableProps {
   model: TableModel;

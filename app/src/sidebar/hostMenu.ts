@@ -6,7 +6,7 @@
 // Inventory, no `:edit`) and Folders' item without the Folders Plugin are left out, not greyed.
 import type { Capabilities } from "../backend/capabilities";
 import type { CommandLine } from "../keymap";
-import type { SidebarRow } from "./Sidebar";
+import type { SidebarRow } from "./model";
 
 export type MenuEntry =
   | {

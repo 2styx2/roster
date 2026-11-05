@@ -231,6 +231,32 @@ export function keymapOf(entries: readonly KeyBindingEntry[]): Keymap {
   return keymap;
 }
 
+/** Which bindings `keysFor` counts as `line`'s: the line exactly, the line with an argument too
+ * (`session` → `session 1` …), or any line of the same command (`help` → `help keys`). */
+export type KeyMatch = "line" | "args" | "command";
+
+/** The keys bound to `line`, as the hints write them: after the Leader (`␣ f`), then the global
+ * ones (`F11`). Escape, which leaves App mode, is listed only for its exact line. */
+export function keysFor(
+  keymap: Keymap,
+  line: CommandLine,
+  { match = "line", leader = true, global = true }: { match?: KeyMatch; leader?: boolean; global?: boolean } = {},
+): string[] {
+  const first = (action: string) => action.split(" ")[0];
+  const hit = (action: string) =>
+    match === "line" ? action === line : match === "args" ? action === line || action.startsWith(`${line} `) : first(action) === line;
+  const keep = (k: string) => match === "line" || k !== "Escape";
+  return [
+    ...(leader ? Object.entries(keymap.leader).filter(([k, b]) => keep(k) && hit(b.action)).map(([k]) => `␣ ${k}`) : []),
+    ...(global ? Object.entries(keymap.global).filter(([, b]) => hit(b.action)).map(([k]) => k) : []),
+  ];
+}
+
+/** The first key after the Leader bound to exactly `line` (`␣ f`), or null: a hint's keys. */
+export function keyHint(keymap: Keymap, line: CommandLine): string | null {
+  return keysFor(keymap, line, { global: false })[0] ?? null;
+}
+
 /** What the built-in bindings depend on: the OS the app runs on. */
 export interface KeymapHost {
   windows?: boolean;

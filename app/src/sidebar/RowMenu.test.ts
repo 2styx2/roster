@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { placeMenu } from "./RowMenu";
 import { hostMenu, type HostMenuOptions } from "./hostMenu";
-import type { SidebarRow } from "./Sidebar";
+import type { SidebarRow } from "./model";
 
 const view = { width: 1000, height: 700 };
 const size = { width: 220, height: 300 };

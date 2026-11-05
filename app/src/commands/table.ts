@@ -8,14 +8,12 @@
 import { groupCommand, hostCommand, type InventoryOp } from "../inventory/commands";
 import { inventoryCommand } from "../inventory/switch";
 import { BUILTIN, Registry, type Entry } from "../registry";
-import type { SidebarRow } from "../sidebar/Sidebar";
+import type { FoldHow, SidebarRow } from "../sidebar/model";
 import { VIEW_MODES, type ViewMode } from "../view/layout";
 import type { Message } from "../ui/messages";
 
 export type ListMove = "down" | "up" | "top" | "bottom" | "choose";
 
-/** h folds (or goes to the parent), l unfolds (or goes to the first child), toggle flips. */
-export type FoldHow = "fold" | "unfold" | "toggle";
 
 /** What commands can ask of the app. */
 export interface CommandContext {

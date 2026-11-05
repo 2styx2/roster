@@ -24,7 +24,8 @@ import { formatQuickTarget, type QuickTarget } from "../quick/target";
 import type { Breadcrumb, PasswordPrompt, PromptWatch } from "./prompt";
 import { ShellHooks, TokenMask, hasTyping, newNonce, type IntegrateResult, type PromptScreen } from "./shellHooks";
 import { hopWords } from "./breadcrumb";
-import { Osc52Stripper } from "../terminal/osc52";
+import { isLive } from "./status";
+import { Attempt } from "./attempt";
 
 export type TabStatus =
   | { state: "connecting" }
@@ -92,13 +93,36 @@ const LOST = "lost";
 
 export type { Breadcrumb, PasswordPrompt };
 
-/** How Tabs watches Host Sessions for sudo's prompt (ticket 119): `setFillPrompts`. */
+/** How Tabs watches Host Sessions for sudo's prompt (ticket 119). */
 export interface FillPrompts {
   /** The Host's login user, which sudo's prompt must name; null: don't watch it. */
   userOf(host: string): string | null;
   /** A watch for a Session of `size` whose login user is `user`, whose shell hooks carry the token
    * `nonce` (prompt.ts's PromptWatch). */
   watch(size: TermSize, user: string, nonce: string): PromptWatch;
+}
+
+/** What Tabs works with from the app (`configure`). */
+export interface TabsConfig {
+  /** A password Host's vault turned out locked (`session.prepare` code 14): the app shows the lock
+   * screen, then calls `resumeAfterUnlock`. */
+  onVaultLocked: () => void;
+  /** Sees every Session's output as it arrives (Plugins with terminal.read, ticket 23), and each
+   * resize sent to one, after which the Session may print its screen again (ticket 73). Never
+   * what's typed. */
+  outputTap: OutputTap | null;
+  /** Whether roster can be asked about a Host's key (API 11, ticket 36). Without it, roster's "no
+   * host key recorded" (44) is a refusal like any other. */
+  asksAboutKeys: boolean;
+  /** How Host Sessions are watched for sudo's prompt (ticket 119); null (an older roster) watches
+   * nothing. Each Session started after it's set is watched, never a Quick Connect. */
+  fillPrompts: FillPrompts | null;
+  /** Shell hooks (ticket 121): `on` says whether roster sends a tab's Session the hook line by
+   * itself, asked when the login goes quiet at a prompt (so a Config reload counts); `screen` makes
+   * the screen each Session started after it's set reads its prompt off (ticket 159: xterm, fed the
+   * Session's output at its size, so it's there for a tab that isn't on screen too). Null: no hook
+   * line is ever sent. */
+  shellHooks: { on(tab: Tab): boolean; screen: ((size: TermSize) => PromptScreen) | null } | null;
 }
 
 /** What a tab's tooltip says about its Session: how it logged in, the Host a nested ssh took it to
@@ -125,28 +149,15 @@ const encoder = new TextEncoder();
 
 /** Output kept per tab for a terminal that attaches later (or again). */
 const REPLAY_LIMIT = 1024 * 1024;
-/**
- * The pre-auth window: what a Session prints before it has logged in is ssh's (and roster
- * askpass's) own, and that's all classifyExit may read. Once logged in, the output is the Host's,
- * where a nested ssh's error or a forged `roster askpass:` line would look just like ours. ssh
- * doesn't say when the login succeeded, so the window closes after PRE_AUTH_MS (roster's ssh
- * config has ConnectTimeout 10, and askpass answers in a few seconds) or PRE_AUTH_BYTES of output
- * (ssh's own messages are short), whichever comes first. A 255 after that is a dropped Session
- * (row 20), told apart only by ssh's drop lines in the last output.
- */
-const PRE_AUTH_MS = 30_000;
-const PRE_AUTH_BYTES = 8 * 1024;
-/** The latest attempt's last output after the window, for classifyDrop. */
-const LATE_LIMIT = 4 * 1024;
 
 type Sink = (data: Uint8Array) => void;
 
-/** What a tab's terminal is wired to; the same object for the tab's whole life. */
-/** Where Plugins hear the Sessions (setOutputTap): their output, with the size its PTY has. */
+/** Where Plugins hear the Sessions: their output, with the size its PTY has. */
 export interface OutputTap {
   output(id: number, host: string | null, data: Uint8Array, size: TermSize): void;
 }
 
+/** What a tab's terminal is wired to; the same object for the tab's whole life. */
 export interface TerminalWiring {
   attach(sink: Sink): () => void;
   onData(data: string): void;
@@ -158,25 +169,16 @@ interface Entry {
   session: SessionHandle | null;
   /** Closed by the user before the Session finished opening. */
   closing: boolean;
-  /** Counts the Session starts in this tab, so a late event from an earlier one is ignored. */
-  attempt: number;
+  /** Counts the Session starts in this tab (and key questions), so a late answer to an earlier one
+   * is ignored. */
+  seq: number;
+  /** The latest Session start's own state. */
+  run: Attempt;
   size: TermSize;
   /** The size the Session was last told about. */
   sentSize: TermSize;
   replay: Uint8Array[];
   replayBytes: number;
-  /** The current attempt's output (decoded) inside the pre-auth window, for classifyExit. */
-  preAuth: string;
-  preAuthBytes: number;
-  /** When the current attempt started, or null once its pre-auth window has closed. */
-  windowFrom: number | null;
-  /** The current attempt's last output after the window (decoded), for classifyDrop. */
-  late: string;
-  /** Decodes this tab's output for `preAuth`, `late` and `saveScan`. Its own, and new each attempt: a streaming decoder
-   * holds a character split across chunks, which must not end up in another tab's text. */
-  decoder: TextDecoder;
-  /** Takes copied text (OSC 52) out of `preAuth` and `late` as it comes: new each attempt. */
-  tailStrip: Osc52Stripper;
   sink: Sink | null;
   wiring: TerminalWiring;
   /** The tab as it was before a reconnect, put back if the user cancels a host key question. */
@@ -187,31 +189,12 @@ interface Entry {
   /** Keys typed before the Session finished opening. On Windows this includes xterm's answer
    * to ConPTY's cursor-position request, which ConPTY waits for before starting anything. */
   pending: string[];
-  /** The attempt's last output while a save may be offered: where the box's name is read from. */
-  saveScan: string;
-  /** Watches the attempt's output for sudo's password prompt (ticket 119); new each attempt, and
-   * only for a Host's Session on a roster that can fill one. */
-  watch: PromptWatch | null;
   /** A fill is under way: a second press waits for it. */
   filling: boolean;
-  /** The attempt's shell hooks (ticket 121): the hook line, its echo held back, OSC 7. */
-  hooks: ShellHooks | null;
-  /** From roster's hook line going out until its first own prompt (or the hooks giving up), what
-   * the Session prints is kept from Plugins: it's the echo of a line with the attempt's token.
-   * `tail` is the window's last bytes, to find that prompt's mark across reads. */
-  echoWindow: { tail: Uint8Array } | null;
-  /** From a fill starting until the next line break the Session prints (sudo's own, after Enter),
-   * or the fill's refusal, what it prints is kept from Plugins (ticket 154): sudo's `pwfeedback`
-   * draws a `*` for the probe's letter and one per character of the password, so its stars would
-   * tell a Plugin the password's length. `dropped` bounds it. */
-  fillWindow: { dropped: number } | null;
 }
 
 /** The most a fill's window keeps from Plugins when no line break ends it. */
 const FILL_WINDOW_LIMIT = 4 * 1024;
-
-/** How much of the output after the login is searched for the box's name. */
-const SAVE_SCAN_LIMIT = 4 * 1024;
 
 export class Tabs {
   private readonly backend: Backend;
@@ -222,21 +205,12 @@ export class Tabs {
   private lastSize: TermSize = { cols: 80, rows: 24 };
   private snap: TabsSnapshot = { tabs: [], active: null, previous: null };
   private readonly listeners = new Set<() => void>();
-  private onVaultLocked: () => void = () => {};
-  /** Sees every Session's output as it arrives (Plugins with terminal.read, ticket 23). */
-  private outputTap: OutputTap | null = null;
-  private asksAboutKeys = true;
-  private fillPrompts: FillPrompts | null = null;
+  private config: TabsConfig = { onVaultLocked: () => {}, outputTap: null, asksAboutKeys: true, fillPrompts: null, shellHooks: null };
   /** Where the serve now running runs (ticket 115): null until it has said (fail closed). */
   private here: InventoryAt | null = null;
   /** Each tab's Inventory by its id, where its Session opened (or last started again): null while
    * the serve it opened on hasn't said, LOST once that serve was replaced before it did. */
   private readonly opened = new Map<number, InventoryAt | null | typeof LOST>();
-  /** Whether roster sends the shell hook line to a tab's Session by itself (ticket 121). */
-  private shellHooksOn: (tab: Tab) => boolean = () => false;
-  /** Makes the screen a Session's shell hooks read its prompt off (promptScreen.ts); null: none,
-   * and no hook line is ever sent. */
-  private promptScreen: ((size: TermSize) => PromptScreen) | null = null;
   private readonly now: () => number;
 
   /** Held ids serve said logged in before their tab knew it held them. */
@@ -267,7 +241,7 @@ export class Tabs {
     const save = entry.tab.save;
     if (!save) return;
     entry.tab = { ...entry.tab, save: null };
-    entry.saveScan = "";
+    entry.run.saveScan = "";
     if (save.saved === null) void this.backend.forgetTyped(save.held).catch(() => {});
   }
 
@@ -298,57 +272,27 @@ export class Tabs {
   private scanForName(entry: Entry, text: string) {
     const save = entry.tab.save;
     if (save ? save.saved !== null : entry.session !== null) return;
-    if (text) entry.saveScan = (entry.saveScan + text).slice(-SAVE_SCAN_LIMIT);
+    entry.run.scan(text);
     if (!save?.loggedIn) return;
     const user = entry.tab.quick?.to.user;
-    const name = user ? hostnameIn(entry.saveScan, user) : null;
+    const name = user ? hostnameIn(entry.run.saveScan, user) : null;
     if (name && name !== save.hostname) entry.tab = { ...entry.tab, save: { ...save, hostname: name } };
   }
 
-  /** Called when a password Host's vault turns out to be locked (`session.prepare` code 14): the
-   * app shows the lock screen, then calls `resumeAfterUnlock`. */
-  setVaultLockedHandler(handler: () => void) {
-    this.onVaultLocked = handler;
-  }
-
-  /** Hands every Session's output to `tap` too (null stops it): what Plugins with terminal.read
-   * get. Only output: what's typed into a Session never goes there. It also hears each resize
-   * sent to a Session, after which the Session may print its screen again (ticket 73). */
-  setOutputTap(tap: OutputTap | null) {
-    this.outputTap = tap;
-  }
-
-  /** Whether roster can be asked about a Host's key (API 11, ticket 36). Without it, roster's "no
-   * host key recorded" (44) is a refusal like any other. */
-  setAsksAboutKeys(asks: boolean) {
-    this.asksAboutKeys = asks;
-  }
-
-  /** Whether roster may send the shell hook line to a tab's Session by itself (`shell_hooks`,
-   * ticket 121): asked when the login goes quiet at a prompt, so a Config reload counts. `screen`
-   * makes the screen each Session started after it's set reads its prompt off (ticket 159: xterm,
-   * fed the Session's output at its size, so it's there for a tab that isn't on screen too). */
-  setShellHooks(on: (tab: Tab) => boolean, screen: ((size: TermSize) => PromptScreen) | null) {
-    this.shellHooksOn = on;
-    this.promptScreen = screen;
-  }
-
-  /** Whether roster can fill a password prompt (`session.fill`, ticket 119): `userOf` gives a
-   * Host's login user, which sudo's prompt must name, and `watch` makes the watch (prompt.ts);
-   * null (an older roster) watches nothing. Each
-   * Session started after it's set is watched, never a Quick Connect. */
-  setFillPrompts(fill: FillPrompts | null) {
-    this.fillPrompts = fill;
+  /** How the tabs work with what the app knows (TabsConfig); what isn't given stays as it was. */
+  configure(config: Partial<TabsConfig>) {
+    this.config = { ...this.config, ...config };
   }
 
   /** `:integrate`: sends the shell hook line to the tab's Session now; answers once a marked
    * prompt came back or didn't, or at once with why nothing was sent. */
   integrate(id: number): Promise<IntegrateResult> {
     const entry = this.find(id);
-    if (!entry?.hooks || !entry.session) return Promise.resolve("not-open");
+    const hooks = entry?.run.hooks;
+    if (!entry || !hooks || !entry.session) return Promise.resolve("not-open");
     // Never at a password prompt (ticket 119): the line would be taken for the password.
     if (entry.tab.prompt !== null || entry.filling) return Promise.resolve("no-prompt");
-    return entry.hooks.integrate();
+    return hooks.integrate();
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -412,29 +356,6 @@ export class Tabs {
     entry.sink?.(data);
   }
 
-  /** Closes the attempt's pre-auth window once its time is up. */
-  private windowOpen(entry: Entry): boolean {
-    if (entry.windowFrom !== null && this.now() - entry.windowFrom >= PRE_AUTH_MS) entry.windowFrom = null;
-    return entry.windowFrom !== null;
-  }
-
-  /** Keeps the attempt's output for classifyExit / classifyDrop; returns it decoded (the tab's
-   * streaming decoder, so a character split across chunks comes out whole). */
-  private keepTail(entry: Entry, data: Uint8Array): string {
-    const text = entry.decoder.decode(data, { stream: true });
-    // What a program copied (OSC 52) is never kept: a Problem's tail reaches messages and the State.
-    const kept = entry.tailStrip.strip(text);
-    if (this.windowOpen(entry) && entry.preAuthBytes + data.length <= PRE_AUTH_BYTES) {
-      entry.preAuth += kept;
-      entry.preAuthBytes += data.length;
-      return text;
-    }
-    entry.windowFrom = null;
-    entry.late += kept;
-    if (entry.late.length > LATE_LIMIT) entry.late = entry.late.slice(-LATE_LIMIT);
-    return text;
-  }
-
   /** A Quick Connect's Problem says so (its fixes then leave out the Host-only ones). */
   private mark(entry: Entry, problem: Problem): Problem {
     return entry.tab.quick ? { ...problem, quick: true } : problem;
@@ -449,10 +370,11 @@ export class Tabs {
   private classifyExit(entry: Entry, exit: SessionExit): Problem | null {
     if (exit.closed) return null;
     const host = entry.tab.host;
-    if (!this.windowOpen(entry)) {
-      return exit.code === 255 ? classifyDrop({ host, tail: terminalTail(entry.late, 30, { strippedAtCapture: true }) }) : null;
+    const run = entry.run;
+    if (!run.windowOpen()) {
+      return exit.code === 255 ? classifyDrop({ host, tail: terminalTail(run.late, 30, { strippedAtCapture: true }) }) : null;
     }
-    return classifyExit({ exitCode: exit.code, tail: terminalTail(entry.preAuth, 30, { strippedAtCapture: true }), host, auth: entry.tab.auth });
+    return classifyExit({ exitCode: exit.code, tail: terminalTail(run.preAuth, 30, { strippedAtCapture: true }), host, auth: entry.tab.auth });
   }
 
   /** "host", or "host (n)" with the smallest n no other tab to `host` uses. */
@@ -491,27 +413,17 @@ export class Tabs {
       tab: { id, host, label: this.label(host, null), status: { state: "connecting" }, auth: null, shell: false, attempt: 1, quick, save: null, prompt: null, cwd: null },
       session: null,
       closing: false,
-      attempt: 0,
+      seq: 0,
+      run: new Attempt(0, this.now, false),
       size,
       sentSize: size,
       replay: [],
       replayBytes: 0,
-      preAuth: "",
-      preAuthBytes: 0,
-      windowFrom: null,
-      late: "",
-      decoder: new TextDecoder(),
-      tailStrip: new Osc52Stripper(),
       sink: null,
       before: null,
       keyAsked: false,
       pending: [],
-      saveScan: "",
-      watch: null,
       filling: false,
-      hooks: null,
-      echoWindow: null,
-      fillWindow: null,
       wiring: {
         attach: (sink) => this.attach(id, sink),
         onData: (data) => this.write(id, data),
@@ -542,8 +454,7 @@ export class Tabs {
    */
   reconnect(id: number, host?: string): boolean {
     const entry = this.find(id);
-    const state = entry?.tab.status.state;
-    if (!entry || (state !== "ended" && state !== "failed")) return false;
+    if (!entry || isLive(entry.tab.status)) return false;
     // A Session from another Inventory (ticket 115): its Host's name means another Host here.
     if (host === undefined && this.elsewhere(id) !== null) return false;
     this.opened.set(id, this.here);
@@ -578,33 +489,24 @@ export class Tabs {
       this.setStatus(entry, { state: "failed", message, code: null, problem: this.mark(entry, problemFromCallError(entry.tab.host, new Error(message))) });
       return;
     }
-    const attempt = ++entry.attempt;
-    const current = () => entry.attempt === attempt && !entry.closing;
+    entry.run.stop();
+    const run = (entry.run = new Attempt(++entry.seq, this.now));
+    const current = () => entry.seq === run.seq && !entry.closing;
     const { id } = entry.tab;
     entry.sentSize = { ...entry.size };
-    entry.preAuth = "";
-    entry.preAuthBytes = 0;
-    entry.windowFrom = this.now();
-    entry.late = "";
-    entry.decoder = new TextDecoder();
-    entry.tailStrip = new Osc52Stripper();
-    entry.saveScan = "";
-    entry.fillWindow = null;
-    entry.watch?.dispose();
     // The attempt's token in roster's own shell marks (ticket 120): only its own shell ever knows it.
     const nonce = newNonce();
     const mask = new TokenMask(nonce);
-    const fill = entry.tab.quick ? null : this.fillPrompts;
+    const fill = entry.tab.quick ? null : this.config.fillPrompts;
     const user = fill?.userOf(entry.tab.host) ?? null;
-    const watch = (entry.watch = fill && user !== null ? fill.watch(entry.size, user, nonce) : null);
+    const watch = (run.watch = fill && user !== null ? fill.watch(entry.size, user, nonce) : null);
     if (entry.tab.prompt !== null || entry.tab.hop) entry.tab = { ...entry.tab, prompt: null, hop: null };
-    entry.hooks?.stop();
-    const hooks = (entry.hooks = this.hooksFor(entry, current, nonce));
+    const hooks = (run.hooks = this.hooksFor(entry, run, current, nonce));
     open(entry.size, {
         output: (data) => {
           if (!current()) return;
           const before = entry.tab;
-          const text = this.keepTail(entry, data);
+          const text = run.keepTail(data);
           this.scanForName(entry, text);
           if (watch) void watch.write(data).then(() => this.promptChanged(entry, watch));
           // The screen gets it unless the shell hooks hold it back; Plugins always get it as it came.
@@ -613,8 +515,8 @@ export class Tabs {
           // A Quick Connect Session isn't on a Host of the Inventory: no Host to name.
           // Plugins never see the attempt's token: not the echoed hook line (its whole window stays
           // out), nor anything after that prints it.
-          const echoed = this.outputTap ? this.pastEchoWindow(entry, nonce, data) : null;
-          const plugins = echoed ? this.pastFillWindow(entry, echoed) : null;
+          const echoed = this.config.outputTap ? pastEchoWindow(run, nonce, data) : null;
+          const plugins = echoed ? pastFillWindow(run, echoed) : null;
           if (plugins && plugins.length > 0) this.tapOut(entry, id, mask, mask.mask(plugins));
           if (!entry.tab.shell && data.length > 0) entry.tab = { ...entry.tab, shell: true };
           if (entry.tab !== before) this.changed();
@@ -622,14 +524,10 @@ export class Tabs {
         exit: (exit) => {
           if (!current()) return;
           entry.session = null;
-          entry.echoWindow = null;
-          entry.fillWindow = null;
           const rest = mask.flush();
-          if (rest.length > 0) this.outputTap?.output(id, entry.tab.quick ? null : entry.tab.host, rest, entry.sentSize);
-          watch?.dispose();
-          if (entry.watch === watch) entry.watch = null;
+          if (rest.length > 0) this.config.outputTap?.output(id, entry.tab.quick ? null : entry.tab.host, rest, entry.sentSize);
+          run.stop();
           if (entry.tab.prompt !== null || entry.tab.hop) entry.tab = { ...entry.tab, prompt: null, hop: null };
-          hooks.stop();
           // A Session that ends without saving: serve forgets the password it held for it.
           this.dropSave(entry);
           if (this.find(id)) this.setStatus(entry, { state: "ended", exit, problem: this.classify(entry, exit) });
@@ -669,13 +567,13 @@ export class Tabs {
             held === undefined ? null : { held, loggedIn: this.loggedInEarly.delete(held), hostname: null, saved: null };
           entry.tab = { ...entry.tab, auth: session.auth, quick, save };
           if (save) this.scanForName(entry, "");
-          else entry.saveScan = "";
+          else run.saveScan = "";
           this.setStatus(entry, { state: "open" });
           this.sendSize(entry);
         },
         (e: unknown) => {
           if (!current()) return;
-          if (e instanceof BackendCallError && e.code === SessionRefusal.hostKeyUnknown && this.asksAboutKeys && !entry.keyAsked) {
+          if (e instanceof BackendCallError && e.code === SessionRefusal.hostKeyUnknown && this.config.asksAboutKeys && !entry.keyAsked) {
             this.askAboutKey(entry);
             return;
           }
@@ -693,7 +591,7 @@ export class Tabs {
   }
 
   /** The attempt's shell hooks: they write only to its own Session, show only while it's current. */
-  private hooksFor(entry: Entry, current: () => boolean, nonce: string): ShellHooks {
+  private hooksFor(entry: Entry, run: Attempt, current: () => boolean, nonce: string): ShellHooks {
     return new ShellHooks({
       write: (line) => {
         // Never while a password prompt is up or being filled (ticket 119): the hook line would
@@ -702,9 +600,9 @@ export class Tabs {
         // Nor to a Session from another Inventory (ticket 115).
         if (this.elsewhere(entry.tab.id) !== null) return false;
         // Its token proves the Session's own shell only if the line can only have gone there.
-        entry.watch?.hookSent();
-        entry.watch?.typed(line);
-        entry.echoWindow = { tail: new Uint8Array(0) };
+        run.watch?.hookSent();
+        run.watch?.typed(line);
+        run.echoWindow = { tail: new Uint8Array(0) };
         void entry.session.write(line).catch(() => {});
         return true;
       },
@@ -716,13 +614,13 @@ export class Tabs {
         entry.tab = { ...entry.tab, cwd: path };
         this.changed();
       },
-      enabled: () => this.shellHooksOn(entry.tab) && this.elsewhere(entry.tab.id) === null,
+      enabled: () => (this.config.shellHooks?.on(entry.tab) ?? false) && this.elsewhere(entry.tab.id) === null,
       // No marked prompt came: what was printed meanwhile stays out of Plugins' sight (it held the
       // echo); what comes next goes to them.
       settled: () => {
-        if (current()) entry.echoWindow = null;
+        if (current()) run.echoWindow = null;
       },
-    }, nonce, this.promptScreen?.(entry.size) ?? null);
+    }, nonce, this.config.shellHooks?.screen?.(entry.size) ?? null);
   }
 
   /** The tab's Session couldn't start: roster refused, or a step before it failed. */
@@ -732,7 +630,7 @@ export class Tabs {
     if (code === SessionRefusal.vaultLocked) {
       const message = "The vault is locked. Unlock it and this Session opens.";
       this.setStatus(entry, { state: "failed", message, code, problem: { ...problem, message } });
-      this.onVaultLocked();
+      this.config.onVaultLocked();
       return;
     }
     const message = e instanceof Error ? e.message : String(e);
@@ -742,8 +640,8 @@ export class Tabs {
   /** A check that a step started now still belongs to the tab: not closed, cancelled or started
    * again since. */
   private turn(entry: Entry): () => boolean {
-    const attempt = entry.attempt;
-    return () => entry.attempt === attempt && !entry.closing;
+    const seq = entry.seq;
+    return () => entry.seq === seq && !entry.closing;
   }
 
   /** Starts the Session again in the same tab (after its key was trusted or turned out recorded). */
@@ -777,7 +675,7 @@ export class Tabs {
   private askQuick(entry: Entry) {
     const quick = entry.tab.quick;
     if (!quick) return;
-    entry.attempt++; // a key fetched for an earlier attempt is no longer asked about
+    entry.seq++; // a key fetched for an earlier attempt is no longer asked about
     const current = this.turn(entry);
     const { address, port } = quick.to;
     this.setStatus(entry, { state: "asking", key: null, trusting: false });
@@ -853,7 +751,7 @@ export class Tabs {
     const s = entry?.tab.status;
     if (!entry || !(s?.state === "password" || (s?.state === "asking" && !s.trusting))) return;
     if (!entry.before) return this.close(id);
-    entry.attempt++; // a key still being fetched is no longer asked about
+    entry.seq++; // a key still being fetched is no longer asked about
     entry.tab = entry.before;
     entry.before = null;
     this.changed();
@@ -865,9 +763,7 @@ export class Tabs {
     const entry = this.entries[i];
     if (!entry) return;
     entry.closing = true;
-    entry.hooks?.stop();
-    entry.watch?.dispose();
-    entry.watch = null;
+    entry.run.stop();
     this.dropSave(entry);
     entry.sink = null;
     void entry.session?.close().catch(() => {});
@@ -946,8 +842,9 @@ export class Tabs {
     }
     const { session } = entry;
     // What the watch says now, not what the tab last showed: a key typed since may have changed it.
-    if (entry.watch) this.promptChanged(entry, entry.watch);
-    const prompt = entry.watch ? entry.tab.prompt : null;
+    const run = entry.run;
+    if (run.watch) this.promptChanged(entry, run.watch);
+    const prompt = run.watch ? entry.tab.prompt : null;
     if (!session || entry.tab.status.state !== "open" || prompt === null) {
       throw new Error(`No password prompt in ${entry.tab.label}'s Session right now`);
     }
@@ -961,26 +858,26 @@ export class Tabs {
     // Spent while it's tried: no offer, and no second press, until a new prompt shows. A refusal
     // from roster serve (a code: the vault, the prompt, the Host) typed nothing, so the prompt is
     // offered again; the core's own refusals (no code) typed its probe, so it stays spent.
-    const watch = entry.watch;
+    const watch = run.watch;
     watch?.spent();
     entry.tab = { ...entry.tab, prompt: null };
     this.changed();
     // What the Session prints from here until its next line break stays out of Plugins' sight:
     // with sudo's pwfeedback that's a `*` per key of the password (ticket 154).
-    entry.fillWindow = { dropped: 0 };
+    run.fillWindow = { dropped: 0 };
     try {
       // A nested ssh's prompt names the Host roster resolved it to (ticket 120); the core checks the
       // Session printed it, and serve that the Host is still what it was resolved to.
       return (await session.fill(prompt.line, prompt.hop ?? undefined)).host;
     } catch (e) {
       // Nothing was typed but at most the probe: what comes next is the Session's own.
-      entry.fillWindow = null;
+      run.fillWindow = null;
       if (watch && e instanceof BackendCallError && typeof e.code === "number") {
         watch.unspent();
         this.promptChanged(entry, watch);
       }
       if (e instanceof BackendCallError && e.code === SessionRefusal.vaultLocked) {
-        this.onVaultLocked();
+        this.config.onVaultLocked();
         throw new BackendCallError("The vault is locked. Unlock it, then press the fill key again.", e.code, e.data);
       }
       throw e;
@@ -993,11 +890,12 @@ export class Tabs {
   write(id: number, data: string) {
     const entry = this.find(id);
     if (!entry) return;
-    entry.hooks?.typed(data);
+    const { hooks, watch } = entry.run;
+    hooks?.typed(data);
     // A nested ssh's prompt after you've typed into it may not be its login's (ticket 120).
-    if (hasTyping(data) && entry.watch) {
-      entry.watch.typed(data);
-      this.promptChanged(entry, entry.watch);
+    if (hasTyping(data) && watch) {
+      watch.typed(data);
+      this.promptChanged(entry, watch);
     }
     if (entry.session) void entry.session.write(data).catch(() => {});
     else if (entry.tab.status.state === "connecting") entry.pending.push(data);
@@ -1016,58 +914,26 @@ export class Tabs {
     const { size, sentSize, session } = entry;
     if (!session || (size.cols === sentSize.cols && size.rows === sentSize.rows)) return;
     entry.sentSize = { ...size };
-    entry.watch?.resize(size);
-    entry.hooks?.resize(size);
+    entry.run.watch?.resize(size);
+    entry.run.hooks?.resize(size);
     void session.resize(size).catch(() => {});
-  }
-
-  /** What of `data` Plugins may get while roster's hook line may be echoing: nothing until the
-   * attempt's first own prompt mark (`133;A;roster=TOKEN`), then from that mark on. */
-  private pastEchoWindow(entry: Entry, nonce: string, data: Uint8Array): Uint8Array | null {
-    const window = entry.echoWindow;
-    if (!window) return data;
-    const seen = new Uint8Array(window.tail.length + data.length);
-    seen.set(window.tail);
-    seen.set(data, window.tail.length);
-    const at = indexOfBytes(seen, `\x1b]133;A;roster=${nonce}`);
-    if (at < 0) {
-      window.tail = seen.slice(-64);
-      return null;
-    }
-    entry.echoWindow = null;
-    return seen.subarray(at);
-  }
-
-  /** What of `data` Plugins may get while a fill's window is open: nothing before the Session's
-   * next line break (`\n`), then from that line break on (ticket 154). */
-  private pastFillWindow(entry: Entry, data: Uint8Array): Uint8Array | null {
-    const window = entry.fillWindow;
-    if (!window) return data;
-    const at = data.indexOf(0x0a);
-    if (at < 0) {
-      window.dropped += data.length;
-      if (window.dropped > FILL_WINDOW_LIMIT) entry.fillWindow = null;
-      return null;
-    }
-    entry.fillWindow = null;
-    return data.subarray(at);
   }
 
   /** Hands Plugins `data`; output the mask holds back goes after 50 ms if nothing follows it. */
   private tapOut(entry: Entry, id: number, mask: TokenMask, data: Uint8Array) {
     const host = entry.tab.quick ? null : entry.tab.host;
-    if (data.length > 0) this.outputTap?.output(id, host, data, entry.sentSize);
+    if (data.length > 0) this.config.outputTap?.output(id, host, data, entry.sentSize);
     if (!mask.holding()) return;
     setTimeout(() => {
       if (!mask.holding() || !this.find(id)) return;
       const rest = mask.flush();
-      if (rest.length > 0) this.outputTap?.output(id, host, rest, entry.sentSize);
+      if (rest.length > 0) this.config.outputTap?.output(id, host, rest, entry.sentSize);
     }, 50);
   }
 
   /** What `watch` says of the prompt now, onto the tab, if it's still the tab's watch. */
   private promptChanged(entry: Entry, watch: PromptWatch) {
-    if (entry.watch !== watch || !this.find(entry.tab.id)) return;
+    if (entry.run.watch !== watch || !this.find(entry.tab.id)) return;
     const prompt = watch.prompt();
     const hop = watch.hop();
     const was = entry.tab.prompt;
@@ -1083,6 +949,38 @@ export class Tabs {
     entry.tab = { ...entry.tab, prompt, hop };
     this.changed();
   }
+}
+
+/** What of `data` Plugins may get while roster's hook line may be echoing: nothing until the
+ * attempt's first own prompt mark (`133;A;roster=TOKEN`), then from that mark on. */
+function pastEchoWindow(run: Attempt, nonce: string, data: Uint8Array): Uint8Array | null {
+  const window = run.echoWindow;
+  if (!window) return data;
+  const seen = new Uint8Array(window.tail.length + data.length);
+  seen.set(window.tail);
+  seen.set(data, window.tail.length);
+  const at = indexOfBytes(seen, `\x1b]133;A;roster=${nonce}`);
+  if (at < 0) {
+    window.tail = seen.slice(-64);
+    return null;
+  }
+  run.echoWindow = null;
+  return seen.subarray(at);
+}
+
+/** What of `data` Plugins may get while a fill's window is open: nothing before the Session's
+ * next line break (`\n`), then from that line break on (ticket 154). */
+function pastFillWindow(run: Attempt, data: Uint8Array): Uint8Array | null {
+  const window = run.fillWindow;
+  if (!window) return data;
+  const at = data.indexOf(0x0a);
+  if (at < 0) {
+    window.dropped += data.length;
+    if (window.dropped > FILL_WINDOW_LIMIT) run.fillWindow = null;
+    return null;
+  }
+  run.fillWindow = null;
+  return data.subarray(at);
 }
 
 /** Where the ASCII `needle` first starts in `bytes`, or -1. */

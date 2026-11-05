@@ -8,7 +8,7 @@ import { DataTable } from "../ui/DataTable";
 import { GraphView } from "../graph/GraphView";
 import type { GraphMemory } from "../graph/memory";
 import type { Content, HeadActionDef, ViewDef } from "./views";
-import { RowActionGlyph } from "../sidebar/Sidebar";
+import { RowActionGlyph } from "../ui/icons";
 
 /** The buttons on a view's or a Host-details section's heading (ticket 91): an icon with the
  * label as its name and tooltip, quiet like the panel's own close. */
