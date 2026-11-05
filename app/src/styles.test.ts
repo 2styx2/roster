@@ -211,7 +211,7 @@ describe("the Key bindings panel's rows (round 18)", () => {
   });
 });
 
-describe("the status bar's order of giving way (round 18)", () => {
+describe("the status bar's order of giving way (rounds 18, 19)", () => {
   const shrink = (selector: string) => {
     const body = rules(stylesCss)
       .filter(([s, , at]) => at.length === 0 && s.trim() === selector)
@@ -219,8 +219,10 @@ describe("the status bar's order of giving way (round 18)", () => {
       .join(";");
     return Number(/(?:^|[;{\s])flex:\s*\S+\s+(\S+)/.exec(body)?.[1]);
   };
-  it("hints first, then the path, the Backend, this Box, and the Session on screen last (Q209 d)", () => {
-    const order = [".statusbar-right", ".statusbar .path", ".statusbar .backend", ".statusbar .box", ".statusbar .session-seg"].map(shrink);
+  it("the path is cut first, then the Backend, this Box, and the Session on screen last (Q209 d)", () => {
+    // The hints aren't cut: FitBar removes them whole, then the path, before the Backend is cut.
+    expect(shrink(".statusbar-right")).toBe(0);
+    const order = [".statusbar .path", ".statusbar .backend", ".statusbar .box", ".statusbar .session-seg"].map(shrink);
     expect(order.every((n) => Number.isFinite(n) && n > 0)).toBe(true);
     for (let i = 1; i < order.length; i++) expect(order[i - 1]! / order[i]!).toBeGreaterThanOrEqual(1e4);
   });

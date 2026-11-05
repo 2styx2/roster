@@ -318,8 +318,8 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .statusbar > * { flex: none; }
 /* The link to roster serve: muted while it's fine (the accent means a live Session, Q204). */
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
-/* Long values give way in order: the hints (whole, last first), then the path (down to
-   "~/…/roster.yml", then not drawn), then the Backend's label, then this Box's name, and the Session on
+/* Long values give way in order: the path cut in its middle (down to "~/…/roster.yml"), the
+   hints (removed whole, last first, FitBar), the path (removed), then the Backend's label, then this Box's name, and the Session on
    screen last (Q209 d; round 18 found the Session cut while the Backend stayed whole). The Host
    count and the mode never do. The shrink factors are orders of magnitude apart, so each gives
    way only once the one before it is at its least (factors 1e5 apart: a step's share of
@@ -335,17 +335,11 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    A shape only; the name beside it stays `muted` text. */
 .box-mark { width: 6px; height: 6px; border-radius: 1.5px; background: var(--tone); flex: none; }
 .statusbar .box .statusbar-cut { min-width: 0; }
-/* The path keeps room for its least (below) ahead of the hints, then gives way before the Backend;
-   it goes rather than showing a stub ("/ho…"). */
-.statusbar .path {
-  flex: 1 1e10 var(--keep, 8ch); min-width: 0; height: var(--statusbar-h); overflow: hidden;
-  display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start;
-}
-/* The path is whole down to its first folder, "…/" and its file name (--keep, from App.tsx), or
-   not drawn at all: below that it wraps to the line the box hides (the zero-width first item lets
-   it wrap even though it's alone), as the hints do. Its tooltip always has it whole. */
-.statusbar .path::before { content: ""; width: 0; height: var(--statusbar-h); }
-.statusbar .path-text { flex: 1 1 auto; min-width: calc(var(--keep, 8ch) - 1px); display: flex; white-space: nowrap; }
+/* The path is cut in its middle down to its least: its first folder, "…/" and its file name
+   (--keep, from App.tsx). Past that it's removed whole (FitBar), never left as a blank box or a
+   stub ("/ho…"). It takes no more than its text: the free room is the bar's, not the path's. */
+.statusbar .path { flex: 0 1e10 auto; min-width: var(--keep, 8ch); overflow: hidden; display: flex; }
+.statusbar .path-text { flex: 1 1 auto; min-width: 0; display: flex; white-space: nowrap; }
 /* Cut in its middle (round 18): the first folder and the file name stay, the folders between are
    cut from their start ("~/…ventory/roster.yml"), as .empty-path is: an rtl box with ltr text. */
 .statusbar .path-base { flex: none; }
@@ -361,18 +355,12 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
    count and the Inventory's path are in Iosevka, as in a tmux line. The words around them are Inter. */
 .statusbar .backend .statusbar-cut, .statusbar .box .statusbar-cut, .statusbar .count, .statusbar .path { font-family: var(--font-mono); }
 /* The hints and the mode, at the right end whatever the layout shows before them. */
-.statusbar-right { margin-left: auto; flex: 0 1e15 auto; min-width: 0; display: flex; align-items: center; gap: 16px; }
-.statusbar-hints {
-  flex: 0 1000 auto; min-width: 0; height: var(--statusbar-h); overflow: hidden;
-  display: flex; flex-wrap: wrap; align-content: flex-start; align-items: center;
-}
-/* A zero-width first item: with it on the first line, a hint that doesn't fit wraps to the
-   hidden second line whole, even the first one, instead of being cut after its keycaps (N3). */
-.statusbar-hints::before { content: ""; width: 0; height: var(--statusbar-h); }
-.statusbar .hint { flex: none; display: inline-flex; align-items: center; gap: 5px; height: var(--statusbar-h); }
-/* A hint that wrapped off the line (FitLine) isn't there at all: not drawn, not read. */
-.statusbar .hint[data-off] { visibility: hidden; }
-.statusbar .hint + .hint { margin-left: 16px; }
+.statusbar-right { margin-left: auto; flex: 0 0 auto; display: flex; align-items: center; gap: 16px; }
+/* The hints are whole or not there (FitBar removes them, last first, when the bar is tight). */
+.statusbar-hints { flex: none; display: flex; align-items: center; gap: 16px; }
+.statusbar .hint { flex: none; display: inline-flex; align-items: center; gap: 5px; height: var(--statusbar-h); white-space: nowrap; }
+/* A segment that gave way isn't there at all: no room, not drawn, not read. */
+.statusbar [data-off] { display: none; }
 /* A hint that names a command is also its button, for the mouse: the same words, quiet until the
    pointer is on it (taste.md: chrome recedes). */
 /* A Plugin's segment that runs a command fits the bar (24 px) like the rest of the line. */
