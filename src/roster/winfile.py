@@ -1,4 +1,4 @@
-"""Windows: read a file only if it's this user's alone (#411), the Windows half of common.read_private.
+"""Windows: read a file only if it's this user's alone (#411), the Windows half of common.read_private_bytes.
 
 Windows has no mode bits, so "only you can read it" is the file's security descriptor: its owner must be this user
 (the SID roster's askpass pipe names, winpipe.user_sid), or SYSTEM or Administrators (who can take any file anyway,
@@ -55,8 +55,8 @@ def problem(owner, aces, me):
     return None
 
 
-def read_private(path):
-    """PATH's text if it's this user's alone; FileNotFoundError if there's nothing there, NotPrivate otherwise."""
+def read_private_bytes(path):
+    """PATH's bytes if it's this user's alone; FileNotFoundError if there's nothing there, NotPrivate otherwise."""
     if not os.path.lexists(path):
         raise FileNotFoundError(path)
     api = _api()
@@ -90,7 +90,7 @@ def read_private(path):
             text = f.read(PRIVATE_MAX + 1)
         if len(text) > PRIVATE_MAX:
             raise NotPrivate(f"{path} is too big to be a session (over {PRIVATE_MAX // 1024} KiB)")
-        return text.decode("utf-8", "replace")
+        return text
     finally:
         if fd is None:
             api.CloseHandle(handle)
