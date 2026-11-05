@@ -25,6 +25,11 @@
 # FAKE_BW_MAIL=FILE: one line per code bw "emailed" (two-step email, new-device OTP).
 # FAKE_BW_SLOW=JSON: {"sync": 30, "list": 5, ...}: sleep that many seconds before answering that command.
 # FAKE_BW_CREATE_HANG=SECONDS: `bw create item` saves the item, then hangs before answering (a slow server).
+# FAKE_BW_DATA=FILE: bw's data file, which keeps ONE protected user key, encrypted with the session key of the last
+#   unlock (bitwarden/clients apps/cli at 1ae4af9b: unlock.command.ts setNewSessionKey() makes a new BW_SESSION key on
+#   every unlock, NodeEnvSecureStorageService saves the user key under one "__PROTECTED__" name with it; lock.command.ts
+#   lockService.lock() clears it). So each `bw unlock` prints a new key and an earlier one stops working, and `bw lock`
+#   makes every key stop working (decision Q203). Without it, the one key is always fake-session-key.
 # FAKE_BW_ORGS=JSON: the organizations the account is in, each with its collections:
 #   [{"id", "name", "status": 2, "type": 2, "enabled": true, "collections": [{"id", "name", "readOnly": bool}]}]
 #   `bw list organizations` and `bw list collections [--organizationid ID]` print them as bw 2026.9.1 does: a
@@ -47,7 +52,9 @@ items = [
 ]
 if os.environ.get("FAKE_BW_ITEMS"):
     items = json.load(open(os.environ["FAKE_BW_ITEMS"]))
-unlocked = os.environ.get("BW_SESSION") == SESSION
+data_file = os.environ.get("FAKE_BW_DATA")
+data = json.load(open(data_file)) if data_file and os.path.exists(data_file) else {"key": None, "unlocks": 0}
+unlocked = os.environ.get("BW_SESSION") == (data["key"] if data_file else SESSION) and os.environ.get("BW_SESSION")
 if a and os.environ.get("FAKE_BW_SLOW"):
     time.sleep(json.loads(os.environ["FAKE_BW_SLOW"]).get(a[0], 0))
 os.environ.get("FAKE_LOG") and open(os.environ["FAKE_LOG"], "a").write("bw " + " ".join(a[:2]) + "\n")
@@ -198,9 +205,16 @@ if a[0] == "logout":
     print("You have logged out."); sys.exit()
 if a[0] == "unlock":
     pw = os.environ.get(a[a.index("--passwordenv") + 1])
-    if pw == "hunter2": print(SESSION); sys.exit()
-    print("Invalid master password.", file=sys.stderr); sys.exit(1)
-if a[0] == "lock": print("Your vault is locked."); sys.exit()
+    if pw != "hunter2": print("Invalid master password.", file=sys.stderr); sys.exit(1)
+    if data_file:                                         # a new key each unlock; the one before stops working
+        data["unlocks"] += 1
+        data["key"] = f"{SESSION}-{data['unlocks']}"
+        json.dump(data, open(data_file, "w"))
+    print(data["key"] if data_file else SESSION); sys.exit()
+if a[0] == "lock":
+    if data_file:
+        data["key"] = None; json.dump(data, open(data_file, "w"))
+    print("Your vault is locked."); sys.exit()
 if not unlocked: print("Vault is locked.", file=sys.stderr); sys.exit(1)
 if a[0] == "sync":
     if os.environ.get("FAKE_BW_SYNC_FAIL"): fail(os.environ["FAKE_BW_SYNC_FAIL"])

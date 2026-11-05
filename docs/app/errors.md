@@ -469,6 +469,16 @@ The app, started on a Box with no `roster.yml`, offers the same first three in p
 | 262 | 200 (a note) | A Host whose `key_type:` isn't `ed25519` is in a meshed group or a Link (or is a Link's `via:`): the Mesh's keys are Ed25519 only for now, so it's left out, as a Windows Host is (160); the rest of the Mesh is set up. `roster mesh --dry-run`, `mesh status` and `check` list it under "left out" (T239) | `roster.yml` / Host | "fips-01 ([200] key_type: ecdsa: the Mesh's keys are Ed25519 only for now, which a FIPS-mode Host refuses, so it's left out …)" | Nothing to fix: reach it from the Box (`ssh fips-01`), or set `mesh: false` on it to keep it out without the note |
 | 263 | 201 | `roster setup`: the file a key type's key goes in already holds a key of another type (`~/.ssh/roster_ecdsa` holding an Ed25519 key, or `key_path:` naming a key of another type than the top-level `key_type:`), an RSA key with fewer bits than its type asks for, or a `.pub` that isn't its private key's (another key's `.pub` beside it), so roster made no key and installed nothing (T239) | Box | "[201] ~/.ssh/roster_ecdsa is an ssh-ed25519 key, not ecdsa (ecdsa-sha2-nistp384), which key_type: in roster.yml asks for …" | Move that file away (setup makes the new key there), or point `key_path:` at another file |
 
+## A saved Bitwarden session
+
+`roster vault unlock` and `roster vault lock` (T241, #474, decision Q203): an unlock saved in the `bw-session` file for every roster run on this Box.
+
+| # | Code | What happened | Where it lives | Message (short) | Fix offered |
+|---|---|---|---|---|---|
+| 264 | 202 | `roster vault unlock`, or "yes" to "Keep the vault unlocked for other roster runs on this Box?": a `bw-session` file is already there that isn't yours alone (a symlink, another user's, not a plain file, or others may read it), so roster won't write over it or through it; it's refused before the master password is asked, and nothing was written | Box | "[202] ~/.config/roster/bw-session is a symlink (roster never follows one here) - roster won't write over it; remove it yourself, then run `roster vault unlock` again" | Look at what's there, remove it, then `roster vault unlock` |
+| 265 | 203 | `roster vault unlock` or `vault lock` for a provider other than Bitwarden: KeePassXC keeps no session (each run opens the database with its password), and 1Password's `op signin` keeps its own, so these are Bitwarden only for now | Box | "[203] KeePassXC keeps no session: each run opens the database with its password, so there's nothing to keep unlocked" | Nothing to do for KeePassXC; for 1Password, `roster vault op --write -- signin` |
+| 266 | 204 | `roster vault unlock` or `vault lock`: the `bw-session` file couldn't be written (or removed): the folder isn't writable, the disk is full, or the new file wouldn't be yours alone; nothing was saved (a lock's `bw lock` still ran) | Box | "[204] couldn't write ~/.config/roster/bw-session (Permission denied)" | Fix the system's reason (the folder `~/.config/roster` should be yours), then run it again |
+
 ## See also
 
 [The error catalog](errors) · [`roster check HOST`](../cli-reference.md#roster-check-host) · [The roster serve API](../serve-api.md)

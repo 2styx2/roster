@@ -202,6 +202,11 @@ KEY_TYPE_FIPS = 199         # check HOST: the Host refused this Box's Ed25519 ke
 MESH_KEY_TYPE = 200         # a note, not an error: a Host whose key_type isn't ed25519 is left out of the Mesh
 KEY_TYPE_MISMATCH = 201     # setup: the file a key type's key goes in holds a key of another type; nothing was made
 
+# A saved Bitwarden session (T241, #474, decision Q203; catalog rows 264-266): roster vault unlock / vault lock
+SESSION_FILE_REFUSED = 202  # the bw-session file is a link, another user's or not a plain file: not written over
+NO_SESSION = 203            # vault unlock/lock for a provider with no session roster keeps (KeePassXC; 1Password for now)
+SESSION_FILE_FAILED = 204   # the bw-session file couldn't be written or removed (the system's reason)
+
 
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""

@@ -424,6 +424,9 @@ One person may have several Inventories, the team's for work and their own for h
 | `199` | `host.check`: the Host refused this Box's Ed25519 key and offers only NIST key exchange and host keys (no curve25519, no Ed25519 host key): a FIPS-mode Host, which never takes Ed25519. The fix is `key_type: ecdsa` for it, then `roster setup --host NAME` (T239); without those signs a refused key is still `46` |
 | `200` | A note, not an error: a Host whose `key_type:` isn't `ed25519` is left out of the Mesh (its keys are Ed25519 only for now). It's the start of that Host's reason in `excluded` (`mesh.plan`, `mesh.apply`, `mesh.status`), as `160` is, never an error code (T239) |
 | `201` | `roster setup`: the file a key type's key goes in (`~/.ssh/roster_ecdsa`, or `key_path:`) holds a key of another type, an RSA key with fewer bits than its type, or a `.pub` that isn't its private key's, so roster made none and installed nothing. A CLI error (T239) |
+| `202` | `roster vault unlock`: a `bw-session` file is already there that isn't yours alone (a symlink, another user's, not a plain file, readable by others), so roster won't write over it; refused before the master password is asked, nothing written (T241). A CLI error, never a serve answer: serve never reads or writes that file |
+| `203` | `roster vault unlock` / `vault lock` for a provider with no session roster keeps: KeePassXC has none, and 1Password's `op signin` keeps its own (Bitwarden only for now). A CLI error |
+| `204` | `roster vault unlock` / `vault lock`: the `bw-session` file couldn't be written or removed (the system's reason in the message). A CLI error |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 

@@ -27,9 +27,9 @@ COMMON_BOX_NAMES = frozenset({
 SHOWN = 5                   # names listed before "and N more"
 
 
-def check(section, level, message, fix=None, topic=None):
+def check(section, level, message, fix=None, topic=None, **extra):
     return {"section": section, "level": level, "message": message,
-            **({"fix": fix} if fix else {}), **({"topic": topic} if topic else {})}
+            **({"fix": fix} if fix else {}), **({"topic": topic} if topic else {}), **extra}
 
 
 def names(items):
@@ -250,13 +250,40 @@ def provider_check(name, n):
     if status == "unauthenticated":
         return check("vault", "error", f"{name} ({used}): {providers.status_message(name, status)}",
                      "sign in from the app's lock screen, or in a terminal", "E6")
-    if status == "locked":
-        return check("vault", "ok", f"{name} ({used}): logged in{who}, locked; it asks for the master password "
-                                    "when a Login needs it")
-    if status == "unlocked":
-        return check("vault", "ok", f"{name} ({used}): logged in{who}, unlocked")
+    if status in ("locked", "unlocked"):
+        state = "locked; it asks for the master password when a Login needs it" if status == "locked" else "unlocked"
+        try:
+            saved = providers.saved_session(name)
+        except providers.SecretError as e:
+            return check("vault", "error", f"{name} ({used}): {e}", None, "E6")
+        if saved is None:
+            return check("vault", "ok", f"{name} ({used}): logged in{who}, {state}")
+        return session_check(name, used, who, status, *saved)
     found = f", `{tool}` found" if tool else ""
     return check("vault", "ok", f"{name} ({used}): no lock to check{found}")
+
+
+SAVED = {"none": "none (every run asks)", "working": "saved, working", "expired": "saved, expired",
+         "ignored": "saved, ignored"}
+
+
+def session_check(name, used, who, status, saved, why):
+    """provider_check for a vault with a saved session (T241, Q203): its state in the message and as saved_session."""
+    from .providers.bitwarden import UNTIL, session_file
+    head = f"{name} ({used}): logged in{who}, "
+    if saved == "working":
+        return check("vault", "ok", f"{head}unlocked for every run by the saved session (saved session: saved, "
+                                    f"working) until {UNTIL}", saved_session=saved)
+    state = "unlocked" if status == "unlocked" else "locked; it asks for the master password when a Login needs it"
+    if saved == "none":
+        return check("vault", "ok", f"{head}{state}; saved session: none (every run asks)",
+                     "to stay unlocked on this Box: roster vault unlock", saved_session=saved)
+    if saved == "expired":
+        return check("vault", "warn", f"{head}{state}; saved session: saved, expired ({session_file()} was locked "
+                                      "since it was saved, e.g. by the roster app's lock or a bw lock/unlock)",
+                     "roster vault unlock saves a new one", saved_session=saved)
+    return check("vault", "warn", f"{head}{state}; saved session: saved, ignored ({why})",
+                 "remove it, then run roster vault unlock", saved_session=saved)
 
 
 # ---------------------------------------------------------------- the infra repo
