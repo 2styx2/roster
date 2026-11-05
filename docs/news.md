@@ -49,9 +49,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
+- **1Password items list their URLs primary first** (#500): the list of vault items (`roster add --from-vault` with no NAME) kept 1Password's order, while `--from-vault NAME` took the primary URL, so a listed item's address could differ from the one it filled in. Both use the primary URL first now.
 - **`roster setup` no longer counts a failed Host as ready too** (#476): one Host that needed its key while the vault was locked said `1 key hosts ready, 0 password-only hosts, 1 failed`; it says `0 … ready … 1 failed` now.
 
 **App**
+
+- **A Bitwarden organization or collection missing a key no longer breaks Save to vault** (#500): one that `bw list organizations` or `bw list collections` printed without its id, its name or (a collection) its organization's id made `roster serve` fail with an internal error when the app listed or picked where to save. Such a row is now left out, since it can't be saved to or named.
 
 - **The Topology map takes the keys back, and `/` starts a new search** (#475): with a Session opened from the map beside it, `:topology` (or `:view topology`, or the map's key) hands the keys back to the map, so a `/` typed next searches the map instead of going to the shell; asking for any open view again does the same. `/` on a map opens its search empty, as the Picker does, so typing a new name no longer adds to the last one.
 - **A slow `:help` no longer opens over the terminal you clicked into** (#438): when a guide took a moment to load, clicking into a terminal (or anywhere outside help) meanwhile still let help open and take the keys once the text came. A click now drops the waiting `:help`, as running a command or opening a finder already did; run `:help` again to open it.

@@ -747,9 +747,21 @@ def _bw_listed(ctx, *what):
     return listed
 
 
+def _named(row, *keys):
+    """Whether ROW has a string at each of KEYS (id, name, ...): a row without one is skipped, as it can't be saved to
+    or named (#500, T254), never a KeyError."""
+    return all(isinstance(row.get(k), str) for k in ("id", "name", *keys))
+
+
 def _bw_orgs(ctx):
     """The organizations whose collections the account can save to: confirmed in, and enabled."""
-    return [o for o in _bw_listed(ctx, "organizations") if o.get("status") == CONFIRMED and o.get("enabled", True)]
+    return [o for o in _bw_listed(ctx, "organizations")
+            if o.get("status") == CONFIRMED and o.get("enabled", True) and _named(o)]
+
+
+def _bw_collections(ctx):
+    """The collections listed with an id, a name and an organization's id."""
+    return [c for c in _bw_listed(ctx, "collections") if _named(c, "organizationId")]
 
 
 def _collection_target(org, c):
@@ -762,8 +774,8 @@ def _bw_targets(ctx):
     _bw_ready(ctx)
     orgs = {o["id"]: o for o in _bw_orgs(ctx)}
     refused = ctx.state.get("read_only", set())
-    return [PERSONAL_TARGET] + [_collection_target(orgs[c["organizationId"]], c) for c in _bw_listed(ctx, "collections")
-                                if c.get("organizationId") in orgs and c.get("id") not in refused]
+    return [PERSONAL_TARGET] + [_collection_target(orgs[c["organizationId"]], c) for c in _bw_collections(ctx)
+                                if c["organizationId"] in orgs and c.get("id") not in refused]
 
 
 def _pick(things, ref, what, field, scope=""):
@@ -785,7 +797,7 @@ def _bw_resolve(setting, field, ctx):
         raise UnknownTarget(f"{field()} names a KeePassXC group ('{setting['group']}'), but Bitwarden saves to the "
                             "personal vault or an organization's collection")
     org = _pick(_bw_orgs(ctx), setting["organization"], "organization", field("organization"))
-    collections = [c for c in _bw_listed(ctx, "collections") if c.get("organizationId") == org["id"]]
+    collections = [c for c in _bw_collections(ctx) if c["organizationId"] == org["id"]]
     c = _pick(collections, setting["collection"], "collection", field("collection"), f" in {org['name']}")
     if c["id"] in ctx.state.get("read_only", ()):
         raise _read_only(_collection_target(org, c))
