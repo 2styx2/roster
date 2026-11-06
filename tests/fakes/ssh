@@ -2,6 +2,9 @@
 # Stand-in ssh for tests: nothing here connects. By default it fails as an unreachable host would.
 # FAKE_LOG=FILE                 append "ssh ARGS" per run (a test counts connection attempts with it)
 # FAKE_SSH_STDERR / _EXIT       what to print on stderr and the exit code (a key login's outcome)
+# FAKE_SSH_ACCEPT_NEW=FILE      before that outcome, append "IP ssh-ed25519 KEY" to FILE (roster's known_hosts), as real
+#                               ssh does for a new Host under roster's StrictHostKeyChecking accept-new (T243); IP is
+#                               FAKE_SSH_ACCEPT_NEW_IP (default 10.0.0.6)
 # FAKE_SSH_PROMPT + _PASSWORD   act as a password login: run $SSH_ASKPASS PROMPT, as ssh does, and succeed
 #                               only if it prints FAKE_SSH_PASSWORD (its stderr goes to ours, as with ssh); once
 #                               logged in, it runs -o LocalCommand with sh -c (cmd.exe on Windows) when -o PermitLocalCommand=yes, as ssh does
@@ -46,6 +49,11 @@
 #                                                   ("'sh' is not recognized ...", "The term 'sh' is not recognized")
 #                                                   Under PowerShell, a command that failed exits 1, whatever its code
 #                                                   was (as Win32-OpenSSH's `powershell -c` does)
+#                                                   With DIR/NAME/keys too (#509 item 7), a key login (`exit 0`, or
+#                                                   any command with BatchMode=yes) gets in only with a key the ssh
+#                                                   config gives NAME (as fips's) whose line is in the file sshd reads
+#                                                   for the account; else any roster-managed line lets it in. A
+#                                                   password login (no BatchMode) is never checked
 # FAKE_SH=PATH                  the sh a stand-in Host runs its side with (default /bin/sh; on native Windows, Git for
 #                               Windows' sh.exe, with the Host's paths written C:/... as that sh reads them)
 import base64, fnmatch, os, shutil, subprocess, sys, time
@@ -100,9 +108,10 @@ function global:Get-Acl {
 """
 
 
-def windows_key_login(root):
+def windows_key_login(root, dest):
     """Would the stand-in Windows Host's sshd let a roster key in? As the real one decides: an admin's keys are in
-    the admin file (stock sshd_config), which it reads only with Microsoft's ACL; no BOM, no UTF-16."""
+    the admin file (stock sshd_config), which it reads only with Microsoft's ACL; no BOM, no UTF-16. With ROOT/keys,
+    only a key the ssh config offers for DEST whose line is in that file."""
     import json
     admin = os.path.exists(os.path.join(root, "admin"))
     f = os.path.join(root, "programdata", "ssh", "administrators_authorized_keys") if admin else \
@@ -115,20 +124,34 @@ def windows_key_login(root):
                       and sorted(e["sid"] for e in acl["allow"] if e.get("type", "Allow") == "Allow")
                       == ["S-1-5-18", "S-1-5-32-544"]):
         data = b""                      # a wrong ACL: sshd ignores the file without a word
-    if data.startswith((b"\xef\xbb\xbf", b"\xff\xfe")) or b" roster-managed:" not in data:
+    if data.startswith((b"\xef\xbb\xbf", b"\xff\xfe")) or b" roster-managed:" not in data or (
+            os.path.exists(os.path.join(root, "keys")) and not offered_in(dest, data)):
         print("admin@10.0.0.5: Permission denied (publickey,password,keyboard-interactive).", file=sys.stderr)
         return False
     return True
+
+
+def offered_in(dest, data):
+    """Is a key the ssh config offers DEST (each in turn, as ssh would) in authorized_keys text DATA?"""
+    lines = [ln.split() for ln in data.decode(errors="replace").splitlines()]
+    for f in identity_files(dest):
+        pub = (open(f + ".pub").read().split() if os.path.exists(f) and os.path.exists(f + ".pub") else [])[:2]
+        if len(pub) == 2 and any(ln[i:i + 2] == pub for ln in lines for i in range(len(ln))):
+            return True
+    return False
 
 
 CMD_SPECIAL = set('&|<>^%"')                 # cmd.exe acts on these in a command line
 PS_SPECIAL = set(";&$'\"(){}@#`|<>,")          # PowerShell's own syntax
 
 
-def windows_host(root, command):
+def windows_host(root, command, dest=None):
     """Run COMMAND on the stand-in Windows Host at ROOT, as its DefaultShell (cmd.exe or PowerShell) reads the line:
     its exit code."""
     line = " ".join(command)
+    if os.path.exists(os.path.join(root, "keys")) and "BatchMode=yes" in args and line.split() != ["exit", "0"] \
+            and not windows_key_login(root, dest):
+        return 255                      # a key login (over_key) with a key sshd doesn't take there
     shell = (open(os.path.join(root, "windows")).read().strip() or "powershell").lower()
     special = CMD_SPECIAL if shell == "cmd" else PS_SPECIAL
     words = line.split()
@@ -179,7 +202,7 @@ def windows_host(root, command):
         # real Host: `ssh HOST 'cmd /c exit 3'` exits 1); cmd.exe passes the code on
         return 1 if rc and shell == "powershell" else rc
     if words == ["exit", "0"]:        # a login test: this account's key file holds roster's key, and sshd would read it
-        return 0 if windows_key_login(root) else 255
+        return 0 if windows_key_login(root, dest) else 255
     first = words[0] if words else ""
     if shell == "cmd":
         print(f"'{first}' is not recognized as an internal or external command,\noperable program or batch file.",
@@ -256,7 +279,8 @@ if hosts:
             print(f"ssh: connect to host {dest} port 22: Connection timed out", file=sys.stderr)
             sys.exit(255)
         open(log, "a").write(f"start {dest}\n")
-        if any(os.path.exists(os.path.join(root, m)) for m in ("fips", "keys")) and not key_taken(root, dest):
+        windows = os.path.exists(os.path.join(root, "windows"))     # its own key login (windows_key_login)
+        if not windows and any(os.path.exists(os.path.join(root, m)) for m in ("fips", "keys")) and not key_taken(root, dest):
             open(log, "a").write(f"end {dest}\n")
             sys.exit(255)
         hold, held_until = os.path.join(root, "hold"), time.monotonic() + 120    # pytest-timeout's, at most
@@ -266,7 +290,7 @@ if hosts:
         if os.path.exists(slow):
             time.sleep(float(open(slow).read() or 1))
         if os.path.exists(os.path.join(root, "windows")):
-            rc = windows_host(root, command)
+            rc = windows_host(root, command, dest)
             sys.stdout.flush()
             open(log, "a").write(f"end {dest}\n")
             sys.exit(rc)
@@ -314,5 +338,9 @@ if prompt is not None and os.environ.get("SSH_ASKPASS"):
         sys.exit(0)
     print("root@127.0.0.1: Permission denied (publickey,password).", file=sys.stderr)
     sys.exit(255)
+if os.environ.get("FAKE_SSH_ACCEPT_NEW"):
+    with open(os.environ["FAKE_SSH_ACCEPT_NEW"], "a") as kh:
+        kh.write(os.environ.get("FAKE_SSH_ACCEPT_NEW_IP", "10.0.0.6")
+                 + " ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAcceptNewRecordedTheHostKeyHere\n")
 print(os.environ.get("FAKE_SSH_STDERR", "fake ssh: not connecting to " + " ".join(args)), file=sys.stderr)
 sys.exit(int(os.environ.get("FAKE_SSH_EXIT", "255")))

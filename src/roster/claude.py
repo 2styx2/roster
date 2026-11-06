@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .common import replace_file, roster_command, say
-from .config import access_label, load_config
+from .config import access_label, load_config, shown_file
 from .context import Context, current
 from .errors import InventoryError
 from .hosts import vault_login
@@ -54,8 +54,8 @@ def write_claude_files(cfg: dict[str, Any]) -> None:
     from . import named  # Pydantic: only once it's used, never at roster's start
     if not write_roster_md(cfg):
         md = cfg["path"].parent / "ROSTER.md"
-        say(f"warning      {md} is the Mesh's (another Box's `roster mesh` lists this Host's peers in it), so roster "
-            "left it alone: keep roster.yml in a folder of its own, not the home folder, for this Box's ROSTER.md")
+        say(f"warning      {shown_file(cfg, md, 'ROSTER.md')} is the Mesh's (another Box's `roster mesh` lists this "
+            "Host's peers in it), so roster left it alone: keep roster.yml in a folder of its own, not the home folder, for this Box's ROSTER.md")
     write_claude_settings(cfg)
     if named.list_file().exists():
         refresh_roster_md(skip=current())
@@ -191,7 +191,7 @@ def write_claude_settings(cfg):
         try:
             data = json.loads(settings.read_text())
         except json.JSONDecodeError:
-            say(f"warning      {settings} isn't valid JSON - left it alone")
+            say(f"warning      {shown_file(cfg, settings, '.claude/settings.json')} isn't valid JSON - left it alone")
             data = None
     if data is not None:
         deny = data.setdefault("permissions", {}).setdefault("deny", [])
@@ -200,4 +200,4 @@ def write_claude_settings(cfg):
                 deny.append(rule)
         settings.parent.mkdir(exist_ok=True)
         shared(settings, json.dumps(data, indent=2) + "\n")
-    say(f"claude       {proj / 'ROSTER.md'} (imported from CLAUDE.md), .claude/settings.json")
+    say(f"claude       {shown_file(cfg, proj / 'ROSTER.md', 'ROSTER.md')} (imported from CLAUDE.md), .claude/settings.json")

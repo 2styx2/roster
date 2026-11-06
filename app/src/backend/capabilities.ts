@@ -46,7 +46,7 @@ export interface Capabilities {
   /** serve's API version; 0 while it isn't up. */
   readonly api: number;
   has(feature: Feature): boolean;
-  /** Why `feature` can't run here, said calmly in the app's words (round 20, decision Q247): "`what`
+  /** Why `feature` can't run here, said calmly in the app's words (round 20, decision Q248): "`what`
    * needs a newer roster. Update roster on this Box.", in the text colour, with serve's API numbers
    * ("API version N; this one speaks M") kept for `:messages` only. `as` names it otherwise
    * (`:unreview` refused for want of `review`). */

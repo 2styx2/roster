@@ -391,7 +391,7 @@ const Section = memo(function Section({
               openMenu={openMenu}
             />
           ))}
-          {/* Sessions' reserved room (Q234) as faint numbered slots, so it reads as "Sessions go
+          {/* Sessions' reserved room (Q235) as faint numbered slots, so it reads as "Sessions go
               here", never as a gap (owner, after round 14). "None open" is the first when empty.
               No node in a slot (round 16: a dashed node means "unreviewed"): a faint well and the
               key ␣ N will go to. */}
@@ -427,12 +427,12 @@ const Section = memo(function Section({
 
 /** The cursor row, whole (M6): a cut-off name, its state and address, readable from the keyboard.
  * It repeats what the tree item's name already tells assistive tech, so it's hidden from it. */
-/** How many rows of room the Sessions section keeps from the start (Q234). */
+/** How many rows of room the Sessions section keeps from the start (Q235). */
 const SESSION_ROOM = 3;
 
 /** Holds a full Sessions section (at its row cap) at its height while the pointer is on the tree
- * under it (`on`), so a Session opening there never moves the tree (Q226, Q232). A new Session scrolls into view inside the
- * held list (never fewer than one row: an empty section keeps a row of room, Q228); the section
+ * under it (`on`), so a Session opening there never moves the tree (Q227, Q233). A new Session scrolls into view inside the
+ * held list (never fewer than one row: an empty section keeps a row of room, Q229); the section
  * takes its new height when the pointer leaves. */
 function holdSessions(section: HTMLElement | null | undefined, on: boolean) {
   if (!section) return;
@@ -593,7 +593,7 @@ export function Sidebar({
 
   const restRef = useRef<HTMLDivElement | null>(null);
 
-  // The capped Sessions list says when more are out of sight: a hairline on that edge (Q223).
+  // The capped Sessions list says when more are out of sight: a hairline on that edge (Q224).
   // The tree under them does the same at its top edge, so a scrolled tree reads as scrolled.
   useLayoutEffect(() => {
     const lists = [
@@ -614,7 +614,7 @@ export function Sidebar({
       marks.forEach(([list, mark]) => list.removeEventListener("scroll", mark));
   });
 
-  // While the pointer is on the tree, the Sessions above it keep their height (Q226).
+  // While the pointer is on the tree, the Sessions above it keep their height (Q227).
   const sessionsSection = () =>
     scrollRef.current?.querySelector<HTMLElement>('[data-section="sessions"]');
   // Whether the pointer is on the tree: a Session opened from it is held as soon as the reserved

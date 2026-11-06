@@ -75,7 +75,8 @@ src/roster/
                     commands (Q178, Q197), read-only unless --write
   catchup.py        what's left after the vault or the map changed (T243, Q210): local state only (no connection, no
                     vault call), the "next" line sync, setup, vault sync and vault unlock end with (what changed, then
-                    the next command), setup's record of the Hosts it didn't finish
+                    the next command), setup's record of the Hosts it didn't finish; explain: a failed login's cause and its one fix
+                    (T243 part B, Q213)
   vaultsync.py      `roster vault sync` (T222, Q194): each vault roster.yml uses, synced (also `roster sync`'s vault
                     step), and the items added, changed or removed since the last sync, from a snapshot of ids and
                     revision dates (vault-sync/, 0600)

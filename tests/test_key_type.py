@@ -649,3 +649,28 @@ def test_setups_cleanup_never_runs_on_a_key_roster_cant_check_its_pub_against(la
     out = capsys.readouterr().out
     assert "note  fips-01: this Box's rsa key line is still there, and roster can't check" in out
     assert lab.kinds("fips-01") == ["ecdsa-sha2-nistp384", "ssh-rsa"]
+
+
+# ---------------------------------------------------------------- T257 (#509 item 3)
+
+def test_after_key_type_the_tidy_says_a_line_it_couldnt_match_was_left(lab, capsys, isolated):
+    """#509 item 3: an earlier try's line whose key file is gone stays (L2); the tidy says it was left, not taken off."""
+    from roster.cli import main
+    lab.write(", key_type: ecdsa")
+    assert main(["setup"]) == 0
+    assert main(["setup", "--host", "fips-01", "--key-type", "rsa"]) == 0
+    for f in ("roster_rsa", "roster_rsa.pub"):
+        (isolated["home"] / ".ssh" / f).unlink()
+    capsys.readouterr()
+    assert main(["setup", "--host", "fips-01", "--key-type", "ecdsa-256"]) == 0          # the install's cleanup
+    out = capsys.readouterr().out
+    assert "left this Box's rsa key line: no rsa key on this Box to match it by; roster revoke takes it" in out, out
+    assert main(["setup", "--host", "fips-01", "--key-type", "ecdsa-256", "--dry-run"]) == 0    # where it works: tidy
+    out = capsys.readouterr().out
+    assert "would leave this Box's rsa key line on fips-01" in out and "would take" not in out, out
+    assert main(["setup", "--host", "fips-01", "--key-type", "ecdsa-256"]) == 0
+    out = capsys.readouterr().out
+    assert "ssh-rsa" in lab.kinds("fips-01")
+    assert "took this Box's rsa" not in out, out
+    assert ("ok    fips-01 (left this Box's rsa key line: no rsa key on this Box to match it by; "
+            "roster revoke takes it)") in out, out

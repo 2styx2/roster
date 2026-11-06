@@ -2085,6 +2085,11 @@ pub const TYPES: &[Type] = &[
                 "`roster.yml` changed the Mesh since the last complete apply on this Box.",
             ),
             o(
+                "warnings",
+                "string[]",
+                "What `roster.yml` alone shows (220: an Ed25519 source's peer of another `key_type`); absent from a roster before #509.",
+            ),
+            o(
                 "meshed",
                 "table<string, string[]>",
                 "Grouped: each meshed group's Hosts that reach each other both ways.",

@@ -14,9 +14,9 @@ from .authorized import TAKEN, NameTaken, NoLine, box_key_re, box_public_keys, e
 from .boxkeys import ensure_key, public_key_line
 from .claude import write_claude_files
 from .common import die, plural, replace_file, say
-from .config import selected
+from .config import selected, shown_file
 from .context import Context, current
-from .errors import KEY_FILE, UNKNOWN_HOST, Exit, Problem, tagged
+from .errors import KEY_FILE, UNKNOWN_HOST, VAULT_LOCKED_DURING_RUN, Exit, Problem, tagged
 from .hosts import provider_of
 from .keyline import key_ere
 from .providers import get_secret
@@ -97,7 +97,7 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
             die("--key-type goes with --host NAME (one Host, to try a key type there): for more Hosts, set "
                 "key_type: on them, their group or defaults in roster.yml and run roster setup")
         cfg, hosts = key_type_for_run(cfg, hosts, override)
-    say(f"roster setup box '{cfg['box']}', {len(hosts)} hosts from {cfg['path']}")
+    say(f"roster setup box '{cfg['box']}', {len(hosts)} hosts from {shown_file(cfg)}")
     if not dry_run:                     # a swap a rotation was stopped in the middle of, finished
         rotation.repair_all(cfg, say)
     # one key per key type the Hosts use (this Box's own when none), each made on first need
@@ -150,15 +150,21 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                 f"roster can't check that {boxkeys.for_host(h).pub} is the key that logs in (a passphrase on it?), so "
                 "it left the lines as they are: remove that line by hand, or roster revoke takes it")
 
-    failed = {h["name"]: "no answer on SSH port" for h in hosts if h["name"] in no_answer}
+    failed = {h["name"]: catchup.setup_failure(cfg, h, "can't connect (no answer on its SSH port)") for h in hosts
+              if h["name"] in no_answer}
     if dry_run:
         for h in todo:
             say(f"  would install key on {h['name']} ({h['user']}@{h['ip']}:{h['port']}, auth {h['auth']}, "
                 f"{h['key_type']} key)")
         for h in retag:
             say(f"  would re-tag key on {h['name']}")
+        hosts_by_name = {h["name"]: h for h in key_hosts}
         for name, types in tidy.items():
-            say(f"  would take this Box's {' and '.join(types)} key line off {name}")
+            left = cleanup_re(cfg, pub(hosts_by_name[name]), types)[1] if override else []
+            if took := [t for t in types if t not in left]:
+                say(f"  would take this Box's {' and '.join(took)} key line off {name}")
+            if left:
+                say(f"  would leave this Box's {' and '.join(left)} key line on {name}: {unmatched_words(left)}")
         return 0
 
     # renamed onto a name another Box's key line has on a Host: the same-name rule (this Box's revoke
@@ -201,7 +207,13 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                 try:
                     notes = f.result()
                     boxkeys.record({name: (set(held.get(name, [])) - set(tidy[name])) | set(unmatched.get(name, ()))})
-                    say(f"  ok    {name} (took this Box's {' and '.join(tidy[name])} key line off)")
+                    left = unmatched.get(name) or []
+                    took = [t for t in tidy[name] if t not in left]
+                    # #509 item 3: a type with no key here to match its line by stays (#505's L2), said as left
+                    say(f"  ok    {name} (" + "; ".join(
+                        ([f"took this Box's {' and '.join(took)} key line off"] if took else [])
+                        + ([f"left this Box's {' and '.join(left)} key line: {unmatched_words(left)}"] if left else []))
+                        + ")")
                     for note in notes:
                         say(f"        {note}")
                 except Exception as e:
@@ -215,15 +227,25 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
         boxkeys.record(known)
 
     locked_vaults: set[str] = set()         # the providers a Login's lookup found locked (their own fix each)
+    fetched: set[str] = set()               # and those that answered one this run
     for ref, group in sorted({(h["auth"], h["group"]) for h in todo}, key=lambda t: (str(t[0]), t[1])):
+        p = provider_of(ref)
         try:
+            if p in locked_vaults:          # T243: no more lookups there this run, nothing more asked
+                raise providers.VaultLocked("not asked: the vault was locked during this run" if p in fetched else
+                                            "not asked: the vault is locked")
             get_secret(ref, group)          # ask for / fetch passwords up front, one per group
+            fetched.add(p)
         except RuntimeError as e:
+            why = str(e)
             if isinstance(e, providers.VaultLocked):
-                locked_vaults.add(provider_of(ref))
+                if p in fetched and p not in locked_vaults:     # open for an earlier lookup of this run (216)
+                    why = tagged(Problem(VAULT_LOCKED_DURING_RUN, "the vault was locked during this run (the roster "
+                                                                  f"app's lock, or bw lock): {e}"))
+                locked_vaults.add(p)
             for h in todo:
                 if (h["auth"], h["group"]) == (ref, group):
-                    failed[h["name"]] = str(e)
+                    failed[h["name"]] = why
     todo = [h for h in todo if h["name"] not in failed]
 
     installed: list[str] = []
@@ -244,6 +266,8 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                         if extra := sorted(have - keep(h)):
                             drop_re, left = cleanup_re(cfg, pub(h), extra)
                             notes = [*(notes or []), *authorized.drop_others(h, pub(h), drop_re)]
+                            if left:        # #509 item 3: said as left, as the tidy says it
+                                notes.append(f"left this Box's {' and '.join(left)} key line: {unmatched_words(left)}")
                         boxkeys.record({h["name"]: keep(h) | set(left)})      # a line it couldn't match stays
                     else:
                         boxkeys.record({h["name"]: [h["key_type"]]})
@@ -254,8 +278,8 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                     failed[h["name"]] = name_taken(cfg)
                     say(f"  FAIL  {h['name']}: {name_taken(cfg)}")
                 except Exception as e:
-                    failed[h["name"]] = str(e)
-                    say(f"  FAIL  {h['name']}: {e}")
+                    failed[h["name"]] = catchup.setup_failure(cfg, h, str(e))
+                    say(f"  FAIL  {h['name']}: {failed[h['name']]}")
 
     # every key Host of this roster.yml now has the key under this name: a later rename is seen against it
     if not narrowed and not failed and len(key_hosts) == sum(h["enroll"] for h in hosts):
@@ -288,6 +312,11 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
     if line := catchup.setup_next_line(sorted(installed), locked_vaults):
         say(line)
     return rc
+
+
+def unmatched_words(types: list[str]) -> str:
+    """Why setup --key-type's tidy leaves this Box's lines of TYPES (cleanup_re's second half): #509 item 3."""
+    return f"no {' or '.join(types)} key on this Box to match it by; roster revoke takes it"
 
 
 def cleanup_re(cfg: dict[str, Any], pub: str, types: list[str]) -> tuple[str, list[str]]:

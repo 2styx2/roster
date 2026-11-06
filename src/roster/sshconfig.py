@@ -2,6 +2,7 @@
 Inventory, the Box key rotation's one-Host config, the Mesh's config on a source Host), the header that says roster
 wrote a file and from which roster.yml, the values that may go in one, and ~/.ssh/config's Include lines."""
 
+import hashlib
 import os
 import re
 import shlex
@@ -37,9 +38,34 @@ def comment(text: object) -> str:
     return re.sub(r"[\x00-\x1f\x7f]", "?", str(text))
 
 
-def header(source: object) -> str:
-    """The first line of an ssh config roster writes from the roster.yml SOURCE."""
+# A roster.yml config.shown_path hides (a token-named folder an older roster made, #506) is named in the header by
+# this and a digest of its resolved path, never the path: roster still tells that file from another (same_source).
+HIDDEN_SOURCE = "the roster.yml at that path (not repeated), sha256 "
+
+
+def source_digest(path: str | Path) -> str:
+    """The digest of the roster.yml at PATH (resolved) a hidden header names it by."""
+    return hashlib.sha256(str(Path(path).expanduser().resolve()).encode()).hexdigest()
+
+
+def header(source: object, hidden: bool = False) -> str:
+    """The first line of an ssh config roster writes from the roster.yml SOURCE (HIDDEN: as HIDDEN_SOURCE names it)."""
+    if hidden:
+        return HEADER + HIDDEN_SOURCE + source_digest(str(source))
     return HEADER + comment(source)
+
+
+def hidden_source(source: str | Path) -> bool:
+    """Is SOURCE (source_of's) a header's hidden roster.yml, named only by its digest?"""
+    return str(source).startswith(HIDDEN_SOURCE)
+
+
+def same_source(a: str | Path, b: str | Path) -> bool:
+    """Are A and B the same roster.yml, either one maybe a header's hidden source (HIDDEN_SOURCE and its digest)?"""
+    da, db = (str(x)[len(HIDDEN_SOURCE):] if str(x).startswith(HIDDEN_SOURCE) else None for x in (a, b))
+    if da is None and db is None:
+        return Path(a).expanduser().resolve() == Path(b).expanduser().resolve()
+    return (da or source_digest(a)) == (db or source_digest(b))
 
 
 def source_of(path: Path) -> Path | None:

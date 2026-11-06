@@ -221,7 +221,7 @@ function Workspace({
   const [tabs] = useState(() => new Tabs(backend));
   const sessions = useSyncExternalStore(tabs.subscribe, tabs.snapshot);
   /** Hosts with a Session that's connected or connecting (not ended or refused): their nodes are
-   * lit wherever a Host is listed (taste.md: the accent means live, Q214). */
+   * lit wherever a Host is listed (taste.md: the accent means live, Q215). */
   const liveHosts = useMemo(() => hostLights(sessions), [sessions]);
   useWindowTitle(sessions);
   const { focus, mainRef, treeRef } = useFocusReturn();

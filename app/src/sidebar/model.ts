@@ -35,7 +35,7 @@ export interface SidebarRow {
   host?: string;
   dot?: Dot;
   /** Its Host has a Session that's connected or connecting: the node takes the accent. At rest a
-   * node is muted, whatever its shape (taste.md: the accent means live, decision Q214). */
+   * node is muted, whatever its shape (taste.md: the accent means live, decision Q215). */
   lit?: Light;
   /** A short status after the label ("connecting…", "ended (code 0)"). */
   note?: string;
@@ -47,7 +47,7 @@ export interface SidebarRow {
   hop?: Breadcrumb;
   /** Right-aligned: how many Hosts a Folder or group holds. Formatted, and never cut off. */
   count?: number;
-  /** A Session's number, the one `␣ 1`–`9` jumps to: right-aligned and faint, a key hint (Q225). */
+  /** A Session's number, the one `␣ 1`–`9` jumps to: right-aligned and faint, a key hint (Q226). */
   index?: number;
   /** A small badge ("unreviewed"). It gives way to the name: shown raised, selected or under the
    * cursor, and always in the tooltip. */

@@ -51,7 +51,7 @@ describe("a Sidebar row's buttons (Q88)", () => {
     expect(selectedRows()).toEqual([next]);
     await user.keyboard("{Escape}");
     expect(document.querySelector(".sidebar .cursor")).toBeNull();
-    // Kept selected, its name in the text colour read as another live Session (Q245): outside App
+    // Kept selected, its name in the text colour read as another live Session (Q246): outside App
     // mode it's drawn as any row, and App mode starts on it again.
     expect(selectedRows()).toEqual([]);
     await user.keyboard(LEADER);

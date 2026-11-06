@@ -1,4 +1,4 @@
-// The Hosts you opened last, for the idle pane's map (Q217, Q220, Q222), and the window's title.
+// The Hosts you opened last, for the idle pane's map (Q218, Q221, Q223), and the window's title.
 import { useEffect, useMemo, useRef } from "react";
 import type { Host, HostList } from "../backend/types";
 import { usedHost } from "../state/appState";
@@ -9,7 +9,7 @@ import type { TabsSnapshot } from "./tabs";
  * question was cancelled, never logged in, was listed). Each attempt counts once. Returns the idle
  * pane's list: the last Hosts opened that are still in the Inventory and reviewed, at most six;
  * with no history yet (a first launch), the Inventory's first reviewed Hosts, so the first screen
- * shows the network too (Q222). */
+ * shows the network too (Q223). */
 export function useRecent(o: { sessions: TabsSnapshot; store: StateStore; hosts: HostList | null; recentHosts: readonly string[] }): {
   hosts: readonly Host[];
   title: string;

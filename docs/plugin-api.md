@@ -4731,6 +4731,7 @@ It never connects. `brief = true` keeps it small as in a brief [`MeshResult`](#m
 | `pending` | `table<string, string>` | yes | Hosts the last run didn't finish, and why. |
 | `cut_pending` | `table<string, string[]>` | yes | Earlier cuts not finished yet. |
 | `out_of_date` | `boolean` | yes | `roster.yml` changed the Mesh since the last complete apply on this Box. |
+| `warnings` | `string[]` | no | What `roster.yml` alone shows (220: an Ed25519 source's peer of another `key_type`); absent from a roster before #509. |
 | `meshed` | `table<string, string[]>` | no | Grouped: each meshed group's Hosts that reach each other both ways. |
 | `link_count` | `integer` | no | Brief: how many Links there are in all. |
 | `link_statuses` | `table<string, integer>` | no | Brief: how many Links have each status (`asked` for untested ones). |

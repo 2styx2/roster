@@ -69,7 +69,7 @@ export function StatusBar(p: StatusBarProps) {
         ...(p.sessionCount > 0 ? [[keyHint(keymap, "find"), "find", "find"] as [string | null, string, Line]] : []),
         [keyHint(keymap, "help"), "help", "help"],
         [keyHint(keymap, "keys"), "keys", "keys"],
-        // Hiding the bar is in ␣ K and :help, not a hint every day (Q222).
+        // Hiding the bar is in ␣ K and :help, not a hint every day (Q223).
       ];
   const hints = offered.filter((h): h is Hint => h[0] !== null && h[0] !== undefined && h[0].length > 0);
   // roster's own segments, each drawn here; `hosts` is the built-in hosts Plugin's (below).

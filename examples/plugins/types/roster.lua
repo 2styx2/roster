@@ -718,6 +718,7 @@
 ---@field pending table<string, string> Hosts the last run didn't finish, and why.
 ---@field cut_pending table<string, string[]> Earlier cuts not finished yet.
 ---@field out_of_date boolean `roster.yml` changed the Mesh since the last complete apply on this Box.
+---@field warnings? string[] What `roster.yml` alone shows (220: an Ed25519 source's peer of another `key_type`); absent from a roster before #509.
 ---@field meshed? table<string, string[]> Grouped: each meshed group's Hosts that reach each other both ways.
 ---@field link_count? integer Brief: how many Links there are in all.
 ---@field link_statuses? table<string, integer> Brief: how many Links have each status (`asked` for untested ones).

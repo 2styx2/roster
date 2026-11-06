@@ -33,6 +33,14 @@ CRON_JOB = "*/15 * * * * /home/u/infra/bin/roster-pull >> $HOME/.cache/roster-pu
 OTHER_JOB = "0 3 * * * /usr/local/bin/backup"
 
 
+def keygen(key, kind="ed25519", comment="roster-managed:ws1"):
+    """A key pair at KEY of key type KIND (as roster.yml spells it) as roster makes one: no passphrase, its .pub
+    tagged with this Box's name (ws1)."""
+    from roster import boxkeys
+    subprocess.run(["ssh-keygen", "-q", *boxkeys.parse(kind).keygen_args(), "-N", "", "-C", comment, "-f", str(key)],
+                   check=True, stdin=subprocess.DEVNULL)
+
+
 @pytest.fixture
 def box(tmp_path):
     """A HOME that install.sh and `roster setup` have been through, and a PATH of stand-ins."""
@@ -44,13 +52,15 @@ def box(tmp_path):
         (fakes / name).chmod(0o755)
     ssh = home / ".ssh"
     (ssh / "config.d").mkdir(parents=True)
-    for f in ("roster_ed25519", "roster_ed25519.pub", "roster_known_hosts", "config.d/roster"):
+    keygen(ssh / "roster_ed25519")
+    for f in ("roster_known_hosts", "config.d/roster"):
         (ssh / f).write_text("x\n")
     (ssh / "config").write_text(f'Include "{ssh}/config.d/roster"\n\nHost mine\n  HostName 10.0.0.5\n')
     (home / ".local/share/man/man1").mkdir(parents=True)
     (home / ".local/share/man/man1/roster.1").write_text(".TH ROSTER 1\n")
     (home / ".config/roster").mkdir(parents=True)
     (home / ".config/roster/bw-session").write_text("session\n")
+    (home / ".config/roster/key-name").write_text("ws1\n")      # the name setup tagged this Box's key lines with
     infra = home / "infra"
     infra.mkdir()
     (infra / "roster.yml").write_text("key_path: ~/.ssh/roster_ed25519\ngroups: {}\n")
@@ -140,6 +150,99 @@ def test_uninstall_never_deletes_a_personal_key_named_by_key_path(box):
     assert (home / ".ssh/id_ed25519").exists() and (home / ".ssh/id_ed25519.pub").exists()
     assert "kept ~/.ssh/id_ed25519" in r.stdout
     assert not (home / ".ssh/roster_ed25519").exists()       # roster's own key still goes
+
+
+@posix_shell
+def test_uninstall_removes_this_box_s_key_of_every_type(box):
+    """T239's other key types (key_type:): roster_ecdsa beside roster_ed25519 is this Box's key too (#508)."""
+    home, env = box
+    keygen(home / ".ssh/roster_ecdsa", "ecdsa")
+    r = run(UNINSTALL_SH, env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not (home / ".ssh/roster_ecdsa").exists() and not (home / ".ssh/roster_ecdsa.pub").exists()
+    assert "~/.ssh/roster_ecdsa (roster-managed:ws1)" in r.stdout          # the tag that vouched for it, shown
+
+
+@posix_shell
+def test_uninstall_removes_a_rotation_s_keys_and_then_its_record(box):
+    """T240's KEY.old and KEY.new are this Box's keys too: they go, and with them the record kept for them (#508)."""
+    home, env = box
+    keygen(home / ".ssh/roster_ed25519.old")
+    keygen(home / ".ssh/roster_ecdsa", "ecdsa")
+    keygen(home / ".ssh/roster_ecdsa.new", "ecdsa")
+    (home / ".config/roster/key-rotation").write_text("x\n")
+    r = run(UNINSTALL_SH, env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not [p.name for p in (home / ".ssh").iterdir() if p.name.startswith("roster_e")]
+    assert not (home / ".config/roster").exists()
+    assert "kept the Box key rotation's record" not in r.stdout
+
+
+@posix_shell
+def test_uninstall_never_deletes_a_key_it_cannot_vouch_for(box):
+    """Only a key this Box holds and tagged as its own goes: never the user's own, whatever its name."""
+    home, env = box
+    ssh = home / ".ssh"
+    keygen(ssh / "id_ecdsa", "ecdsa", "you@example.com")               # the user's own
+    keygen(ssh / "roster_rsa", "rsa", "you@example.com")               # roster's name, no roster tag
+    keygen(ssh / "roster_ecdsa", "ecdsa", "roster-managed:other-box")  # another Box's, copied here
+    keygen(ssh / "roster_ecdsa-256", "ecdsa")
+    (ssh / "roster_ecdsa-256.pub").write_text((ssh / "roster_ed25519.pub").read_text())   # not its own .pub
+    keygen(ssh / "roster_ed25519.new")
+    (ssh / "roster_ed25519.new").chmod(0o644)                          # others may read it: not this user's alone
+    r = run(UNINSTALL_SH, env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    left = sorted(p.name for p in ssh.iterdir())
+    assert left == ["config", "id_ecdsa", "id_ecdsa.pub", "roster_ecdsa", "roster_ecdsa-256", "roster_ecdsa-256.pub",
+                    "roster_ecdsa.pub", "roster_ed25519.new", "roster_ed25519.new.pub", "roster_rsa",
+                    "roster_rsa.pub"]
+    for key, why in [("roster_rsa", "its .pub has no roster-managed: tag"),
+                     ("roster_ecdsa", "tagged roster-managed:other-box, not a name of this box's"),
+                     ("roster_ecdsa-256", "its .pub isn't its own public key"),
+                     ("roster_ed25519.new", "others may read or write it")]:
+        assert f"kept ~/.ssh/{key}: not this box's roster key ({why}" in r.stdout
+
+
+@posix_shell
+def test_uninstall_removes_a_key_path_of_another_name_roster_made(box):
+    home, env = box
+    (home / "infra/roster.yml").write_text("key_path: ~/.ssh/roster_custom\ngroups: {}\n")
+    keygen(home / ".ssh/roster_custom")
+    r = run(UNINSTALL_SH, env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not (home / ".ssh/roster_custom").exists() and not (home / ".ssh/roster_custom.pub").exists()
+
+
+@posix_shell
+def test_uninstall_asks_apart_about_a_key_path_roster_made_at_an_id_name(box):
+    """ssh offers ~/.ssh/id_* keys to every server: one roster made may be in use elsewhere since (#511's review)."""
+    home, env = box
+    (home / "infra/roster.yml").write_text("key_path: ~/.ssh/id_ed25519\ngroups: {}\n")
+    keygen(home / ".ssh/id_ed25519")
+    r = run(UNINSTALL_SH, env, "--purge")
+    assert (home / ".ssh/id_ed25519").exists() and (home / ".ssh/id_ed25519.pub").exists()
+    assert "which roster made for this box (roster-managed:ws1)" in r.stdout and "kept ~/.ssh/id_ed25519" in r.stdout
+    r = run(UNINSTALL_SH, env, answers="y\n" * 20)
+    assert not (home / ".ssh/id_ed25519").exists() and not (home / ".ssh/id_ed25519.pub").exists()
+
+
+@posix_shell
+def test_uninstall_asks_about_a_key_path_of_another_name_without_the_tag(box):
+    home, env = box
+    (home / "infra/roster.yml").write_text("key_path: ~/.ssh/roster_custom\ngroups: {}\n")
+    keygen(home / ".ssh/roster_custom", comment="you@example.com")
+    r = run(UNINSTALL_SH, env, "--purge")
+    assert (home / ".ssh/roster_custom").exists() and (home / ".ssh/roster_custom.pub").exists()
+    assert "kept ~/.ssh/roster_custom" in r.stdout
+
+
+@posix_shell
+def test_uninstall_keep_hosts_says_the_keys_still_log_in_there(box):
+    home, env = box
+    keygen(home / ".ssh/roster_ecdsa", "ecdsa")
+    r = run(UNINSTALL_SH, env, "--keep-hosts")
+    assert (home / ".ssh/roster_ecdsa").exists() and (home / ".ssh/roster_ed25519").exists()
+    assert "keys below still log in to its hosts" in r.stdout, r.stdout
 
 
 @posix_shell
@@ -245,6 +348,64 @@ def test_uninstall_removes_every_file_roster_writes_in_its_own_folder(box):
     assert r.returncode == 0, r.stdout + r.stderr
     left = sorted(p.name for p in conf.iterdir()) if conf.exists() else []
     assert not left, f"uninstall.sh left {left} in ~/.config/roster: add them to its list of roster's own state"
+
+
+# The same for ~/.ssh (#508): every `ssh_dir() / ...` path roster's source writes, and this Box's key of every type
+# (boxkeys) with a rotation's .old and .new beside it. A user's own keys there stay.
+SSH_RE = re.compile(r'ssh_dir\(\)((?:\s*/\s*(?:\([^)]*\)|f?"[^"]*"|[A-Za-z_]\w*\b(?!\()))+)')
+SSH_USER_OWNED = {"config"}                    # ~/.ssh/config: roster only adds (and uninstall drops) its Include line
+KEY_TYPES = ("ed25519", "ecdsa", "ecdsa-256", "ecdsa-521", "rsa", "rsa-4096")
+
+
+def roster_ssh_files() -> set[str]:
+    """Each path roster writes under ~/.ssh (an Inventory's named `lab`), relative to it."""
+    from roster import context
+
+    out: set[str] = set()
+    # the table roster names its own files in (context.FILES, per Inventory)
+    for f in context.FILES.values():
+        if f.folder is context.ssh_dir:
+            out.update((f.unnamed, f.named.format("lab")))
+    # and any path still written as ssh_dir() / "NAME" outside it
+    for src in (ROOT / "src/roster").rglob("*.py"):
+        for m in SSH_RE.finditer(src.read_text(encoding="utf-8")):
+            paths = [""]
+            for seg in re.findall(r'\([^)]*\)|f?"[^"]*"|[A-Za-z_]\w*', m.group(1)):
+                lits = re.findall(r'f?"([^"]*)"', seg)
+                alts = [re.sub(r"\{[^}]*\}", "lab", lit) for lit in lits] if lits else ["lab"]   # a name: an Inventory's
+                paths = [f"{p}/{a}".lstrip("/") for p in paths for a in alts]
+            # a bare name first (`ssh_dir() / p`: a path the user gave, relative to ~/.ssh) isn't a file roster names
+            out.update(p for p in paths if not p.startswith("lab"))
+    return out
+
+
+@posix_shell
+def test_uninstall_removes_every_file_roster_writes_in_ssh(box):
+    from roster import boxkeys
+    home, env = box
+    ssh = home / ".ssh"
+    names = roster_ssh_files()
+    assert {"config", "config.d/roster", "config.d/roster.inventories", "config.d/roster-lab", "roster-inventories/lab",
+            "roster_known_hosts", "roster_known_hosts-lab"} <= names
+    for name in names - SSH_USER_OWNED:
+        (ssh / name).parent.mkdir(parents=True, exist_ok=True)
+        (ssh / name).write_text("x\n")
+    (ssh / "roster-mesh").mkdir()
+    (ssh / "roster-mesh/config").write_text("# Written by roster mesh\n")
+    for t in KEY_TYPES:
+        for suffix in ("", ".old", ".new"):
+            key = ssh / (boxkeys.parse(t).file_name + suffix)
+            if not key.exists():                                      # the fixture's roster_ed25519
+                keygen(key, t)
+    keygen(ssh / "id_ecdsa", "ecdsa", "you@example.com")              # the user's own: stays
+    keygen(ssh / "roster_custom", comment="you@example.com")          # a name like roster's, no tag: stays
+    (home / ".config/roster/key-rotation").write_text("x\n")
+    r = run(UNINSTALL_SH, env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    left = sorted(str(p.relative_to(ssh)) for p in ssh.rglob("*"))
+    assert left == ["config", "id_ecdsa", "id_ecdsa.pub", "roster_custom", "roster_custom.pub"], \
+        f"uninstall.sh left {left} in ~/.ssh: add roster's new files to its stage 4"
+    assert not (home / ".config/roster").exists()                     # the rotation's record went with its keys
 
 
 @posix_shell
@@ -1456,3 +1617,53 @@ def test_update_skips_the_pull_of_a_plain_or_local_inventory(stale):
     r = script("update.sh", checkout, env, prefix, "--dry-run")
     assert "no upstream to pull from" in r.stdout, r.stdout
     assert "couldn't fast-forward" not in r.stdout
+
+
+def cloned_map(tmp_path, env):
+    """HOME/infra as a clone of a bare repo (the team's map), on main, with roster.yml."""
+    home = Path(env["HOME"])
+    import shutil
+    shutil.rmtree(home / "infra", ignore_errors=True)        # installed()'s plain file: a clone takes its place
+    bare = tmp_path / "map.git"
+    git(tmp_path, "init", "-q", "--bare", "-b", "main", str(bare))
+    git(tmp_path, "clone", "-q", str(bare), str(home / "infra"))
+    (home / "infra/roster.yml").write_text("groups: {}\n")
+    git(home / "infra", "add", "-A")
+    git(home / "infra", "commit", "-qm", "map")
+    git(home / "infra", "push", "-q", "-u", "origin", "HEAD:main")
+    return bare, home / "infra"
+
+
+@posix_shell
+@pytest.mark.parametrize("case", ["branch-gone", "dirty", "diverged", "offline"])
+def test_update_says_why_the_map_didnt_pull_and_keeps_it(stale, tmp_path, case):
+    """T243 (#476): the map's pull failing says which case it is, and never resets or discards anything."""
+    upstream, checkout, env, prefix = stale
+    installed(prefix, env=env)
+    bare, infra = cloned_map(tmp_path, env)
+    if case == "branch-gone":                   # the owner's 2026-11-05 case: merged and deleted on the server
+        git(infra, "switch", "-q", "-c", "add-hosts")
+        git(infra, "push", "-q", "-u", "origin", "add-hosts")
+        git(bare, "branch", "-D", "add-hosts")
+        said = "origin/add-hosts is gone from the server (merged and deleted?): git -C ~/infra switch main"
+    else:
+        other = tmp_path / "other"
+        git(tmp_path, "clone", "-q", str(bare), str(other))
+        (other / "roster.yml").write_text("groups: {lab: {}}\n")
+        git(other, "commit", "-qam", "theirs")
+        git(other, "push", "-q")
+        if case == "dirty":
+            (infra / "roster.yml").write_text("groups: {mine: {}}\n")
+            said = "uncommitted edits in ~/infra block the fast-forward (they're kept)"
+        elif case == "diverged":
+            (infra / "README.md").write_text("mine\n")
+            git(infra, "add", "-A")
+            git(infra, "commit", "-qm", "mine")
+            said = "~/infra and origin/main both have new commits (diverged): merge or rebase it yourself"
+        else:
+            git(infra, "remote", "set-url", "origin", str(tmp_path / "gone.git"))
+            said = "couldn't reach the map's server (offline?)"
+    before = git(infra, "rev-parse", "HEAD")
+    r = script("update.sh", checkout, env, prefix)
+    assert f"{said}; using the map as it is" in r.stdout, r.stdout
+    assert git(infra, "rev-parse", "HEAD") == before

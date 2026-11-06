@@ -72,13 +72,13 @@ export const builtinControls: readonly ToolbarControlDef[] = [
     pressed: (c) => c.sidebarShown,
   }),
   // Find is the Sidebar's own field while the Sidebar shows; the title bar offers it only when it
-  // doesn't (Q219).
+  // doesn't (Q220).
   control({ id: "find", label: () => "Find a Host", text: "Find", icon: "find", command: "find", byDefault: true, when: (c) => !c.sidebarShown }),
   // Quick Connect (ticket 14): the Picker, ready for user@address[:port].
   control({
     id: "quick",
     label: () => "Quick Connect",
-    // An icon, as Add Host is (Q219, Q223): its name is in the tooltip with its keys.
+    // An icon, as Add Host is (Q220, Q224): its name is in the tooltip with its keys.
     icon: "quick",
     command: "quick",
     byDefault: true,
@@ -92,7 +92,7 @@ export const builtinControls: readonly ToolbarControlDef[] = [
     icon: "changes",
     command: "changes",
     byDefault: true,
-    // Only while there's something to review: an empty "Changes" is noise (Q219);
+    // Only while there's something to review: an empty "Changes" is noise (Q220);
     // a plain roster.yml has no Pending changes at all (T212).
     when: (c) => !c.plain && c.pendingCount > 0,
     count: (c) => (c.pendingCount > 0 ? c.pendingCount : null),
@@ -158,7 +158,7 @@ const PATHS: Record<ToolbarIcon, React.ReactNode> = {
     <>
       <rect x="1" y="6.4" width="3.2" height="3.2" rx="0.5" fill="currentColor" stroke="none" />
       <path d="M4.85 8h1.6" />
-      {/* The connecting node: an open ring, its 50° gap at the upper right (Q231 a; round 9:
+      {/* The connecting node: an open ring, its 50° gap at the upper right (Q232 a; round 9:
           dashed read as "oo"). Centre (11.2, 8), radius 4.1. */}
       <path d="M15.053 6.598A4.1 4.1 0 1 1 12.602 4.147" />
     </>

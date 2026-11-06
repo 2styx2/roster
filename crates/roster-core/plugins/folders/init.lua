@@ -119,7 +119,7 @@ do
             or ("Moved " .. count(#folders, "Folder") .. " to roster's data folder. Nothing to do."),
           "info",
           -- From the State there's nothing to do, so it's quiet (in :messages, not a notice over the
-          -- terminal, Q219); from a folders.yml you wrote it needs attention: that file isn't read
+          -- terminal, Q220); from a folders.yml you wrote it needs attention: that file isn't read
           -- any more.
           { quiet = from ~= "folders.yml" }
         )
