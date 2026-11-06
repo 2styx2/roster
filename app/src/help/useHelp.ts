@@ -65,9 +65,10 @@ export function useHelp(opts: {
           activeTheme,
           health: { sections: healthSections, report: health },
           ...(tutor ? { tutor } : {}),
+          text: view.text,
         },
       ),
-    [registries, commandList, themeList, finderList, errorRows, helpPages, keymap, options, config, configPath, state, activeTheme, healthSections, health, tutor],
+    [registries, commandList, themeList, finderList, errorRows, helpPages, keymap, options, config, configPath, state, activeTheme, healthSections, health, tutor, view],
   );
   useLayoutEffect(() => view.setContext(() => ctx), [view, ctx]);
 

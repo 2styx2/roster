@@ -23,7 +23,7 @@ import { code, h, keys, link, p, plain, slug, text, type Block, type Inline } fr
 import { blockTags, guideBlocks, headingTag, type PageTag, type Topic } from "./guideBlocks";
 import { guides, PARTS, type Guide } from "./guides";
 import { inline, withoutDevNotes } from "./markdown";
-import { helpText } from "./text";
+import { helpText, type HelpText } from "./text";
 import guideTags from "virtual:help-tags";
 import { optionRows, optionTag, reference, referenceAliases } from "./reference";
 import type { StateChoices } from "./options";
@@ -51,6 +51,8 @@ export interface HelpContext {
   /** `:tutor` (ticket 55): the steps done, per tutorial, and the one running on the demo
    * Inventory (null outside it). */
   tutor?: { done(tutorial: string): ReadonlySet<string>; running: string | null };
+  /** The guides' text (T213): the app's, unless a test or the docs build gives its own. */
+  text: HelpText;
 }
 
 export interface HelpPage extends Entry {
@@ -86,10 +88,11 @@ interface HelpRegistries {
 
 export function helpContext(
   r: HelpRegistries,
-  live: Pick<HelpContext, "keymap" | "options" | "config" | "configPath" | "state" | "activeTheme" | "health" | "tutor">,
+  live: Pick<HelpContext, "keymap" | "options" | "config" | "configPath" | "state" | "activeTheme" | "health" | "tutor"> & { text?: HelpText },
 ): HelpContext {
   return {
     ...live,
+    text: live.text ?? helpText,
     commands: { get: (id) => r.commands.get(id), list: () => r.commands.list() },
     themes: r.themes.list(),
     finders: r.finders.list(),
@@ -697,18 +700,8 @@ function allPage(ctx: HelpContext): Block[] {
   ];
 }
 
-const guideCache = new Map<string, Block[]>();
-
 /** A guide's blocks once its text is loaded (none before: HelpView waits for it). */
-function guideBody(guide: Guide): Block[] {
-  const cached = guideCache.get(guide.id);
-  if (cached) return cached;
-  const markdown = helpText.markdown(guide.id);
-  if (markdown === undefined) return [];
-  const blocks = guideBlocks(guide, markdown);
-  guideCache.set(guide.id, blocks);
-  return blocks;
-}
+const guideBody = (guide: Guide, ctx: HelpContext): Block[] => ctx.text.blocks(guide.id, (markdown) => guideBlocks(guide, markdown));
 
 const page = (
   id: string,
@@ -746,7 +739,7 @@ const builtinHelpPages: readonly HelpPage[] = [
   page("errors", 60, "Reference", "Connection errors", "The error catalog: where each problem lives and its fix", errorsPage, inEffect),
   page("health", 61, "Reference", "Health", "This Box's health: the last :check with no Host, with each fix", healthPage, { ...inEffect, aliases: { checkhealth: "health" } }),
   page("all", 90, "Reference", "Every topic", "Every page, command, key, option and error, A to Z", allPage, { aliases: { "help-index": "all" } }),
-  ...guides.map((g) => ({ ...page(g.id, g.order, g.part, g.title, g.summary, () => guideBody(g), { aliases: g.aliases }), tags: guideTags[g.id] ?? [] })),
+  ...guides.map((g) => ({ ...page(g.id, g.order, g.part, g.title, g.summary, (ctx) => guideBody(g, ctx), { aliases: g.aliases }), tags: guideTags[g.id] ?? [] })),
 ];
 
 export function builtinHelpRegistry(): HelpRegistry {

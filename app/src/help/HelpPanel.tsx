@@ -16,7 +16,6 @@ import { highlight, shellCommand } from "./highlight";
 import type { HelpSnapshot, HelpView } from "./command";
 import type { Block, Def, Inline } from "./doc";
 import { linkKind, pageBody, topics, type HelpContext } from "./pages";
-import { helpText } from "./text";
 
 export interface HelpPanelProps {
   view: HelpView;
@@ -80,11 +79,11 @@ export function HelpPanel({ view, snapshot, ctx, leader, vim, onFind, onOutline,
   const page = ctx.pages.find((p) => p.id === at?.page);
   // A guide's blocks are empty until the guides' text arrives (T213): read the page again then,
   // though the place and the context are the same (#431's review F1).
-  const textReady = useSyncExternalStore(helpText.subscribe, helpText.ready);
+  const textReady = useSyncExternalStore(ctx.text.subscribe, ctx.text.ready);
   // The text itself decides, not only the snapshot: a wait cancelled after it showed "loading" (a
   // command or a finder meanwhile, #431's second review N1) leaves `loading` set, and the page
   // then fills in here in place, with no new snapshot, so it takes no focus.
-  const textFailed = useSyncExternalStore(helpText.subscribe, helpText.failed);
+  const textFailed = useSyncExternalStore(ctx.text.subscribe, ctx.text.failed);
   const failed = snapshot.failed ?? (snapshot.loading && !textReady ? (textFailed ?? undefined) : undefined);
   const loading = snapshot.loading && !textReady && failed === undefined;
   const blocks = useMemo(() => {

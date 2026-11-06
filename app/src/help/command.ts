@@ -58,7 +58,7 @@ export class HelpView {
   private waiting: { shown: boolean } | null = null;
 
   /** `text` is the guides' text (T213): a guide opens once it's loaded. */
-  constructor(private readonly text: HelpText = helpText) {}
+  constructor(readonly text: HelpText = helpText) {}
 
   /** What topics are resolved against: App sets it every render. */
   setContext(ctx: () => HelpContext) {
