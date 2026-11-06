@@ -225,6 +225,69 @@ def test_update_ends_with_the_next_line_roster_sync_gave_and_only_then(box, tmp_
 
 
 @posix_shell
+def test_update_syncs_the_map_only_and_never_reads_its_terminal(box, tmp_path):
+    """#503's review HIGH-1: update.sh's sync never asks for a vault password mid-update (a `bw unlock` there would
+    lock the roster app): --no-vault, stdin closed."""
+    home, env = box
+    src = source_copy(tmp_path)
+    roster = Path(env["PATH"].split(":")[0]) / "roster"
+    roster.write_text(FAKES["roster"].replace("exit 0", '[ "$1" = sync ] && { read -r x && echo "read: $x" >> '
+                                              '"$HOME/calls"; }\nexit 0'))
+    r = run(src / "update.sh", env, answers="typed at the terminal\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "roster sync --no-vault" in calls(home)
+    assert "read:" not in calls(home)
+
+
+@posix_shell
+def test_update_with_the_real_roster_and_a_locked_vault_asks_nothing_and_keeps_the_app_unlocked(box, tmp_path):
+    """#503's review: update.sh with the worktree's own roster, in a terminal (a pty), the stand-in Bitwarden unlocked
+    by the roster app and nothing saved for roster: no master password prompt, and the app's session still works."""
+    import json
+    import pty
+    import select
+    import sys
+    import time
+    home, env = box
+    src = source_copy(tmp_path)
+    fakes_dir = Path(__file__).parent / "fakes"
+    roster = Path(env["PATH"].split(":")[0]) / "roster"
+    roster.write_text(f'#!/bin/sh\nexec "{sys.executable}" -m roster "$@"\n')
+    (home / ".config/roster/bw-session").unlink()                 # nothing saved: a vault step would have to ask
+    (home / "infra/roster.yml").write_text('groups:\n  lab:\n    hosts:\n      web-01: {ip: 10.0.0.5, user: admin, '
+                                           'auth: "bw:web-01 ssh"}\n')
+    data = tmp_path / "bw-data.json"
+    env = {**env, "PATH": f"{env['PATH'].split(':')[0]}:{fakes_dir}:/usr/bin:/bin", "FAKE_BW_DATA": str(data),
+           "PYTHONPATH": str(Path(__file__).parent.parent / "src"), "PW": "hunter2"}
+    bw = [sys.executable, str(fakes_dir / "bw")]
+    app = subprocess.run([*bw, "unlock", "--raw", "--passwordenv", "PW"], env=env, capture_output=True,
+                         text=True).stdout.strip()                # the roster app's session
+    pid, fd = pty.fork()
+    if pid == 0:                                                  # the child: update.sh on the pty
+        os.chdir(home)
+        os.execve("/bin/bash", ["bash", str(src / "update.sh"), "--yes"], env)    # noqa: S606 - a fixed argv
+    seen, end = b"", time.monotonic() + 120
+    while time.monotonic() < end:
+        if select.select([fd], [], [], 0.5)[0]:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            seen += chunk
+            if b"master password" in seen.lower():
+                os.kill(pid, 9)
+                break
+    os.waitpid(pid, 0)
+    assert b"master password" not in seen.lower(), seen.decode(errors="replace")[-2000:]
+    assert "roster sync (ssh config and ROSTER.md from the map)" in seen.decode(errors="replace")    # it got there
+    assert (home / ".ssh/config.d/roster").read_text().count("Host web-01") == 1                     # and synced
+    status = subprocess.run([*bw, "status"], env={**env, "BW_SESSION": app}, capture_output=True, text=True).stdout
+    assert json.loads(status)["status"] == "unlocked"
+
+
+@posix_shell
 def test_update_on_a_detached_checkout_skips_the_pull(box, tmp_path):
     home, env = box
     src = source_copy(tmp_path)

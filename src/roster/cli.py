@@ -272,12 +272,13 @@ def setup_run(cfg, args):
                     failed[h["name"]] = f"re-tag: {why}"
                     say(f"  FAIL  {h['name']}: re-tag: {why}")
 
-    vault_locked = False
+    locked_vaults = set()                   # the providers a Login's lookup found locked (their own fix each)
     for ref, group in sorted({(h["auth"], h["group"]) for h in todo}, key=lambda t: (str(t[0]), t[1])):
         try:
             get_secret(ref, group)          # ask for / fetch passwords up front, one per group
         except RuntimeError as e:
-            vault_locked = vault_locked or isinstance(e, providers.VaultLocked)
+            if isinstance(e, providers.VaultLocked):
+                locked_vaults.add(str(ref).partition(":")[0].strip())
             for h in todo:
                 if (h["auth"], h["group"]) == (ref, group):
                     failed[h["name"]] = str(e)
@@ -313,10 +314,11 @@ def setup_run(cfg, args):
     warn_overlaps(cfg)
     failed.update(setup_mesh(cfg, "--only" if args.only else "--host" if narrowed else None))
     # #476 (the owner's run): a Host that failed (the vault locked, say) is never counted as ready too
-    ready = sum(h["name"] not in failed for h in key_hosts)
+    # #503's review LOW-3: a Host whose key works but whose Mesh step failed is key-ready (its gap is the Mesh's)
+    keyed = [h["name"] for h in key_hosts if h["name"] not in failed or str(failed[h["name"]]).startswith("mesh:")]
+    ready = len(keyed)
     from . import catchup
-    catchup.record_setup(cfg, [h["name"] for h in key_hosts if h["name"] not in failed],
-                         [n for n, why in failed.items() if not str(why).startswith("mesh:")])
+    catchup.record_setup(cfg, keyed, [n for n, why in failed.items() if not str(why).startswith("mesh:")])
     say()
     say(f"done         {ready} key hosts ready, {len(pw_hosts)} password-only hosts, {len(failed)} failed")
     if failed:
@@ -333,19 +335,23 @@ def setup_run(cfg, args):
         for message, fix in found:
             say(f"warning: {message} ({fix})")
         rc = 1
-    if line := setup_next_line(sorted(installed), vault_locked):
+    if line := setup_next_line(sorted(installed), locked_vaults):
         say(line)
     return rc
 
 
-def setup_next_line(installed, vault_locked):
+CHECK_HOSTS = 5             # setup's next line names at most this many Hosts as --host flags (#503's review LOW-1)
+
+
+def setup_next_line(installed, locked_vaults=()):
     """setup's last line (T243): the Hosts it put the key on and, to check them, `roster check --host` for exactly
-    those; a locked vault's one fix first. None when it changed nothing and nothing is left."""
+    those (`roster check` past CHECK_HOSTS of them); a locked vault's own fix first (providers.unlock_fix). None when
+    it changed nothing and nothing is left."""
     from .catchup import Gap, names, next_line
-    left = [Gap("unlock", (), "in a terminal: the vault is locked", "roster vault unlock")] if vault_locked else []
+    left = [Gap("unlock", (), f"{p} is locked", providers.unlock_fix(p)) for p in sorted(locked_vaults)]
     if installed:
-        left.append(Gap("check", tuple(installed), "check them", "roster check " +
-                        " ".join(f"--host {n}" for n in installed)))
+        which = " ".join(f"--host {n}" for n in installed) if len(installed) <= CHECK_HOSTS else ""
+        left.append(Gap("check", tuple(installed), "check them", f"roster check {which}".strip()))
     changed = [f"{'key' if len(installed) == 1 else 'keys'} on {plural(len(installed), 'Host')} ({names(installed)})"]
     return next_line(changed if installed else [], left)
 
@@ -462,7 +468,9 @@ def cmd_sync(cfg, args):
     --no-vault, the vault sync too (as `roster vault sync`, never asking without a terminal). One line ends it: what
     changed in each, then the next command when something is left (catchup), nothing more when all is done."""
     from . import catchup
-    before = written_hosts()
+    from .inventories import unnamed_from_elsewhere
+    # #503's review MED-2: an unnamed ssh config another roster.yml wrote isn't this map's past: no diff against it
+    before = written_hosts() if unnamed_from_elsewhere() is None else None
     write_ssh_config(cfg)
     write_claude_files(cfg)
     warn_overlaps(cfg)
@@ -547,12 +555,10 @@ def vault_not_synced(p, e):
         if isinstance(e, NotLoggedIn):
             return f"not synced (not logged in: roster vault {p} --write -- login)" if p in ("bw", "op") else \
                 f"not synced ({e})"
-        return f"not synced (locked; run in a terminal: {UNLOCK_FIX.get(p, 'unlock it')})"
+        return f"not synced ({e if isinstance(e, NotAsked) else 'locked'}; {providers.unlock_fix(p)})"
     when = vaultsync.last_synced(p)
     return f"not synced ({e})" + (f"; using it as last synced {vaultsync.ago(when)}" if when else "")
 
-
-UNLOCK_FIX = {"bw": "roster vault unlock", "op": "eval $(op signin)"}
 
 
 def sync_vaults(cfg):
@@ -561,14 +567,41 @@ def sync_vaults(cfg):
     master password only with a terminal, once a run (T241's offer to keep it unlocked with it)."""
     from . import fromvault, vaultsync
     refs = fromvault.refs(cfg["path"])
+    interactive = sys.stdin.isatty()
     out = []
     for p in sorted(p for p in refs if p in PROVIDERS and p not in ("env", "cmd", "prompt")):
+        if interactive and p == "bw" and bw_would_ask():    # #503's review MED-1: say what an unlock here costs
+            print(f"note: the vault is locked, so roster asks for its master password once to sync it (Ctrl-D "
+                  f"skips the vault). As with roster vault unlock, {UNLOCK_COST}", file=sys.stderr, flush=True)
         try:
-            out.append((p, vaultsync.sync(p, interactive=sys.stdin.isatty(), mapped=fromvault.named(p, refs[p])),
-                        None))
+            out.append((p, vaultsync.sync(p, interactive=interactive, mapped=fromvault.named(p, refs[p])), None))
+        except EOFError:                   # Ctrl-D at the prompt: the vault is left as last synced (LOW-2)
+            out.append((p, None, NotAsked("no master password given")))
         except RuntimeError as e:          # a SecretError, or a provider's own failure: its words, never a value
             out.append((p, None, e))
     return out
+
+
+UNLOCK_COST = "unlocking here locks the roster app and any other bw session on this Box (bw keeps one unlock at a time)"
+
+
+class NotAsked(providers.VaultLocked):
+    """The vault step was skipped at its prompt (Ctrl-D): left as last synced."""
+
+
+def bw_would_ask():
+    """Would a Bitwarden lookup now ask for the master password? Not with a working BW_SESSION or saved session, nor
+    BW_PASSWORD; not when bw isn't logged in or installed (its own error says so)."""
+    from .providers import Ctx
+    from .providers import bitwarden as bwp
+    if os.environ.get("BW_PASSWORD") or not find_program("bw"):
+        return False
+    try:
+        if providers.vault_status("bw") != "locked":    # unlocked by BW_SESSION, or not logged in
+            return False
+        return bwp.saved_session(Ctx("bw", None))[0] != "working"
+    except providers.SecretError:
+        return False
 
 
 # ---------------------------------------------------------------- the Mesh (ticket 39, decision Q63)
@@ -766,7 +799,9 @@ def cmd_check(cfg, args):
     if getattr(args, "hosts", None):         # T243: `--host NAME` again for more: exactly those Hosts
         unknown = [n for n in args.hosts if n not in cfg["hosts"]]
         if unknown:
-            die(f"unknown host {unknown[0]!r} (see `roster hosts`)")
+            group = f": {unknown[0]} is a group (--only {unknown[0]} takes its Hosts)" if unknown[0] in cfg["groups"] \
+                else ""
+            die(f"unknown host {unknown[0]!r} (see `roster hosts`){group}")
         wanted = [cfg["hosts"][n] for n in dict.fromkeys(args.hosts)]
     else:
         wanted = selected(cfg, args.only)
@@ -1550,7 +1585,7 @@ def cmd_vault_sync(cfg, args):
     """`roster vault sync`: each vault roster.yml uses that keeps a local copy, synced, and what changed since the last
     sync (vaultsync): names and counts, never a value. Ends with the next command when a new item isn't in roster.yml
     (T243)."""
-    from . import catchup, fromvault, vaultsync
+    from . import catchup, vaultsync
     results = sync_vaults(cfg)
     if not results:
         say("roster.yml's Logins use no vault: nothing to sync")
@@ -1561,8 +1596,8 @@ def cmd_vault_sync(cfg, args):
             bad += 1
             when = None if isinstance(e, providers_locked()) else vaultsync.last_synced(p)
             say(f"  FAIL  {p}: {e}" + (f"; roster uses it as last synced {vaultsync.ago(when)}" if when else ""))
-            if p in fromvault.UNLOCK and isinstance(e, providers_locked()):
-                say(f"        fix: {fromvault.UNLOCK[p]}")
+            if isinstance(e, providers.VaultLocked):
+                say(f"        fix: {providers.unlock_fix(p)}")
             continue
         if r is None:
             say(f"  ok    {p}: keeps no local copy (it asks its own server or file each time), nothing to sync")

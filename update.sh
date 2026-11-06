@@ -225,7 +225,9 @@ if [[ -z $cfg ]]; then
 else
     export ROSTER_CONFIG="$cfg"
     cd "$(dirname "$cfg")" || exit 1
-    if step "roster sync (ssh config and ROSTER.md from the map)" roster sync; then
+    # the map only, never reading the terminal (#503's review HIGH-1): a vault unlock mid-update would lock the
+    # roster app's session; `roster sync` or `roster vault sync` picks up the vault
+    if step "roster sync (ssh config and ROSTER.md from the map)" roster sync --no-vault </dev/null; then
         done_stage
         # T243: end as `roster sync` does: its next command (the last line it printed), only when something is left
         last=$(tail -n 1 "$LOG")
