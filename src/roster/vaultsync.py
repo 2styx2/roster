@@ -54,21 +54,32 @@ def diff(before, items):
     return added, changed, len(set(before) - now)
 
 
-def sync(provider, interactive=False):
+def sync(provider, interactive=False, mapped=None):
     """Sync PROVIDER and compare its items with the last snapshot: {provider, first, count, added: [name],
-    changed: [name], removed: n}, or None for a provider with nothing to sync. The snapshot is replaced only after a
-    sync and a listing that worked. Raises SecretError."""
+    changed: [name], removed: n, unmapped: [{name, missing}]}, or None for a provider with nothing to sync. UNMAPPED
+    (T243): the items added since the last sync that no Login in roster.yml names (MAPPED(item) is False), each with
+    what `roster add --from-vault` would miss to make a Host of it (address, user), never their values. The snapshot
+    is replaced only after a sync and a listing that worked. Raises SecretError."""
     if providers.sync_vault(provider, interactive) is None:
         return None
     if not providers.can_list(provider):
         save(provider, {})
-        return {"provider": provider, "first": True, "count": None, "added": [], "changed": [], "removed": 0}
-    items = providers.vault_items(provider, interactive=interactive)
+        return {"provider": provider, "first": True, "count": None, "added": [], "changed": [], "removed": 0,
+                "unmapped": []}
+    mapped = mapped or (lambda item: False)
+    items = providers.vault_items(provider, mapped, interactive=interactive)
     before = load(provider)
     added, changed, removed = diff((before or {}).get("items") or {}, items)
     save(provider, {i["id"]: i.get("revised") for i in items})
+    unmapped = [{"name": shown(i), "missing": missing(i)} for i in added if not mapped(i)] if before is not None else []
     return {"provider": provider, "first": before is None, "count": len(items),
-            "added": [shown(i) for i in added], "changed": [shown(i) for i in changed], "removed": removed}
+            "added": [shown(i) for i in added], "changed": [shown(i) for i in changed], "removed": removed,
+            "unmapped": unmapped}
+
+
+def missing(item):
+    """What an item lacks for a Host: its address (a URI) and its user, by name."""
+    return [what for what, have in (("address", item.get("uris")), ("user", item.get("username"))) if not have]
 
 
 def shown(item):

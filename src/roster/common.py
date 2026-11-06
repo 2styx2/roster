@@ -101,6 +101,13 @@ def rotation_file(name: Any = _CURRENT) -> Path:
     return user_config_dir() / ("key-rotation" if name is None else f"key-rotation-{name}")
 
 
+def setup_left_file(name: Any = _CURRENT) -> Path:
+    """The Hosts `roster setup` didn't finish for the Inventory NAME (T243, #476): ~/.config/roster/setup-left, or
+    setup-left-NAME, so a later command (vault unlock, sync) names `roster setup --host` for them. Names only."""
+    name = _inventory if name is _CURRENT else name
+    return user_config_dir() / ("setup-left" if name is None else f"setup-left-{name}")
+
+
 def lock_file(name: Any = _CURRENT) -> Path:
     """The Box-wide lock for the Inventory NAME (T240): ~/.config/roster/run.lock, or run-NAME.lock, held by every run
     that changes this Box's keys or Mesh entries on its Hosts (boxlock)."""

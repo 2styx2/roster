@@ -15,11 +15,17 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 - **Stay unlocked: `roster vault unlock` and `roster vault lock`** (#474): a terminal unlock of Bitwarden lasts for that run only, so every `roster run` asked for the master password again, without saying why. `roster vault unlock` asks once and saves the session in `~/.config/roster/bw-session` (0600, written whole, never over a symlink or another user's file), so every roster run on this Box uses it until `roster vault lock` (bw lock, and the file removed), `bw lock`, or the roster app's lock. After a terminal unlock, roster now asks `Keep the vault unlocked for other roster runs on this Box? [y/N]`; No says the unlock lasts for this run only, and an expired saved session says so (bw keeps one unlock at a time, so the app's lock or unlock, `bw lock` or another `bw unlock` expires it). A working `BW_SESSION` in your shell is saved as it is, and the file is never written or read in a `~/.config/roster` someone else owns or may write to. `roster vault status` and `roster check --box` show the saved session (`none (every run asks)`, `saved, working`, `saved, expired`; `saved_session` in `--json`). Bitwarden only for now. See [Staying unlocked](cli-reference.md#staying-unlocked-roster-vault-unlock).
 - **Rotate this Box's key: `roster setup --rotate`** (#469): a new key goes on every Host and logs in there alone before the old key's line goes; then the old private key is deleted. A Host it can't reach stays pending with both keys, and `roster check` says so until a re-run finishes it. `roster check --box` warns once the key is older than `key_max_age:` (new, `365d` unless set, or `off`). Runs that change Hosts (`setup`, `revoke`, the Mesh's writes) now go one at a time. Mesh keys are untouched.
 
+- **`roster sync` syncs the vault too, and commands end with what's next** (#476, part 1): `roster sync` now runs the vault sync as well (`--no-vault` skips it) and ends with one line saying what changed in the vault and the map and, only when something is left, the command that does it: `next: roster setup --host db-01 (no key on db-01 yet)`. It no longer prints "new hosts still need roster setup" every time. A locked vault with no terminal, or an offline server, doesn't fail it: it says so, with `roster vault unlock` or when the vault last synced. In a terminal with Bitwarden locked, it may ask for the master password once, after saying that unlocking there locks the roster app (Ctrl-D skips the vault); `update.sh` syncs the map only. `roster setup` ends with `roster check --host` for exactly the Hosts it put its key on (`check --host NAME` is new, again for more), `roster vault sync` names a new item that isn't in `roster.yml` (`roster add --from-vault`) and says `up to date` when nothing changed, `roster vault unlock` names the setup a locked vault held up, and `update.sh` ends with `roster sync`'s line.
+
 **App**
 
 - **`:tutor topology` teaches reach** (#233): the tutorial's demo Inventory has a small, made-up Mesh now, so the Topology tutor's third lesson, "Who reaches whom", lights up what a Host reaches on the map and reads its details: `demo-01` reaches 3 Hosts directly, and `demo-05` is Mesh pending because it didn't answer the last apply. Nothing on the demo connects anywhere. A Plugin's tutorial can use the same Mesh: on the demo, roster serve answers `mesh.status` too (plain, `grouped` and `brief`, as real serve does).
 
 ### Changed
+
+**CLI**
+
+- **A locked vault with no terminal names `roster vault unlock`** (#476): the message and the fix said to run `(umask 077; bw unlock --raw > …)` by hand; they name `roster vault unlock` (in a terminal) now, as does ROSTER.md's rule for Claude.
 
 **App**
 
@@ -46,6 +52,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **`uninstall.sh` removes roster's newer files in `~/.config/roster`**: the run lock (`run.lock`), the key's age and name (`key-created`, `key-name`), a finished key rotation's record and the vault snapshots (`vault-sync/`, `vault-seen/`) were left there, so `uninstall.sh --yes` kept the folder and asked about them as if they were yours. They go with the rest of roster's state now; a key rotation's record stays only while its `.old` or `.new` key is still in `~/.ssh`.
 - **1Password items list their URLs primary first** (#500): the list of vault items (`roster add --from-vault` with no NAME) kept 1Password's order, while `--from-vault NAME` took the primary URL, so a listed item's address could differ from the one it filled in. Both use the primary URL first now.
+- **`roster setup` no longer counts a failed Host as ready too** (#476): one Host that needed its key while the vault was locked said `1 key hosts ready, 0 password-only hosts, 1 failed`; it says `0 … ready … 1 failed` now.
 
 **App**
 

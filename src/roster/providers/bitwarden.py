@@ -32,6 +32,7 @@ from . import (
     register,
     resolve_target,
     split_field,
+    unlock_fix,
 )
 
 # ---- built-in: Bitwarden
@@ -525,8 +526,8 @@ def _bw_ready(ctx):
     if expired:
         forget_session()
         if not (os.environ.get("BW_PASSWORD") or ctx.interactive):
-            raise VaultLocked(f"the Bitwarden session in {session_file()} has expired (vault locked) - refresh it: "
-                              f"(umask 077; bw unlock --raw > {session_file()})")
+            raise VaultLocked(f"the Bitwarden session in {session_file()} has expired (vault locked): "
+                              f"{unlock_fix('bw')}")
     if status == "locked" and manual_unlock():
         raise VaultLocked("Bitwarden vault is locked - unlock it first")
     if status == "locked":
@@ -538,9 +539,8 @@ def _bw_ready(ctx):
             _offer_to_keep(ctx, key, expired)
             r = None
         else:
-            raise VaultLocked("Bitwarden vault is locked and there's no terminal to unlock it. In the shell "
-                              "you start Claude (or roster) from, run:  export BW_SESSION=$(bw unlock --raw)  "
-                              f"- or, for every session on this box:  (umask 077; bw unlock --raw > {session_file()})")
+            raise VaultLocked(f"Bitwarden vault is locked and there's no terminal to unlock it: {unlock_fix('bw')} "
+                              "(every roster run on this Box, Claude's too, then uses it until roster vault lock)")
         if r is not None:
             if r.returncode != 0 or not r.stdout.strip():
                 raise WrongPassword("Bitwarden unlock failed (wrong master password?)")
