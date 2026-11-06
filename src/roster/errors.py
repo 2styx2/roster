@@ -200,7 +200,7 @@ OP_REFUSED = 198            # never run: `op run`/`op plugin run` (another progr
 
 # The SSH key type (T239, #436, decision Q200; catalog rows 261-263)
 KEY_TYPE_FIPS = 199         # check HOST: the Host refused this Box's Ed25519 key and offers only NIST algorithms (FIPS)
-MESH_KEY_TYPE = 200         # a note, not an error: a Host whose key_type isn't ed25519 is left out of the Mesh
+MESH_KEY_TYPE = 200         # no longer raised (T245, Q212: the Mesh follows key_type); was: left out of the Mesh
 KEY_TYPE_MISMATCH = 201     # setup: the file a key type's key goes in holds a key of another type; nothing was made
 
 # A saved Bitwarden session (T241, #474, decision Q203; catalog rows 264-266): roster vault unlock / vault lock
@@ -213,6 +213,11 @@ BOX_BUSY = 205              # another roster run (setup, revoke, a Mesh write) i
 ROTATION_PENDING = 206      # a warning: the old Box key is still on some Hosts (setup --rotate finishes it)
 KEY_TOO_OLD = 207           # a warning (check --box, box.check): this Box's key is older than key_max_age
 NEW_KEY_REFUSED = 208       # setup --rotate: a Host it reached refused the new key, so no old key line went anywhere
+
+# key_type follow-ups (T245, #478, decision Q212; catalog rows 281-283)
+KEY_TYPE_DRIFT = 219        # a warning: a Host holds this Box's key lines of other types than roster.yml's
+MESH_KEY_PEER = 220         # a warning: a source's Ed25519 Mesh key goes to a peer whose key_type isn't ed25519
+KEY_FILE_SHARED = 221       # a note: revoke keeps a key file another Inventory on this Box still uses
 
 
 class Problem(Exception):

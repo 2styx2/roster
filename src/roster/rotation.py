@@ -331,22 +331,33 @@ def words(pub: Path) -> list[str] | None:
     return boxkeys.public_words(pub)
 
 
-def group(cfg: dict[str, Any]) -> list[tuple[str | None, dict[str, Any]]]:
-    """This run's Inventory, then every other named Inventory one of whose key files is one of this one's (Q188 (d):
-    they share this Box's key): rotated together (owner, Q204). One that doesn't load stops the run, since its
-    Hosts could hold the key."""
+@dataclass
+class KeyUser:
+    """Another Inventory on this Box: NAME (None: the unnamed one), its LABEL, its CFG (None when its roster.yml
+    doesn't load: ERROR says why), and the key files of this Inventory's it uses too (SHARED)."""
+
+    name: str | None
+    label: str
+    cfg: dict[str, Any] | None
+    shared: set[Path]
+    error: str = ""
+
+
+def key_users(cfg: dict[str, Any]) -> list[KeyUser]:
+    """Every other Inventory on this Box (the named ones, and the unnamed one this Box's ssh config was written from):
+    who shares this Box's key files (Q188 (d)). A rotation's group, and revoke's list of files to delete (T245)."""
     from . import inventories
     from .config import load_config
     here = current_inventory()
-    out: list[tuple[str | None, dict[str, Any]]] = [(here, cfg)]
     if not inventories.list_file().exists():
-        return out
+        return []
     named = inventories.load().inventories
     candidates: list[tuple[str | None, Path]] = [(x.name, x.path) for x in named]
     unnamed = inventories.unnamed_source()      # the unnamed roster.yml this Box's ssh config was written from
     if unnamed is not None and not any(inventories.same_file(x.path, unnamed) for x in named if x.path.exists()):
         candidates.append((None, unnamed))
     mine = {Path(h["key_file"]) for h in cfg["hosts"].values() if h["enroll"]} | {cfg["key"]}
+    out: list[KeyUser] = []
     for name, path in candidates:
         if name == here or not path.exists() or inventories.same_file(path, cfg["path"]):
             continue
@@ -354,12 +365,25 @@ def group(cfg: dict[str, Any]) -> list[tuple[str | None, dict[str, Any]]]:
         try:
             other = load_config(path)
         except SystemExit as e:
-            die(f"the Inventory {label}'s roster.yml doesn't load ({str(e.code).removeprefix('error: ')}): its "
+            out.append(KeyUser(name, label, None, set(), str(e.code).removeprefix("error: ")))
+            continue
+        theirs = {Path(h["key_file"]) for h in other["hosts"].values() if h["enroll"]} | {other["key"]}
+        out.append(KeyUser(name, label, other, mine & theirs))
+    return out
+
+
+def group(cfg: dict[str, Any]) -> list[tuple[str | None, dict[str, Any]]]:
+    """This run's Inventory, then every other named Inventory one of whose key files is one of this one's (Q188 (d):
+    they share this Box's key): rotated together (owner, Q204). One that doesn't load stops the run, since its
+    Hosts could hold the key."""
+    out: list[tuple[str | None, dict[str, Any]]] = [(current_inventory(), cfg)]
+    for u in key_users(cfg):
+        if u.cfg is None:
+            die(f"the Inventory {u.label}'s roster.yml doesn't load ({u.error}): its "
                 "Hosts may hold this Box's key too, and a rotation does every Inventory that shares the key at once. "
                 "Fix it, then run roster setup --rotate")
-        theirs = {Path(h["key_file"]) for h in other["hosts"].values() if h["enroll"]} | {other["key"]}
-        if mine & theirs:
-            out.append((name, other))
+        if u.shared:
+            out.append((u.name, u.cfg))
     return out
 
 
@@ -715,6 +739,7 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
                 say(f"  FAIL     {m.label}: {recs[m.inv].pending[m.name]}")
                 continue
             recs[m.inv].pending.pop(m.name, None)
+            boxkeys.record({m.name: [m.h["key_type"]]}, m.inv)  # T245: every other line of this Box's went
             done.append(m)
             say(f"  ok       {m.label}")
             if not taken:
