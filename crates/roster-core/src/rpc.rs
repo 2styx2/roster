@@ -46,6 +46,17 @@ pub enum CallError {
     Io { message: String },
 }
 
+impl CallError {
+    /// A JSON-RPC error with no `data`: what a stand-in for serve answers.
+    pub fn rpc(code: i64, message: impl Into<String>) -> CallError {
+        CallError::Rpc {
+            code,
+            message: message.into(),
+            data: None,
+        }
+    }
+}
+
 impl std::fmt::Display for CallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

@@ -601,7 +601,7 @@ export type KeePassXc = {
 /**
  * A Package named in `init.lua` (ticket 24): where its git repo is, which version, and the
  * settings it's handed. At most one of `tag`, `branch` and `commit`; none means the repo's
- * default branch. Checked by [`crate::package::check_spec`].
+ * default branch. Checked by `config::package_spec::check_specs`.
  */
 export type PackageSpec = {
   /**

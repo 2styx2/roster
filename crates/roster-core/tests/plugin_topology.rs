@@ -14,6 +14,7 @@
 mod common;
 
 use common::unhurried;
+use roster_core::rpc::CallError;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
@@ -237,7 +238,7 @@ impl FakeServe {
 }
 
 impl Serve for FakeServe {
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
         self.calls.lock().unwrap().push((method.to_string(), params.clone()));
         match method {
             "hosts.list" => {
@@ -280,7 +281,9 @@ impl Serve for FakeServe {
                 json!({ "job": 7, "action": "cut", "host": "esx-01", "state": "done", "done": 3, "total": 3, "at": null, "stopped": false,
                         "result": mesh_cut_synced("esx-01", self.cut_sync.lock().unwrap().clone()) }),
             ),
-            _ => Err(format!("unknown method {method}")),
+            _ => Err(CallError::Io {
+                message: format!("unknown method {method}"),
+            }),
         }
     }
 }
@@ -506,7 +509,7 @@ fn it_installs_from_its_folder_asking_for_what_its_readme_explains() {
     let w = World::new("manifest");
     let manifest = common::read_manifest(&w.dir).unwrap();
     assert_eq!(manifest.name, NAME);
-    assert_eq!(manifest.api, 6);
+    assert_eq!(manifest.api, 7);
     let asked: Vec<String> = manifest.permissions.iter().map(|p| p.to_string()).collect();
     assert_eq!(asked, ALL);
     let readme = std::fs::read_to_string(plugins_dir().join("topology/README.md")).unwrap();

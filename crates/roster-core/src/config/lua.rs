@@ -72,6 +72,43 @@ const MAX_REP: usize = 1024 * 1024;
 const LOADED: &str = "roster.loaded";
 const API: &str = "roster.api";
 const LOADING: &str = "\0loading";
+/// The registry's maker of [`Coded`] error objects (the sandbox defines it).
+const CODED: &str = "roster.coded";
+
+/// An error a `roster.*` function raises that carries a code: roster serve's error, as a Plugin
+/// gets it (Plugin API 7, decision Q210). `pcall` hands it to Lua as an error object, a table with
+/// `code` and `message`, whose `tostring` is `text` (`roster.serve.call METHOD: MESSAGE (code N)`,
+/// the string Plugins got before) and which answers string methods (`e:find`) on that text, so
+/// code written for the string keeps working. Uncaught, it's `text`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Coded {
+    pub text: String,
+    pub code: i64,
+    pub message: String,
+}
+
+impl std::fmt::Display for Coded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.text)
+    }
+}
+
+impl std::error::Error for Coded {}
+
+/// The [`Coded`] error inside `e`, if it is one.
+fn coded_of(e: &mlua::Error) -> Option<&Coded> {
+    match e {
+        mlua::Error::CallbackError { cause, .. } | mlua::Error::WithContext { cause, .. } => coded_of(cause),
+        mlua::Error::ExternalError(inner) => inner.downcast_ref::<Coded>(),
+        _ => None,
+    }
+}
+
+/// `coded` as Lua's error object ([`Coded`]), made by the sandbox's maker.
+pub(crate) fn coded_value(lua: &Lua, coded: &Coded) -> mlua::Result<Value> {
+    lua.named_registry_value::<mlua::Function>(CODED)?
+        .call((coded.text.as_str(), coded.code, coded.message.as_str()))
+}
 
 /// Runs `source` on a thread of its own, and gives up on it after `env.limits.wall`: a single
 /// long C call (a pattern that backtracks) can't be interrupted, so the caller isn't made to wait
@@ -253,6 +290,7 @@ pub(crate) fn set_api(lua: &Lua, roster: Table) -> mlua::Result<()> {
 pub(crate) fn error_text(e: &mlua::Error) -> String {
     match e {
         mlua::Error::CallbackError { cause, .. } | mlua::Error::WithContext { cause, .. } => error_text(cause),
+        mlua::Error::ExternalError(inner) => inner.to_string(),
         mlua::Error::RuntimeError(m) | mlua::Error::SyntaxError { message: m, .. } => m.clone(),
         other => other.to_string(),
     }
@@ -308,9 +346,12 @@ fn sandbox(lua: &Lua, dir: Option<&Path>, clock: Rc<Clock>, label: String) -> ml
     // `pcall` and `xpcall` can't swallow running out of time: once it has, they raise it again.
     let still_in_time = lua.create_function(move |_, ()| clock.still_in_time())?;
     // An error raised by a `roster.*` function reaches `pcall` as its message, a string, like
-    // any Lua error.
+    // any Lua error; one with a code (roster serve's) as its error object ([`Coded`]).
     let plain = lua.create_function(|lua, e: Value| match e {
-        Value::Error(e) => Ok(Value::String(lua.create_string(error_text(&e))?)),
+        Value::Error(e) => match coded_of(&e) {
+            Some(coded) => coded_value(lua, coded),
+            None => Ok(Value::String(lua.create_string(error_text(&e))?)),
+        },
         other => Ok(other),
     })?;
     lua.load(
@@ -356,6 +397,33 @@ fn sandbox(lua: &Lua, dir: Option<&Path>, clock: Rc<Clock>, label: String) -> ml
     )
     .set_name("=sandbox")
     .call::<()>((MAX_TEXT, MAX_PATTERN, MAX_REP))?;
+    // The error object of a [`Coded`] error: `code` and `message` are its fields; its text (kept
+    // aside, so `pairs` shows only those two) is what `tostring`, `..` and `#` see, and any other
+    // key is a string method run on that text (`e:find("unknown", 1, true)`, `e:match(…)`).
+    let maker: mlua::Function = lua
+        .load(
+            r##"local setmetatable, tostring, string = setmetatable, tostring, string
+            local text = setmetatable({}, { __mode = "k" })
+            local mt = {
+              __tostring = function(e) return text[e] end,
+              __concat = function(a, b) return tostring(a) .. tostring(b) end,
+              __len = function(e) return #text[e] end,
+              __index = function(_, key)
+                local f = string[key]
+                if f == nil then return nil end
+                return function(self, ...) return f(text[self] or self, ...) end
+              end,
+              __metatable = "roster error",
+            }
+            return function(t, code, message)
+              local e = setmetatable({ code = code, message = message }, mt)
+              text[e] = t
+              return e
+            end"##,
+        )
+        .set_name("=sandbox")
+        .call(())?;
+    lua.set_named_registry_value(CODED, maker)?;
     // print goes to the core's stderr (the `tauri dev` console), never to a file.
     g.raw_set(
         "print",

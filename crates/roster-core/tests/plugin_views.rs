@@ -7,14 +7,17 @@
 mod common;
 
 use roster_core::plugin::{Event, Limits, PluginHost, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
 struct NoServe;
 
 impl Serve for NoServe {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
-        Err(format!("unknown method {method}"))
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
+        Err(CallError::Io {
+            message: format!("unknown method {method}"),
+        })
     }
 }
 

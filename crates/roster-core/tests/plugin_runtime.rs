@@ -6,13 +6,14 @@
 mod common;
 
 use roster_core::plugin::{Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
 struct NoServe;
 
 impl Serve for NoServe {
-    fn call(&self, _method: &str, _params: Value) -> Result<Value, String> {
+    fn call(&self, _method: &str, _params: Value) -> Result<Value, CallError> {
         Ok(json!({}))
     }
 }

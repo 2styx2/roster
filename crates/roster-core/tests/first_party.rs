@@ -11,6 +11,7 @@ mod common;
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
 use roster_core::plugin::{API_VERSION, Limits, Load, PluginHost, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -74,8 +75,10 @@ fn copy_dir(from: &Path, to: &Path) {
 
 struct NoServe;
 impl Serve for NoServe {
-    fn call(&self, method: &str, _: Value) -> Result<Value, String> {
-        Err(format!("no {method} in this test"))
+    fn call(&self, method: &str, _: Value) -> Result<Value, CallError> {
+        Err(CallError::Io {
+            message: format!("no {method} in this test"),
+        })
     }
 }
 

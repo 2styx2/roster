@@ -8,6 +8,7 @@
 mod common;
 
 use common::unhurried;
+use roster_core::rpc::CallError;
 
 use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Value, json};
@@ -24,13 +25,16 @@ struct Recorded {
 }
 
 impl Serve for Recorded {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
         self.calls.lock().unwrap().push(method.to_string());
         if let Some(d) = self.slow {
             std::thread::sleep(d);
         }
         match method {
-            "host.get" => Err("no Login for esx-02: cmd:pass show esx-02/root failed (code 5)".into()),
+            "host.get" => Err(CallError::rpc(
+                5,
+                "no Login for esx-02: cmd:pass show esx-02/root failed",
+            )),
             _ => Ok(json!({ "ok": true, "job": "job-1" })),
         }
     }

@@ -7,14 +7,15 @@
 mod common;
 
 use roster_core::plugin::{Limits, PluginHost, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
 struct NoServe;
 
 impl Serve for NoServe {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
-        Err(format!("unknown method {method} (code -32601)"))
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
+        Err(CallError::rpc(-32601, format!("unknown method {method}")))
     }
 }
 
@@ -50,15 +51,16 @@ fn said(ops: &[Value], id: &str) -> String {
 }
 
 /// api 6 (#242, decision Q185) added `cwd` to `roster.sessions.list()`'s Sessions and to
-/// `command_done`; what api 5 brought is unchanged.
+/// `command_done`; api 7 (decision Q210) made roster serve's error an error object
+/// (tests/plugin_serve.rs); what api 5 brought is unchanged.
 #[test]
-fn the_api_version_is_6() {
+fn the_api_version_is_7() {
     let (ops, error) = load(
         "version",
         r#"roster.status.set("v", { text = tostring(roster.api_version) })"#,
     );
     assert_eq!(error, None);
-    assert_eq!(said(&ops, "v"), "6");
+    assert_eq!(said(&ops, "v"), "7");
 }
 
 #[test]

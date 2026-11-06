@@ -2,7 +2,7 @@
 
 <!-- Generated from crates/roster-core/src/plugin/api/ by `cargo run -p roster-core --example gen_plugin_api`: edit that, then run it. -->
 
-Every function, value, event and data type of the `roster` Lua module a Plugin gets, `roster.api_version` 6. How to write, install and trust a Plugin is the guide, [Writing a Plugin](plugins.md); this is the reference. Each entry is a help topic: `:help roster.inventory.host()` for a function, `:help roster-Host` for a type.
+Every function, value, event and data type of the `roster` Lua module a Plugin gets, `roster.api_version` 7. How to write, install and trust a Plugin is the guide, [Writing a Plugin](plugins.md); this is the reference. Each entry is a help topic: `:help roster.inventory.host()` for a function, `:help roster-Host` for a type.
 
 Types are written as [LuaCATS](https://luals.github.io/wiki/annotations/) annotations write them: `string?` may be `nil`, `Host[]` is a list of Hosts, `table<string, Group>` a table of Groups by name, `"info"|"warn"` one of those strings. The same declarations are [`roster.lua`](../examples/plugins/types/roster.lua), for [your editor](#editor-support).
 
@@ -208,6 +208,7 @@ roster embeds **Lua 5.4** (built into the app, nothing to install), not LuaJIT a
 | [`NodeRun`](#noderun) | What a graph's node or action runs |
 | [`NodeEvent`](#nodeevent) | What a graph's function gets |
 | [`Host`](#host) | A Host, as roster serve's `hosts.list` and `host.get` give it |
+| [`ServeError`](#serveerror) | roster serve's error, as a Plugin gets it (since api 7) |
 | [`LoginRef`](#loginref) | A Login reference: where a password is, never the password |
 | [`SshLogin`](#sshlogin) | A Host's ssh login |
 | [`Login`](#login) | A Host's default Login for its services (`login:` in roster.yml) |
@@ -259,7 +260,7 @@ roster embeds **Lua 5.4** (built into the app, nothing to install), not LuaJIT a
 
 ## Errors
 
-A function that fails raises a Lua error: `pcall` catches it, with the message as a string. The message starts with the function (`roster.inventory.host: unknown host 'web-9' (code 2)`); a roster serve error ends with its code, from [serve-api.md's tables](serve-api.md). An error you don't catch stops the call: a notice names the Plugin, file and line (`pinned: init.lua:12: …`), the UI changes that call made are dropped, and the third such error after loading stops the Plugin.
+A function that fails raises a Lua error: `pcall` catches it, with the message as a string that starts with the function (`roster.storage.write: …`). **roster serve's own error** (from `roster.serve.call`, `roster.serve.request`'s `done` and `roster.inventory`) is a [`ServeError`](#serveerror) instead (since api 7, decision Q210): an error object with `code`, serve's number from [serve-api.md's tables](serve-api.md), and `message`, serve's words. Tell errors apart by `e.code`, never by the text. `tostring(e)` is the text it was before api 7 (`roster.inventory.update: unknown host 'web-9' (code 2)`), and so are `..` and string methods (`e:find(…)`), so code written for the string keeps working. An error you don't catch stops the call: a notice names the Plugin, file and line (`pinned: init.lua:12: …`), the UI changes that call made are dropped, and the third such error after loading stops the Plugin.
 
 Any function can also raise:
 
@@ -3088,7 +3089,7 @@ Reads every Host and group without waiting: `done` gets them. Serve's [`hosts.li
 
 **Parameters**
 
-- `done` (`fun(list: `[`HostList`](#hostlist)`?, err: string?)`): Runs once with the answer: every Host and group (`list.hosts`, `list.groups`), or `nil` and why (`roster.inventory.request: MESSAGE (code N)`). Its return value is ignored; an error in it counts like an action's.
+- `done` (`fun(list: `[`HostList`](#hostlist)`?, err: `[`ServeError`](#serveerror)`|string?)`): Runs once with the answer: every Host and group (`list.hosts`, `list.groups`), or `nil` and why: roster serve's error as a [`ServeError`](#serveerror) (`tostring(err)` is `roster.inventory.request: MESSAGE (code N)`), or a string when serve gave no answer. Its return value is ignored; an error in it counts like an action's.
 
 **Returns**
 
@@ -3367,7 +3368,7 @@ Calls a roster serve method the Plugin was granted. Waits for the answer, howeve
 - `roster.serve.call: not granted (serve:METHOD)`: the Plugin wasn't granted that method.
 - `roster.serve.call METHOD: only while the user runs one of your actions, commands or finder items`: a flagged method (`mesh.apply`, `host.check`, `discover.start`, …) at load, in an event listener, a timer, a finder's `items` or a `:check`.
 - `roster.serve.call METHOD: more than 100 calls into roster serve in one go (roster.serve.request doesn't wait)`: the call asked roster serve 100 times already (or waited 300 s in all: `waited 300 s or more for roster serve in one go`).
-- `roster.serve.call METHOD: MESSAGE (code N)`: the method failed (its codes are in [serve-api.md](serve-api.md)).
+- `roster.serve.call METHOD: MESSAGE (code N)`: the method failed: a [`ServeError`](#serveerror) with its `code` (in [serve-api.md](serve-api.md)) and `message`, this text as its `tostring`.
 - And [those of every function](#errors).
 
 **Permission:** `serve:<method>` (that method) · **Since:** api 2
@@ -3387,7 +3388,7 @@ Asks roster serve without waiting: `done` gets the answer. Returns at once; `don
 
 - `method` (`string`): A roster serve method the Plugin was granted, as [`roster.serve.call`](#rosterservecallmethod-params)'s.
 - `params` (`table?`, optional): The method's params; `nil` or `{}` for none. Data only: no functions.
-- `done` (`fun(result: any, err: string?)`): Runs once with the answer: the method's `result` (as `roster.serve.call` returns it), or `nil` and why (`roster.serve.request METHOD: MESSAGE (code N)`). Its return value is ignored; an error in it counts like an action's.
+- `done` (`fun(result: any, err: `[`ServeError`](#serveerror)`|string?)`): Runs once with the answer: the method's `result` (as `roster.serve.call` returns it), or `nil` and why: roster serve's error as a [`ServeError`](#serveerror) (`err.code`, `err.message`; `tostring(err)` is `roster.serve.request METHOD: MESSAGE (code N)`), or a string when serve gave no answer. Its return value is ignored; an error in it counts like an action's.
 
 **Returns**
 
@@ -4361,6 +4362,17 @@ Every value is resolved: what the Host doesn't set comes from its group, then `d
 | `user` | `string` | yes | The same as `ssh.user` (kept for older code). |
 | `port` | `integer` | yes | The same as `ssh.port`. |
 | `auth` | [`LoginRef`](#loginref) | yes | The same as `ssh.auth`. |
+
+### `ServeError`
+
+roster serve's error, as a Plugin gets it (since api 7).
+
+What `pcall` catches from [`roster.serve.call`](#rosterservecallmethod-params) and `roster.inventory`, and the second value [`roster.serve.request`](#rosterserverequestmethod-params-done)'s and [`roster.inventory.request`](#rosterinventoryrequestdone)'s `done` get, when roster serve answered with an error (decision Q210). Switch on `code`, never on the words. It's still the text it was before api 7: `tostring(e)`, `"…" .. e` and string methods (`e:find("busy", 1, true)`, `e:match(…)`) see `roster.serve.call METHOD: MESSAGE (code N)`, and an uncaught one stops the call with that text. When serve gave no answer at all (it exited, or didn't answer in time) or roster refused before asking (`not granted`), the error is a plain string, whose `.code` is `nil` too.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `code` | `integer` | yes | serve's code: roster's own (`2` unknown Host, `4` busy, …) or JSON-RPC's (`-32601` no such method, `-32602` bad params), as [serve-api.md](serve-api.md) lists them. |
+| `message` | `string` | yes | serve's words, without the function's name or the code; a `cmd:` or `env:` Login reference in them is cut to its kind ([`LoginRef`](#loginref)). |
 
 ### `LoginRef`
 

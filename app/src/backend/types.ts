@@ -5,6 +5,7 @@
 import type { BackendInfo as CoreBackendInfo, BackendProblem, CheckStarted } from "../config/core.gen";
 import { CORE } from "../plugins/core.gen";
 import type { QuickTarget } from "../quick/target";
+import DEMO from "../../../crates/roster-core/tests/fixtures/demo-mesh.json";
 import {
   CHECK_STEPS,
   Code,
@@ -1187,9 +1188,9 @@ export type DemoPluginHost = Pick<Backend, "pluginManifest" | "pluginTypes" | "p
 };
 
 /** The words a Plugin on the demo gets for a serve method the demo has no stand-in for (errors.md
- * row 135; the core's plugin/demo.rs says the same). */
+ * row 135): demo-mesh.json's `refusal`, which the core's plugin/demo.rs reads too. */
 export function notOnDemo(method: string): string {
-  return `${method} isn't on the demo Inventory: the tutorial's demo answers only hosts.list, host.get and mesh.status`;
+  return DEMO.refusal.replace("{method}", method);
 }
 
 /** A newer commit, shown before it's applied. */

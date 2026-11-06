@@ -14,6 +14,7 @@ mod common;
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
 use roster_core::plugin::{Event, Limits, Load, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Map, Value, json};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -114,7 +115,7 @@ fn status(scan: &str, state: &str, done: u64, found: &[Value], count: usize) -> 
 }
 
 impl Serve for FakeServe {
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
         // serve answers one request at a time.
         let _turn = self.busy.lock().unwrap();
         self.calls.lock().unwrap().push((method.to_string(), params.clone()));
@@ -128,13 +129,14 @@ impl Serve for FakeServe {
 }
 
 impl FakeServe {
-    fn answer(&self, method: &str, params: &Value) -> Result<Value, String> {
+    fn answer(&self, method: &str, params: &Value) -> Result<Value, CallError> {
         let targets: Vec<String> = serde_json::from_value(params["targets"].clone()).unwrap_or_default();
         let force = params["force"] == json!(true);
         match method {
-            "discover.plan" if targets == ["10.0.0.0/19"] && !force => {
-                Err("that's 8,190 addresses; a scan visits at most 4,096 without force (code 121)".into())
-            }
+            "discover.plan" if targets == ["10.0.0.0/19"] && !force => Err(CallError::rpc(
+                121,
+                "that's 8,190 addresses; a scan visits at most 4,096 without force",
+            )),
             "discover.plan" if targets == ["10.0.0.0/19"] => Ok(
                 json!({ "targets": targets, "addresses": 8190, "ports": 47, "scanner": "nmap", "limit": 4096, "max": 65536 }),
             ),
@@ -168,7 +170,7 @@ impl FakeServe {
                     json!({ "group": "discovered-20261031", "added": added, "backup": "/team-inventory/.git/roster/roster.yml.bak" }),
                 )
             }
-            other => Err(format!("unknown method '{other}' (code -32601)")),
+            other => Err(CallError::rpc(-32601, format!("unknown method '{other}'"))),
         }
     }
 }
@@ -395,7 +397,7 @@ fn it_installs_from_its_folder_asks_for_the_discover_methods_and_flags_the_scan(
     let w = World::new("install", json!({}));
     let manifest = common::read_manifest(&w.dir).unwrap();
     assert_eq!(manifest.name, NAME);
-    assert_eq!(manifest.api, 6);
+    assert_eq!(manifest.api, 7);
     let asked: Vec<String> = manifest.permissions.iter().map(Permission::to_string).collect();
     assert_eq!(asked, ALL);
     // The install prompt flags the two that act: the scan, and adding to the Inventory.

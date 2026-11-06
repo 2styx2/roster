@@ -29,4 +29,4 @@ pub mod wt;
 
 /// The version of the `roster` Lua module (`roster.api_version`) Plugins are written against;
 /// init.lua's table shows it too. init.lua's own version is `config::CONFIG_VERSION` (decision Q165).
-pub const API_VERSION: u32 = 6;
+pub const API_VERSION: u32 = 7;

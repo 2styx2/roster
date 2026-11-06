@@ -6,7 +6,7 @@
 import { PLUGIN_COMMANDS, ROSTER_ONLY } from "../plugins/cmd";
 import { CORE } from "../plugins/core.gen";
 import { fakeFoldersPlugin } from "./fakeFolders";
-import { redact, redactError } from "./redact";
+import { PluginServeError, pluginServeError, redact } from "./redact";
 import { BackendCallError, PLUGIN_EVENTS, type Host, type OpenSession, type PluginEventName, type PluginCaller, type PluginData, type PluginLoaded, type PluginManifest, type PluginReply } from "./types";
 
 type Fn = (arg: Record<string, unknown>) => unknown;
@@ -90,7 +90,7 @@ export interface FakeRoster {
    * `request` doesn't wait: `done` runs later, as the core's does (decision Q103). */
   serve?: {
     call(method: string, params?: Spec): unknown;
-    request(method: string, params: Spec | null | undefined, done: (result: unknown, err?: string) => void): void;
+    request(method: string, params: Spec | null | undefined, done: (result: unknown, err?: string | PluginServeError) => void): void;
   };
 }
 
@@ -781,8 +781,6 @@ export function fakePluginHost(
     // As runtime.rs: `roster.serve` with any serve: grant, each call checked against its own.
     if ([...r.grants].some((g) => g.startsWith("serve:"))) {
       // serve's answers and errors with their cmd:/env: references cut, as runtime.rs's redacted (Q92).
-      const errorText = (e: unknown) =>
-        redactError(e instanceof BackendCallError && e.code !== null ? `${e.message} (code ${e.code})` : e instanceof Error ? e.message : String(e));
       m.serve = {
         call: (method, params = {}) => {
           if (!r.grants.has(`serve:${method}`)) throw new Error(`roster.serve.call: not granted (serve:${method})`);
@@ -791,8 +789,8 @@ export function fakePluginHost(
             return redact(serve(method, params));
           } catch (e) {
             // No `cause`: serve's own error is uncut, and a Plugin could read it there (Q92).
-            // eslint-disable-next-line preserve-caught-error -- the cut message is all a Plugin gets
-            throw new Error(`roster.serve.call ${method}: ${errorText(e)}`);
+            const failed = pluginServeError(`roster.serve.call ${method}`, e);
+            throw typeof failed === "string" ? new Error(failed) : failed;
           }
         },
         // serve is asked now (the core's thread asks at once); `done` runs later, as a call of its
@@ -809,7 +807,8 @@ export function fakePluginHost(
             const result = redact(serve(method, params ?? {}));
             answer = () => done(result ?? undefined);
           } catch (e) {
-            answer = () => done(undefined, `${what}: ${errorText(e)}`);
+            const failed = pluginServeError(what, e);
+            answer = () => done(undefined, failed);
           }
           later(r, answer);
         },

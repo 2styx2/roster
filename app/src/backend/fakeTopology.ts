@@ -4,7 +4,7 @@
 // crates/roster-core/tests/plugin_topology.rs recorded from the Lua and checks this does the same.
 // Change the Lua, record the transcript again, and change this to match.
 import type { FakePlugin, FakeRoster } from "./fakePlugins";
-import type { Host, HostList } from "./types";
+import { BackendCallError, type Host, type HostList } from "./types";
 
 type Obj = Record<string, unknown>;
 type Edge = { id: string; from: string; to: string; dir?: string; style?: string; tone?: string; cut?: boolean; label?: string };
@@ -421,7 +421,7 @@ export function topologyPlugin(): FakePlugin {
       version: "1.3.0",
       description: "The Topology view: this Box, your Hosts by group, the Mesh and its Links as a map",
       author: "roster",
-      api: 6,
+      api: 7,
       permissions: TOPOLOGY_PERMISSIONS,
     },
     load(roster: FakeRoster) {
@@ -450,7 +450,7 @@ export function topologyPlugin(): FakePlugin {
       let hosts: Host[] | null = null;
       let groups: Record<string, { title?: string }> = {};
 
-      const ask = (method: string, params: Obj, done: (r: unknown, why?: string) => void) => {
+      const ask = (method: string, params: Obj, done: (r: unknown, why?: unknown) => void) => {
         try {
           if (!roster.serve) throw new Error("roster.serve: no serve permission");
           roster.serve.request(method, params, (r, why) => done(r, why));
@@ -941,7 +941,7 @@ export function topologyServe(world: TopologyWorld): (method: string, params: Ob
         };
       }
       default:
-        throw new Error(`unknown method '${method}' (code -32601)`);
+        throw new BackendCallError(`unknown method '${method}'`, -32601);
     }
   };
 }

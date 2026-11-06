@@ -5,7 +5,7 @@ return {
   version = "1.3.0",
   description = "The Topology view: this Box, your Hosts by group, the Mesh and its Links as a map",
   author = "roster",
-  api = 6,
+  api = 7,
   -- Why each one is here is in README.md ("Permissions"). It loads without any of them, and says
   -- what it's missing.
   permissions = {

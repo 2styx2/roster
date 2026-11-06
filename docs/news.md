@@ -6,7 +6,11 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ## Unreleased
 
-### New
+### Breaking
+
+**Plugin API 7**
+
+- **roster serve's error is an error object with its code** (decision Q210): what `pcall(roster.serve.call, …)` and `roster.inventory`'s functions raise, and the `why` that `roster.serve.request`'s and `roster.inventory.request`'s `done` get, is a [`ServeError`](plugin-api.md#serveerror) when serve answered with an error: `e.code` (serve's number, `-32601` for a method this roster serve doesn't have) and `e.message` (its words). Switch on `e.code` instead of matching the text. It still reads as the old text, `roster.serve.call METHOD: MESSAGE (code N)`, through `tostring(e)`, `..`, `#` and string methods (`e:find`, `e:match`, `e:sub`), so most Plugins keep working as they are. What changes: `type(e)` is `"table"`, and a function that wants a string (`roster.notify(e)`) needs `tostring(e)` or `e.message`. The first-party Plugins (Discover, the Mesh controls, Topology) and the examples are written for api 7. [Asking roster serve](plugins.md#asking-roster-serve).
 
 **CLI**
 

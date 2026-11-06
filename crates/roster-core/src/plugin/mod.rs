@@ -49,6 +49,7 @@ pub mod permission;
 pub(crate) mod runtime;
 
 use crate::config::lua;
+pub use crate::rpc::CallError;
 pub use demo::DemoHost;
 pub use permission::Permission;
 use serde::Serialize;
@@ -63,6 +64,17 @@ use std::time::{Duration, Instant};
 /// The version of the `roster` Lua module (`roster.api_version`). init.lua's table shows it too;
 /// init.lua's own version is `roster.config_version` (decision Q165).
 pub use crate::API_VERSION;
+
+/// roster serve's codes the Plugin host answers with or tells apart (src/roster/errors.py; backend.rs's
+/// `contract` test holds them to docs/serve-contract.json).
+pub mod code {
+    /// No Host has the name: `roster.inventory.host` answers `nil` for it (api 3).
+    pub const UNKNOWN_HOST: i64 = 2;
+    /// roster refused: the demo's answer for a method it has no stand-in for.
+    pub const ROSTER_ERROR: i64 = 3;
+    /// JSON-RPC's invalid params.
+    pub const INVALID_PARAMS: i64 = -32602;
+}
 
 /// The prefix of a built-in Plugin's path (`builtin:hosts`).
 pub const BUILTIN_PREFIX: &str = "builtin:";
@@ -131,10 +143,11 @@ pub const MANIFEST: &str = "roster-plugin.lua";
 /// The Plugin's code, in its folder.
 pub const ENTRY: &str = "init.lua";
 
-/// How a Plugin reaches `roster serve`. The Tauri shell's adapter calls the running Backend;
-/// tests use a fake. The host only ever asks for the methods a Plugin was granted.
+/// How a Plugin reaches `roster serve`. The Shell calls the running Backend; tests use a fake.
+/// The host only ever asks for the methods a Plugin was granted. serve's error keeps its code
+/// ([`CallError::Rpc`]): a Plugin gets it as an error object (Plugin API 7, decision Q210).
 pub trait Serve: Send + Sync {
-    fn call(&self, method: &str, params: Json) -> Result<Json, String>;
+    fn call(&self, method: &str, params: Json) -> Result<Json, CallError>;
 }
 
 /// Something that happened in the app, for the Plugins that listen ([`api::EVENTS`]).

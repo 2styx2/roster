@@ -56,8 +56,8 @@ pub(super) const FUNCTIONS: &[Function] = &[
         path: "roster.inventory.request",
         params: &[p(
             "done",
-            "fun(list: HostList?, err: string?)",
-            "Runs once with the answer: every Host and group (`list.hosts`, `list.groups`), or `nil` and why (`roster.inventory.request: MESSAGE (code N)`). Its return value is ignored; an error in it counts like an action's.",
+            "fun(list: HostList?, err: ServeError|string?)",
+            "Runs once with the answer: every Host and group (`list.hosts`, `list.groups`), or `nil` and why: roster serve's error as a [`ServeError`](#serveerror) (`tostring(err)` is `roster.inventory.request: MESSAGE (code N)`), or a string when serve gave no answer. Its return value is ignored; an error in it counts like an action's.",
         )],
         summary: "Reads every Host and group without waiting: `done` gets them",
         doc: "Serve's [`hosts.list`](serve-api.md), asked as [`roster.serve.request`](#rosterserverequestmethod-params-done) asks: it returns at once and `done` runs later on the Plugin's thread, as a call of its own, so the Plugin keeps answering the user while roster serve is busy (a Publish holds `roster.yml` for a minute or two). Its answer carries the user's call as a `roster.serve.request`'s does. It counts toward the 8 requests a Plugin may have waiting, and needs no `serve:` permission. A `cmd:` or `env:` Login reference is cut to its kind, as in every read.",
@@ -238,11 +238,11 @@ pub(in crate::plugin) mod binding {
                         done,
                     )
                 });
-                // An unknown name is `nil` (api 3): serve's code 2 for host.get.
+                // An unknown name is `nil` (api 3).
                 func!(lua, shared, inventory, "host", |lua, s, name: String| {
                     need(s, &Permission::InventoryRead, "roster.inventory.host")?;
                     match ask_serve(s, "host.get", json!({ "name": name })) {
-                        Err(message) if message.ends_with("(code 2)") => Ok(Value::Nil),
+                        Err(Failed::Serve { code: UNKNOWN_HOST, .. }) => Ok(Value::Nil),
                         result => answer(lua, "roster.inventory.host", result),
                     }
                 });

@@ -6,6 +6,7 @@
 mod common;
 
 use roster_core::plugin::{Event, Limits, Load, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
@@ -13,13 +14,15 @@ use std::sync::Arc;
 struct FakeServe;
 
 impl Serve for FakeServe {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
         match method {
             "hosts.list" => Ok(json!({
                 "hosts": [{ "name": "esx-02" }, { "name": "esx-03" }, { "name": "db-01" }],
                 "groups": {}
             })),
-            other => Err(format!("unknown method {other}")),
+            other => Err(CallError::Io {
+                message: format!("unknown method {other}"),
+            }),
         }
     }
 }

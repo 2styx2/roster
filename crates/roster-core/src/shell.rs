@@ -117,9 +117,8 @@ impl BackendSlot {
 struct PluginServe(Arc<BackendSlot>);
 
 impl plugin::Serve for PluginServe {
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
-        let backend = self.0.get().map_err(|e| e.to_string())?;
-        backend.call(method, params).map_err(|e| e.to_string())
+    fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
+        self.0.get()?.call(method, params)
     }
 }
 

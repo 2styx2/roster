@@ -434,10 +434,10 @@ fn the_demos_mesh_status_answers_in_real_serves_shape_with_one_host_not_answerin
             "params.grouped and params.brief don't go together (code -32602)",
         ),
     ] {
-        assert_eq!(serve.call("mesh.status", params).unwrap_err(), words);
+        assert_eq!(serve.call("mesh.status", params).unwrap_err().to_string(), words);
     }
     // The rest of the Mesh is still not on the demo.
-    let refused = serve.call("mesh.apply", json!({})).unwrap_err();
+    let refused = serve.call("mesh.apply", json!({})).unwrap_err().to_string();
     assert_eq!(
         refused,
         "mesh.apply isn't on the demo Inventory: the tutorial's demo answers only hosts.list, host.get and mesh.status (code 3)"

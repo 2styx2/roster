@@ -5,6 +5,7 @@
 mod common;
 
 use common::{CEILING, within_ceiling};
+use roster_core::rpc::CallError;
 
 use roster_core::plugin::{Event, Limits, Permission, PluginHost, Serve, Source};
 use serde_json::{Value, json};
@@ -43,7 +44,7 @@ impl Held {
 }
 
 impl Serve for FakeServe {
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
         self.calls.lock().unwrap().push((method.to_string(), params.clone()));
         if let Some(held) = &self.held {
             held.wait();
@@ -57,7 +58,9 @@ impl Serve for FakeServe {
             "host.get" => Ok(json!({ "name": params["name"], "ip": "10.0.0.5" })),
             "host.update" => Ok(json!({ "host": params["host"], "pending": true })),
             "inventory.info" => Ok(json!({ "api_version": 17 })),
-            other => Err(format!("unknown method {other}")),
+            other => Err(CallError::Io {
+                message: format!("unknown method {other}"),
+            }),
         }
     }
 }

@@ -6,13 +6,14 @@
 mod common;
 
 use roster_core::plugin::{Limits, Permission, PluginHost, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
 struct FakeServe;
 
 impl Serve for FakeServe {
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
         let esx = json!({
             "name": "esx-02", "ip": "10.0.0.5", "group": "lab",
             "ssh": { "user": "root", "port": 22, "auth": "cmd:pass show lab/esx-02 --hunter2" },
@@ -33,11 +34,11 @@ impl Serve for FakeServe {
                   "message": "cmd:pass show lab/esx-02 --hunter2 failed: exit 1",
                   "details": { "auth": "env:ESX_PASSWORD", "tried": ["CMD:pass --hunter2", "bw:esx-02 web"] } }
             ] })),
-            "host.get" => Err(format!(
-                "unknown host '{}' (code 2)",
-                params["name"].as_str().unwrap_or("")
+            "host.get" => Err(CallError::rpc(
+                2,
+                format!("unknown host '{}'", params["name"].as_str().unwrap_or("")),
             )),
-            other => Err(format!("unknown method {other} (code -32601)")),
+            other => Err(CallError::rpc(-32601, format!("unknown method {other}"))),
         }
     }
 }

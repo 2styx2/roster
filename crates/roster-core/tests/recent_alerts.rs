@@ -14,6 +14,7 @@ mod common;
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
 use roster_core::plugin::{Event, Limits, Load, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -114,9 +115,11 @@ struct Serve0 {
 }
 
 impl Serve for Serve0 {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
         self.calls.lock().unwrap().push(method.to_string());
-        Err(format!("unknown method {method}"))
+        Err(CallError::Io {
+            message: format!("unknown method {method}"),
+        })
     }
 }
 

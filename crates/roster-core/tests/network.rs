@@ -5,6 +5,7 @@
 mod common;
 
 use roster_core::plugin::{Limits, Load, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -15,8 +16,10 @@ use std::time::Duration;
 struct NoServe;
 
 impl Serve for NoServe {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
-        Err(format!("unknown method {method}"))
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
+        Err(CallError::Io {
+            message: format!("unknown method {method}"),
+        })
     }
 }
 

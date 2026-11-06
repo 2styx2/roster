@@ -832,6 +832,9 @@ mod contract {
         assert_eq!(c["codes"]["HOST_KEY_UNKNOWN"], HOST_KEY_UNKNOWN);
         assert_eq!(c["codes"]["FILL_REFUSED"], FILL_REFUSED);
         assert_eq!(c["json_rpc"]["METHOD_NOT_FOUND"], METHOD_NOT_FOUND);
+        assert_eq!(c["codes"]["UNKNOWN_HOST"], crate::plugin::code::UNKNOWN_HOST);
+        assert_eq!(c["codes"]["ROSTER_ERROR"], crate::plugin::code::ROSTER_ERROR);
+        assert_eq!(c["json_rpc"]["INVALID_PARAMS"], crate::plugin::code::INVALID_PARAMS);
     }
 
     #[test]
