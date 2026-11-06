@@ -180,6 +180,9 @@ class Inventory(Model, frozen=True):
     rate_limited: list[str] = Field(default_factory=list)    # networks with an SSH rate limiter (Q180)
     # days before check --box warns the Box key is due a rotation; None: off
     key_max_age: int | None = boxkeys.parse_age(boxkeys.MAX_AGE)
+    # its path as given (-c, $ROSTER_CONFIG, a named Inventory's) is one config.shown_path hides: a token-named folder
+    # (or file) an older roster made (#506). What roster prints names it through config.shown_file, never `path`.
+    hidden: bool = False
 
     def as_config(self) -> dict[str, Any]:
         """The dict the older code reads (`cfg["hosts"][name]["ssh"]["user"]`), the same keys as before T112: each

@@ -54,6 +54,7 @@ from .config import (
     matches,
     open_inventory,
     selected,
+    shown_file,
     shown_path,
 )
 from .context import Context, current
@@ -816,12 +817,12 @@ def add_host(cfg, name, got, auth, group, enroll, asking, os=None, title=None, t
     where = f"group '{group}'"
     try:
         r = addhost.add(path, group, name, fields, dry_run=dry_run, new_address=True,
-                        on_write=lambda done: written(name, where, path, group, done))
+                        on_write=lambda done: written(cfg, name, where, group, done))
     except Problem as e:
         refuse(e)
     if dry_run:
         new = " (a new group)" if r["new_group"] else ""
-        say(f"would add    {name} to {where}{new} in {path} (--dry-run: nothing written):")
+        say(f"would add    {name} to {where}{new} in {shown_file(cfg)} (--dry-run: nothing written):")
         for line in r["lines"]:
             say(f"  {line}")
         return False
@@ -829,10 +830,11 @@ def add_host(cfg, name, got, auth, group, enroll, asking, os=None, title=None, t
     return True
 
 
-def written(name, where, path, group, r):
-    """What `roster add` wrote, said as `discover --write` says it, before this Box's sync."""
-    say(f"backup       {r['backup']}")
-    say(f"wrote        {name} into {where}" + (" (a new group)" if r["new_group"] else "") + f" in {path}")
+def written(cfg, name, where, group, r):
+    """What `roster add` wrote into the Inventory CFG's roster.yml, said as `discover --write` says it, before this
+    Box's sync: both files named through shown_file (#506)."""
+    say(f"backup       {shown_file(cfg, r['backup'], 'its backup')}")
+    say(f"wrote        {name} into {where}" + (" (a new group)" if r["new_group"] else "") + f" in {shown_file(cfg)}")
     if r["new_group"]:
         say(f"new group    '{group}': roster.yml had no group by that name, so it's made")
     if r["kind"] == store.REPO:
