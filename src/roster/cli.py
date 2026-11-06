@@ -166,8 +166,7 @@ def cmd_rotate(cfg, args):
     if args.dry_run:
         rotate.run(cfg, scope, dry_run=True, say=say)
         return 0
-    groups = rotate.group(cfg)
-    with locked("setup --rotate", [ctx for ctx, _ in groups]):
+    with locked("setup --rotate"):
         r = rotate.run(cfg, scope, say=say)
         failed = dict(r["failed"])
         # setup's own Mesh apply: once the new key is proven on every Host, over it, never --rotate

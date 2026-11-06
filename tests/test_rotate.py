@@ -764,19 +764,19 @@ def test_a_lock_file_that_is_a_link_is_refused_on_every_os(isolated, tmp_path):
     import os
 
     from roster import boxlock
-    from roster.context import current
+    from roster.context import box_file
     from roster.errors import Problem
     victim = tmp_path / "victim"
     victim.write_text("precious\n")
-    current().lock.parent.mkdir(parents=True, exist_ok=True)
-    os.link(victim, current().lock)                                # a hard link
+    box_file("lock").parent.mkdir(parents=True, exist_ok=True)
+    os.link(victim, box_file("lock"))                                # a hard link
     with pytest.raises(Problem, match="isn't a plain file"):
         with boxlock.held("setup"):
             pass
     assert victim.read_text() == "precious\n"
-    current().lock.unlink()
+    box_file("lock").unlink()
     try:
-        current().lock.symlink_to(victim)
+        box_file("lock").symlink_to(victim)
     except OSError:                                             # Windows without the privilege to make one
         return
     with pytest.raises(Problem, match="isn't a plain file"):
@@ -803,3 +803,72 @@ def test_revoke_never_says_to_delete_a_key_file_another_inventory_uses(lab, caps
     note = next(ln for ln in out.splitlines() if ln.startswith("note: [221]"))
     assert note.startswith(f"note: [221] keep {lab.key}: the Inventories home, ") and "use it too" in note
     assert str(lab.key) not in out.replace(note, "")                          # neither it nor its .pub to delete
+
+
+# ---------------------------------------------------------------- T253 (#499): the rotation's follow-ups
+
+def test_a_new_key_moved_aside_after_a_stop_has_its_lines_taken_off_too(lab, capsys, tmp_path):
+    """T253 item 1 (#482's C4): after a 208 stop the first KEY.new's line is on the Hosts it reached. Moved aside
+    (not deleted), the re-run makes another key; the first one's line goes with the old ones, so the moved file no
+    longer logs in anywhere, and the run says what happened to it."""
+    (lab.hosts / "web-02" / "refuse").write_text("*.new\n")
+    assert main(["setup", "--rotate"]) == 1
+    first = lab.key.with_name("roster_ed25519.new")
+    moved = tmp_path / "moved"
+    first.rename(moved)
+    first.with_name(first.name + ".pub").rename(tmp_path / "moved.pub")
+    abandoned = pub_key(moved)
+    assert abandoned in lab.keys("web-01")
+    (lab.hosts / "web-02" / "refuse").unlink()
+    capsys.readouterr()
+    assert main(["setup", "--rotate"]) == 0, capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "its private key is gone" not in out
+    assert "its line is taken off with the old key's" in out
+    new_pub = pub_key(lab.key)
+    for name in ("web-01", "web-02", "db-01"):
+        assert lab.keys(name) == [new_pub], name
+        assert not lab.logs_in(name, moved), name
+
+
+HOLDER_IN = """\
+import os, sys, time
+from pathlib import Path
+from roster import boxlock, context
+context.use(sys.argv[2])
+with boxlock.held("mesh"):
+    print("held", os.getpid(), flush=True)
+    while not Path(sys.argv[1]).exists():
+        time.sleep(0.02)
+"""
+
+
+def test_the_lock_covers_every_inventory_on_the_box_shared_key_file_or_not(isolated, tmp_path, monkeypatch):
+    """T253 item 2: two named Inventories can hold one Host (one account's authorized_keys) under different key
+    files. A run in one holds the lock against a run in the other, so neither's rewrite drops the other's line."""
+    import os
+
+    from roster import boxlock, context
+    from roster.errors import Problem
+    monkeypatch.setattr(boxlock, "WAIT", 0.3)
+    go = tmp_path / "let-go"
+    p = subprocess.Popen([sys.executable, "-c", HOLDER_IN, str(go), "home"], stdout=subprocess.PIPE, text=True,
+                         env=dict(os.environ))
+    try:
+        assert p.stdout is not None
+        said = p.stdout.readline().split()
+        assert said[:1] == ["held"]
+        for name in ("work", None):
+            context.use(name)
+            with pytest.raises(Problem, match=rf"^another roster run \(mesh, pid {said[1]}\)") as e:
+                with boxlock.held("setup"):
+                    pass
+            assert e.value.code == 205
+    finally:
+        go.touch()
+        p.wait(timeout=30)
+        context.use(None)
+    context.use("work")
+    with boxlock.held("setup"):
+        pass
+    context.use(None)

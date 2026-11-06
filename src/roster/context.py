@@ -2,7 +2,7 @@
 
 One process uses one Inventory (serve restarts to switch): config.find_config picks it as it finds roster.yml and
 calls use(). A named Inventory has files of its own (its ssh config, known_hosts, Mesh state, key-name, key-types,
-rotation record, setup's unfinished Hosts, lock), so syncing one never wipes another's; the unnamed one (no named Inventories, or a roster.yml
+rotation record, setup's unfinished Hosts), so syncing one never wipes another's; the unnamed one (no named Inventories, or a roster.yml
 that isn't one of them) has the files roster always wrote. FILES is the one table of them: every path comes from it, and
 `roster inv remove` walks it. BOX_FILES are the ones roster keeps once for this Box.
 
@@ -55,8 +55,6 @@ FILES = {
     "key_types": File(user_config_dir, "key-types", "key-types-{}", "delete"),
     # the Hosts `roster setup` didn't finish (names only), so a later command names `roster setup --host` for them
     "setup_left": File(user_config_dir, "setup-left", "setup-left-{}", "delete"),
-    # the Box-wide lock (boxlock)
-    "lock": File(user_config_dir, "run.lock", "run-{}.lock", "delete"),
 }
 
 
@@ -93,10 +91,6 @@ class Context:
         return self.file("rotation")
 
     @property
-    def lock(self) -> Path:
-        return self.file("lock")
-
-    @property
     def legacy_ssh_config(self) -> Path | None:
         """Where a named Inventory's ssh config was before it moved out of config.d (None for the unnamed one)."""
         return None if self.name is None else ssh_dir() / "config.d" / f"roster-{self.name}"
@@ -131,6 +125,8 @@ BOX_FILES = {
     "inventories": "inventories.json",
     # serve's inventory.create, one at a time on this Box whichever serve makes it (#417 L3)
     "first_run_lock": "inventory.create.lock",
+    # the Box-wide lock (boxlock): one for every Inventory, since two can hold one Host's account (T253)
+    "lock": "run.lock",
     # a folder: per roster.yml, the vault items `roster add --from-vault` has seen
     "vault_seen": "vault-seen",
     # a folder: per provider, `roster vault sync`'s snapshot of item ids and revision dates

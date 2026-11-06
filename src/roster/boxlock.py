@@ -4,7 +4,9 @@ Inventory's Hosts. `roster setup` (and `setup --rotate`), `revoke` and every Mes
 write back), so two at once could each drop the other's new line. Read-only runs (`check`, `--dry-run`,
 `mesh status`) never take it.
 
-One lock file per Inventory (context.FILES' lock), locked with the OS's own file lock (flock; on Windows a byte range,
+One lock file for the Box (context.BOX_FILES' lock), whatever the Inventory (T253, #499): two Inventories can hold
+the same Host (one account's authorized_keys) under different key files, and nothing short of loading every
+Inventory says which, so a run in one waits for a run in another. Locked with the OS's own file lock (flock; on Windows a byte range,
 msvcrt.locking). The OS lets go of it when the process holding it ends, however it ends, so a lock whose run died
 (a dead pid in the file) is free at once and taken over. The file says who holds it (pid and what, for the message
 a second run gives), never a secret. A second run waits WAIT seconds, then refuses with code 205.
@@ -22,7 +24,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from .context import Context, box_file, current
+from .context import box_file
 from .errors import BOX_BUSY, INVENTORY_THERE, Problem
 
 WAIT = 5.0                  # seconds a second run waits before it refuses
@@ -90,19 +92,15 @@ def first_run():
 
 
 @contextmanager
-def held(what: str, contexts: list[Context] | None = None, wait: float | None = None):
-    """Hold the lock of each of CONTEXTS' Inventories (default: this run's) while WHAT (`setup --rotate`, `mesh`)
-    runs, in a fixed order. Waits WAIT seconds for each, then raises busy's Problem (205), holding none."""
-    paths = sorted({str(c.lock) for c in (contexts or [current()])})
-    got: list[str] = []
+def held(what: str, wait: float | None = None):
+    """Hold the Box-wide lock while WHAT (`setup --rotate`, `mesh`) runs, whichever Inventories it changes. Waits
+    WAIT seconds, then raises busy's Problem (205)."""
+    path = box_file("lock")
+    _take(path, what, WAIT if wait is None else wait)
     try:
-        for p in paths:
-            _take(Path(p), what, WAIT if wait is None else wait)
-            got.append(p)
         yield
     finally:
-        for p in reversed(got):
-            _release(p)
+        _release(str(path))
 
 
 def locking(what: str, unless=None):

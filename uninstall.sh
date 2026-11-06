@@ -409,8 +409,9 @@ remove "install.sh's kept answers" "$CONF_DIR/install-choices"
 # roster's own folder: what roster wrote goes; what you put there (roster.yml, providers/) is asked about.
 # Kept with roster: revoke --all and mesh cut --all need them. Every name roster writes there must be below
 # (tests/test_install_scripts.py reads them from roster's source): the Mesh state, the Inventory list and what a
-# removed Inventory left, the run lock, the key's name and age, a key rotation's record, the vault snapshots
-# (vault-sync/, vault-seen/), and the temp files of a run cut short (bw-session is stage 5's).
+# removed Inventory left, the run lock (and run-NAME.lock, an older roster's lock per Inventory), the key's name and
+# age, a key rotation's record, the vault snapshots (vault-sync/, vault-seen/), and the temp files of a run cut short
+# (bw-session is stage 5's).
 # Kept: a Box key rotation's record (key-rotation, key-rotation-NAME) while a KEY.old or KEY.new stage 4 didn't remove
 # (it couldn't vouch for it, or you said no) is in ~/.ssh: it's what says those key files are roster's (Q204 (d2), (l));
 # without it a later roster won't use or clean them up.

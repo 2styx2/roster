@@ -15,7 +15,7 @@ from .boxkeys import ensure_key, public_key_line
 from .claude import write_claude_files
 from .common import die, plural, replace_file, say
 from .config import selected, shown_file
-from .context import Context, current
+from .context import current
 from .errors import KEY_FILE, UNKNOWN_HOST, VAULT_LOCKED_DURING_RUN, Exit, Problem, tagged
 from .hosts import AccountLocks, account, provider_of
 from .keyline import key_ere
@@ -52,10 +52,10 @@ def name_taken(cfg: dict[str, Any]) -> str:
 
 
 @contextmanager
-def locked(what: str, contexts: list[Context] | None = None) -> Generator[None, None, None]:
-    """The Box-wide lock (boxlock, T240) of each of CONTEXTS' Inventories (default: this run's) while the body runs;
-    a run that can't get it stops (205) before anything."""
-    held = boxlock.held(what, contexts)
+def locked(what: str) -> Generator[None, None, None]:
+    """The Box-wide lock (boxlock, T240; one for every Inventory, T253) while the body runs; a run that can't get it
+    stops (205) before anything."""
+    held = boxlock.held(what)
     try:
         held.__enter__()
     except Problem as e:

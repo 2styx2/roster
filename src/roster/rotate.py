@@ -288,11 +288,12 @@ def delete_old(slot: Slot) -> None:
         f.unlink(missing_ok=True)
 
 
-def old_lines_re(m: Member, groups: Groups, new_words: list[str]) -> str:
+def old_lines_re(m: Member, groups: Groups, new_words: list[str], abandoned: list[str] | None = None) -> str:
     """This Box's key lines on M that aren't its new key's: each of this Box's public keys but the new one, only those
-    boxkeys.all_keys vouches for (KEY.old included only when this user's and its .pub is its own: #482's LOW-4), with
-    a roster-managed tag of any Box name. Never a roster-mesh: line."""
-    found: list[list[str]] = []
+    boxkeys.all_keys vouches for (KEY.old included only when this user's and its .pub is its own: #482's LOW-4), and
+    the rotation's own earlier new keys whose file went away (ABANDONED, `TYPE BASE64` as the record names them: T253
+    item 1), with a roster-managed tag of any Box name. Never a roster-mesh: line."""
+    found: list[list[str]] = [w for w in (str(a).split()[:2] for a in abandoned or []) if len(w) == 2]
     for _, c in groups:
         for key in boxkeys.all_keys(c):
             w = boxkeys.public_words(key.pub)
@@ -446,9 +447,12 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
         if not slot.done and not new_of(key).exists():
             # stopped before ssh-keygen wrote it (or it was moved away): make it again, never take KEY for it
             if entry.get("new"):
-                say(f"rotation     the rotation's new key {new_of(key)} isn't there any more: making another (a "
-                    "line of the one gone may be left on a Host it reached; it can't log in, its private key is "
-                    "gone, and `roster revoke` takes it)")
+                # T253 item 1 (#482's C4): it may have been moved aside, not deleted, and its line is on the Hosts
+                # it reached: the record keeps it, and its lines go with the old key's
+                entry["abandoned"] = sorted({*entry.get("abandoned", []), str(entry["new"])})
+                say(f"rotation     the rotation's new key {new_of(key)} isn't there any more: making another. A "
+                    "Host it reached may hold its line, which still logs in for whoever kept that file: its line "
+                    "is taken off with the old key's")
             make_new(slot, cfg, say)
             entry["new"] = " ".join((boxkeys.public_words(pub_of(new_of(key))) or [])[:2]) or None
             save_all()
@@ -524,7 +528,7 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
         done: list[Member] = []
         notes: dict[str, str] = {}
         for m in proven:                         # pass 2: the old lines off, over the new key
-            ere = old_lines_re(m, groups, news[m.slot.key])
+            ere = old_lines_re(m, groups, news[m.slot.key], entries[str(m.slot.key)].get("abandoned"))
             try:
                 taken = conn.script(m, [m.slot.key], remove_key_script(ere, m.h["ssh"]["user"]), "remove", ere) \
                     if ere else []

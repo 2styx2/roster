@@ -472,22 +472,22 @@ def test_a_removed_names_host_keys_dont_go_to_a_new_file_of_the_same_name(two, c
     assert list(ssh(isolated).glob("roster_known_hosts-work.removed*"))
 
 
-def test_a_removed_names_key_name_rotation_and_lock_dont_go_to_a_new_file_of_the_same_name(two, capsys):
+def test_a_removed_names_key_name_and_rotation_dont_go_to_a_new_file_of_the_same_name(two, capsys):
     """`inv remove` takes every file roster keeps for an Inventory (context.FILES), not only its ssh config,
-    known_hosts and Mesh state: a new Inventory of that name never inherits the old one's recorded key name, pending
-    Box key rotation or lock."""
+    known_hosts and Mesh state: a new Inventory of that name never inherits the old one's recorded key name or
+    pending Box key rotation (the lock is the Box's, one for every Inventory: T253)."""
     from roster.context import Context
     run(capsys, "inv", "add", "work", str(two["work"]))
     ctx = Context("work")
-    for f in (ctx.key_name, ctx.rotation, ctx.lock):
+    for f in (ctx.key_name, ctx.rotation):
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text("x\n")
     _, out, _ = run(capsys, "inv", "remove", "work")
-    assert not ctx.key_name.exists() and not ctx.lock.exists() and not ctx.rotation.exists()
+    assert not ctx.key_name.exists() and not ctx.rotation.exists()
     kept = list(ctx.rotation.parent.glob("key-rotation-work.removed-*"))
     assert len(kept) == 1 and str(kept[0]) in out                 # set aside, and said where
     run(capsys, "inv", "add", "work", str(two["home"]))
-    assert not any(f.exists() for f in (ctx.key_name, ctx.rotation, ctx.lock))
+    assert not any(f.exists() for f in (ctx.key_name, ctx.rotation))
 
 
 @needs_ssh
