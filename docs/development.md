@@ -36,7 +36,7 @@ src/roster/
   models.py         roster.yml's Inventory as Pydantic models (Host, its Logins and services, group, Link, resource);
                     load_inventory returns them, load_config their dict view (Inventory.as_config)
   hosts.py          what roster asks of a Host: Windows or not, a password Login or a vault one, discover's placeholder
-                    user, its address as an IP
+                    user, its address as an IP, the account it logs in to (one lock per account: AccountLocks)
   named.py          the named Inventories' list (inventories.json, Pydantic) and the ssh config index over them; which
                     of an Inventory's Hosts a plain `ssh NAME` reaches
   inventories.py    naming, using and forgetting one (`roster inv add/use/remove`, serve's inventories.*)
