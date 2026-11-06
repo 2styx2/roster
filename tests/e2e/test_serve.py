@@ -4,6 +4,7 @@ argv run for real (a key Login and an askpass one), $/cancel, and the error answ
 locked vault."""
 
 import json
+import time
 
 import pytest
 
@@ -230,6 +231,7 @@ def test_cancel(serve, lab):
     try:
         rid = serve.request("host.check", {"host": "lab-02"})
         serve.wait_note("job.progress", lambda p: p.get("host") == "lab-02" and p.get("state") == "running")
+        time.sleep(1)
         c = result(serve.call("$/cancel", {"id": rid}, step="cancel-running"))
         assert c["cancelled"] is True and c["was"] == "running"
         r = result(serve.answer(rid, "cancelled-check"))
