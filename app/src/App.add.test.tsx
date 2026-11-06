@@ -12,6 +12,7 @@ import type { Backend } from "./backend/types";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
 import { chooseInMenu, inventoryRow, menuLabels } from "./test-menu";
+import { advanceTimers, fakeTimeouts, pass } from "./test-timers";
 
 const LEADER = "{Control>} {/Control}";
 const UNREVIEWED = "switch-4-003";
@@ -34,7 +35,7 @@ function recording(scenario: FakeScenario) {
 }
 
 async function ready(scenario: FakeScenario = fixtures.add as FakeScenario) {
-  const user = userEvent.setup();
+  const user = userEvent.setup({ advanceTimers });
   const { backend, calls } = recording(scenario);
   const platform = memoryPlatform();
   render(<App backend={backend} terminalView={StubTerminal} platform={platform} />);
@@ -443,13 +444,15 @@ describe("Fill from this item (#437, vault.item_fields, API 29)", () => {
   });
 
   it("drops a reply that comes after the item changed (M2)", async () => {
+    fakeTimeouts();
     const { user } = await ready({ ...vault(), delay: 300 });
     const panel = await openForm(user);
     await fill(user, panel, { Name: "nas-01", Address: "10.19.9.9" });
     await user.click(within(panel).getByLabelText("An existing vault item"));
     await user.click(within(panel).getByRole("button", { name: "Fill from this item" }));
     await user.type(within(panel).getByLabelText("Vault item"), "bw:nas-01 web");
-    await new Promise((r) => setTimeout(r, 500));
+    // Long past every reply the fake Backend holds back (300 ms each, one after another).
+    await pass(5_000);
     expect(within(panel).getByLabelText("Address")).toHaveValue("10.19.9.9");
     expect(within(panel).queryByText(/^Filled/)).toBeNull();
   });

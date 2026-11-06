@@ -11,6 +11,8 @@ import { FAKE_LOGIN_PASSWORD, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeSc
 import { FILL_API_VERSION, FillRefusal, NESTED_FILL_API_VERSION } from "./backend/types";
 import { builtinRegistries } from "./registries";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { IDLE_MS } from "./session/shellHooks";
+import { advanceTimers, fakeTimeouts, pass } from "./test-timers";
 
 const hosts = makeHosts(12);
 // makeHosts: every third Host has a vault Login (bw:…), the rest log in with keys (auth: key).
@@ -21,13 +23,16 @@ const keyHost = keyHosts[0]?.name ?? "";
 // Every Host with `shell_hooks: true`: roster sends its hook line, so the shell's marks carry the
 // Session's token (ticket 120).
 const hooked = { ...hosts, hosts: hosts.hosts.map((h) => ({ ...h, shell_hooks: true })) };
-/** Waits for roster's hook line to have gone (the login idle at its prompt for IDLE_MS). */
-const hooksOn = () => new Promise((r) => setTimeout(r, 700));
+/** Roster's hook line has gone: it goes once the login has idled at its prompt for IDLE_MS, looking
+ * again each IDLE_MS while the screen hasn't drawn what came. The tests that use it run on fake
+ * timeouts (`ready({ hosts: hooked })`). */
+const hooksOn = () => pass(3 * IDLE_MS);
 const LEADER = "{Control>} {/Control}";
 type User = ReturnType<typeof userEvent.setup>;
 
 async function ready(scenario: Partial<FakeScenario> = {}) {
-  const user = userEvent.setup();
+  if (scenario.hosts === hooked) fakeTimeouts();
+  const user = userEvent.setup({ advanceTimers });
   render(
     <App
       backend={fakeBackend({ hosts, apiVersion: NESTED_FILL_API_VERSION, ...scenario })}
@@ -128,10 +133,9 @@ describe("filling a password prompt", () => {
     await connect(user, vaultHost);
     await user.keyboard("su{Enter}");
     await within(output()).findByText(/Password:/);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(offer()).toBeNull();
     await user.keyboard(`${LEADER}p`);
     await waitFor(() => expect(messageLine()).toHaveTextContent(/No password prompt/));
+    expect(offer()).toBeNull();
   });
 
   it("shows serve's refusal of a prompt for another Host", async () => {

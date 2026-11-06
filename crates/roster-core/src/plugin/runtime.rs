@@ -1558,11 +1558,30 @@ mod tests {
         assert_eq!(serve.0.load(std::sync::atomic::Ordering::SeqCst), 4);
     }
 
-    /// The set of quiet handlers (a command's `complete`, a finder's `items`) holds only the ones
-    /// still there: a Plugin adding a command again and again, from a timer say, doesn't grow it
-    /// outside Lua's memory limit (the iteration 8 review).
+    /// A handler the Plugin replaced (a command's `run` and `complete`, a finder's `items`, a
+    /// `:check` section's `check`) is let go: a Plugin adding a command again and again, from a
+    /// timer say, doesn't keep every function it ever gave (the iteration 8 review). Calling an old
+    /// one says it's gone; the ones there now still run.
     #[test]
-    fn replaced_quiet_handlers_are_let_go() {
+    fn replaced_handlers_are_let_go() {
+        fn handlers(ops: &[Json], skip: u64) -> Vec<u64> {
+            fn walk(v: &Json, out: &mut Vec<u64>) {
+                match v {
+                    Json::Object(m) => {
+                        if let Some(id) = m.get("handler").and_then(Json::as_u64) {
+                            out.push(id);
+                        }
+                        m.values().for_each(|x| walk(x, out));
+                    }
+                    Json::Array(a) => a.iter().for_each(|x| walk(x, out)),
+                    _ => {}
+                }
+            }
+            let mut out = Vec::new();
+            ops.iter().for_each(|o| walk(o, &mut out));
+            out.retain(|&id| id != skip);
+            out
+        }
         let rt = runtime();
         let loaded = rt.load(
             r#"
@@ -1583,11 +1602,23 @@ mod tests {
             .find(|o| o["op"] == "command" && o["name"] == "again")
             .and_then(|o| o["run"]["handler"].as_u64())
             .unwrap();
+        let first = handlers(&loaded.ops, again);
+        assert_eq!(first.len(), 4, "{:?}", loaded.ops);
+        let mut last = loaded;
         for _ in 0..50 {
-            let r = rt.call(again, &json!({}), By::User);
-            assert!(r.error.is_none(), "{:?}", r.error);
+            last = rt.call(again, &json!({}), By::User);
+            assert!(last.error.is_none(), "{:?}", last.error);
         }
-        assert_eq!(rt.shared.quiet.borrow().len(), 3);
+        let now = handlers(&last.ops, again);
+        assert_eq!(now.len(), 4, "{:?}", last.ops);
+        for id in first {
+            let r = rt.call(id, &json!({}), By::App);
+            assert!(r.stale, "handler {id} is still there: {:?}", r.error);
+        }
+        for id in now {
+            let r = rt.call(id, &json!({}), By::App);
+            assert!(r.error.is_none() && !r.stale, "handler {id}: {:?}", r.error);
+        }
     }
 
     /// tests/vectors/redaction.json, which the CLI's tests (tests/test_json.py) read too, so the

@@ -16,7 +16,7 @@ export class HelpText {
   private error: string | null = null;
   private readonly listeners = new Set<() => void>();
 
-  constructor(private readonly loader: () => Promise<GuideTexts>) {}
+  constructor(private loader: () => Promise<GuideTexts>) {}
 
   ready = (): boolean => this.texts !== null;
 
@@ -52,6 +52,16 @@ export class HelpText {
   use(texts: GuideTexts) {
     if (this.texts) return;
     this.texts = texts;
+    for (const l of this.listeners) l();
+  }
+
+  /** Starts over with nothing loaded, the text to come from `loader`: the App tests give each case
+   * a first `:help` of its own, with a loader they hold back. */
+  restart(loader: () => Promise<GuideTexts>) {
+    this.loader = loader;
+    this.texts = null;
+    this.loading = null;
+    this.error = null;
     for (const l of this.listeners) l();
   }
 

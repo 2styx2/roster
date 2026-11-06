@@ -16,15 +16,27 @@ use std::time::{Duration, Instant};
 #[derive(Default)]
 struct SerialServe {
     one_at_a_time: Mutex<()>,
+    /// Every call as it comes, before it waits for its turn.
+    asked: Mutex<Vec<String>>,
     calls: Mutex<Vec<(String, Value)>>,
+    /// A held `changes.publish` ([`SerialServe::hold`]) waits for this.
+    go: (Mutex<bool>, std::sync::Condvar),
 }
 
 impl Serve for SerialServe {
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.asked.lock().unwrap().push(method.to_string());
         let _turn = self.one_at_a_time.lock().unwrap();
         self.calls.lock().unwrap().push((method.to_string(), params.clone()));
         match method {
-            // The app's own long call.
+            // The app's own long call: held until the test lets it go, or for `ms`.
+            "changes.publish" if params["held"] == true => {
+                let mut go = self.go.0.lock().unwrap();
+                while !*go {
+                    go = self.go.1.wait(go).unwrap();
+                }
+                Ok(json!({ "published": true }))
+            }
             "changes.publish" => {
                 std::thread::sleep(Duration::from_millis(params["ms"].as_u64().unwrap_or(1500)));
                 Ok(json!({ "published": true }))
@@ -47,19 +59,49 @@ impl SerialServe {
         self.calls.lock().unwrap().iter().map(|(m, _)| m.clone()).collect()
     }
 
-    /// The app's own long call, on a thread of its own, holding serve for `ms`. Returns once serve
-    /// has taken it.
+    /// The app's own long call, on a thread of its own, holding serve for `ms` (a test about time
+    /// spent waiting: at least that long). Returns once serve has taken it.
     fn busy(self: &Arc<Self>, ms: u64) -> std::thread::JoinHandle<()> {
+        self.publishing(json!({ "ms": ms }))
+    }
+
+    /// The app's own long call, holding serve until [`Held::release`]. Returns once serve has
+    /// taken it.
+    fn hold(self: &Arc<Self>) -> Held {
+        Held(Arc::clone(self), self.publishing(json!({ "held": true })))
+    }
+
+    fn publishing(self: &Arc<Self>, params: Value) -> std::thread::JoinHandle<()> {
         let me = Arc::clone(self);
         let t = std::thread::spawn(move || {
-            me.call("changes.publish", json!({ "ms": ms })).unwrap();
+            me.call("changes.publish", params).unwrap();
         });
-        let started = Instant::now();
+        self.wait_asked("changes.publish");
         while !self.methods().contains(&"changes.publish".to_string()) {
-            assert!(started.elapsed() < Duration::from_secs(2));
             std::thread::sleep(Duration::from_millis(5));
         }
         t
+    }
+
+    /// Returns once a call to `method` has come (it may still wait for its turn).
+    fn wait_asked(&self, method: &str) {
+        let started = Instant::now();
+        while !self.asked.lock().unwrap().iter().any(|m| m == method) {
+            assert!(started.elapsed() < Duration::from_secs(5), "no {method} came");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+/// A held `changes.publish`.
+struct Held(Arc<SerialServe>, std::thread::JoinHandle<()>);
+
+impl Held {
+    /// Lets it answer, and waits for it.
+    fn release(self) {
+        *self.0.go.0.lock().unwrap() = true;
+        self.0.go.1.notify_all();
+        self.1.join().unwrap();
     }
 }
 
@@ -162,7 +204,7 @@ roster.commands.add("quick", { run = function() return "here" end })
         let host = Arc::clone(&host);
         std::thread::spawn(move || host.call("waiter", count, json!({ "args": "", "words": [] })))
     };
-    std::thread::sleep(Duration::from_millis(50));
+    serve.wait_asked("hosts.list");
     let next = host.call("waiter", quick, json!({ "args": "", "words": [] }));
     ok(&next);
     assert_eq!(next.result, "here");
@@ -193,8 +235,7 @@ roster.commands.add("ask", { run = function()
 end })
 "#,
     );
-    let publish = serve.busy(1500);
-    let started = Instant::now();
+    let publish = serve.hold();
     let asked = host.call(
         "waiter",
         command(&loaded.ops, "ask"),
@@ -202,12 +243,9 @@ end })
     );
     ok(&asked);
     assert_eq!(asked.result, "asked");
-    assert!(
-        started.elapsed() < Duration::from_millis(200),
-        "{:?}",
-        started.elapsed()
-    );
-    publish.join().unwrap();
+    // Back while serve is still held: neither request has had its turn.
+    assert_eq!(serve.methods(), ["changes.publish"]);
+    publish.release();
     let mut said = notices(&rx, 2);
     said.sort();
     // Login references that say how a secret is fetched come cut, as the sync call's do (Q92).
@@ -321,7 +359,7 @@ end })
 fn a_plugin_may_have_only_so_many_requests_waiting() {
     let serve = Arc::new(SerialServe::default());
     let (host, rx) = listening(&serve);
-    let publish = serve.busy(800);
+    let publish = serve.hold();
     load(
         &host,
         "cap",
@@ -338,7 +376,7 @@ local ok, err = pcall(roster.serve.request, "hosts.list", {}, function() end)
 assert(not ok and err:find("8 requests are waiting for roster serve already", 1, true), tostring(err))
 "#,
     );
-    publish.join().unwrap();
+    publish.release();
     assert_eq!(notices(&rx, 1), ["all 8"]);
     settled(&host);
 }
@@ -350,17 +388,19 @@ fn an_answer_after_an_unload_or_a_reload_is_dropped() {
     let init = r#"
 roster.serve.request("hosts.list", {}, function() roster.notify("answered " .. roster.plugin.version) end)
 "#;
-    let publish = serve.busy(400);
+    let publish = serve.hold();
     let (_, _folder) = load(&host, "reload", &["serve:hosts.list"], init);
     // Reloaded while its first request waits: only the second load's answer arrives.
     let (_, _folder) = load(&host, "reload", &["serve:hosts.list"], init);
-    publish.join().unwrap();
+    publish.release();
     assert_eq!(notices(&rx, 2), ["answered 1.0.0"]);
 
-    let publish = serve.busy(400);
+    let serve = Arc::new(SerialServe::default());
+    let (host, rx) = listening(&serve);
+    let publish = serve.hold();
     let (_, _folder) = load(&host, "reload", &["serve:hosts.list"], init);
     assert!(host.unload("waiter"));
-    publish.join().unwrap();
+    publish.release();
     assert!(notices(&rx, 1).is_empty());
 }
 

@@ -9,6 +9,7 @@ import { FAKE_PASSWORD, fakeBackend, makeHosts } from "./backend/fake";
 import type { FakePlugin } from "./backend/fakePlugins";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { advanceTimers, fakeTimeouts, pass } from "./test-timers";
 
 const LEADER = "{Control>} {/Control}";
 const PATH = "~/plugins/recent-alerts";
@@ -182,7 +183,7 @@ describe("job_progress", () => {
         roster.on("job_progress", (e) => void heard.push({ kind: e.kind, job: e.job, state: e.state, done: e.done }));
       },
     };
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers });
     const backend = fakeBackend({ hosts: makeHosts(3), apiVersion, plugins: { "~/plugins/follower": follower } });
     render(<App backend={backend} terminalView={StubTerminal} platform={memoryPlatform()} />);
     await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
@@ -208,9 +209,11 @@ describe("job_progress", () => {
   });
 
   it("isn't listened for from a serve before API 20", async () => {
+    fakeTimeouts();
     const { heard, backend } = await watching(19);
     backend.jobProgress({ kind: "mesh", job: 3, state: "running", done: 1, ...job });
-    await new Promise((r) => setTimeout(r, 50));
+    // Long past what an event to a Plugin takes through the fake Backend.
+    await pass(1_000);
     expect(heard).toEqual([]);
   });
 });
