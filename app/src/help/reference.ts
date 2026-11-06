@@ -56,11 +56,11 @@ export interface Reference {
 
 export const reference = data as Reference;
 
-/** The help pages roster makes itself (help/pages.ts), and every guide's name and other names:
+/** The help pages roster makes itself (help/pages.ts, and :tutor's; pages.test.ts checks), and every guide's name and other names:
  * an entry named like one (`keys`, the Plugin API's `roster.os`) is `'keys'`, as Neovim writes
  * options, so the page keeps its name. */
 const RESERVED = new Set(
-  ["index", "quickref", "commands", "keys", "options", "themes", "finders", "errors", "health", "all"]
+  ["index", "quickref", "commands", "keys", "options", "themes", "finders", "errors", "health", "all", "tutor"]
     .concat(guides.flatMap((g) => [g.id, ...Object.keys(g.aliases ?? {})]))
     .map((t) => t.toLowerCase()),
 );

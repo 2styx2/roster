@@ -26,6 +26,7 @@ import { ShellHooks, TokenMask, hasTyping, newNonce, type IntegrateResult, type 
 import { hopWords } from "./breadcrumb";
 import { isLive } from "./status";
 import { Attempt } from "./attempt";
+import { errorText } from "../ui/format";
 
 export type TabStatus =
   | { state: "connecting" }
@@ -637,7 +638,7 @@ export class Tabs {
       this.config.onVaultLocked();
       return;
     }
-    const message = e instanceof Error ? e.message : String(e);
+    const message = errorText(e);
     this.setStatus(entry, { state: "failed", message, code, problem });
   }
 

@@ -33,7 +33,7 @@ export function useConfigActions(opts: {
   source(): void;
 }): ConfigActions {
   const { platform, report, say } = opts;
-  const importing = usePanelState<Importing>(opts.focus);
+  const importing = usePanelState<Importing>(opts.focus, "import");
   const withSource = (act: (source: NonNullable<Platform["config"]>) => void) => () => {
     const source = platform.config;
     if (!source) return say("There's no init.lua here: this window isn't the app (a plain browser)");

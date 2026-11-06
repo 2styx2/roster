@@ -1,14 +1,15 @@
 // Plugins in the workspace (ticket 23): the Lua runs in roster-core; they act on the app through
 // command lines, and their UI goes into the registries with their name as its source. This is
 // what the workspace tells them (the events) and what it lets them do (PluginUi).
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Backend } from "../backend/types";
-import { foldersSettings } from "../folders/file";
+import { foldersBuiltin } from "../folders/builtin";
+import { useStoreLayer, type Layer } from "../panel/stack";
 import type { Platform } from "../platform/types";
 import { PluginManager, type Snapshot } from "../plugins/manager";
+import { SessionEvents } from "../plugins/sessionEvents";
 import { SessionList } from "../plugins/sessionList";
 import type { Registries } from "../registries";
-import { isLive } from "../session/status";
 import type { TabsSnapshot } from "../session/tabs";
 import type { StateStore } from "../state/store";
 import type { TutorEvent } from "../tutor/tutor";
@@ -16,6 +17,7 @@ import { errorText } from "../ui/format";
 import type { Message, MessageLog, MessagesChoice } from "../ui/messages";
 import type { ViewHost } from "../view/views";
 import type { Latest } from "../ui/latest";
+import type { FocusReturn } from "../ui/useFocusReturn";
 
 /** What a Plugin's calls reach in the workspace, as of its last render. */
 export interface PluginHandlers {
@@ -30,6 +32,8 @@ export interface PluginHandlers {
 export interface PluginBridge {
   plugins: PluginManager;
   snapshot: Snapshot;
+  /** A Plugin's question, then its float: the topmost layers. */
+  layers: Layer[];
 }
 
 export function usePluginBridge(opts: {
@@ -54,10 +58,12 @@ export function usePluginBridge(opts: {
    * (ticket 66), and why yours aren't there is said once. */
   demo: { onStop(stop: () => void): () => void; problem: string | null } | null;
   tutorEvent(name: string, data: TutorEvent["data"]): void;
+  focus: FocusReturn;
 }): PluginBridge {
   const { backend, registries, store, platform, viewHost, say, handlers, sessions, tutorEvent } = opts;
   const { choice: messagesChoice, log: messageLog } = opts.messages;
   const isDemo = opts.demo !== null;
+  const [builtins] = useState(() => [foldersBuiltin(registries.folders, platform.folders, store)]);
   const [plugins] = useState(
     () =>
       new PluginManager(backend, registries, store, {
@@ -76,8 +82,7 @@ export function usePluginBridge(opts: {
         messagesAll: () => messagesChoice.all(),
         log: (message) => messageLog.push(message),
         openCommandLine: (text) => handlers.get().openCommandLine(text),
-        // Folders (ticket 61, decision Q93): init.lua's Folders, and the ones to move in once.
-        builtinSettings: async (name) => (name === "folders" ? foldersSettings(registries.folders, platform.folders, store) : null),
+        builtinSettings: async (name) => (await builtins.find((b) => b.name === name)?.settings()) ?? null,
         demo: isDemo,
       }),
   );
@@ -111,55 +116,36 @@ export function usePluginBridge(opts: {
     if (!ready || !jobs) return;
     return backend.onJobProgress((job) => void plugins.event("job_progress", job));
   }, [backend, ready, jobs, plugins]);
-  // Folders (GLOSSARY) is a built-in Plugin (ticket 61, decision Q93): init.lua's Folders are its
-  // settings, so a change to them loads it again.
-  useEffect(() => registries.folders.subscribe(() => void plugins.reloadBuiltin("folders")), [registries, plugins]);
+  useEffect(() => {
+    const stops = builtins.map((b) => b.watch(() => void plugins.reloadBuiltin(b.name)));
+    return () => stops.forEach((stop) => stop());
+  }, [builtins, plugins]);
 
-  // Sessions opening and ending as Plugin events. Each tab's state and Host (a Quick Connect
-  // Session's is null), so a tab closed while it ran still names its Host in `session_exit`.
-  const seen = useRef(new Map<number, { state: "live" | "ended"; host: string | null }>());
-  // The Sessions open now, in the order they opened (a reconnect is a new open, so it goes last):
-  // the whole list goes to the core on start and whenever it changes, before the events that
-  // changed it, for `roster.sessions.list()` (ticket 96, decision Q127).
-  const order = useRef(new Map<number, string | null>());
+  // A Plugin's question (ticket 78) or float (ticket 91) takes the keys; answering or closing puts
+  // them back where they were.
+  const confirmKey = useCallback(() => plugins.snapshot().confirm?.id.toString() ?? null, [plugins]);
+  const floatKey = useCallback(() => {
+    const f = plugins.snapshot().float;
+    return f ? `${f.plugin}:${f.title}` : null;
+  }, [plugins]);
+  const closeConfirm = useCallback(() => plugins.answerConfirm(false), [plugins]);
+  const closeFloat = useCallback(() => plugins.closeFloat(), [plugins]);
+  const confirmLayer = useStoreLayer(opts.focus, "plugin-confirm", plugins, confirmKey, closeConfirm);
+  const floatLayer = useStoreLayer(opts.focus, "plugin-float", plugins, floatKey, closeFloat);
+
   // A folder change waits a little (SessionList: review of #426, L3); an open or an end goes at once.
   const [list] = useState(() => new SessionList((open) => plugins.sessions(open)));
   useEffect(() => () => list.stop(), [list]);
+  const [sessionEvents] = useState(() => new SessionEvents());
   useEffect(() => {
-    const before = seen.current;
-    const now = new Map<number, { state: "live" | "ended"; host: string | null }>();
-    const events: [() => void, () => void][] = [];
-    for (const t of sessions.tabs) {
-      const ended = !isLive(t.status);
-      const host = t.quick ? null : t.host;
-      now.set(t.id, { state: ended ? "ended" : "live", host });
-      if (!ended && before.get(t.id)?.state !== "live") {
-        order.current.delete(t.id);
-        order.current.set(t.id, host);
-        // A Quick Connect Session's `host` is nil to a Plugin: it isn't a Host of the Inventory.
-        events.push([() => void plugins.event("session_open", { session: t.id, host }), () => tutorEvent("session_open", { host: t.host })]);
-      }
-      if (ended && before.get(t.id)?.state === "live") {
-        order.current.delete(t.id);
-        const code = t.status.state === "ended" ? t.status.exit.code : null;
-        events.push([() => void plugins.event("session_exit", { session: t.id, host, code }), () => tutorEvent("session_exit", { host: t.host, code })]);
-      }
+    const { events, open } = sessionEvents.next(sessions.tabs);
+    // The list goes to the core before the events that changed it.
+    list.update(open);
+    for (const e of events) {
+      void plugins.event(e.name, e.payload);
+      if (e.tutor) tutorEvent(e.name, e.tutor);
     }
-    for (const [id, was] of before) {
-      if (now.has(id)) continue;
-      order.current.delete(id);
-      if (was.state === "live") events.push([() => void plugins.event("session_exit", { session: id, host: was.host, code: null }), () => {}]);
-    }
-    seen.current = now;
-    // With the folder each one's shell last said (OSC 7, #242): the core gives it to terminal.read's
-    // Plugins only (Q185), and a `cd` sends the list again.
-    const cwds = new Map(sessions.tabs.map((t) => [t.id, t.cwd ?? null]));
-    list.update([...order.current].map(([session, host]) => ({ session, host, cwd: cwds.get(session) ?? null })));
-    for (const [toPlugins, toTutor] of events) {
-      toPlugins();
-      toTutor();
-    }
-  }, [sessions.tabs, plugins, tutorEvent, list]);
+  }, [sessions.tabs, plugins, tutorEvent, list, sessionEvents]);
   // The Session on screen: Plugins hear `host_selected` only for a Host's (a Quick Connect
   // Session isn't on one).
   const onScreen = sessions.tabs.find((t) => t.id === sessions.active);
@@ -171,5 +157,5 @@ export function usePluginBridge(opts: {
     tutorEvent("host_selected", { host: onScreenHost });
   }, [onScreenHost, onScreenQuick, plugins, tutorEvent]);
 
-  return { plugins, snapshot };
+  return { plugins, snapshot, layers: [confirmLayer, floatLayer] };
 }

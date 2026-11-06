@@ -239,7 +239,7 @@ roster embeds **Lua 5.4** (built into the app, nothing to install), not LuaJIT a
 | [`MeshCutChange`](#meshcutchange) | The `mesh: false` a `mesh.cut` writes into `roster.yml` |
 | [`MeshStatus`](#meshstatus) | `mesh.status`'s result: the Mesh as `roster.yml` asks for it |
 | [`MeshJob`](#meshjob) | `mesh.job`'s result: how far a Mesh run has got |
-| [`ServeError`](#serveerror) | An error roster serve answered with |
+| [`JobError`](#joberror) | Why a job in roster serve failed, as plain data in its status |
 | [`MeshStop`](#meshstop) | `mesh.stop`'s result |
 | [`DiscoverPlan`](#discoverplan) | `discover.plan`'s result: what a scan would visit |
 | [`DiscoverStatus`](#discoverstatus) | `discover.status`'s and `discover.start`'s result: how far a scan has got |
@@ -4555,7 +4555,7 @@ Since serve API 21 a check is a job: the `job_progress` event (with `serve:host.
 | `at` | `string` | no | The step under way (`"dns"`, `"auth"`, ...). |
 | `host` | `string` | yes | The Host it checks. |
 | `result` | [`HostCheck`](#hostcheck) | no | Once `done` or `stopped`: `host.check`'s result. `ok` is false for a stopped check, its later steps `skipped`. |
-| `error` | [`ServeError`](#serveerror) | no | Once `failed`: why. |
+| `error` | [`JobError`](#joberror) | no | Once `failed`: why. |
 
 ### `CheckStep`
 
@@ -4753,11 +4753,11 @@ It never connects. `brief = true` keeps it small as in a brief [`MeshResult`](#m
 | `at` | `string` | no | The Host it's on. |
 | `stopped` | `boolean` | yes | `mesh.stop` asked it to stop; the Hosts it hadn't got to are pending. |
 | `result` | [`MeshResult`](#meshresult)`\|`[`MeshCut`](#meshcut) | no | Once `done`: what the method itself returns. |
-| `error` | [`ServeError`](#serveerror) | no | Once `failed`: why. |
+| `error` | [`JobError`](#joberror) | no | Once `failed`: why. |
 
-### `ServeError`
+### `JobError`
 
-An error roster serve answered with.
+Why a job in roster serve failed, as plain data in its status.
 
 | Field | Type | Required | Description |
 |---|---|---|---|

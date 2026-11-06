@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Config } from "../config/types";
 import type { Options } from "../keymap";
-import { realClock, type Clock } from "../lock/idle";
+import { realClock, type Clock } from "../ui/clock";
 import type { Platform } from "../platform/types";
 import type { StateStore } from "../state/store";
 import { errorText } from "../ui/format";

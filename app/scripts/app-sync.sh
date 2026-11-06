@@ -15,6 +15,7 @@ rsync -a --delete \
   --include /app/ --include /crates/ --include /examples/ \
   --include /docs/ --include /docs/app/ --include '/docs/*.md' --exclude '/docs/*' \
   --include /tests/ --include /tests/vectors/ --exclude '/tests/*' \
+  --include /plugins/ --include '/plugins/*/' --include '/plugins/*/roster-plugin.lua' --exclude '/plugins/*/*' --exclude '/plugins/*' \
   --exclude '/*' \
   --exclude .git --exclude node_modules --exclude /target --exclude dist \
   --exclude app/src-tauri/gen --exclude app/src-tauri/tauri.dev-port.json \

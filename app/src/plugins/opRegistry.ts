@@ -72,6 +72,7 @@ import {
   type Run,
 } from "./ops";
 import type { Shown } from "./shown";
+import { errorText } from "../ui/format";
 
 /** What a Plugin's function is told about what ran it (api 3, `HandlerContext`). */
 export type HandlerContext = Record<string, string | number | null>;
@@ -831,7 +832,7 @@ const OPS: { [K in OpKind]: Entry<K> } = {
       const done = h.ui.copy(op.text).then(
         () => true,
         (e: unknown) => {
-          h.notify(plugin, "error", `${plugin}: couldn't copy to the clipboard: ${e instanceof Error ? e.message : String(e)}`);
+          h.notify(plugin, "error", `${plugin}: couldn't copy to the clipboard: ${errorText(e)}`);
           return false;
         },
       );

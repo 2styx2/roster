@@ -8,11 +8,12 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_LOGIN_PASSWORD, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "./backend/fake";
-import { FILL_API_VERSION, FillRefusal, NESTED_FILL_API_VERSION } from "./backend/types";
+import { FillRefusal } from "./backend/types";
 import { builtinRegistries } from "./registries";
 import { StubTerminal } from "./terminal/StubTerminal";
 import { IDLE_MS } from "./session/shellHooks";
 import { advanceTimers, fakeTimeouts, pass } from "./test-timers";
+import { sinceOf } from "./backend/capabilities";
 
 const hosts = makeHosts(12);
 // makeHosts: every third Host has a vault Login (bw:…), the rest log in with keys (auth: key).
@@ -35,7 +36,7 @@ async function ready(scenario: Partial<FakeScenario> = {}) {
   const user = userEvent.setup({ advanceTimers });
   render(
     <App
-      backend={fakeBackend({ hosts, apiVersion: NESTED_FILL_API_VERSION, ...scenario })}
+      backend={fakeBackend({ hosts, apiVersion: sinceOf("nestedFill"), ...scenario })}
       terminalView={StubTerminal}
       registries={builtinRegistries()}
     />,
@@ -191,7 +192,7 @@ describe("filling a password prompt", () => {
   });
 
   it("isn't offered by an older roster, and the key says why", async () => {
-    const user = await ready({ apiVersion: FILL_API_VERSION - 1 });
+    const user = await ready({ apiVersion: sinceOf("fill") - 1 });
     await connect(user, vaultHost);
     await sudo(user);
     expect(offer()).toBeNull();
@@ -275,7 +276,7 @@ describe("a nested ssh to another Host (ticket 120)", () => {
   });
 
   it("shows the Host but offers no fill on a roster before API 26", async () => {
-    const user = await ready({ hosts: hooked, apiVersion: FILL_API_VERSION });
+    const user = await ready({ hosts: hooked, apiVersion: sinceOf("fill") });
     await nested(user);
     await within(output()).findByText(new RegExp(`admin@${there}'s password:`));
     expect(tab()).toHaveAccessibleName(new RegExp(`now on ${there}`));
@@ -321,7 +322,7 @@ describe("on Windows' ConPTY (ticket 162)", () => {
 describe("the fake's printed-prompt check, as the core's", () => {
   const td = new TextDecoder();
   async function session(scenario: Partial<FakeScenario> = {}, marks?: string) {
-    const backend = fakeBackend({ hosts, apiVersion: NESTED_FILL_API_VERSION, vault: { status: "unlocked" }, ...scenario });
+    const backend = fakeBackend({ hosts, apiVersion: sinceOf("nestedFill"), vault: { status: "unlocked" }, ...scenario });
     let seen = "";
     const events = { output: (d: Uint8Array) => void (seen += td.decode(d)), exit: () => {} };
     const handle = await backend.openSession(vaultHost, { cols: 80, rows: 24 }, events, undefined, marks);

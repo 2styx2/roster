@@ -63,6 +63,7 @@ import {
   type AddField,
   type LoginWay,
 } from "./addForm";
+import { errorText } from "../ui/format";
 
 type Phase =
   | { at: "ready" }
@@ -223,7 +224,7 @@ export function AddPanel({
       setItemFill({ at: "done", changed, ref: refText, note: fields.note ?? null });
     } catch (e) {
       if (!live.current || seq !== fillSeq.current) return;
-      setItemFill({ at: "failed", message: e instanceof Error ? e.message : String(e) });
+      setItemFill({ at: "failed", message: errorText(e) });
     }
   };
 

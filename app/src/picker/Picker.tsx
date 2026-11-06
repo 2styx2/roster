@@ -163,7 +163,7 @@ export function Picker({ hosts, recent, vim, keymap = defaultKeymap, onOpen, onR
   ];
 
   return (
-    <div className="picker-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="picker-backdrop" data-panel="picker" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="picker" role="dialog" aria-label="Find a Host">
         <div className="picker-search">
           <svg className="picker-search-icon" viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">

@@ -17,19 +17,53 @@ const WIRING = (p: string) => WIRING_FILES.includes(p) || p.startsWith("app/") |
 
 /** The pure modules: data and rules with no component, so a test, the docs build or another
  * feature can load them alone. */
-const PURE = ["sidebar/model.ts", "session/status.ts", "graph/model.ts", "ui/table.ts", "ui/when.ts", "backend/capabilities.ts", "panel/stack.ts", "ui/dot.ts"];
+const PURE = ["sidebar/model.ts", "session/status.ts", "graph/model.ts", "ui/table.ts", "ui/when.ts", "backend/capabilities.ts", "panel/stack.ts", "ui/dot.ts", "view/segments.ts", "edit/diff.ts", "plugins/sessionEvents.ts"];
 
-/** Folder pairs that import each other today, each with why. The test fails on a new pair, and on
- * a pair listed here that no longer imports both ways (take it off: the list only shrinks). */
-const KNOWN_FOLDER_CYCLES: Record<string, string> = {
-  "config <-> terminal":
-    "config/ is two layers in one folder: the Config's data (core.gen.ts, types.ts, defaults.ts, ranges.ts) under terminal/options.ts, and applying it (apply.ts) over it",
-  "config <-> panel": "the same split: panel/layout.ts reads config/ranges.ts, config/useConfigActions.ts opens a panel",
-  "terminal <-> theme":
-    "terminal/options.ts holds the ANSI palette a Theme is made of, and the terminal is drawn with the Theme (useTerminalEnv.ts)",
-  "platform <-> terminal": "the browser Platform (platform/browser.ts) probes fonts with terminal/fonts.ts; the terminal asks platform/os.ts",
-  "plugins <-> tutor": "plugins/opRegistry.ts applies every op kind into its feature (tutor's too); tutor/demo.ts loads the demo's Plugins",
+/** The folder imports that go up, each with why. Without them the folders depend one way: the test
+ * fails on any other import that closes a cycle (of any length), and on an entry here that's gone
+ * or no longer closes one (take it off: the list only shrinks). */
+const KNOWN_BACK_EDGES: Record<string, string> = {
+  "theme -> terminal":
+    "terminal/options.ts holds the ANSI palette a Theme is made of (theme/theme.ts), and the terminal is drawn with the Theme (useTerminalEnv.ts)",
+  "platform -> terminal": "the browser and Tauri Platforms probe fonts with terminal/fonts.ts; the terminal asks platform/os.ts",
+  "plugins -> tutor": "plugins/opRegistry.ts applies every op kind into its feature (tutor's too); tutor/demo.ts loads the demo's Plugins",
 };
+
+/** A folder that holds two layers, split so the lower one counts on its own: the Config's data
+ * (generated from the core; terminal/ and panel/ read it) under applying it (apply.ts). */
+const CONFIG_DATA = ["config/core.gen.ts", "config/types.ts", "config/defaults.ts", "config/ranges.ts"];
+
+/** The groups of NODES that reach each other through NEXT (Tarjan's strongly connected
+ * components), each of more than one node, sorted. */
+function stronglyConnected(nodes: string[], next: (v: string) => string[]): string[][] {
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const stack: string[] = [];
+  const found: string[][] = [];
+  let n = 0;
+  const visit = (v: string) => {
+    index.set(v, n);
+    low.set(v, n++);
+    stack.push(v);
+    for (const w of next(v)) {
+      if (!index.has(w)) {
+        visit(w);
+        low.set(v, Math.min(low.get(v)!, low.get(w)!));
+      } else if (stack.includes(w)) low.set(v, Math.min(low.get(v)!, index.get(w)!));
+    }
+    if (low.get(v) === index.get(v)) {
+      const scc: string[] = [];
+      let w: string;
+      do {
+        w = stack.pop()!;
+        scc.push(w);
+      } while (w !== v);
+      if (scc.length > 1) found.push(scc.sort());
+    }
+  };
+  for (const v of nodes) if (!index.has(v)) visit(v);
+  return found;
+}
 
 interface Mod {
   path: string;
@@ -101,6 +135,7 @@ function reach(path: string): Map<string, string[]> {
 function unitOf(path: string): string | null {
   if (WIRING(path) || !path.includes("/")) return null;
   if (/^backend\/(fake|worstCase)/.test(path)) return "backend (fakes)";
+  if (CONFIG_DATA.includes(path)) return "config (data)";
   return path.slice(0, path.indexOf("/"));
 }
 
@@ -137,37 +172,11 @@ describe("the frontend's import rules", () => {
   });
 
   it("has no import cycle between modules", () => {
-    const index = new Map<string, number>();
-    const low = new Map<string, number>();
-    const stack: string[] = [];
-    const cycles: string[] = [];
-    let n = 0;
-    const visit = (v: string) => {
-      index.set(v, n);
-      low.set(v, n++);
-      stack.push(v);
-      for (const w of MODS.get(v)!.imports) {
-        if (!MODS.has(w)) continue;
-        if (!index.has(w)) {
-          visit(w);
-          low.set(v, Math.min(low.get(v)!, low.get(w)!));
-        } else if (stack.includes(w)) low.set(v, Math.min(low.get(v)!, index.get(w)!));
-      }
-      if (low.get(v) === index.get(v)) {
-        const scc: string[] = [];
-        let w: string;
-        do {
-          w = stack.pop()!;
-          scc.push(w);
-        } while (w !== v);
-        if (scc.length > 1) cycles.push(scc.sort().join(", "));
-      }
-    };
-    for (const v of MODS.keys()) if (!index.has(v)) visit(v);
+    const cycles = stronglyConnected([...MODS.keys()], (v) => MODS.get(v)!.imports.filter((w) => MODS.has(w))).map((scc) => scc.join(", "));
     expect(cycles, `${DOC}, "Dependencies between folders": modules import each other one way`).toEqual([]);
   });
 
-  it("has no import cycle between feature folders but the known ones", () => {
+  it("has no import cycle between feature folders but through the known back edges", () => {
     const edges = new Map<string, Map<string, string>>();
     for (const m of MODS.values()) {
       const from = unitOf(m.path);
@@ -180,15 +189,29 @@ describe("the frontend's import rules", () => {
         edges.set(from, out);
       }
     }
-    const found = new Map<string, string>();
-    for (const [a, out] of edges)
-      for (const [b, why] of out) {
-        const back = edges.get(b)?.get(a);
-        if (back && a < b) found.set(`${a} <-> ${b}`, `${why}; ${back}`);
-      }
-    const fresh = [...found].filter(([pair]) => !(pair in KNOWN_FOLDER_CYCLES)).map(([pair, why]) => `${pair}: ${why}`);
-    const gone = Object.keys(KNOWN_FOLDER_CYCLES).filter((pair) => !found.has(pair));
-    expect(fresh, `${DOC}, "Dependencies between folders": feature folders depend one way`).toEqual([]);
-    expect(gone, "these no longer import each other: take them off KNOWN_FOLDER_CYCLES (and the doc's list)").toEqual([]);
+    const back = (a: string, b: string) => `${a} -> ${b}` in KNOWN_BACK_EDGES;
+    const next = (a: string) => [...(edges.get(a)?.keys() ?? [])].filter((b) => !back(a, b));
+    const cycles = stronglyConnected([...edges.keys()], next).map((scc) =>
+      scc.flatMap((a) => next(a).filter((b) => scc.includes(b)).map((b) => `${a} -> ${b} (${edges.get(a)!.get(b)})`)).join("; "),
+    );
+    const reaches = (from: string, to: string) => {
+      const seen = new Set([from]);
+      const queue = [from];
+      for (let at = queue.shift(); at !== undefined; at = queue.shift())
+        for (const b of next(at)) {
+          if (b === to) return true;
+          if (!seen.has(b)) {
+            seen.add(b);
+            queue.push(b);
+          }
+        }
+      return false;
+    };
+    const gone = Object.keys(KNOWN_BACK_EDGES).filter((edge) => {
+      const [a = "", b = ""] = edge.split(" -> ");
+      return !edges.get(a)?.has(b) || !reaches(b, a);
+    });
+    expect(cycles, `${DOC}, "Dependencies between folders": feature folders depend one way`).toEqual([]);
+    expect(gone, "these no longer close a cycle: take them off KNOWN_BACK_EDGES (and the doc's list)").toEqual([]);
   });
 });

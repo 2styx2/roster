@@ -1,5 +1,6 @@
 // What Plugins put over the workspace: the permission prompt, `:plugins` and `:packages`, a
-// Plugin's question and its float. Each gives the keys back where they were when it closes.
+// Plugin's question and its float. Each gives the keys back where they were when it closes (the
+// question's and the float's through their layers, usePluginBridge.ts).
 import type { PanelLayout } from "../panel/layout";
 import { PanelFrame } from "../panel/PanelFrame";
 import type { PanelState } from "../panel/stack";
@@ -15,6 +16,7 @@ export interface PluginLayersProps {
   panelKeys: string | null;
   /** The prompt's safe choice, which takes the keys (ticket 56, decision Q87). */
   safe(el: HTMLButtonElement | null): void;
+  /** Where the keys go after the prompt's answer. */
   restoreFocus(): void;
   run(line: string): void;
 }
@@ -58,10 +60,7 @@ export function PluginLayers(p: PluginLayersProps) {
         <PluginConfirmPanel
           key={snapshot.confirm.id}
           confirm={snapshot.confirm}
-          onAnswer={(yes) => {
-            plugins.answerConfirm(yes);
-            p.restoreFocus();
-          }}
+          onAnswer={(yes) => plugins.answerConfirm(yes)}
         />
       )}
       {snapshot.float && (
@@ -70,10 +69,7 @@ export function PluginLayers(p: PluginLayersProps) {
           float={snapshot.float}
           onAction={(i) => plugins.floatAction(i)}
           onLink={(i) => plugins.openLink(i)}
-          onClose={() => {
-            plugins.closeFloat();
-            p.restoreFocus();
-          }}
+          onClose={() => plugins.closeFloat()}
         />
       )}
     </>

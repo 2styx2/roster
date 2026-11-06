@@ -8,9 +8,11 @@
 // show a command to copy, when roster serve has no method for it (`roster sync`, `roster setup`).
 // There is never an action that accepts a host key.
 import { Code, PATH_NOT_REPEATED } from "../backend/serveContract";
-import { BackendCallError, SETUP_HOST_API_VERSION } from "../backend/types";
+import type { Capabilities } from "../backend/capabilities";
+import { BackendCallError } from "../backend/types";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import type { Problem, ProblemCode, ProblemData } from "./classify";
+import { errorText } from "../ui/format";
 
 /** Where a problem lives (docs/app/errors.md "Where it lives"). */
 export type Where =
@@ -24,10 +26,10 @@ export type Where =
   | "the infra repo"
   | "init.lua";
 
-/** What a row's words may depend on beyond the Problem: the connected roster's `api_version`.
+/** What a row's words may depend on beyond the Problem: what the connected roster can do.
  * Unknown (`:help`, no roster yet): the words of a roster that has everything. */
 export interface RowContext {
-  api?: number | undefined;
+  caps?: Capabilities | undefined;
 }
 
 export type ErrorAction =
@@ -60,8 +62,7 @@ const copy = (text: (p: Problem, ctx?: RowContext) => string | null): ErrorActio
 const sync = copy(() => "roster sync");
 /** `roster setup` for this one Host: `--host` (that Host alone) on a roster that has it (API 29),
  * else `--only`, which also takes a group, type or product by that name (#461). */
-const setupHost = (host: string, ctx: RowContext = {}): string =>
-  `roster setup ${ctx.api === undefined || ctx.api >= SETUP_HOST_API_VERSION ? "--host" : "--only"} ${host}`;
+export const setupHost = (host: string, ctx: RowContext = {}): string => `roster setup ${!ctx.caps || ctx.caps.has("setupHost") ? "--host" : "--only"} ${host}`;
 const setupOne: ErrorAction = { ...copy((p, ctx) => setupHost(p.host, ctx)), hostOnly: true };
 /** The first `command` in roster's message (e.g. "run `bw login` once"). */
 const quoted = (p: Problem) => /`([^`]+)`/.exec(p.message)?.[1] ?? null;
@@ -696,7 +697,7 @@ export function problemFromCallError(host: string, e: unknown): Problem {
       ...(Object.keys(data).length ? { data } : {}),
     };
   }
-  const message = e instanceof Error ? e.message : String(e);
+  const message = errorText(e);
   return { code: Code.ROSTER_ERROR, host, message, details: message };
 }
 

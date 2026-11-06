@@ -4,6 +4,7 @@
 // goes back where it was.
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { chordOf, type CommandLine, type Keymap, type Options } from "../keymap";
+import { inAnyLayer, inLayer } from "../panel/stack";
 import { isLeaderKey } from "../terminal/keys";
 import type { FocusReturn } from "../ui/useFocusReturn";
 import { press, terminalMode, type KeyState } from "./mode";
@@ -15,7 +16,15 @@ export interface AppKeys {
   setMode(next: KeyState): void;
   /** The mode now, for an event handler (it may have changed since the last render). */
   mode(): KeyState["mode"];
+  /** The Sidebar's tree took focus (Tab, a screen reader) from `from`: App mode, as after the Leader. */
+  treeFocused(from: Element | null): void;
+  /** Focus left the tree for `to` (Tab on, a click): the keys are the terminal's again, unless it
+   * went to what App mode opened over it (a Host row's menu, the command line, a finder). */
+  treeBlurred(to: Element | null): void;
 }
+
+/** The layers App mode opens over the Sidebar's tree: focus going to one keeps App mode. */
+const OVER_THE_TREE = ["picker", "finder", "cmdline", "import", "row-menu"];
 
 export function useAppKeys(opts: {
   keymap: Keymap;
@@ -40,7 +49,7 @@ export function useAppKeys(opts: {
   const onKey = useEffectEvent((e: KeyboardEvent) => {
     if (MODIFIERS.has(e.key)) return;
     // A Host row's menu takes its own keys (arrows, letters, Esc), in App mode too.
-    if (e.target instanceof Element && e.target.closest(".row-menu")) return;
+    if (e.target instanceof Element && inLayer("row-menu", e.target)) return;
     // An overlay (the Picker, the command line, the bindings filter) opens in Terminal mode, so its
     // input gets the keys as a terminal would, until the Leader.
     const { options, keymap } = opts;
@@ -87,5 +96,14 @@ export function useAppKeys(opts: {
     if (document.activeElement === focused) focus.toMain();
   }, [treeMode, keyState.mode, focus]);
 
-  return { keyState, setMode, mode: () => keyRef.current.mode };
+  const treeFocused = (from: Element | null) => {
+    if (keyRef.current.mode !== "terminal") return;
+    opts.focus.setBeforeTree(from);
+    opts.onAppMode();
+    setMode({ mode: "app", pending: [] });
+  };
+  const treeBlurred = (to: Element | null) => {
+    if (keyRef.current.mode === "app" && to !== null && !inAnyLayer(OVER_THE_TREE, to)) setMode(terminalMode);
+  };
+  return { keyState, setMode, mode: () => keyRef.current.mode, treeFocused, treeBlurred };
 }

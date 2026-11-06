@@ -1,15 +1,17 @@
 // `:help` in the workspace (ticket 37): its pages read the live registries and the Config each time
 // they show; a `:help` still loading never opens over what the user went on to; and the command
 // line help was opened from comes back as it was when help closes (ticket 52).
-import { useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { inLayer } from "../panel/stack";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { inLayer, useStoreLayer, type Layer } from "../panel/stack";
 import type { Config } from "../config/types";
 import type { HealthReport } from "../health/health";
 import type { Keymap, Options } from "../keymap";
 import type { Registries } from "../registries";
 import type { TutorEvent } from "../tutor/tutor";
 import type { HelpSnapshot, HelpView } from "./command";
-import { helpContext, type HelpContext } from "./pages";
+import type { FocusReturn } from "../ui/useFocusReturn";
+import { optionTopic } from "./lookup";
+import { helpContext, topics, type HelpContext } from "./pages";
 
 export interface HelpState {
   view: HelpView;
@@ -18,6 +20,10 @@ export interface HelpState {
   /** Opens `:help TOPIC` from the command line: the line `line` (caret at `caret`) comes back when
    * help closes. */
   fromLine(line: string, caret: number, open: () => void): void;
+  /** The `:help` topic of an option (`leader`, `keys.list`), as the Key bindings panel links it. */
+  optionTopic(option: string): string;
+  /** The help panel's place in the stack: it takes the keys as it opens and gives them back. */
+  layer: Layer;
 }
 
 export function useHelp(opts: {
@@ -35,6 +41,7 @@ export function useHelp(opts: {
   overlayOpen: boolean;
   tutorEvent(name: string, data: TutorEvent["data"]): void;
   reopenLine(line: string, caret: number): void;
+  focus: FocusReturn;
 }): HelpState {
   const { registries } = opts;
   const { view } = opts;
@@ -65,9 +72,10 @@ export function useHelp(opts: {
           activeTheme,
           health: { sections: healthSections, report: health },
           ...(tutor ? { tutor } : {}),
+          text: view.text,
         },
       ),
-    [registries, commandList, themeList, finderList, errorRows, helpPages, keymap, options, config, configPath, state, activeTheme, healthSections, health, tutor],
+    [registries, commandList, themeList, finderList, errorRows, helpPages, keymap, options, config, configPath, state, activeTheme, healthSections, health, tutor, view],
   );
   useLayoutEffect(() => view.setContext(() => ctx), [view, ctx]);
 
@@ -110,5 +118,9 @@ export function useHelp(opts: {
     open();
     if (!view.snapshot().at) backToLine.current = null;
   };
-  return { view, at, ctx, fromLine };
+  const openKey = useCallback(() => (view.snapshot().at ? "help" : null), [view]);
+  const close = useCallback(() => view.close(), [view]);
+  const layer = useStoreLayer(opts.focus, "help", view, openKey, close);
+  const topicOf = (option: string) => optionTopic(option, new Set(topics(ctx).map((t) => t.tag)));
+  return { view, at, ctx, fromLine, optionTopic: topicOf, layer };
 }

@@ -1,5 +1,5 @@
 // A Clock for tests: time moves only when the test calls advance(), and due timers run in order.
-import type { Clock } from "./idle";
+import type { Clock } from "./clock";
 
 export function manualClock() {
   let t = 0;

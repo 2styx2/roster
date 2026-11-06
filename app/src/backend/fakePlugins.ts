@@ -4,10 +4,12 @@
 // as `{ handler: N }`. Errors name the Plugin and `init.lua`, a load error or a third error
 // disables it, as in the core. The built-in `hosts` Plugin is here as the core's Lua is.
 import { PLUGIN_COMMANDS, ROSTER_ONLY } from "../plugins/cmd";
+import { api_version as pluginApiVersion } from "../../../crates/roster-core/tests/fixtures/plugin-api.json?pick=api_version,commands,roster_only,tags";
 import { CORE } from "../plugins/core.gen";
 import { fakeFoldersPlugin } from "./fakeFolders";
 import { PluginServeError, pluginServeError, redact } from "./redact";
-import { BackendCallError, PLUGIN_EVENTS, type Host, type OpenSession, type PluginEventName, type PluginCaller, type PluginData, type PluginLoaded, type PluginManifest, type PluginReply } from "./types";
+import { BackendCallError, type Host, type OpenSession, type PluginEventName, type PluginCaller, type PluginData, type PluginLoaded, type PluginManifest, type PluginReply } from "./types";
+import { errorText } from "../ui/format";
 
 type Fn = (arg: Record<string, unknown>) => unknown;
 type Spec = Record<string, unknown>;
@@ -555,7 +557,7 @@ export function fakePluginHost(
     const detailsIds = () =>
       [...r.own].filter(([k, m]) => k.startsWith("details:") && m.size > 0).map(([k]) => k.slice("details:".length)).sort();
     const m: FakeRoster = {
-      api_version: 6,
+      api_version: pluginApiVersion,
       plugin: { name: r.manifest.name, version: r.manifest.version, permissions: [...r.grants], config },
       commands: {
         add: (name, spec) => {
@@ -854,7 +856,7 @@ export function fakePluginHost(
     const before = new Map([...r.own].map(([k, m]) => [k, new Map(m)]));
     // As mod.rs's settle: which events it listens for, when that's news (always at load).
     const listens = (): PluginEventName[] | null => {
-      const now = PLUGIN_EVENTS.filter((e) => (r.listeners.get(e)?.length ?? 0) > 0);
+      const now = CORE.events.map((e) => e.name).filter((e) => (r.listeners.get(e)?.length ?? 0) > 0);
       if (!loading && now.join() === r.told) return null;
       r.told = now.join();
       return now;
@@ -864,7 +866,7 @@ export function fakePluginHost(
       return { plugin: name, result: data(r, result) ?? null, ops, error: null, disabled: null, listens: listens() };
     } catch (e) {
       r.own = before;
-      const message = e instanceof Error ? e.message : String(e);
+      const message = errorText(e);
       r.errors += loading ? LIMITS.strikes : 1;
       if (r.errors >= LIMITS.strikes) r.disabled = loading ? `it failed to load: ${name}: init.lua: ${message}` : `it failed ${r.errors} times`;
       return { plugin: name, result: null, ops: [], error: { plugin: name, file: "init.lua", line: null, message }, disabled: r.disabled, listens: loading ? null : listens() };

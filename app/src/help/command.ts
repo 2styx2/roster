@@ -12,6 +12,7 @@ import { grepTexts } from "./grep";
 import { lineTopic } from "./lookup";
 import { findTopic, headingTag, pageBody, pageTexts, topics, type HelpContext, type Topic } from "./pages";
 import { helpText, type HelpText } from "./text";
+import { errorText } from "../ui/format";
 
 /** Where the help panel is: a page, and the entry or heading on it. */
 export interface HelpPlace {
@@ -57,7 +58,7 @@ export class HelpView {
   private waiting: { shown: boolean } | null = null;
 
   /** `text` is the guides' text (T213): a guide opens once it's loaded. */
-  constructor(private readonly text: HelpText = helpText) {}
+  constructor(readonly text: HelpText = helpText) {}
 
   /** What topics are resolved against: App sets it every render. */
   setContext(ctx: () => HelpContext) {
@@ -100,7 +101,7 @@ export class HelpView {
     };
     this.text.load().then(
       () => arrive(),
-      (e: unknown) => arrive(e instanceof Error ? e.message : String(e)),
+      (e: unknown) => arrive(errorText(e)),
     );
   }
 

@@ -5,8 +5,10 @@
 // `virtual:help-tags`), as Neovim's doc/tags.
 //
 // This is the one place that knows the chunk: `load()` brings it in (once, however many ask; again
-// after a failure), `markdown(id)` reads a guide's text once it's here, and `subscribe` tells
-// whoever shows it (HelpView, the `:helpgrep` finder) that it came.
+// after a failure), `markdown(id)` reads a guide's text once it's here, `blocks(id, make)` keeps
+// what a guide's text was made into for as long as that text, and `subscribe` tells whoever shows
+// it (HelpView, the `:helpgrep` finder) that it came.
+import type { Block } from "./doc";
 
 export type GuideTexts = Readonly<Record<string, string>>;
 
@@ -15,6 +17,7 @@ export class HelpText {
   private loading: Promise<void> | null = null;
   private error: string | null = null;
   private readonly listeners = new Set<() => void>();
+  private readonly made = new Map<string, Block[]>();
 
   constructor(private loader: () => Promise<GuideTexts>) {}
 
@@ -23,6 +26,17 @@ export class HelpText {
   /** A guide's Markdown; undefined until the text is loaded, or for a page that isn't a guide. */
   markdown(id: string): string | undefined {
     return this.texts?.[id];
+  }
+
+  /** A guide's text made into blocks by `make`, once per text: none until it's loaded. */
+  blocks(id: string, make: (markdown: string) => Block[]): Block[] {
+    const kept = this.made.get(id);
+    if (kept) return kept;
+    const markdown = this.markdown(id);
+    if (markdown === undefined) return [];
+    const blocks = make(markdown);
+    this.made.set(id, blocks);
+    return blocks;
   }
 
   /** Why the last load failed; null before any, while one is under way and once it's loaded. */
@@ -52,6 +66,7 @@ export class HelpText {
   use(texts: GuideTexts) {
     if (this.texts) return;
     this.texts = texts;
+    this.made.clear();
     for (const l of this.listeners) l();
   }
 
@@ -60,6 +75,7 @@ export class HelpText {
   restart(loader: () => Promise<GuideTexts>) {
     this.loader = loader;
     this.texts = null;
+    this.made.clear();
     this.loading = null;
     this.error = null;
     for (const l of this.listeners) l();

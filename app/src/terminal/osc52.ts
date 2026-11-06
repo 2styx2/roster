@@ -69,6 +69,7 @@ export function wireOsc52(t: Pick<Terminal, "parser">, deps: Osc52Deps): () => v
     guarded(t, (body: string) => {
       if (!deps.enabled() || !deps.onScreen()) return true;
       const text = osc52Text(body);
+      // A copy the clipboard refuses is dropped: the Host can't be told, and the user didn't ask.
       if (text !== null) void deps.clipboard().writeText(text).catch(() => {});
       return true;
     }),

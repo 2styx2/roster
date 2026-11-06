@@ -602,7 +602,7 @@
 ---@field at? string The step under way (`"dns"`, `"auth"`, ...).
 ---@field host string The Host it checks.
 ---@field result? roster.HostCheck Once `done` or `stopped`: `host.check`'s result. `ok` is false for a stopped check, its later steps `skipped`.
----@field error? roster.ServeError Once `failed`: why.
+---@field error? roster.JobError Once `failed`: why.
 
 --- One step of a `host.check`
 ---@class roster.CheckStep
@@ -734,10 +734,10 @@
 ---@field at? string The Host it's on.
 ---@field stopped boolean `mesh.stop` asked it to stop; the Hosts it hadn't got to are pending.
 ---@field result? roster.MeshResult|roster.MeshCut Once `done`: what the method itself returns.
----@field error? roster.ServeError Once `failed`: why.
+---@field error? roster.JobError Once `failed`: why.
 
---- An error roster serve answered with
----@class roster.ServeError
+--- Why a job in roster serve failed, as plain data in its status
+---@class roster.JobError
 ---@field code integer Its code, in serve-api.md's tables.
 ---@field message string What went wrong.
 ---@field data? table More about it, as its row says.

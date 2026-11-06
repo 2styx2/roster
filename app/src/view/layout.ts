@@ -29,14 +29,11 @@ export interface ModeLayout {
   hint: boolean;
   /** The Sidebar's sections by id, in order; null shows every registered one in its order. */
   sections: readonly string[] | null;
-  /** The status bar's segments by id (STATUS_SEGMENTS), in order; null shows them all. */
+  /** The status bar's segments by id (segments.ts), in order; null shows them all. */
   segments: readonly string[] | null;
   /** The toolbar's controls by id (the toolbar registry), in order; null: the default set. */
   controls: readonly string[] | null;
 }
-
-/** The status bar's segments, in their default order. */
-export const STATUS_SEGMENTS = ["backend", "box", "inventory", "hosts", "path", "changes", "hints", "mode"] as const;
 
 /** One mode's pieces as the Config says them (roster-core config schema.rs ModeLayout). */
 export interface ModePieces {

@@ -10,9 +10,10 @@
 // sections are registries (ADR 0006), read live. What each part of the workspace does is its own
 // hook; this file wires them together and draws the screen.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import { Latest } from "./ui/latest";
+import { Latest, useLatest } from "./ui/latest";
 import { Overlays, type Overlay } from "./app/Overlays";
 import { PluginLayers } from "./app/PluginLayers";
+import { infoLine } from "./app/infoLine";
 import { useBuiltins } from "./app/useBuiltins";
 import { useWorkspaceLife } from "./app/useWorkspaceLife";
 import { WindowFrame } from "./chrome/WindowFrame";
@@ -33,6 +34,7 @@ import { useConfigActions } from "./config/useConfigActions";
 import { useConfigReport } from "./config/useConfigReport";
 import { HostDetails } from "./details/HostDetails";
 import { webServices } from "./details/details";
+import { useDetails } from "./details/useDetails";
 import { CheckPanel } from "./errors/CheckPanel";
 import type { CheckContext } from "./errors/command";
 import { RosterApi } from "./errors/rosterApi";
@@ -41,15 +43,14 @@ import { ErrorScreen } from "./ErrorScreen";
 import type { FinderContext } from "./finder/sources";
 import { HelpView } from "./help/command";
 import { HelpPanel } from "./help/HelpPanel";
-import { optionTopic } from "./help/lookup";
-import { topics } from "./help/pages";
 import { useHelp } from "./help/useHelp";
 import { FirstRun } from "./inventory/FirstRun";
-import { inventoryActions, type Form } from "./inventory/actions";
+import { inventoryActions } from "./inventory/actions";
 import type { InventoryContext } from "./inventory/commands";
 import { Forms } from "./inventory/Forms";
 import { SwitchPanel } from "./inventory/SwitchPanel";
 import { useInventories } from "./inventory/useInventories";
+import { useForms } from "./inventory/useForms";
 import { useInventory } from "./inventory/useInventory";
 import { BindingsPanel } from "./keyboard/BindingsPanel";
 import { bindingRows } from "./keyboard/bindings";
@@ -57,13 +58,13 @@ import { terminalMode } from "./keyboard/mode";
 import { useAppKeys } from "./keyboard/useAppKeys";
 import { defaultOptions, keyHint, keymapOf, type CommandLine as Line, type Options } from "./keymap";
 import { TypedPasswordsContext } from "./lock/forgetOnLock";
-import type { Clock } from "./lock/idle";
+import type { Clock } from "./ui/clock";
 import { LockGate } from "./lock/LockScreen";
 import { SignOutPanel } from "./lock/SignOutPanel";
 import { useWorkspaceVault } from "./lock/useWorkspaceVault";
 import { NO_DEFAULTS, PanelLayout, type PanelPlace } from "./panel/layout";
 import { PanelFrame } from "./panel/PanelFrame";
-import { closeTop, inLayer, usePanelState, type Layer } from "./panel/stack";
+import { closeTop, usePanelState, type Layer } from "./panel/stack";
 import { pickerTimer } from "./picker/timing";
 import { memoryPlatform } from "./platform/memory";
 import type { Platform } from "./platform/types";
@@ -75,14 +76,12 @@ import type { SessionContext } from "./session/commands";
 import { SessionsMain } from "./session/SessionsMain";
 import { Tabs } from "./session/tabs";
 import { hostMenu } from "./sidebar/hostMenu";
-import type { SidebarContext } from "./sidebar/commands";
 import type { SidebarRow } from "./sidebar/model";
+import { sidebarContext } from "./sidebar/context";
 import { Sidebar } from "./sidebar/Sidebar";
 import { useSidebarModel } from "./sidebar/useSidebarModel";
 import { StateStore } from "./state/store";
-import { fontInUse } from "./terminal/fonts";
 import { defaultTerminalOptions } from "./terminal/options";
-import { rendererLabel } from "./terminal/renderer";
 import { TerminalView, type TerminalViewComponent } from "./terminal/TerminalView";
 import { useTerminalEnv } from "./terminal/useTerminalEnv";
 import { defaultAppearance, type AppearanceOptions } from "./theme/theme";
@@ -241,8 +240,7 @@ function Workspace({
 
   // `:tutor` (ticket 55): on the demo Inventory, what happens is fed to the tutorial running, whose
   // steps tick themselves; what a step ticks is said once (the page shows it as a ✓).
-  const [tutorNow] = useState(() => new Latest(tutor));
-  useLayoutEffect(() => tutorNow.set(tutor));
+  const tutorNow = useLatest(tutor);
   const tutorEvent = useCallback(
     (name: string, data: TutorEvent["data"]) => {
       const link = tutorNow.get();
@@ -251,7 +249,7 @@ function Workspace({
     [tutorNow],
   );
   const [handlers] = useState(() => new Latest(noHandlers));
-  const { plugins, snapshot: pluginSnap } = usePluginBridge({
+  const { plugins, snapshot: pluginSnap, layers: pluginLayers } = usePluginBridge({
     backend,
     registries,
     store,
@@ -269,6 +267,7 @@ function Workspace({
     packagesKey: JSON.stringify(config?.packages ?? []),
     demo: tutor?.demo ? { onStop: tutor.demo.onStop, problem: tutor.demo.problem } : null,
     tutorEvent,
+    focus,
   });
 
   const { viewMode, setViewMode, layout, toggle, hint } = useLayout({
@@ -320,12 +319,10 @@ function Workspace({
     openHealth: () => helpView.open({ page: "health" }),
     say,
   });
-  const [overlay, setOverlay] = useState<Overlay>(null);
-  const openCommandLine = (initial = "") => {
-    if (overlay === null) focus.remember();
-    setOverlay({ cmdline: initial });
-  };
-  const reopenLine = useCallback((line: string, caret: number) => setOverlay({ cmdline: line, caret }), []);
+  const overlay = usePanelState<NonNullable<Overlay>>(focus, "overlay");
+  const setOverlay = overlay.set;
+  const openCommandLine = (initial = "") => overlay.open({ cmdline: initial });
+  const reopenLine = useCallback((line: string, caret: number) => setOverlay({ cmdline: line, caret }), [setOverlay]);
   // `:tutor`'s progress: a tick re-renders the tutorial's page.
   const tutorDone = useSyncExternalStore(tutor?.progress.subscribe ?? noSubscribe, tutor?.progress.snapshot ?? noSnapshot);
   const running = tutor?.demo?.tutorial.id ?? null;
@@ -348,9 +345,10 @@ function Workspace({
     activeTheme: theme.id,
     health: check.health,
     tutor: tutorCtx,
-    overlayOpen: overlay !== null,
+    overlayOpen: overlay.value !== null,
     tutorEvent,
     reopenLine,
+    focus,
   });
   const inventories = useInventories({
     backend,
@@ -376,12 +374,10 @@ function Workspace({
   });
 
   // The panels over the workspace (panel/stack.ts).
-  const form = usePanelState<Form>(focus);
-  const keysPanel = usePanelState<true>(focus);
-  const pluginsPanel = usePanelState<true>(focus);
-  const packagesPanel = usePanelState<true>(focus);
-  const removing = usePanelState<{ host: string; group: string }>(focus);
-  const [details, setDetails] = useState<string | null>(null);
+  const { form, removing, openForm } = useForms(focus, inventory);
+  const keysPanel = usePanelState<true>(focus, "keys", { fromInside: true });
+  const pluginsPanel = usePanelState<true>(focus, "plugins");
+  const packagesPanel = usePanelState<true>(focus, "packages");
 
   const outputTap = useMemo(() => ({ output: plugins.output.bind(plugins) }), [plugins]);
   useTabsConfig({ tabs, caps, config, hosts: hosts?.hosts ?? [], hostByName, lockVault: vault.lock, outputTap });
@@ -394,7 +390,7 @@ function Workspace({
     keymap,
     options,
     listening: unlocked && !suspended,
-    noOverlay: overlay === null,
+    noOverlay: overlay.value === null,
     focus,
     staysInAppMode,
     onAppMode: sidebar.enterCursor,
@@ -403,7 +399,7 @@ function Workspace({
   const { keyState, setMode } = keys;
 
   const [pickerTime] = useState(pickerTimer);
-  const pickerShown = overlay === "picker" && !vault.locked;
+  const pickerShown = overlay.value === "picker" && !vault.locked;
   useLayoutEffect(() => {
     if (pickerShown) pickerTime.shown();
   }, [pickerShown, pickerTime]);
@@ -426,51 +422,28 @@ function Workspace({
   };
   const copy = (text: string) => platform.clipboard.writeText(text);
   const onScreenTab = sessions.tabs.find((t) => t.id === sessions.active);
-  const openForm = (next: Form) => {
-    if (next.kind === "changes") inventory.setPending((p) => p ?? { state: "loading" });
-    form.open(next);
-  };
   const closeOverlay = () => {
-    setOverlay(null);
+    overlay.close();
     setMode(terminalMode);
-    focus.restore();
   };
+  const selectedHost = () => sidebar.cursorRow()?.host ?? onScreenTab?.host ?? null;
+  const details = useDetails(focus, hostByName, selectedHost, say);
   // The panels from the top down (the one drawn last is the topmost): what Esc closes first.
   const layers = (): Layer[] => [
-    {
-      id: "plugin-confirm",
-      open: pluginSnap.confirm !== null,
-      close: () => {
-        plugins.answerConfirm(false);
-        focus.restore();
-      },
-    },
-    {
-      id: "plugin-float",
-      open: pluginSnap.float !== null,
-      close: () => {
-        plugins.closeFloat();
-        focus.restore();
-      },
-    },
+    ...pluginLayers,
     { id: "view", open: openView !== undefined, close: () => viewHost.close() },
-    { id: "help", open: help.at.at !== null, close: () => helpView.close() },
-    { id: "plugins", open: pluginsPanel.value !== null, close: pluginsPanel.close },
-    { id: "packages", open: packagesPanel.value !== null, close: packagesPanel.close },
-    { id: "keys", open: keysPanel.value !== null, close: closeKeys },
-    { id: "sign-out", open: signingOut.value !== null, close: signingOut.close },
-    { id: "switch", open: inventories.question.value !== null, close: inventories.question.close, held: inventories.switching() },
-    { id: "remove", open: removing.value !== null, close: removing.close },
-    { id: "import", open: configActions.importing.value !== null, close: configActions.importing.close },
-    { id: "form", open: form.value !== null, close: form.close },
-    { id: "check", open: check.check !== null, close: check.close },
-    { id: "details", open: details !== null, close: () => setDetails(null) },
+    help.layer,
+    pluginsPanel.layer,
+    packagesPanel.layer,
+    keysPanel.layer,
+    signingOut.layer,
+    inventories.layer,
+    removing.layer,
+    configActions.importing.layer,
+    form.layer,
+    check.layer,
+    details.panel.layer,
   ];
-  function closeKeys() {
-    keysPanel.set(null);
-    if (inLayer("keys")) focus.restore();
-  }
-  const selectedHost = () => sidebar.cursorRow()?.host ?? onScreenTab?.host ?? null;
   const { openWeb, whyNoSave, ...session } = sessionActions({
     tabs,
     sessions,
@@ -479,11 +452,8 @@ function Workspace({
     store,
     platform,
     say,
-    currentHost: () => details ?? selectedHost(),
-    openQuickPicker: () => {
-      if (overlay === null) focus.remember();
-      setOverlay("quick");
-    },
+    currentHost: () => details.panel.value ?? selectedHost(),
+    openQuickPicker: () => overlay.open("quick"),
   });
   const inventoryCmds = inventoryActions({
     backend,
@@ -505,13 +475,12 @@ function Workspace({
   // current state.
   const appCtx: AppContext = {
     openPicker: () => {
-      if (overlay === null) focus.remember();
-      if (overlay !== "picker") pickerTime.start();
-      setOverlay("picker");
+      if (overlay.value !== "picker") pickerTime.start();
+      overlay.open("picker");
     },
     toggleStatusBar: () => toggle(layout.bar),
     openCommandLine,
-    toggleKeys: () => (keysPanel.value ? closeKeys() : keysPanel.open(true)),
+    toggleKeys: () => (keysPanel.value ? keysPanel.close() : keysPanel.open(true)),
     lock: workspaceVault.lock,
     vault: workspaceVault.askSignOut,
     toTerminal: () => {
@@ -524,31 +493,13 @@ function Workspace({
     say,
     showInfo: () => {
       if (!info) return;
-      // The command too: it's the program the master password and sign-in codes go to.
-      // The terminal font in use (ticket 33): the first installed one in terminal.font. The
-      // renderer: the visible terminal's, or with none on screen the one terminal.renderer asks for.
-      const font = fontInUse(terminalOptions.fonts, platform.fontInstalled ?? (() => null));
-      const size = `${Math.round(terminal.fontSize * 100) / 100} px`;
-      const inUse = terminal.renderer;
-      const renderer = rendererLabel(sessions.active !== null && inUse !== null ? inUse : terminalOptions.renderer);
-      const picked = pickerTime.last();
-      say(
-        `Backend ${info.backend} · Box ${info.inventory.box} · Inventory ${info.inventory.path} · Command ${info.command.join(" ")} · ` +
-          `Terminal ${font} ${size}, ${renderer}` +
-          (picked === null ? "" : ` · Picker opened in ${Math.round(picked)} ms`),
-      );
+      const renderer = sessions.active !== null ? terminal.renderer : null;
+      say(infoLine({ info, terminalOptions, fontInstalled: platform.fontInstalled, fontSize: terminal.fontSize, renderer, pickerMs: pickerTime.last() }));
     },
-    details: (name) => {
-      if (name === null && details !== null && hostByName.has(details)) return setDetails(null);
-      const host = name ?? selectedHost();
-      if (!host) return say("No Host selected: pick one in the Sidebar or open its Session, or use :info HOST");
-      if (!hostByName.has(host)) return say(`No Host named ${host}`);
-      setDetails(host);
-    },
+    details: details.show,
     openFinder: (source, query) => {
       if (!registries.finders.get(source)) return say(`No finder named ${source}`);
-      if (overlay === null) focus.remember();
-      setOverlay(query ? { finder: source, query } : { finder: source });
+      overlay.open(query ? { finder: source, query } : { finder: source });
     },
   };
   const sessionCtx: SessionContext = {
@@ -559,25 +510,13 @@ function Workspace({
       if (onScreenTab) openForm({ kind: "save", tab: onScreenTab.id });
     },
   };
-  const sidebarCtx: SidebarContext = {
+  const sidebarCtx = sidebarContext(sidebar, {
     toggleSidebar: () => toggle("sidebar"),
-    list: (move) => {
-      if (move !== "choose") return sidebar.move(move);
-      const row = sidebar.cursorRow();
-      if (row) sidebar.setSelected(row.id);
-      // Enter on a group, Folder or heading folds it and stays in the Sidebar.
-      setMode(row && staysInAppMode(row.command) ? { mode: "app", pending: [] } : terminalMode);
-      if (row) run(row.command);
-    },
-    fold: sidebar.fold,
-    cursorRow: sidebar.cursorRow,
-    rowMenu: () => {
-      const row = sidebar.cursorRow();
-      if (!sidebar.shown) return say("The Sidebar is hidden: show it to use a Host's menu (sidebar)");
-      if (!row?.menu) return say("Only a Host's row has a menu: move the cursor to one");
-      sidebar.setMenu({ row: row.id, at: null });
-    },
-  };
+    keysToApp: (app) => setMode(app ? { mode: "app", pending: [] } : terminalMode),
+    staysInAppMode,
+    run,
+    say,
+  });
   const inventoryCtx: InventoryContext = { ...inventoryCmds, groupNames: () => groupNames, switchInventory: inventories.ask };
   const checkCtx: CheckContext = { checkHost: check.checkHost, checkBox: check.checkBox, stopCheck: check.stopOwn };
   const viewCtx: ViewContext = { viewMode: () => viewMode, setViewMode: (mode) => setViewMode(mode ?? otherMode(viewMode)) };
@@ -633,8 +572,6 @@ function Workspace({
     demoTutorial: tutor?.demo?.tutorial ?? null,
     openTutorial,
     focus,
-    pluginConfirm: pluginSnap.confirm?.id ?? null,
-    pluginFloat: pluginSnap.float ? `${pluginSnap.float.plugin}:${pluginSnap.float.title}` : null,
     say,
   });
 
@@ -646,13 +583,13 @@ function Workspace({
         : null,
     [sessions, hosts, hostByName, options.sessions, appState, sectionDefs],
   );
-  const detailsHost = details === null ? undefined : hostByName.get(details);
+  const detailsHost = details.host;
   const toolbarCtx: ToolbarContext = { pendingCount, sidebarShown: sidebar.shown, quickConnect: caps.has("quickConnect"), detailsShown: detailsHost !== undefined, plain };
   const toolbarControls = unlocked && isShown(layout, "toolbar") ? shownControls(toolbarDefs, layout.controls, toolbarCtx) : [];
   const frame = (content: ReactNode) => (
     <TypedPasswordsContext.Provider value={typed}>
       <HintsShown value={hintsShown}>
-        <RosterApi.Provider value={info ? caps.api : undefined}>
+        <RosterApi.Provider value={info ? caps : undefined}>
           <WindowFrame
             layout={layout}
             controls={platform.window}
@@ -700,7 +637,7 @@ function Workspace({
     return frame(<ErrorScreen problem={conn.problem} note={inventories.startNote} onRetry={() => void connect(true)} copy={copy} />);
   }
 
-  const appMode = keyState.mode === "app" && overlay === null;
+  const appMode = keyState.mode === "app" && overlay.value === null;
   const spokenMessage = spokenText(message, messagesChoice.all());
   const findKeys = keyHint(keymap, "find");
   const progress = <PluginProgressItems progress={pluginSnap.progress} onCancel={(id) => say(plugins.cancelProgress(id))} />;
@@ -745,7 +682,7 @@ function Workspace({
   );
   const actions = { run, copy };
   const overlayProps = {
-    overlay,
+    overlay: overlay.value,
     locked: vault.locked,
     close: closeOverlay,
     run,
@@ -761,7 +698,7 @@ function Workspace({
       groupNames,
       inventoryNames: inventories.inventories?.inventories.map((i) => i.name) ?? [],
       webServices: (name: string | null) => {
-        const h = hostByName.get(name ?? details ?? selectedHost() ?? "");
+        const h = hostByName.get(name ?? details.panel.value ?? selectedHost() ?? "");
         return h ? webServices(h) : [];
       },
     },
@@ -798,18 +735,8 @@ function Workspace({
               const h = row.host === undefined ? undefined : hostByName.get(row.host);
               return hostMenu(row, { reviewed: h ? h.reviewed : null, caps, folders: commands.get("folder") !== undefined, keys: (command) => keyHint(keymap, command) });
             }}
-            onTreeFocus={(from) => {
-              // Tab (or a screen reader) reached the tree: it's App mode, as after the Leader.
-              if (keys.mode() !== "terminal") return;
-              focus.setBeforeTree(from);
-              sidebar.enterCursor();
-              setMode({ mode: "app", pending: [] });
-            }}
-            onTreeBlur={(to) => {
-              // Focus went elsewhere (Tab on, a click): keys are the terminal's again. A Host row's
-              // menu is the tree's own: App mode stays while it's open.
-              if (keys.mode() === "app" && to !== null && !to.closest(".picker-backdrop, .cmdline, .row-menu")) setMode(terminalMode);
-            }}
+            onTreeFocus={keys.treeFocused}
+            onTreeBlur={keys.treeBlurred}
           />
         )}
         <SessionsMain
@@ -845,7 +772,7 @@ function Workspace({
               host={detailsHost}
               groups={conn.hosts.groups}
               onOpen={(service, url) => openWeb(detailsHost.name, service, url)}
-              onClose={() => setDetails(null)}
+              onClose={details.panel.close}
               cmdlineKeys={keyHint(keymap, "cmdline")}
               leader={options.leader}
               sections={sectionsFor(detailsList, detailsHost.name)}
@@ -913,10 +840,10 @@ function Workspace({
             <BindingsPanel
               rows={bindingRows(keymap, options, commands)}
               leader={options.leader}
-              onClose={closeKeys}
+              onClose={keysPanel.close}
               onHelp={(option) => {
-                closeKeys();
-                run(`help ${optionTopic(option, new Set(topics(help.ctx).map((t) => t.tag)))}`);
+                keysPanel.close();
+                run(`help ${help.optionTopic(option)}`);
               }}
             />,
           )}

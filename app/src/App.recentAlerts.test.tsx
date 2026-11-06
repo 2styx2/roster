@@ -11,10 +11,11 @@ import { FAKE_HOST_PASSWORD, FAKE_PASSWORD, fakeBackend, fixtures, makeHosts, ty
 import { fixtureProps } from "./backend/fixtureProps";
 import { fakeCommit, type FakePackages } from "./backend/fakePackages";
 import { recentAlerts, type RecentAlertsOptions } from "./backend/fakeRecentAlerts";
-import { SAVE_TO_VAULT_API_VERSION } from "./backend/types";
+
 import { memoryPlatform, type MemoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
 import { advanceTimers, fakeTimeouts, pass } from "./test-timers";
+import { sinceOf } from "./backend/capabilities";
 
 const LEADER = "{Control>} {/Control}";
 const URL = "https://git.example.com/someone/recent-alerts.git";
@@ -48,7 +49,7 @@ interface Ready {
 
 async function ready(pk = packages(), repaints = false): Promise<Ready> {
   const user = userEvent.setup({ advanceTimers });
-  const backend = fakeBackend({ hosts, packages: pk, apiVersion: SAVE_TO_VAULT_API_VERSION, repaints });
+  const backend = fakeBackend({ hosts, packages: pk, apiVersion: sinceOf("saveToVault"), repaints });
   const platform = memoryPlatform();
   render(<App backend={backend} terminalView={StubTerminal} platform={platform} />);
   await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
@@ -98,7 +99,6 @@ describe("a stray Enter", () => {
     expect(pk.lock).toEqual({});
     expect(screen.queryByText("Recent alerts")).toBeNull();
   });
-
 
   it("isn't where the keys go once :tutor's demo is in front: the demo's workspace has them", async () => {
     const { user } = await ready();

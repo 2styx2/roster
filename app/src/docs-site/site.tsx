@@ -117,10 +117,6 @@ function pageIds(page: string, blocks: readonly Block[], print: boolean): Map<st
 
 const short = (title: string) => title.split(":")[0] as string;
 
-/** Pages made from the app's code rather than a Markdown file: on the website they show the
- * defaults, and say so. */
-const GENERATED_NOTE = new Set(["quickref", "commands", "keys", "options", "themes", "finders", "errors", "health"]);
-
 export function buildSite(ctx: HelpContext, opts: SiteOptions): Site {
   const print = opts.print ?? false;
   const gh = `https://github.com/${opts.repo}`;
@@ -291,7 +287,7 @@ ${css}
 
 function sitePage(pg: HelpPage, article: string, pages: HelpPage[], opts: SiteOptions, gh: string): string {
   const start = pg.id === "index";
-  const note = GENERATED_NOTE.has(pg.id)
+  const note = pg.inEffect
     ? `<p class="site-note">On the website this page shows roster's defaults: no <code>init.lua</code>, no Plugins, nothing checked. In the app, <code>:help ${esc(pg.id)}</code> shows what's in effect on your Box.</p>`
     : "";
   const intro = start
