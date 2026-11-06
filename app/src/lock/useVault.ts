@@ -1,7 +1,7 @@
 // The Lock's state (GLOSSARY: Lock). The app is locked until `vault.unlock` succeeds, and locks
 // again on demand or after `idleMs` without input. Unlocking the vault is what unlocks the app:
 // there is no app password. A vault with no master password (`unsupported`) means no lock screen.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   BackendCallError,
   VaultError,
@@ -89,8 +89,10 @@ export function useVault(
   { idleMs, clock = realClock }: { idleMs: number; clock?: Clock | undefined },
 ): Vault {
   const [view, setView] = useState<VaultView>({ state: "checking" });
+  // What the handlers below read: kept in step during the commit, so a submit the moment the unlock
+  // form shows (an autofill, a quick Enter) sees the view that showed it, not the one before.
   const viewRef = useRef(view);
-  useEffect(() => {
+  useLayoutEffect(() => {
     viewRef.current = view;
   }, [view]);
 

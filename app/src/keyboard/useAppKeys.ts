@@ -2,7 +2,7 @@
 // or the app's, caught before anything else sees it (capture phase on window), the terminal
 // included. App mode with the Sidebar shown puts focus on its tree; back in Terminal mode, focus
 // goes back where it was.
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { chordOf, type CommandLine, type Keymap, type Options } from "../keymap";
 import { inAnyLayer, inLayer } from "../panel/stack";
 import { isLeaderKey } from "../terminal/keys";
@@ -66,7 +66,9 @@ export function useAppKeys(opts: {
     if (r.action) opts.run(r.action);
   });
   const { listening, focus } = opts;
-  useEffect(() => {
+  // In place in the commit that shows the workspace: a Leader typed right after the unlock's Enter
+  // reaches the app, not the page behind it.
+  useLayoutEffect(() => {
     if (!listening) return;
     const handler = (e: KeyboardEvent) => onKey(e);
     window.addEventListener("keydown", handler, true);

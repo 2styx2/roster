@@ -47,6 +47,44 @@ describe("the Lock", () => {
     expect((await backend.vaultStatus()).status).toBe("unlocked");
   });
 
+  it("unlocks with a password sent the moment the form shows (an autofill and Enter)", async () => {
+    const backend = fakeBackend({ hosts: makeHosts(12) });
+    // Fills the field and submits as soon as it's in the page, before anything else runs.
+    const sent = new Promise<void>((done) => {
+      const watch = new MutationObserver(() => {
+        const field = document.getElementById("lock-password") as HTMLInputElement | null;
+        if (!field) return;
+        watch.disconnect();
+        field.value = FAKE_PASSWORD;
+        field.form?.requestSubmit();
+        done();
+      });
+      watch.observe(document.body, { childList: true, subtree: true });
+    });
+    render(<App backend={backend} clock={manualClock()} />);
+    await sent;
+    await screen.findByRole("main", { name: /workspace/i });
+    expect(lockScreen()).toBeNull();
+  });
+
+  it("takes the keys from the moment the workspace shows (the Leader typed right after Enter)", async () => {
+    const { user } = await start();
+    // Presses Leader f as soon as the lock screen is gone, before anything else runs.
+    const pressed = new Promise<void>((done) => {
+      const watch = new MutationObserver(() => {
+        if (lockScreen()) return;
+        watch.disconnect();
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", ctrlKey: true, bubbles: true }));
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", code: "KeyF", bubbles: true }));
+        done();
+      });
+      watch.observe(document.body, { childList: true, subtree: true });
+    });
+    await unlock(user);
+    await pressed;
+    expect(await screen.findByRole("dialog", { name: /find a host/i })).toBeInTheDocument();
+  });
+
   it("says when the password is wrong, clears the field and stays locked", async () => {
     const { user, backend } = await start();
     await unlock(user, "hunter2");
