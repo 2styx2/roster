@@ -224,6 +224,12 @@ def _created_rows() -> list[tuple[str, str]]:
     return [(t, p) for t, _, p in (ln.partition("\t") for ln in text.splitlines()) if p]
 
 
+def was_made(key: Path) -> bool:
+    """Did roster make (or rotate) KEY on this Box before (its key-created record names it)? T243: a key file gone
+    since is a key every Host it was on lost."""
+    return any(p == str(key) for _, p in _created_rows())
+
+
 def created(key: Path):
     """When KEY was made or last rotated (a UTC datetime): roster's record of it, else the file's own time (a key made
     before T240, or by hand). None when there's no such file."""

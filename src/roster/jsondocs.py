@@ -121,11 +121,20 @@ class MeshStatusDoc(Part, frozen=True):
     out_of_date: bool
 
 
+class LoginProblem(Part, frozen=True):
+    """Why a key login failed, and its one fix (T243: catchup.explain; codes as errors.py's). Never a value."""
+
+    code: int
+    message: str = Field(repr=False)
+    fix: str | None = None
+
+
 class HostCheck(Part, frozen=True):
     name: str
     ok: bool
     ssh: Literal["login", "port"]
     checks: dict[str, bool]
+    problem: LoginProblem | None = None     # T243: the failed key login's cause and fix
 
 
 class CheckDoc(Part, frozen=True):

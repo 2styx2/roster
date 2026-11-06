@@ -139,3 +139,99 @@ def next_line(changed: list[str], left: list[Gap]) -> str | None:
     nxt = "; ".join(f"{fix} ({'; '.join(why)})" for fix, why in fixes.items())
     parts = list(changed) + ([f"next: {nxt}"] if nxt else [])
     return "; ".join(parts) or None
+
+
+# ---------------------------------------------------------------- a failed login: its cause and its one fix
+
+NO_ANSWER = ("no route to host", "timed out", "network is unreachable", "host is down", "no answer")
+LOCKED = ("account has expired", "account is locked", "account locked", "password has expired",
+          "password change required", "required to change your password", "account is disabled")
+DROPPED = ("kex_exchange_identification", "connection reset by peer")
+
+
+def has_answered(h: dict[str, Any]) -> bool:
+    """Has this Box ever reached H (its host key in roster's known_hosts)?"""
+    from .sshops import hk_name, known_names
+    return hk_name(h) in known_names()
+
+
+def not_set_up(cfg: dict[str, Any], h: dict[str, Any]) -> bool:
+    """Is H a key Host this Box never reached, or one the last setup didn't finish? (`roster run` then watches its one
+    login, to name the fix if it fails)"""
+    return bool(h["enroll"]) and (not has_answered(h) or h["name"] in setup_left(cfg))
+
+
+def vault_item(h: dict[str, Any]) -> str | None:
+    """The vault item H's ssh Login names (`bw:ITEM` gives ITEM, without a #FIELD), or None for env:, prompt and the
+    like: a name, never a value."""
+    from . import providers
+    auth = str(h["ssh"].get("auth") or "")
+    name, _, spec = auth.partition(":")
+    if name not in providers.PROVIDERS or name in ("env", "cmd", "prompt") or not spec:
+        return None
+    return providers.split_field(spec)[0]
+
+
+def explain(cfg: dict[str, Any], h: dict[str, Any], stderr: str, password: bool = False, nist_only: bool = False) -> Any:
+    """What ssh's STDERR from one login to Host H means, as a Problem with its one fix (codes 209-215, else the step's
+    own, diagnose.login_failure): a Host that never answered or stopped answering, no key there yet or one that no
+    longer logs in, a password the vault item holds that the Host refuses, an account locked or expired, no password
+    login, a rate limiter. PASSWORD: the login used the Login's password; NIST_ONLY: the Host offered only NIST
+    algorithms (a FIPS Host: login_failure's 199 says key_type: ecdsa). Never a value: the vault item by name."""
+    from . import errors
+    from .diagnose import login_failure, unreachable_fix
+    from .errors import Problem
+    name, addr, user, low = h["name"], h["ip"], h["ssh"]["user"], stderr.lower()
+    item = vault_item(h)
+    if any(w in low for w in LOCKED):
+        return Problem(errors.ACCOUNT_LOCKED, f"the account {user} on {name} is locked or its password expired",
+                       fix=f"unlock it or set a new password on {name} (its console, or its admin), then put the new "
+                           "one in " + (f"vault item '{item}'" if item else "its Login"), details=stderr)
+    if any(w in low for w in DROPPED):
+        return Problem(errors.SSH_RATE_LIMITED, f"{name} dropped the connection before ssh spoke: a rate limiter "
+                       "after quick connections, most likely", fix="wait about 4 minutes before the next try, and "
+                       "run one command at a time there (roster stops here rather than try again)", details=stderr)
+    if any(w in low for w in NO_ANSWER):
+        if not has_answered(h):
+            return Problem(errors.NEVER_ANSWERED, f"{name} has never answered at {addr}: is it on, and is that its "
+                           "address?", fix=f"check {name}'s ip: in roster.yml" + (f" (and vault item '{item}', if "
+                           "the address came from it)" if item else "") + "; " + unreachable_fix(
+                               h, cfg.get("rate_limited") or []), details=stderr)
+        return Problem(errors.STOPPED_ANSWERING, f"{name} stopped answering at {addr}",
+                       fix=unreachable_fix(h, cfg.get("rate_limited") or []), details=stderr)
+    if "permission denied" in low:
+        offered = low.rpartition("permission denied")[2]
+        if password and "password" not in offered and "keyboard-interactive" not in offered:
+            return Problem(errors.NO_PASSWORD_LOGIN, f"{name} takes no password login (only keys), and this Box's "
+                           "key isn't there", fix=f"setup needs a password login once: turn it on for {user} on "
+                           f"{name} for the setup, or add this Box's key there by hand (its .pub file)", details=stderr)
+        if password:
+            what = f"the password in vault item '{item}'" if item else f"{name}'s Login password"
+            return Problem(errors.PASSWORD_REFUSED, f"{what} doesn't log in to {name}: was it changed on one side "
+                           "only?", fix=f"log in to {name} by hand with the password you expect, then fix "
+                           + (f"vault item '{item}'" if item else "the Login") + " or the Host", details=stderr)
+        if h.get("enroll", True) and not (nist_only and h.get("key_type") == "ed25519"):
+            if name in setup_left(cfg) or not has_answered(h):
+                return Problem(errors.NO_KEY_YET, f"no key on {name} yet", fix=setup_fix([name]), details=stderr)
+            return Problem(errors.KEY_GONE, f"this Box's key no longer logs in to {name} (taken off there?)",
+                           fix=f"roster setup --host {name} puts it back", details=stderr)
+    return login_failure(h, password, stderr, cfg.get("rate_limited") or [], nist_only=nist_only)
+
+
+# What setup's password login (paramiko, sshops.password_exec) says, as ssh would: explain reads ssh's words
+SETUP_WORDS = (("takes no password login", "Permission denied (publickey)."),
+               ("login refused", "Permission denied (password)."),
+               ("can't connect", ""))
+
+
+def setup_failure(cfg: dict[str, Any], h: dict[str, Any], text: str) -> str:
+    """A setup failure's line for Host H: `[code] message: fix` when explain knows its cause, else TEXT as it was."""
+    from . import errors
+    low = text.lower()
+    said = next((ssh if ssh else text for words, ssh in SETUP_WORDS if words in low), None)
+    if said is None:
+        return text
+    p = explain(cfg, h, said, password=True)
+    if p.code in (errors.AUTH_FAILED, errors.LOOKUP_FAILED):
+        return text
+    return f"[{p.code}] {p.message}: {p.fix}"

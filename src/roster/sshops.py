@@ -60,12 +60,18 @@ def ensure_key(key, tag):
                 f"{fix}")
         say(f"key          {key.key} ({key.type.name}, existing)")
         return
+    from . import boxkeys
+    gone = boxkeys.was_made(key.key)        # T243: roster made it before, and it's gone (deleted)
     key.key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     subprocess.run(program_argv(["ssh-keygen", "-q", *key.type.keygen_args(), "-N", "", "-C", tag,
                                  "-f", str(key.key)]), check=True)
-    from . import boxkeys
     boxkeys.stamp(key.key)                  # its age counts from now (key_max_age:, T240)
     say(f"key          {key.key} ({key.type.name}, created)")
+    if gone:
+        from .errors import BOX_KEY_REMADE
+        say(f"warning: [{BOX_KEY_REMADE}] {key.key} was gone, so this is a new key: every Host the old one was on "
+            "needs this one (setup puts it on each Host it can log in to with a password; roster check names the "
+            "rest)")
 
 
 def public_key_line(key, tag):
@@ -445,16 +451,22 @@ LOGIN_PROBE = "exit 0"
 
 
 def ssh_ok(name, timeout=10):
-    if not_reached(name):               # `ssh NAME` would reach another named Inventory's Host, or nothing of ours
-        return False
+    return login_probe(name, timeout)[0]
+
+
+def login_probe(name, timeout=10):
+    """One key login to NAME (`ssh NAME exit 0`, BatchMode): (worked, ssh's stderr), the stderr for the cause of a
+    failure (catchup.explain). One connection, never a retry."""
+    if why := not_reached(name):        # `ssh NAME` would reach another named Inventory's Host, or nothing of ours
+        return False, why
     # ControlPath=none: never trust a cached connection, really log in with the key
     try:
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none",
                                          "-o", f"ConnectTimeout={timeout}", name, LOGIN_PROBE]),
                            stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout + 20)
-        return r.returncode == 0
+        return r.returncode == 0, r.stderr.decode(errors="replace").strip()
     except subprocess.TimeoutExpired:
-        return False
+        return False, f"ssh to {name} timed out"
 
 def sudo_wrap(command):
     """Run COMMAND as root via `sudo -S`, which reads the login password from stdin. The command
@@ -486,6 +498,8 @@ def password_exec(h, command, password, timeout=15, stdin=None):
         out = stdout.read().decode(errors="replace")
         err = stderr.read().decode(errors="replace")
         return stdout.channel.recv_exit_status(), out, err
+    except paramiko.BadAuthenticationType as e:     # T243: no password login there at all (only keys)
+        raise RuntimeError(f"login refused: the Host takes no password login (allowed: {', '.join(e.allowed_types)})")
     except paramiko.AuthenticationException:
         raise RuntimeError("login refused (wrong user or password?)")
     except paramiko.SSHException as e:

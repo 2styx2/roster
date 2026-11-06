@@ -45,6 +45,7 @@ from .config import (
     typed_token,
 )
 from .discover import DEFAULT_SCAN_PORTS, cmd_discover
+from . import errors
 from .errors import ROSTER_ERROR, UNKNOWN_HOST, UNKNOWN_INVENTORY, Problem, inventory_problem
 from .example import EXAMPLE_CONFIG
 from .providers import NO_PASSWORD, PROVIDERS, errtext, get_secret, setup_providers
@@ -62,6 +63,7 @@ from .sshops import (
     record_fingerprints,
     remove_key_script,
     retag_key_script,
+    login_probe,
     ssh_ok,
     sudo_wrap,
     write_ssh_config,
@@ -150,9 +152,12 @@ def skip_left_out(hosts, to_stderr=False):
 
 def refuse_left_out(h):
     """`roster run` (and --sudo) over ssh: never by a name that reaches another Inventory's Host (its sudo password
-    would go there), or that this Inventory's part of this Box's ssh config doesn't have."""
-    from .sshops import left_out, not_reached, sync_fix
+    would go there), or that this Inventory's part of this Box's ssh config doesn't have (T243: nor one it has no
+    block for yet, a Host added since the last sync)."""
+    from .sshops import left_out, not_reached, sync_fix, written_host_block
     why = not_reached(h["name"])
+    if not why and written_host_block(h["name"]) is None:
+        why = f"{h['name']} isn't in this Box's ssh config yet (added to roster.yml since the last sync?)"
     if why:
         fix = ("make this Inventory the active one (`roster inv use`), or rename one of the two in its roster.yml"
                if left_out(h["name"]) else sync_fix())
@@ -245,7 +250,9 @@ def setup_run(cfg, args):
                f"this Box's key was made as {KEY_TAG}:{was}, so its lines may carry that name")
         say(f"key tag      {why}: re-tag it as {cfg['tag']} on {plural(len(retag), 'host')} where it works")
 
-    failed = {h["name"]: "no answer on SSH port" for h in hosts if h["name"] in no_answer}
+    from . import catchup
+    failed = {h["name"]: catchup.setup_failure(cfg, h, "can't connect (no answer on its SSH port)") for h in hosts
+              if h["name"] in no_answer}
     if args.dry_run:
         for h in todo:
             say(f"  would install key on {h['name']} ({h['user']}@{h['ip']}:{h['port']}, auth {h['auth']}, "
@@ -272,15 +279,23 @@ def setup_run(cfg, args):
                     failed[h["name"]] = f"re-tag: {why}"
                     say(f"  FAIL  {h['name']}: re-tag: {why}")
 
-    vault_locked = False
+    vault_locked = fetched = False
     for ref, group in sorted({(h["auth"], h["group"]) for h in todo}, key=lambda t: (str(t[0]), t[1])):
         try:
+            if vault_locked:                # T243: locked part way: no more lookups, nothing more asked
+                raise providers.VaultLocked("not asked: the vault was locked during this run")
             get_secret(ref, group)          # ask for / fetch passwords up front, one per group
+            fetched = True
         except RuntimeError as e:
-            vault_locked = vault_locked or isinstance(e, providers.VaultLocked)
+            why = str(e)
+            if isinstance(e, providers.VaultLocked):
+                if fetched and not vault_locked:    # it was open for an earlier lookup of this run
+                    why = (f"[{errors.VAULT_LOCKED_DURING_RUN}] the vault was locked during this run (the roster "
+                           f"app's lock, or bw lock): {e}")
+                vault_locked = True
             for h in todo:
                 if (h["auth"], h["group"]) == (ref, group):
-                    failed[h["name"]] = str(e)
+                    failed[h["name"]] = why
     todo = [h for h in todo if h["name"] not in failed]
 
     installed = []
@@ -302,8 +317,8 @@ def setup_run(cfg, args):
                     failed[h["name"]] = name_taken(cfg)
                     say(f"  FAIL  {h['name']}: {name_taken(cfg)}")
                 except Exception as e:
-                    failed[h["name"]] = str(e)
-                    say(f"  FAIL  {h['name']}: {e}")
+                    failed[h["name"]] = catchup.setup_failure(cfg, h, str(e))
+                    say(f"  FAIL  {h['name']}: {failed[h['name']]}")
 
     # every key Host of this roster.yml now has the key under this name: a later rename is seen against it
     if not narrowed and not failed and len(key_hosts) == sum(h["enroll"] for h in hosts):
@@ -314,7 +329,6 @@ def setup_run(cfg, args):
     failed.update(setup_mesh(cfg, "--only" if args.only else "--host" if narrowed else None))
     # #476 (the owner's run): a Host that failed (the vault locked, say) is never counted as ready too
     ready = sum(h["name"] not in failed for h in key_hosts)
-    from . import catchup
     catchup.record_setup(cfg, [h["name"] for h in key_hosts if h["name"] not in failed],
                          [n for n, why in failed.items() if not str(why).startswith("mesh:")])
     say()
@@ -763,6 +777,7 @@ def cmd_mesh(cfg, args):
 
 
 def cmd_check(cfg, args):
+    from . import catchup, errors
     if getattr(args, "hosts", None):         # T243: `--host NAME` again for more: exactly those Hosts
         unknown = [n for n in args.hosts if n not in cfg["hosts"]]
         if unknown:
@@ -777,18 +792,28 @@ def cmd_check(cfg, args):
     if not args.json:
         warn_problems(hosts)
 
+    problems = {}                           # T243: a failed key login's cause and its one fix (catchup.explain)
+
     def check(h):
-        res = {"ssh": ssh_ok(h["name"]) if h["enroll"] else tcp_ok(h["ip"], h["ssh"]["port"])}
+        if h["enroll"]:
+            ok, stderr = login_probe(h["name"])
+            if not ok:
+                problems[h["name"]] = catchup.explain(cfg, h, stderr)
+        res = {"ssh": ok if h["enroll"] else tcp_ok(h["ip"], h["ssh"]["port"])}
         if res["ssh"] and h["enroll"] and is_windows(h):
             check_windows_key(cfg, h)
         for name, s in h["services"].items():
             res[name] = tcp_ok(urlparse(s["url"]).hostname if s["url"] else h["ip"], s["port"])
         return h, res
 
+    def problem(name):
+        p = problems.get(name)
+        return {"code": p.code, "message": p.message, "fix": p.fix} if p else None
+
     if args.json:
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
             results = [{"name": h["name"], "ok": all(res.values()), "ssh": "login" if h["enroll"] else "port",
-                        "checks": res} for h, res in ex.map(check, hosts)]
+                        "checks": res, "problem": problem(h["name"])} for h, res in ex.map(check, hosts)]
         drift = mesh.drift(cfg) if not narrowed else None
         broken = drift is not None and bool(drift["pending"] or any(h["changes"] for h in drift["hosts"])
                                             or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
@@ -803,9 +828,12 @@ def cmd_check(cfg, args):
     width = max((len(h["name"]) for h in hosts), default=0)
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
         for h, res in sorted(ex.map(check, hosts), key=lambda r: r[0]["name"]):
-            line = "  ".join(f"{k}:{'ok' if v else 'FAIL'}" for k, v in res.items())
+            todo = getattr(problems.get(h["name"]), "code", None) == errors.NO_KEY_YET     # a to-do, not a FAIL
+            line = "  ".join(f"{k}:{'ok' if v else 'todo' if k == 'ssh' and todo else 'FAIL'}" for k, v in res.items())
             bad += not all(res.values())
             say(f"{h['name']:<{width}}  {line}")
+    for name, p in sorted(problems.items()):
+        say(f"  {name}: [{p.code}] {p.message}: {p.fix}")
     say(f"\n{len(hosts) - bad}/{len(hosts)} hosts fully reachable"
         + ("" if all(h["enroll"] for h in hosts) else "  (password-only hosts: ssh = port open)"))
     drift = mesh.drift(cfg) if not narrowed else None
@@ -1166,17 +1194,62 @@ def cmd_run(cfg, args):
         return run_sudo(h, command)
     if h["enroll"]:
         refuse_left_out(h)
-        return run_instead(["ssh", "-o", "BatchMode=yes", h["name"], command])
+        argv = ["ssh", "-o", "BatchMode=yes", h["name"], command]
+        from . import catchup
+        if catchup.not_set_up(cfg, h):      # T243: a Host this Box never reached, or setup didn't finish
+            return run_explained(cfg, h, argv)
+        return run_instead(argv)
     try:
         rc, out, err = password_exec(h, command, get_secret(h["ssh"]["auth"], h["group"]))
     except RuntimeError as e:
-        die(f"{h['name']}: {clean(str(e))}")
+        die(f"{h['name']}: {secret_failure(e, h)}")
     sys.stdout.write(out)
     sys.stderr.write(err)
     if words[0] == "sudo" and rc != 0 and ("password is required" in err or "terminal is required" in err):
         print(f"hint: sudo wants a password - use  roster run --sudo {h['name']} -- {' '.join(words[1:])}",
               file=sys.stderr)
     return rc if rc >= 0 else 1
+
+
+def secret_failure(e, h):
+    """A Login lookup that failed for `roster run` (T243): its errors.py code and roster's words with the one fix
+    (errors.login_problem: the item by name, never a value), or the error's own words for anything else."""
+    from .providers import SecretError
+    if not isinstance(e, SecretError):
+        return clean(str(e))
+    p = errors.login_problem(e, h)
+    fix = f": {p.fix}" if p.fix and p.fix not in p.message else ""
+    return clean(f"[{p.code}] {p.message}{fix}")
+
+
+def run_explained(cfg, h, argv):
+    """`roster run` on a Host whose key may not be there yet (catchup.not_set_up): ssh as a child, not in roster's
+    place, its stderr passed on as it comes and kept, so a failed login (exit 255) gets one more line: its cause and
+    the one fix (`no key on NAME yet: roster setup --host NAME`). Still one connection, never a retry."""
+    import threading
+
+    from . import catchup
+    kept = []
+    p = subprocess.Popen(program_argv(argv), stderr=subprocess.PIPE)
+
+    def tee():
+        assert p.stderr is not None
+        for line in iter(p.stderr.readline, b""):
+            kept.append(line)
+            sys.stderr.buffer.write(line) if hasattr(sys.stderr, "buffer") else sys.stderr.write(
+                line.decode(errors="replace"))
+            sys.stderr.flush()
+    t = threading.Thread(target=tee, daemon=True)
+    t.start()
+    try:
+        rc = p.wait()
+    except KeyboardInterrupt:              # Ctrl+C went to ssh as well; its code is what counts
+        rc = p.wait()
+    t.join()
+    if rc == 255:
+        why = catchup.explain(cfg, h, b"".join(kept).decode(errors="replace"))
+        print(f"roster: [{why.code}] {why.message}: {why.fix}", file=sys.stderr, flush=True)
+    return rc
 
 
 def run_windows(h, command, sudo):
@@ -1196,7 +1269,7 @@ def run_windows(h, command, sudo):
     except ValueError as e:                 # the script with CMD in it is over 1 MB: nothing was sent
         die(f"{h['name']}: {e}: nothing ran")
     except RuntimeError as e:
-        die(f"{h['name']}: {clean(str(e))}")
+        die(f"{h['name']}: {secret_failure(e, h)}")
 
 
 def run_sudo(h, command):
@@ -1204,7 +1277,7 @@ def run_sudo(h, command):
     try:
         secret = get_secret(h["ssh"]["auth"], h["group"])
     except RuntimeError as e:
-        die(f"{h['name']}: {clean(str(e))}")
+        die(f"{h['name']}: {secret_failure(e, h)}")
     if not secret:
         die(f"{h['name']}: --sudo needs the login's password, but its auth is {h['ssh']['auth']!r} "
             "(set auth: to the vault item that holds the password)")
@@ -1222,10 +1295,24 @@ def run_sudo(h, command):
             die(f"{h['name']}: {clean(mask(str(e), [secret]))}")
     sys.stdout.write(mask(out, [secret]))
     sys.stderr.write(mask(err, [secret]))
-    if "incorrect password" in err or "no password was provided" in err:
-        print(f"{h['name']}: sudo refused the password from {h['ssh']['auth']} - "
-              f"is {h['ssh']['user']} allowed to sudo there?", file=sys.stderr)
+    if why := sudo_failure(h, err):
+        print(f"{h['name']}: {why}", file=sys.stderr)
     return rc if rc >= 0 else 1
+
+
+def sudo_failure(h, err):
+    """What sudo's own words on Host H mean (T243): not in sudoers, a tty it wants, or the Login's password refused
+    (a sudo password that differs from it); None when it said none of them. Names the vault item, never a value."""
+    low, user, auth = err.lower(), h["ssh"]["user"], h["ssh"]["auth"]
+    if "not in the sudoers" in low or "is not allowed to" in low or "may not run sudo" in low:
+        return f"{user} isn't allowed to sudo there (not in sudoers): add it there, or log in as an account that is"
+    if "terminal is required" in low or "no tty present" in low or "must have a tty" in low:
+        return ("sudo there wants a terminal (requiretty in sudoers), which roster run --sudo doesn't give it: "
+                f"turn requiretty off for {user}, or run it in a Session (roster's app, or ssh -t)")
+    if "incorrect password" in low or "no password was provided" in low:
+        return (f"sudo refused the password from {auth}: is the sudo password there the login's? (another one: "
+                f"a sudo: Login in roster.yml gives it; or is {user} allowed to sudo there?)")
+    return None
 
 
 def revoke_on(h, tag_re):

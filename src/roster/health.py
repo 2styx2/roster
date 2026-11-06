@@ -173,6 +173,11 @@ def ssh(cfg):
         if key.key.exists():
             out.append(check("ssh", "ok", f"{what}: {key.key}"))
             out += key_age(cfg, key, what)
+        elif boxkeys.was_made(key.key):             # T243: roster made it, and it's gone since
+            from .errors import BOX_KEY_REMADE
+            out.append(check("ssh", "error", f"[{BOX_KEY_REMADE}] {what} is gone ({key.key}, deleted?): every Host it "
+                                             "was on lost this Box's key login", "run `roster setup`: it makes a new "
+                                             "key and puts it on every Host it can log in to with a password", "E280"))
         else:
             kind = "" if key.type.name == boxkeys.DEFAULT else f"{key.type.name} "
             out.append(check("ssh", "warn", f"this Box has no {kind}key yet ({key.key}), so key Logins "
