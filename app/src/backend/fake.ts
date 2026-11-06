@@ -823,6 +823,7 @@ function demoMeshStatus(params: Record<string, unknown>): Record<string, unknown
     pending: { "demo-05": "no answer: ssh: connect to host 10.0.0.15 port 22: Connection timed out" },
     cut_pending: {},
     out_of_date: false,
+    warnings: [],
   };
   if (grouped) Object.assign(out, { links: DEMO_LINKS.map(link), meshed: { "demo-lab": DEMO_MESHED } });
   if (brief) {

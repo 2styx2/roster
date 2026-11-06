@@ -91,6 +91,7 @@ fn mesh_status(params: &Json) -> Result<Json, String> {
         "pending": { "demo-05": "no answer: ssh: connect to host 10.0.0.15 port 22: Connection timed out" },
         "cut_pending": {},
         "out_of_date": false,
+        "warnings": [],
     });
     if grouped {
         // The pairs `meshed` covers go; the rest stay.
