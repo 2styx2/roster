@@ -2,6 +2,7 @@
 // long as the workspace lives; what they open is the workspace's as of its last render.
 import { useEffect, useLayoutEffect, useState } from "react";
 import { registerBuiltins, type BuiltinDeps } from "../commands/builtins";
+import type { PluginManager } from "../plugins/manager";
 import type { Registries } from "../registries";
 import type { TutorialDef } from "../tutor/tutor";
 import type { TutorLink } from "../tutor/useDemo";
@@ -18,7 +19,7 @@ const none: Openers = { plugins: () => {}, packages: () => {}, tutorial: () => {
 
 export function useBuiltins(
   registries: Registries,
-  deps: Omit<BuiltinDeps, "plugins" | "tutor"> & { plugins: BuiltinDeps["plugins"]["manager"] },
+  deps: Omit<BuiltinDeps, "plugins" | "tutor"> & { plugins: PluginManager },
   tutor: TutorLink | undefined,
   openers: Openers,
 ) {

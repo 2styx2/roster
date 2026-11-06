@@ -2,12 +2,10 @@
 // messages, views, panels, Plugins, the tutor), registered in one place: the workspace with its
 // live objects, the docs website and the docs lint with inert ones, so `:help commands` lists the
 // same commands in all three.
-import type { Backend } from "../backend/types";
 import { HelpView, registerHelp } from "../help/command";
 import { PanelLayout } from "../panel/layout";
 import { registerPanel } from "../panel/command";
-import { cancelCommand, packagesCommand, pluginsCommand } from "../plugins/command";
-import { PluginManager } from "../plugins/manager";
+import { cancelCommand, packagesCommand, pluginsCommand, type PluginCommands } from "../plugins/command";
 import type { Registries } from "../registries";
 import { registerThemePicker, ThemeChoice } from "../theme/picker";
 import { tutorCommand, type TutorActions } from "../tutor/command";
@@ -22,7 +20,7 @@ export interface BuiltinDeps {
   messages: { choice: MessagesChoice; log: MessageLog; open(): void };
   views: ViewHost;
   panels: PanelLayout;
-  plugins: { manager: PluginManager; openPlugins(): void; openPackages(): void };
+  plugins: { manager: PluginCommands; openPlugins(): void; openPackages(): void };
   /** `:tutor`: only where tutorials can run. */
   tutor: TutorActions | null;
 }
@@ -45,10 +43,27 @@ export function registerBuiltins(registries: Registries, deps: BuiltinDeps): () 
   return () => disposers.forEach((d) => d());
 }
 
-/** A Backend for objects that are only described, never run: every call fails. */
-const offline = new Proxy({} as Backend, {
-  get: () => () => Promise.reject(new Error("no roster serve here")),
-});
+/** The docs only describe these commands; running one there is a mistake. */
+function described(): never {
+  throw new Error("no Plugins in the docs");
+}
+
+const noPlugins: PluginCommands = {
+  names: () => [],
+  cancellable: () => [],
+  snapshot: described,
+  install: described,
+  remove: described,
+  reload: described,
+  setGrant: described,
+  writeTypes: described,
+  callWith: described,
+  runLine: described,
+  checkPackages: described,
+  installPackage: described,
+  cleanPackages: described,
+  cancelProgress: described,
+};
 
 /** Objects for the docs (the website, the lint): nothing kept, no Backend, no tutorials to run. */
 export function docsBuiltins(registries: Registries): BuiltinDeps {
@@ -62,7 +77,7 @@ export function docsBuiltins(registries: Registries): BuiltinDeps {
     views: new ViewHost(),
     panels: new PanelLayout(state),
     plugins: {
-      manager: new PluginManager(offline, registries, state, { run: none, send: none, copy: () => Promise.resolve() }),
+      manager: noPlugins,
       openPlugins: none,
       openPackages: none,
     },
