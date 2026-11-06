@@ -803,7 +803,7 @@ def test_setup_on_a_renamed_box_says_when_a_windows_host_has_no_line_to_retag(wi
     assert main(["setup", "--only", "dc-01"]) == 0
     win.admin_file("dc-01").write_bytes(OTHER)              # the key works some other way: no roster line here
     write_config(WIN.replace("box_name: box\n", "box_name: box2\n"))
-    monkeypatch.setattr("roster.cli.ssh_ok", lambda name: True)
+    monkeypatch.setattr("roster.boxsetup.ssh_ok", lambda name: True)     # sshd takes the key some other way
     capsys.readouterr()
     main(["setup", "--only", "dc-01"])
     out = capsys.readouterr().out

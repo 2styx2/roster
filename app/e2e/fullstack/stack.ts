@@ -69,8 +69,24 @@ function tripwire(dir: string, tool: string, ran: string) {
   chmodSync(script, 0o755);
 }
 
-/** The sandbox guard: HOME is a fresh temp folder, the vault CLIs resolve to tests/fakes, roster is
- * this worktree's, and no ROSTER_CONFIG reaches it. Throws before anything runs otherwise. */
+/** ssh as it is on a Box whose HOME is its home, as tests/e2e's `ssh_wrapper` makes it. OpenSSH
+ * reads ~/.ssh/config, and expands ~ in its defaults, from the password database's home, not
+ * $HOME: in the sandbox it would read the real ~/.ssh/config (on a CI runner, none, so no Host
+ * block for `ssh lab-01`) and write the real known_hosts. The sandbox's ssh is the real one with
+ * -F: this HOME's ~/.ssh/config, then the system's, then defaults that keep known_hosts and the
+ * identities in this HOME. serve hands the app the ssh it finds on PATH, so Sessions run this. */
+function sshWrapper(root: string, home: string, bin: string, path: string[]) {
+  const real = execFileSync("sh", ["-c", "command -v ssh"], { env: { PATH: path.join(delimiter) }, encoding: "utf8" }).trim();
+  const ssh = join(home, ".ssh");
+  const config = join(root, "ssh_config");
+  writeFileSync(config, `Include "${ssh}/config"\nInclude /etc/ssh/ssh_config\nHost *\n    UserKnownHostsFile "${ssh}/known_hosts"\n    IdentityFile "${ssh}/id_ed25519"\n`);
+  writeFileSync(join(bin, "ssh"), `#!/bin/sh\nexec '${real}' -F '${config}' "$@"\n`);
+  chmodSync(join(bin, "ssh"), 0o755);
+}
+
+/** The sandbox guard: HOME is a fresh temp folder, the vault CLIs resolve to tests/fakes, ssh to
+ * the sandbox's (sshWrapper), roster is this worktree's, and no ROSTER_CONFIG reaches it. Throws
+ * before anything runs otherwise. */
 function assertSandbox(env: NodeJS.ProcessEnv, root: string) {
   const home = env.HOME ?? "";
   if (!home.startsWith(root) || !home.startsWith(realpathSync(tmpdir()))) throw new Error(`sandbox: HOME ${home} isn't a fresh temp folder`);
@@ -79,6 +95,8 @@ function assertSandbox(env: NodeJS.ProcessEnv, root: string) {
     const found = execFileSync("sh", ["-c", `command -v ${tool}`], { env, encoding: "utf8" }).trim();
     if (realpathSync(found) !== join(FAKES, tool)) throw new Error(`sandbox: ${tool} resolves to ${found}, not tests/fakes`);
   }
+  const ssh = execFileSync("sh", ["-c", "command -v ssh"], { env, encoding: "utf8" }).trim();
+  if (ssh !== join(root, "bin", "ssh")) throw new Error(`sandbox: ssh resolves to ${ssh}, not the sandbox's (-F)`);
   if (!env.ROSTER_APP_ROSTER?.includes(`--project ${REPO} `)) throw new Error("sandbox: roster isn't this worktree's");
 }
 
@@ -97,6 +115,7 @@ export async function startStack(opts: StackOptions = {}): Promise<Stack> {
   tripwire(dirs.guard, "roster", ran);
   const realHome = process.env.HOME ?? "";
   const path = (process.env.PATH ?? "").split(delimiter).filter((d) => d && !(realHome && d.startsWith(join(realHome, ".local"))));
+  sshWrapper(root, dirs.home, dirs.bin, path);
   const uv = process.env.UV ?? execFileSync("sh", ["-c", "command -v uv"], { encoding: "utf8" }).trim();
   const config = join(dirs.home, ".config", "roster");
   mkdirSync(config, { recursive: true });

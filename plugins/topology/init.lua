@@ -38,9 +38,9 @@ local filtered = false -- the view's filter is one :topology GROUP set
 -- Asks roster serve without waiting (roster.serve.request): `done(result)` or `done(nil, why)`
 -- comes later, as a call of its own, so a busy serve (a Publish, a long Mesh run) never holds up
 -- this Plugin or the app.
----@param done fun(result: any, why: string?)
+---@param done fun(result: any, why: roster.ServeError|string?)
 local function ask(method, params, done)
-  local sent_ok, err = pcall(roster.serve.request, method, params or {}, function(r, why) done(r, why) end)
+  local sent_ok, err = pcall(roster.serve.request, method, params or {}, done)
   if not sent_ok then done(nil, tostring(err)) end
 end
 
