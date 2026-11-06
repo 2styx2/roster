@@ -2339,7 +2339,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       const chosen = namedInvs.find((n) => n.name === name);
       if (!chosen) {
         const names = namedInvs.map((n) => n.name);
-        throw new BackendCallError(`no Inventory named '${name}'`, InventoriesError.unknown, { names, fix: `pick one of ${names.join(", ") || "none"}` });
+        throw new BackendCallError(`no Inventory named '${name}' (named: ${names.join(", ") || "none yet"}) - \`roster inv list\` lists them, \`roster inv add NAME PATH\` names one`, InventoriesError.unknown, { names, fix: "`roster inv list` lists them" });
       }
       activeInventory = name;
       return { active: name, path: chosen.path, restart: true as const };

@@ -117,12 +117,15 @@ def same_file(a: str | Path, b: str | Path) -> bool:
     return Path(a).expanduser().resolve() == Path(b).expanduser().resolve()
 
 
-def unknown(name: str, inv: Inventories | None = None) -> NoReturn:
+def unknown(name: str, inv: Inventories | None = None, typed: bool = True) -> NoReturn:
+    """No named Inventory NAME (code 140, `data.names` the ones there are). A TYPED name that looks like a token is
+    not repeated (Q207 (g)); serve's comes from the app's own list, so it's always quoted."""
     inv = inv or load()
-    have = ", ".join(x.name for x in inv.inventories) or "none yet"
-    shown = "that (not repeated)" if token_shaped(name) else f"'{name}'"     # a token typed after --inv
-    raise Problem(UNKNOWN_INVENTORY, f"no Inventory named {shown} (named: {have}) - `roster inv list` lists them, "
-                                     "`roster inv add NAME PATH` names one", fix="`roster inv list` lists them")
+    names = [x.name for x in inv.inventories]
+    shown = "that (not repeated)" if typed and token_shaped(name) else f"'{name}'"
+    raise Problem(UNKNOWN_INVENTORY, f"no Inventory named {shown} (named: {', '.join(names) or 'none yet'}) - "
+                  "`roster inv list` lists them, `roster inv add NAME PATH` names one", {"names": names},
+                  fix="`roster inv list` lists them")
 
 
 def path_of(name: str) -> Path:

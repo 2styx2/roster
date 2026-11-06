@@ -103,12 +103,11 @@ def test_a_key_file_goes_with_the_password(fakes, isolated, tmp_path):
     setup_providers({"path": isolated["work"] / "roster.yml", "providers": {"kp": {"database": str(db)}}})
     with pytest.raises(providers.WrongPassword, match="wrong master password"):   # the key file is missing
         providers.unlock("kp", MASTER)
-    setup_providers({"path": isolated["work"] / "roster.yml",
+    setup_providers({"path": tmp_path / "roster.yml",                 # k.kdbx: relative to roster.yml's folder
                      "providers": {"kp": {"database": "k.kdbx", "key_file": str(tmp_path / "nope.key")}}})
-    providers.PROVIDER_SETTINGS["kp"]["_base"] = tmp_path            # relative to roster.yml's folder
     with pytest.raises(providers.NotLoggedIn, match="key file"):
         providers.unlock("kp", MASTER)
-    providers.PROVIDER_SETTINGS["kp"]["key_file"] = str(key)
+    setup_providers({"path": tmp_path / "roster.yml", "providers": {"kp": {"database": "k.kdbx", "key_file": str(key)}}})
     providers.unlock("kp", MASTER)
     assert get_secret("kp:esx ssh", "g") == "pw-esx"
 
@@ -144,8 +143,8 @@ def test_creates_a_login_entry_with_the_passwords_off_the_command_line(kdbx, tmp
     assert NEW_PW not in log and MASTER not in log
 
 
-def test_creates_in_the_group_set_for_it(kdbx):
-    providers.PROVIDER_SETTINGS["kp"]["group"] = "Lab"
+def test_creates_in_the_group_set_for_it(kdbx, isolated):
+    setup_providers({"path": isolated["work"] / "roster.yml", "providers": {"kp": {"database": str(kdbx), "group": "Lab"}}})
     providers.unlock("kp", MASTER)
     made = providers.create_item("kp", name="box ssh", password=NEW_PW)
     assert made == {"id": "Lab/box ssh", "name": "box ssh", "target": {"id": "group:Lab", "kind": "group", "label": "Lab"}}

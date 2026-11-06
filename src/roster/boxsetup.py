@@ -7,7 +7,7 @@ import concurrent.futures as cf
 import sys
 from contextlib import contextmanager
 
-from . import authorized, boxkeys, boxlock, keyline, mesh, rotation
+from . import authorized, boxkeys, boxlock, keyline, mesh, meshview, rotation
 from .authorized import TAKEN, NameTaken, NoLine, box_key_re, box_public_keys, enroll, key_named
 from .boxkeys import ensure_key, public_key_line
 from .claude import write_claude_files
@@ -63,16 +63,15 @@ def locked(what, contexts=None):
         held.__exit__(None, None, None)
 
 
-def setup(cfg, apply_mesh, only=None, host=None, dry_run=False, key_type=None, force=False):
-    """`roster setup`, holding the Box-wide lock unless DRY_RUN (read-only). APPLY_MESH(cfg) -> {host: why pending}:
-    the Mesh's apply as the command line shows it."""
+def setup(cfg, only=None, host=None, dry_run=False, key_type=None, force=False):
+    """`roster setup`, holding the Box-wide lock unless DRY_RUN (read-only)."""
     if dry_run:
-        return setup_run(cfg, apply_mesh, only, host, dry_run, key_type, force)
+        return setup_run(cfg, only, host, dry_run, key_type, force)
     with locked("setup"):
-        return setup_run(cfg, apply_mesh, only, host, dry_run, key_type, force)
+        return setup_run(cfg, only, host, dry_run, key_type, force)
 
 
-def setup_run(cfg, apply_mesh, only, host, dry_run, override, force):
+def setup_run(cfg, only, host, dry_run, override, force):
     # `--host NAME` (Q198; `roster add --setup` too): exactly that Host, never what --only NAME would match too
     # (a group, type or product by that name)
     if host is not None and host not in cfg["hosts"]:
@@ -193,7 +192,7 @@ def setup_run(cfg, apply_mesh, only, host, dry_run, override, force):
             replace_file(current().key_name, f"{cfg['box']}\n")
     write_claude_files(cfg)
     warn_overlaps(cfg)
-    failed.update(setup_mesh(cfg, "--only" if only else "--host" if narrowed else None, apply_mesh))
+    failed.update(setup_mesh(cfg, "--only" if only else "--host" if narrowed else None))
     ready = len(key_hosts) - len(todo) + installed
     say()
     say(f"done         {ready} key hosts ready, {len(pw_hosts)} password-only hosts, {len(failed)} failed")
@@ -213,7 +212,7 @@ def setup_run(cfg, apply_mesh, only, host, dry_run, override, force):
     return 1 if failed else 0
 
 
-def setup_mesh(cfg, narrowed_by, apply_mesh):
+def setup_mesh(cfg, narrowed_by):
     """Setup's own Mesh apply (Q63), once the Box key works on the Hosts: never with a narrowed run (NARROWED_BY, the
     flag), never one that would take a member out for its key type. {host: why} for what it left pending."""
     if not mesh.graph(cfg)["links"]:
@@ -229,7 +228,7 @@ def setup_mesh(cfg, narrowed_by, apply_mesh):
             "--dry-run`, then run `roster mesh` to do it (or set key_type: back)")
         return {}
     say("mesh         applying the Mesh for meshed groups and links (one Host at a time)...")
-    return {n: f"mesh: {why}" for n, why in apply_mesh(cfg).items()}
+    return {n: f"mesh: {why}" for n, why in meshview.apply(cfg).items()}
 
 
 def key_type_for_run(cfg, hosts, value):

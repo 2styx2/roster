@@ -215,7 +215,7 @@ def kp(fakes, tmp_path):
                                            "URL": "10.0.0.50", "Notes": "note-SECRET-nas"},
                                           {"path": "esx-02 ssh", "UserName": "root", "Password": "pw-mapped-SECRET",
                                            "URL": ""}]}))
-    providers.PROVIDER_SETTINGS["kp"] = {"database": str(db)}
+    providers.setup_providers({"path": tmp_path / "roster.yml", "providers": {"kp": {"database": str(db)}}})
     (tmp_path / "argv.log").unlink(missing_ok=True)
     return tmp_path
 

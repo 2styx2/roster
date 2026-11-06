@@ -466,20 +466,24 @@ def test_a_box_wide_key_type_leaves_password_hosts_in_the_mesh(write_config):
 def test_setup_doesnt_take_a_member_out_of_the_mesh_for_its_key_type(write_config, capsys, monkeypatch):
     """A full setup applies the Mesh; when that would take Mesh entries off a Host that is a member now because its
     key_type leaves it out, it warns and leaves the Mesh alone: `roster mesh --dry-run` shows it, `roster mesh` does it."""
-    from roster import cli, mesh
+    from roster import mesh
     from roster.cli import main
     monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: {h["name"] for h in hosts})
     applied = []
-    monkeypatch.setattr(cli, "mesh_apply", lambda cfg: applied.append(1) or {})
+
+    def run(cfg, apply=False, **kw):
+        applied.append(apply)
+        return {"links": [], "hosts": [], "excluded": {}, "warnings": [], "pending": {}, "applied": apply}
+    monkeypatch.setattr(mesh, "run", run)
     yml = MESH_YML.replace("      fips-01: {ip: 10.0.0.5, key_type: ecdsa}\n", "      fips-01: 10.0.0.5\n")
     write_config(yml)
     mesh.save_state({**mesh.load_state(), "members": ["a-01", "a-02", "b-01", "fips-01"]})
     main(["setup"])
-    assert applied == [1]                                       # nothing left out for its key type: applied
+    assert applied == [True]                                    # nothing left out for its key type: applied
     write_config(MESH_YML)
     capsys.readouterr()
     main(["setup"])
     out = capsys.readouterr().out
-    assert applied == [1]                                       # not applied this time
+    assert applied == [True]                                    # not applied this time
     assert "mesh         NOT applied" in out and "fips-01" in out and "roster mesh --dry-run" in out
     assert main(["setup", "--dry-run"]) == 0

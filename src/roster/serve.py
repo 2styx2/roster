@@ -741,9 +741,7 @@ def inventories_use(state, params):
     inv = named.load()
     chosen = inv.get(name)
     if chosen is None:
-        names = [x.name for x in inv.inventories]
-        raise Problem(UNKNOWN_INVENTORY, f"no Inventory named '{name}'", {"names": names},
-                       fix="pick one of " + (", ".join(names) or "none: `roster inv add NAME PATH` names one"))
+        named.unknown(name, inv, typed=False)
     inventories.use(name)
     return {"active": name, "path": str(chosen.path), "restart": True}
 

@@ -255,7 +255,7 @@ def test_sudos_password_reaches_the_remote_sh_without_a_carriage_return(as_windo
     write_config(SUDO_CFG)
     monkeypatch.setenv("ROSTER_TEST_PW", "s3cret")
     seen = {}
-    monkeypatch.setattr(cli.subprocess, "run", fake_run_answering(seen, "root\n"))
+    monkeypatch.setattr(subprocess, "run", fake_run_answering(seen, "root\n"))
     assert cli.main(["run", "--sudo", "key-host", "--", "whoami"]) == 0
     assert sent_on_windows(seen) == b"s3cret\n"
 

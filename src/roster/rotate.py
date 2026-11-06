@@ -31,11 +31,11 @@ from pathlib import Path
 from typing import Any
 
 from . import boxkeys, keyline, sshconfig, winhost
-from .authorized import add_key_script, remove_key_script
+from .authorized import add_key_script, key_named, remove_key_script
 from .common import die, program_argv, replace_file, ssh_path
 from .config import load_config
 from .context import Context, current
-from .errors import NEW_KEY_REFUSED, InventoryError, Problem, tagged
+from .errors import NEW_KEY_REFUSED, UNKNOWN_HOST, InventoryError, Problem, tagged
 from .hosts import is_windows
 from .keyline import key_ere
 from .rotation import (
@@ -297,6 +297,37 @@ def read_all(groups) -> dict[Context, Record]:
                 "beside the key ending .new and .old with it, then run roster setup --rotate (a Host that holds only "
                 "the old key's line then needs `roster setup --host NAME`, with its Login's password)")
     return out
+
+
+def hosts_for(cfg: dict[str, Any], host: str | None, key_type: str | None) -> set[str] | None:
+    """The Hosts `setup --rotate [--host NAME] [--key-type T]` covers (None: every Host), or it stops: an unknown
+    NAME, a key type roster.yml doesn't give them, a Box whose key lines carry another name."""
+    hosts: set[str] | None = None
+    if host is not None:
+        if host in cfg["hosts"]:
+            hosts = {host}
+        elif host in cfg["groups"]:
+            hosts = {n for n, h in cfg["hosts"].items() if h["group"] == host}
+        else:
+            die(f"unknown host or group {host!r} (see `roster hosts`): setup --rotate --host takes a Host or a "
+                "group", code=UNKNOWN_HOST)
+    if key_type:
+        try:
+            kt = boxkeys.parse(key_type).name
+        except ValueError as e:
+            die(f"--key-type: {e}")
+        other = sorted(n for n, h in cfg["hosts"].items() if h["enroll"] and h["reviewed"] and (hosts is None or n in
+                       hosts) and h["key_type"] != kt)
+        if other:
+            die(f"--key-type {kt} with --rotate: roster.yml gives {', '.join(other)} another key type. Set key_type: "
+                f"{kt} in roster.yml (on them, their group or defaults), then run roster setup --rotate: one pass "
+                "makes the new key of that type, proves it, and takes the old type's lines off (a type for this "
+                "run only would come back at the next sync and lock them out, Q200 (e))")
+    was = key_named(cfg)
+    if was not in (None, cfg["box"]):
+        die(f"this Box's key lines carry the name {was}, not {cfg['box']} (box_name:, or the hostname, changed): run "
+            "`roster setup` first (it re-tags them), then roster setup --rotate. A rotation never renames the Box")
+    return hosts
 
 
 def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = False, say=print) -> dict[str, Any]:

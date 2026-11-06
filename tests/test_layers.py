@@ -26,7 +26,7 @@ LAYERS: dict[str, list[str]] = {
     # What a command or a serve method does: shared by both, so neither holds logic the other needs.
     "feature": ["boxsync", "store", "inventories", "newinventory", "mesh", "diagnose", "fill", "health", "web",
                 "discover", "addhost", "fromvault", "authorized", "winhost", "rotate", "vaultsync", "cliparser",
-                "completion", "manpage", "boxsetup", "revoke"],
+                "completion", "manpage", "meshview", "boxsetup", "revoke", "run"],
     # The two front doors. Nothing imports them but the ones listed in TOP_IMPORTS.
     "top": ["serve", "cli", "__main__"],
 }
