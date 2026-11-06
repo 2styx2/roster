@@ -40,6 +40,8 @@ export function hostFacts(h: Host, groups: HostList["groups"]): Fact[] {
     ["access", access(h), true],
     ["mac", h.mac, true],
     ["ssh login", loginLabel(h.ssh), true],
+    // a key Host's key type and the key file it logs in with (a password Host's key_type means nothing)
+    ["ssh key", h.enroll && h.key_type ? h.key_type + (h.key_file ? `, ${h.key_file}` : "") : null, true],
     ["login", login, true],
     ["web UI", h.web && shownUrl(h.web), true],
   ];

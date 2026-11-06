@@ -1,9 +1,9 @@
 """The Inventory a run uses (ticket 115) and the files roster keeps for each Inventory.
 
 One process uses one Inventory (serve restarts to switch): config.find_config picks it as it finds roster.yml and
-calls use(). A named Inventory has files of its own (its ssh config, known_hosts, Mesh state, key-name, rotation
-record, lock), so syncing one never wipes another's; the unnamed one (no named Inventories, or a roster.yml that
-isn't one of them) has the files roster always wrote. FILES is the one table of them: every path comes from it, and
+calls use(). A named Inventory has files of its own (its ssh config, known_hosts, Mesh state, key-name, key-types,
+rotation record, lock), so syncing one never wipes another's; the unnamed one (no named Inventories, or a roster.yml
+that isn't one of them) has the files roster always wrote. FILES is the one table of them: every path comes from it, and
 `roster inv remove` walks it. BOX_FILES are the ones roster keeps once for this Box.
 
 Imports nothing of roster's: it is what everything else stands on."""
@@ -51,6 +51,8 @@ FILES = {
     "key_name": File(user_config_dir, "key-name", "key-name-{}", "delete"),
     # the Box key rotation's pending record: the Hosts not finished yet
     "rotation": File(user_config_dir, "key-rotation", "key-rotation-{}", "set aside"),
+    # the key types of this Box's lines on each Host, as roster last left them (boxkeys.installed)
+    "key_types": File(user_config_dir, "key-types", "key-types-{}", "delete"),
     # the Box-wide lock (boxlock)
     "lock": File(user_config_dir, "run.lock", "run-{}.lock", "delete"),
 }

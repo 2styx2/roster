@@ -134,6 +134,9 @@ export const Code = {
   ROTATION_PENDING: 206,
   KEY_TOO_OLD: 207,
   NEW_KEY_REFUSED: 208,
+  KEY_TYPE_DRIFT: 219,
+  MESH_KEY_PEER: 220,
+  KEY_FILE_SHARED: 221,
 } as const;
 
 /** JSON-RPC's own error codes, which serve answers with too. */

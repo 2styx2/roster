@@ -90,6 +90,7 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
     if not hosts:
         return 0
     warn_os(hosts)
+    yml = cfg                               # roster.yml's own key types, before --key-type's for this run
     if override:
         if host is None:            # a Host at a time, never a group or the whole Inventory
             die("--key-type goes with --host NAME (one Host, to try a key type there): for more Hosts, set "
@@ -129,6 +130,25 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                f"this Box's key was made as {keyline.tag(str(was))}, so its lines may carry that name")
         say(f"key tag      {why}: re-tag it as {cfg['tag']} on {plural(len(retag), 'host')} where it works")
 
+    # the record says which types this Box's lines on each Host are; where the key works, the lines of other types
+    # go now (setup --key-type's, a cleanup that failed), over that key login. --key-type's Host keeps roster.yml's
+    # type's line too, so its tries never pile up
+    held = boxkeys.installed()
+    pending_rotation = rotation.pending(cfg)
+
+    def keep(h: dict[str, Any]) -> set[str]:
+        return {h["key_type"], yml["hosts"][h["name"]]["key_type"]} if override else {h["key_type"]}
+
+    tidy = {h["name"]: sorted(set(held.get(h["name"], [])) - keep(h)) for h in key_hosts
+            if works[h["name"]] and h["name"] not in pending_rotation and set(held.get(h["name"], [])) - keep(h)}
+    # the cleanup writes the key's .pub back after taking this Box's lines off, so only where roster can tell that
+    # .pub is the key that logged in (a passphrase on it: it can't), never losing the working line (#505's review NIT)
+    for h in key_hosts:
+        if h["name"] in tidy and not boxkeys.matches(boxkeys.for_host(h).key):
+            say(f"  note  {h['name']}: this Box's {' and '.join(tidy.pop(h['name']))} key line is still there, and "
+                f"roster can't check that {boxkeys.for_host(h).pub} is the key that logs in (a passphrase on it?), so "
+                "it left the lines as they are: remove that line by hand, or roster revoke takes it")
+
     failed = {h["name"]: "no answer on SSH port" for h in hosts if h["name"] in no_answer}
     if dry_run:
         for h in todo:
@@ -136,6 +156,8 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                 f"{h['key_type']} key)")
         for h in retag:
             say(f"  would re-tag key on {h['name']}")
+        for name, types in tidy.items():
+            say(f"  would take this Box's {' and '.join(types)} key line off {name}")
         return 0
 
     # renamed onto a name another Box's key line has on a Host: the same-name rule (this Box's revoke
@@ -161,6 +183,36 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                     failed[h["name"]] = f"re-tag: {why}"
                     say(f"  FAIL  {h['name']}: re-tag: {why}")
 
+    if tidy:
+        by_name = {h["name"]: h for h in key_hosts}
+        unmatched: dict[str, list[str]] = {}    # an earlier try's type with no key of it here (#505's review L2)
+
+        def tidy_on(name: str) -> list[str]:
+            h = by_name[name]
+            if not override:
+                return authorized.drop_others(h, pub(h), box_key_re(cfg), why="the key works")
+            drop_re, unmatched[name] = cleanup_re(cfg, pub(h), tidy[name])
+            return authorized.drop_others(h, pub(h), drop_re, why="the key works")
+        with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
+            futs = {ex.submit(tidy_on, n): n for n in tidy if n not in failed}
+            for f in cf.as_completed(futs):
+                name = futs[f]
+                try:
+                    notes = f.result()
+                    boxkeys.record({name: (set(held.get(name, [])) - set(tidy[name])) | set(unmatched.get(name, ()))})
+                    say(f"  ok    {name} (took this Box's {' and '.join(tidy[name])} key line off)")
+                    for note in notes:
+                        say(f"        {note}")
+                except Exception as e:
+                    failed[name] = str(e)
+                    say(f"  FAIL  {name}: {e}")
+    # a Host where the key works holds at least its type's line
+    known = {h["name"]: set(held.get(h["name"], [])) | {h["key_type"]} for h in key_hosts
+             if works[h["name"]] and h["name"] not in tidy and h["name"] not in failed
+             and set(held.get(h["name"], [])) | {h["key_type"]} != set(held.get(h["name"], []))}
+    if known:
+        boxkeys.record(known)
+
     for ref, group in sorted({(h["auth"], h["group"]) for h in todo}, key=lambda t: (str(t[0]), t[1])):
         try:
             get_secret(ref, group)          # ask for / fetch passwords up front, one per group
@@ -182,6 +234,15 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                 try:
                     notes = f.result()
                     installed += 1
+                    if override:            # roster.yml's type's line stayed, and any other try's: those go
+                        have = set(held.get(h["name"], [])) | keep(h)
+                        left: list[str] = []
+                        if extra := sorted(have - keep(h)):
+                            drop_re, left = cleanup_re(cfg, pub(h), extra)
+                            notes = [*(notes or []), *authorized.drop_others(h, pub(h), drop_re)]
+                        boxkeys.record({h["name"]: keep(h) | set(left)})      # a line it couldn't match stays
+                    else:
+                        boxkeys.record({h["name"]: [h["key_type"]]})
                     say(f"  ok    {h['name']}")
                     for note in notes or ():
                         say(f"        {note}")
@@ -218,20 +279,30 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
     return 1 if failed else 0
 
 
+def cleanup_re(cfg: dict[str, Any], pub: str, types: list[str]) -> tuple[str, list[str]]:
+    """What drop_others takes on a Host for `setup --key-type` (#471's NIT-3): PUB's line (written again) and this
+    Box's lines of TYPES' keys (the ones this Box holds, boxkeys.vouched), never roster.yml's type's line. Returns
+    (that ERE, the TYPES with no such key here: their lines stay, and the record keeps them, #505's review L2)."""
+    by_type = {k.type.name: k for k in boxkeys.all_keys(cfg)}
+    alts: list[str] = [key_ere(*pub.split()[:2])]
+    missing: list[str] = []
+    for t in types:
+        k = by_type.get(t)
+        words = boxkeys.public_words(k.pub) if k is not None and boxkeys.vouched(k, cfg["key"]) else None
+        if words:
+            alts.append(key_ere(*words))
+        else:
+            missing.append(t)
+    return "|".join(alts), missing
+
+
 def setup_mesh(cfg: dict[str, Any], narrowed_by: str | None) -> dict[str, str]:
     """Setup's own Mesh apply (Q63), once the Box key works on the Hosts: never with a narrowed run (NARROWED_BY, the
-    flag), never one that would take a member out for its key type. {host: why} for what it left pending."""
+    flag). {host: why} for what it left pending. (The Mesh follows key_type, Q212, so no Host is left out for it.)"""
     if not mesh.graph(cfg)["links"]:
         return {}
     if narrowed_by:
         say(f"mesh         not applied with {narrowed_by} (it covers the whole Mesh): run `roster mesh`")
-        return {}
-    if dropped := mesh.key_type_dropped(cfg):
-        # never take a member's Mesh entries off as a side effect of setup
-        say(f"warning: mesh         NOT applied: {', '.join(dropped)} {'is' if len(dropped) == 1 else 'are'} in "
-            "the Mesh now, but key_type: leaves them out of it (the Mesh is Ed25519 only), so applying it would "
-            "take their Mesh entries off and their peers' for them. See what it would change with `roster mesh "
-            "--dry-run`, then run `roster mesh` to do it (or set key_type: back)")
         return {}
     say("mesh         applying the Mesh for meshed groups and links (one Host at a time)...")
     return {n: f"mesh: {why}" for n, why in meshview.apply(cfg).items()}

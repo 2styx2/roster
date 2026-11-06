@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from . import (
     addhost,
     aliases,
+    boxkeys,
     boxsync,
     edit,
     fromvault,
@@ -168,6 +169,8 @@ def cmd_sync(cfg, args):
     write_ssh_config(cfg)
     write_claude_files(cfg)
     warn_overlaps(cfg)
+    for p in boxkeys.drift(cfg).values():
+        say(f"warning: {tagged(p)}")
     say("note: new hosts still need `roster setup` (it only touches hosts that aren't ready)")
     if mesh.status(cfg)["out_of_date"]:
         say("mesh out of date: roster.yml changed the Mesh since its last apply here - run `roster mesh`")
@@ -336,10 +339,11 @@ def cmd_check(cfg, args):
         broken = drift is not None and meshview.broken(drift)
         waiting = rotation_waiting(cfg, wanted)
         found = [tagged(p) for p in rotation.problems(cfg)]
-        ok = all(r["ok"] for r in results) and not broken and not skipped and not waiting and not found
+        types = {n: tagged(p) for n, p in boxkeys.drift(cfg, wanted).items()}
+        ok = all(r["ok"] for r in results) and not broken and not skipped and not waiting and not found and not types
         from . import jsondocs
         jsonout.emit(jsondocs.CheckDoc.model_validate({"hosts": results, "mesh": drift, "rotation_pending": waiting,
-                                                       "rotation_problems": found, "ok": ok}))
+                                                       "rotation_problems": found, "key_type_drift": types, "ok": ok}))
         return 0 if ok else 1
     bad = 0
     width = max((len(h["name"]) for h in hosts), default=0)
@@ -358,9 +362,7 @@ def cmd_check(cfg, args):
         if drift["already"]:
             say("mesh         every Host holds what roster wrote")
     if not args.only:          # a Windows Host in a Link or meshed group is left out, not an error; say why
-        # (and a Host whose key_type isn't Ed25519)
-        windows = {n: why for n, why in mesh.graph(cfg)["excluded"].items()
-                   if is_windows(cfg["hosts"][n]) or mesh.key_type_out(cfg["hosts"][n])}
+        windows = {n: why for n, why in mesh.graph(cfg)["excluded"].items() if is_windows(cfg["hosts"][n])}
         if windows:
             say("mesh         left out: " + ", ".join(f"{n} ({why})" for n, why in windows.items()))
     if waiting := rotation_waiting(cfg, wanted):
@@ -369,6 +371,9 @@ def cmd_check(cfg, args):
         bad += 1
     for p in rotation.problems(cfg):
         say(f"warning: {tagged(p)} ({p.fix})")
+        bad += 1
+    for p in boxkeys.drift(cfg, wanted).values():       # a key line of another type
+        say(f"warning: {tagged(p)}")
         bad += 1
     if skipped:
         say("not every Host was checked: " + ("the ones above were skipped" if hosts else "none was reached"))

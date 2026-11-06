@@ -387,7 +387,7 @@ def write_discovered(cfg_path, group, entries, note, needs_user, today):
     else:
         text = (f"# roster.yml - started by `roster discover` on {today}. NO PASSWORDS IN THIS FILE.\n"
                 "# Every option, with comments:  roster -c example.yml init\n\n"
-                "box_name: \"\"\nkey_path: ~/.ssh/roster_ed25519\n\n"
+                "box_name: \"\"\n\n"
                 "defaults:\n  auth: prompt\n\ngroups:\n")
     new_text = with_group(text, group, entries, note, needs_user)
 

@@ -34,7 +34,7 @@ from .common import (
     write_private,
 )
 from .context import current
-from .errors import MESH_KEY_TYPE, MESH_WINDOWS, NOT_A_SOURCE, Problem
+from .errors import MESH_KEY_PEER, MESH_WINDOWS, NOT_A_SOURCE, Problem
 from .hosts import is_windows
 from .sshops import hk_name, not_reached, recorded_host_keys
 
@@ -44,25 +44,36 @@ CLAUDE_IMPORT = "@~/ROSTER.md"
 # Decision Q176: every Mesh script is sh, which a Windows Host (os: windows) can't run
 WINDOWS_LEFT_OUT = (f"[{MESH_WINDOWS}] os: windows: the Mesh's scripts are sh, which a Windows Host can't run, so it's "
                     "left out (a Link or meshed group naming it isn't an error)")
-# Decision Q200: the Mesh's keys are Ed25519, which a FIPS-mode Host (the reason for key_type:) refuses and
-# may not even make, so a Host with another key_type stays out of it until the Mesh follows key_type too
-def key_type_out(h):
-    """Does H's key_type keep it out of the Mesh? Only a key Host's (#471's review MED-2): a password Host's key_type
-    means nothing, so a box-wide one never takes it out."""
-    return bool(h["enroll"]) and h.get("key_type", boxkeys.DEFAULT) != boxkeys.DEFAULT
 
 
-def key_type_dropped(cfg: dict[str, Any]) -> list[str]:
-    """The Hosts the Mesh holds entries on now (mesh.json's members) that key_type leaves out: an apply would take
-    those entries off (MED-2), so setup leaves the Mesh to an explicit `roster mesh`."""
-    excluded = graph(cfg)["excluded"]
-    return sorted(n for n in load_state()["members"] if n in cfg["hosts"] and n in excluded
-                  and key_type_out(cfg["hosts"][n]))
+def mesh_key(h):
+    """The type of source Host H's Mesh key (decision Q212): H's own key_type, as the Box's key for H is, so a
+    FIPS-mode Host (which refuses Ed25519, and may not even make one) makes a key of a type it takes. boxkeys names
+    its file (KeyType.mesh_file) and its ssh-keygen arguments."""
+    return boxkeys.parse(h.get("key_type") or boxkeys.DEFAULT)
 
 
-def key_type_left_out(h):
-    return (f"[{MESH_KEY_TYPE}] key_type: {h['key_type']}: the Mesh's keys are Ed25519 only for now, which a FIPS-mode "
-            "Host refuses, so it's left out (a Link or meshed group naming it isn't an error)")
+def key_type_warnings(cfg, links):
+    """A warning (220) for each key Link from a source whose Mesh key is Ed25519 to a peer (or via: hop) whose key_type
+    isn't: a FIPS-mode one refuses that key (the Link is still written: key_type: on a Host that isn't FIPS is a
+    choice). Once per source and Host."""
+    hosts = cfg["hosts"]
+    out = []
+    said = set()
+    for x in links:
+        a = hosts[x["from"]]
+        if "skip" in x or mesh_key(a).name != boxkeys.DEFAULT:
+            continue
+        # the peer (a key Link's), and the via: hop, which the source's key logs in to too (#505's review L1)
+        for b in [hosts[x["to"]]] * (x["kind"] == "key") + ([hosts[x["via"]]] if x.get("via") else []):
+            if not b["enroll"] or mesh_key(b).name == boxkeys.DEFAULT or (a["name"], b["name"]) in said:
+                continue
+            said.add((a["name"], b["name"]))
+            out.append(
+                f"[{MESH_KEY_PEER}] {a['name']}'s Mesh key is Ed25519 (its key_type), and {b['name']}'s key_type is "
+                f"{b['key_type']}: if {b['name']} is in FIPS mode it refuses that key, so the Link doesn't log in; "
+                f"set key_type: {b['key_type']} on {a['name']} too (an ECDSA or RSA key works on both)")
+    return out
 
 
 MARK = "# roster-mesh: the Mesh's ssh config (roster mesh adds and removes these two lines)"
@@ -94,8 +105,6 @@ def graph(cfg: dict[str, Any]) -> dict[str, Any]:
             excluded[h["name"]] = "mesh: false"
         elif is_windows(h):
             excluded[h["name"]] = WINDOWS_LEFT_OUT
-        elif key_type_out(h):
-            excluded[h["name"]] = key_type_left_out(h)
         else:
             return True
         return False
@@ -120,9 +129,6 @@ def graph(cfg: dict[str, Any]) -> dict[str, Any]:
                 via = link.get("via")
                 if via and is_windows(hosts[via]):         # roster can't test a hop it can't run sh on
                     excluded[via] = WINDOWS_LEFT_OUT
-                    continue
-                if via and key_type_out(hosts[via]):        # a hop holds a Mesh key too
-                    excluded[via] = key_type_left_out(hosts[via])
                     continue
                 if a != b and eligible(hosts[a]) and eligible(hosts[b]):
                     for pair in ((a, b), (b, a)) if link["both"] else ((a, b),):
@@ -165,6 +171,8 @@ def digest(cfg, g=None):
               h[x["from"]]["ip"]) + ((x["via"], h[x["via"]]["ip"]) if x.get("via") else ())
              + ((cfg["mesh_dirs"][x["from"]],) if x["from"] in cfg.get("mesh_dirs", {}) else ())
              + tuple(cfg.get("seen_as", {}).get(x.get("via") or x["from"], ()))
+             # the source's Mesh key type (T245): only when it isn't Ed25519, so a Mesh from before keeps its digest
+             + ((t,) if (t := mesh_key(h[x["from"]]).name) != boxkeys.DEFAULT else ())
              for x in g["links"] if "skip" not in x]
     return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
 
@@ -230,16 +238,46 @@ def ere(name):
 # A Host's mesh_dir: ($MD) overrides where the files go, on either; roster then only touches them there if they're
 # its own (mine: a Mesh key's public half, or a config roster wrote).
 WHERE = r"""
-mine() { grep -qs " $TAG:" "$1/id_ed25519.pub" || head -n 1 "$1/config" 2>/dev/null | grep -q '^# Written by roster mesh'; }
+KG=$(command -v ssh-keygen 2>/dev/null || echo /usr/lib/vmware/openssh/bin/ssh-keygen)
+# The Mesh keys in DIR (T245: one of any type; id_ed25519, or roster_mesh_TYPE): their names, either half there,
+# space-separated. Only a name roster gives a Mesh key: a file by it is acted on only when it's tagged (below)
+mkeys() {
+  s=
+  for f in "$1"/id_ed25519 "$1"/id_ed25519.pub "$1"/roster_mesh_*; do
+    n=${f##*/}; n=${n%.pub}
+    case "$n" in @MESH_FILES@) ;; *) continue;; esac
+    [ -f "$1/$n" ] || [ -f "$1/$n.pub" ] || continue
+    case " $s " in *" $n "*) ;; *) s="$s $n";; esac
+  done
+  echo $s
+}
+# tagged DIR K: K is a Mesh key this run may replace or remove (#505's review H1): its .pub's comment is a $TAG:
+# tag of an owner this run takes (ours_by), and its private key gives that very .pub (ssh-keygen -y, never asking for a
+# passphrase). Anything else by that name (a user's own key) is left where it is, and said (NOTOURS)
+tagged() {
+  [ -f "$1/$2" ] && [ -f "$1/$2.pub" ] || return 1
+  tp=$(cat "$1/$2.pub" 2>/dev/null) || return 1
+  tc=${tp##* }
+  case "$tc" in "$TAG":*@*) ours_by "${tc#*@}" || return 1;; "$TAG":*) ours_by - || return 1;; *) return 1;; esac
+  ty=$("$KG" -y -P '' -f "$1/$2" </dev/null 2>/dev/null) || return 1
+  [ "$(printf '%s\n' "$tp" | cut -d ' ' -f 1,2)" = "$(printf '%s\n' "$ty" | cut -d ' ' -f 1,2)" ]
+}
+mine() {
+  for k in $(mkeys "$1"); do grep -qs " $TAG:" "$1/$k.pub" && return 0; done
+  head -n 1 "$1/config" 2>/dev/null | grep -q '^# Written by roster mesh'
+}
 # Whose Mesh files are (T199, #379): the owner (BOX, or BOX/INVENTORY) their headers name. whose DIR: its config's
 # header, else its key's comment; - when an older roster wrote them (no owner in them); empty with no Mesh files there.
 whose() {
-  [ -f "$1/config" ] || [ -f "$1/id_ed25519.pub" ] || return 0
+  ks=$(mkeys "$1")
+  [ -f "$1/config" ] || [ -n "$ks" ] || return 0
   h=$(head -n 1 "$1/config" 2>/dev/null)
   case "$h" in "# Written by roster mesh for "*)
     o=$(printf '%s\n' "$h" | sed -n 's/^# Written by roster mesh for [^ ]* (owner \([^)]*\)).*/\1/p'); echo "${o:--}"; return;; esac
-  c=$(cat "$1/id_ed25519.pub" 2>/dev/null); c=${c##* }
-  case "$c" in "$TAG":*@*) echo "${c#*@}";; "$TAG":*) echo -;; esac
+  for k in $ks; do
+    c=$(cat "$1/$k.pub" 2>/dev/null); c=${c##* }
+    case "$c" in "$TAG":*@*) echo "${c#*@}"; return;; "$TAG":*) echo -; return;; esac
+  done
 }
 mdwhose() {  # mdwhose FILE: the owner the Mesh's ROSTER.md names, or -
   o=$(head -n 1 "$1" 2>/dev/null | sed -n "s/^$MDMARK[^ ;]* (owner \([^)]*\)).*/\1/p"); echo "${o:--}"
@@ -277,7 +315,7 @@ stale() {  # stale DIR: an earlier Mesh directory, once per directory, never the
 }
 echo "DIR $P"
 [ -n "$ESXI" ] && echo "PLATFORM esxi"
-K=$P/id_ed25519
+K=$P/$KF
 if [ -z "$P" ]; then
   echo "ERROR no datastore to keep the Mesh's key on (ESXi): name a directory on one with mesh_dir:"; echo ROSTER_DONE; exit 0
 fi
@@ -289,26 +327,43 @@ if [ -n "$MD" ]; then
   [ -d "${P%/*}" ] || bad ": ${P%/*} isn't there"
   if [ -d "$P" ]; then [ -w "$P" ] || bad ": roster can't write in it"; else [ -w "${P%/*}" ] || bad ": roster can't make it in ${P%/*}"; fi
   if ! mine "$P"; then
-    for f in id_ed25519 id_ed25519.pub known_hosts config ROSTER.md; do
+    for f in $(mkeys "$P"); do
+      if [ -e "$P/$f" ]; then bad " holds a $f that isn't roster's: give the Mesh a directory of its own"; fi
+      bad " holds a $f.pub that isn't roster's: give the Mesh a directory of its own"
+    done
+    for f in known_hosts config ROSTER.md; do
       [ -e "$P/$f" ] && bad " holds a $f that isn't roster's: give the Mesh a directory of its own"
     done
   fi
   if [ -n "$ESXI" ]; then
-    for v in /vmfs/volumes/*/.roster-mesh; do [ -f "$v/id_ed25519" ] && stale "$v"; done
-  elif [ -f "$HOME/.ssh/roster-mesh/id_ed25519" ]; then stale "$HOME/.ssh/roster-mesh"; fi
+    for v in /vmfs/volumes/*/.roster-mesh; do [ -n "$(mkeys "$v")" ] && stale "$v"; done
+  elif [ -n "$(mkeys "$HOME/.ssh/roster-mesh")" ]; then stale "$HOME/.ssh/roster-mesh"; fi
 fi
 # the directory the Include after roster's mark in ~/.ssh/config names: an earlier mesh_dir: (or roster's own pick)
 O=$(awk -v m="$MARK" 'p { print; exit } $0 == m { p = 1 }' "$HOME/.ssh/config" 2>/dev/null)
-case "$O" in "Include "/*/config) O=${O#Include }; O=${O%/config}; [ -f "$O/id_ed25519" ] && mine "$O" && stale "$O";; esac
+case "$O" in "Include "/*/config) O=${O#Include }; O=${O%/config}; [ -n "$(mkeys "$O")" ] && mine "$O" && stale "$O";; esac
 # a key in $P from before that earlier directory took over: roster stopped using it (and warned then), and uses
 # it again now; said (OLDKEY), never replaced unasked (--rotate does). Only while that directory is still there.
-case "$O" in /*) r=$(cd "$O" 2>/dev/null && pwd -P) && [ -f "$K" ] && [ "$r" != "$(cd "$P" && pwd -P)" ] && [ "$ROTATE" != 1 ] \
+case "$O" in /*) r=$(cd "$O" 2>/dev/null && pwd -P) && [ -n "$(mkeys "$P")" ] && [ "$r" != "$(cd "$P" && pwd -P)" ] && [ "$ROTATE" != 1 ] \
   && echo "OLDKEY $P";; esac
-KG=$(command -v ssh-keygen 2>/dev/null || echo /usr/lib/vmware/openssh/bin/ssh-keygen)
 WHO=$(whose "$P")
 if ! ours_by "$WHO"; then   # another's Mesh key: used as it is (its public half), never replaced or made (T199)
   [ "$ROTATE" = 1 ] && { echo "ERROR its Mesh key in $P is $(whose_words "$WHO"): roster doesn't replace it"; echo ROSTER_DONE; exit 0; }
+  # of whatever type it is (T245): its owner's key_type may differ from this roster.yml's
+  if ! { [ -f "$K" ] && [ -f "$K.pub" ]; }; then
+    for k in $(mkeys "$P"); do grep -qs " $TAG:" "$P/$k.pub" && [ -f "$P/$k" ] && { K=$P/$k; break; }; done
+  fi
   { [ -f "$K" ] && [ -f "$K.pub" ]; } || { echo "ERROR $P holds Mesh files that are $(whose_words "$WHO"), and no key"; echo ROSTER_DONE; exit 0; }
+else
+  # this Box's Mesh key of another type (key_type: changed since, T245): it goes, and one of $KF's type is made, as
+  # --rotate replaces a key; its public half is said (OLDPUB), so an older roster's line for it is this Box's to take
+  for k in $(mkeys "$P"); do
+    [ "$k" = "$KF" ] && continue
+    tagged "$P" "$k" || { echo "NOTOURS $P/$k"; continue; }     # a user's own key by that name: never touched
+    [ -f "$P/$k.pub" ] && echo "OLDPUB $(cat "$P/$k.pub")"
+    echo "KEY retype $k"
+    [ "$MODE" = apply ] && rm -f "$P/$k" "$P/$k.pub"
+  done
 fi
 # the key being replaced: an older roster's untagged line for it on a peer is this Box's to take too (#384)
 [ "$ROTATE" = 1 ] && [ -f "$K.pub" ] && echo "OLDPUB $(cat "$K.pub")"
@@ -318,13 +373,14 @@ if [ "$ROTATE" = 1 ] && [ -f "$K" ]; then
 fi
 if [ ! -f "$K" ] || [ ! -f "$K.pub" ]; then
   if [ "$MODE" = apply ]; then
-    mkdir -p "$P" && rm -f "$K" "$K.pub" && "$KG" -q -t ed25519 -N '' -C "$TAG:$NAME@$OWNER" -f "$K" >/dev/null 2>&1 \
+    mkdir -p "$P" && rm -f "$K" "$K.pub" && "$KG" -q $KT -N '' -C "$TAG:$NAME@$OWNER" -f "$K" >/dev/null 2>&1 \
       || { echo "ERROR ssh-keygen couldn't make the Mesh's key in $P"; echo ROSTER_DONE; exit 0; }
     echo "KEY made"
   else
     echo "KEY missing"
   fi
 fi
+echo "KEYFILE ${K##*/}"
 [ -f "$K.pub" ] && [ "$MODE" = apply -o "$ROTATE" != 1 ] && echo "PUB $(cat "$K.pub")"
 """
 
@@ -413,8 +469,12 @@ fi
 # the Include after roster's mark names, which isn't $P when mesh_dir: changed in the same edit: roster's own
 # pick goes, as $P would; a mesh_dir: is only warned about (STALE), as after a move.
 NOT_SOURCE = r"""
-clean() {  # clean DIR: roster's files in it; the public half goes last: until it does, mine knows the rest is roster's
-  for f in id_ed25519 known_hosts config ROSTER.md id_ed25519.pub; do drop "$1/$f" "remove $f"; done
+clean() {  # clean DIR: roster's files in it (a key of any type, T245, only one it made: tagged, #505's H1); the public
+           # halves go last: until they do, mine knows the rest is roster's
+  ks=; for k in $(mkeys "$1"); do if tagged "$1" "$k"; then ks="$ks $k"; else echo "NOTOURS $1/$k"; fi; done
+  for k in $ks; do drop "$1/$k" "remove $k"; done
+  for f in known_hosts config ROSTER.md; do drop "$1/$f" "remove $f"; done
+  for k in $ks; do drop "$1/$k.pub" "remove $k.pub"; done
   [ "$MODE" = apply ] && rmdir "$1" 2>/dev/null
 }
 O=$(awk -v m="$MARK" 'p { print; exit } $0 == m { p = 1 }' "$C" 2>/dev/null)
@@ -422,7 +482,7 @@ case "$O" in "Include "/*/config) O=${O#Include }; O=${O%/config};; *) O=;; esac
 if [ -n "$O" ] && [ "$(cd "$O" 2>/dev/null && pwd -P)" = "$(cd "$P" 2>/dev/null && pwd -P)" ]; then O=; fi
 # only this Box's (and Inventory's) own Mesh files go: another's stay, with its Include, ROSTER.md and import (T199)
 if [ -n "$P" ] && { [ -z "$MD" ] || mine "$P"; } && ours_by "$(whose "$P")"; then clean "$P"; fi
-if [ -n "$O" ] && [ -f "$O/id_ed25519" ] && mine "$O" && ours_by "$(whose "$O")"; then
+if [ -n "$O" ] && [ -n "$(mkeys "$O")" ] && mine "$O" && ours_by "$(whose "$O")"; then
   OWN=
   if [ -n "$ESXI" ]; then
     case "$O" in /vmfs/volumes/*/.roster-mesh) v=${O#/vmfs/volumes/}; case "${v%/.roster-mesh}" in */*) ;; *) OWN=1;; esac;; esac
@@ -535,10 +595,12 @@ def preamble(h, mode, own, prev=()):
     """OWN: whose Mesh this run writes (owner_of). PREV: owners whose Mesh entries count as this run's too: what this
     Box wrote before (earlier_owner) where its record proves it wrote on the Host, or an older roster's (-) for
     mesh leftovers --remove and cut --all, asked first."""
+    kt = mesh_key(h)                # its Mesh key's file name and ssh-keygen arguments (KT: words, no quotes)
     return (f"TAG={q(TAG)}\nNAME_ERE={q(NAME_ERE)}\nMDMARK={q(MESH_MARK)}\n"
             f"NAME={q(h['name'])}\nU={q(h['ssh']['user'])}\nMODE={mode}\nMARK={q(MARK)}\n"
             f"MD={q(h.get('mesh_dir') or '')}\nOWNER={q(own)}\nOWNER_RE={q(ere(own))}\nPREV={q(' '.join(prev))}\n"
-            f"IMPORT={q(CLAUDE_IMPORT)}\n" + WHERE)
+            f"KF={q(kt.mesh_file)}\nKT={q(' '.join(kt.keygen_args()))}\n"
+            f"IMPORT={q(CLAUDE_IMPORT)}\n" + WHERE.replace("@MESH_FILES@", boxkeys.MESH_FILES))
 
 
 def heredoc(text):
@@ -676,7 +738,8 @@ def host_key_lines(t):
     return [f"{hk_name(t)} {kt} {k.get_base64()}" for kt, k in sorted(recorded_host_keys(t).items())]
 
 
-def ssh_config(cfg, src, peers, d, vias=None):
+def ssh_config(cfg, src, peers, d, vias=None, key="id_ed25519"):
+    """SRC's Mesh ssh config: KEY is its Mesh key's file name in D (the probe's KEYFILE: its key_type's, T245)."""
     vias = vias or {}
     out = [f"# Written by roster mesh for {src} (owner {owner_of(cfg)}) from {cfg['path'].name}: the Hosts {src} "
            "reaches. Don't edit by hand.",
@@ -687,7 +750,7 @@ def ssh_config(cfg, src, peers, d, vias=None):
         opts += [("UserKnownHostsFile", f"{d}/known_hosts"), ("StrictHostKeyChecking", "yes"),
                  ("ConnectTimeout", CONNECT_TIMEOUT)]
         if p["enroll"]:
-            opts += [("IdentityFile", f"{d}/id_ed25519"), ("IdentitiesOnly", "yes")]
+            opts += [("IdentityFile", f"{d}/{key}"), ("IdentitiesOnly", "yes")]
         else:
             opts += [("PubkeyAuthentication", "no"), ("PreferredAuthentications", "password,keyboard-interactive")]
         out += sshconfig.host_block(p["name"], opts) + [""]
@@ -805,11 +868,14 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
             out["probe"][name] = {"error": err}
             continue
         pub, oldpub = report(lines, "PUB "), report(lines, "OLDPUB ")
+        keyfile = report(lines, "KEYFILE ")
         out["probe"][name] = {"dir": report(lines, "DIR ")[0], "esxi": "PLATFORM esxi" in lines, "pub": pub[0] if pub else None,
-                              "oldpub": oldpub[0] if oldpub else None,
+                              "oldpub": oldpub[0] if oldpub else None, "oldpubs": oldpub,
+                              "keyfile": keyfile[0] if keyfile else mesh_key(hosts[name]).mesh_file,
                               "key": report(lines, "KEY "),
                               "reach": dict(x.split(" ", 1) for x in report(lines, "REACH "))}
         stale(out, name, lines)
+        not_ours(out, name, lines)
         for d in report(lines, "OLDKEY "):
             out.setdefault("warnings", []).append(
                 f"{name}: {d} still holds an older Mesh key from before mesh_dir: changed, and roster uses it again: "
@@ -887,7 +953,7 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
             vias = {x["to"]: x["via"] for x in mine if x.get("via")}
             d = p["dir"]
             files = {"known_hosts": "".join(line + "\n" for t in peers for line in host_key_lines(t)),
-                     "config": ssh_config(cfg, name, peers, d, vias),
+                     "config": ssh_config(cfg, name, peers, d, vias, p["keyfile"]),
                      "ROSTER.md": roster_md(name, peers, d, p["esxi"], vias, own)}
         keys, keep, adopt = [], set(), []
         for x in links:
@@ -902,14 +968,14 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
                             else f"new-key {x['from']} {TAG}:{x['from']}@{own}")
                 # an older roster's line this Box would write (key and options alike), only the tag without a Box
                 adopt += [key_line(hosts[x["from"]], k, own, via).removesuffix(f"@{own}")
-                          for k in (src.get("pub"), src.get("oldpub")) if k]
+                          for k in (src.get("pub"), *src.get("oldpubs", ())) if k]
         say(f"  {'write' if apply else 'check'}  {name}")
         lines, err = on_host(h, write_script(h, mode, files, sorted(keys, key=lambda k: k.rsplit(":", 1)[1]), keep,
                                              own, was if name in proven else (), adopt))
         if err:
             finish(name, [], err)
             continue
-        changes = key_changes(out["probe"].get(name), apply, name in rotate)
+        changes = key_changes(out["probe"].get(name), apply, name in rotate, mesh_key(h).name)
         added, dropped = set(report(lines, "ADD ")), set(report(lines, "DROP "))
         retag = set(report(lines, "RETAG "))
         writes = {k.rsplit(":", 1)[1].split("@", 1)[0] for k in keys}
@@ -931,11 +997,12 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
             "roster leaves them alone; that Box's (or Inventory's) roster.yml can add these Links")
             if theirs and differs else None)
         stale(out, name, lines)                 # a source that left with its mesh_dir: (NOT_SOURCE)
+        not_ours(out, name, lines)
         said = set()
         for x in report(lines, "UNTAGGED "):
             src, key, frm = (x.split(" ", 2) + ["", ""])[:3]
-            old = (out["probe"].get(src) or {}).get("oldpub") or ""
-            if key and key in old.split()[1:2]:     # the key --rotate replaces: it still gets in from there
+            olds = (out["probe"].get(src) or {}).get("oldpubs") or []
+            if key and any(key in old.split()[1:2] for old in olds):    # the key --rotate (or a type change) replaces
                 out.setdefault("warnings", []).append(
                     f"{name}: a roster-mesh:{src} line with no Box in its tag still lets the replaced key in "
                     f"(from={frm or '?'}): it isn't the line this Box writes, so roster left it; remove it with "
@@ -968,6 +1035,7 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
                 else "isn't there, so `ssh PEER` there doesn't reach its peers: roster mesh writes it again"))
 
     progress(steps["total"], steps["total"], None)
+    out.setdefault("warnings", []).extend(key_type_warnings(cfg, links))
     result = summary(cfg, g, links, out, apply, gone)
     if apply:
         record(cfg, g, st, result, ex)
@@ -981,6 +1049,14 @@ def whose_words(owner):
             else f"another Box's or Inventory's ({owner})")
 
 
+def not_ours(out, name, lines):
+    """A warning for each file by a Mesh key's name that NAME's script left because roster didn't make it (#505's H1)."""
+    for path in dict.fromkeys(report(lines, "NOTOURS ")):
+        out.setdefault("warnings", []).append(
+            f"{name}: {path} isn't a Mesh key roster made (no roster-mesh: tag of this Box's, or its private key doesn't "
+            "give that .pub), so roster left it there; move it out of the Mesh's directory")
+
+
 def stale(out, name, lines):
     """A warning for each earlier Mesh directory NAME's script found (STALE): roster never removes one."""
     for old in report(lines, "STALE "):
@@ -989,11 +1065,16 @@ def stale(out, name, lines):
             "by hand")
 
 
-def key_changes(probe, apply, rotate):
-    """What happens to a source's own key: [] / ["make key"] / ["replace key"]."""
+def key_changes(probe, apply, rotate, kind=boxkeys.DEFAULT):
+    """What happens to a source's own key: [] / ["make key"] / ["replace key"]; a key of another type than KIND (its
+    key_type) is replaced by one of KIND (T245)."""
     if not probe or "key" not in probe:
         return []
     k = probe["key"]
+    old = next((x.removeprefix("retype ") for x in k if x.startswith("retype ")), None)
+    if old is not None:     # the old key's type, from its file name (id_ed25519, roster_mesh_TYPE)
+        was = "ed25519" if old == "id_ed25519" else old.removeprefix("roster_mesh_")
+        return [f"replace key ({was} -> {kind}, its key_type)"]
     return ["replace key"] if "rotate" in k else ["make key"] if ("made" in k or "missing" in k) else []
 
 
@@ -1142,6 +1223,7 @@ def cut(cfg, name, workers=16, progress=None, stopped=None):
                 confirmed.append(n)
             if lines and n == name:
                 stale(out, n, lines)            # HOST's own side: an earlier mesh_dir: it leaves alone
+                not_ours(out, n, lines)
             if lines and "UNTAGGED" in lines:
                 out.setdefault("warnings", []).append(
                     f"{n}: a roster-mesh:{'…' if n == name else name} line with no Box in its tag is still there: an "
@@ -1190,6 +1272,7 @@ def cut_all(cfg, workers=16, progress=None, stopped=None):
             else:
                 confirmed.append(n)
                 stale(out, n, lines)
+                not_ours(out, n, lines)
             progress(i, len(todo), n)
     st = load_state()
     done = set(confirmed)
@@ -1215,7 +1298,7 @@ grep -E "$T" "$AK" 2>/dev/null | while read -r l; do
 done
 seen=; INCD=$(awk -v m="$MARK" 'p { print; exit } $0 == m { p = 1 }' "$HOME/.ssh/config" 2>/dev/null | sed -n 's/^Include \(\/.*\)\/config$/\1/p')
 for d in "$P" "$INCD"; do
-  [ -n "$d" ] && [ -f "$d/id_ed25519.pub" ] && mine "$d" && ours_by "$(whose "$d")" || continue
+  [ -n "$d" ] && [ -n "$(mkeys "$d")" ] && mine "$d" && ours_by "$(whose "$d")" || continue
   r=$(cd "$d" && pwd -P); case " $seen " in *" $r "*) continue;; esac; seen="$seen $r"; echo "FILES $(whose "$d") $d"
 done
 if grep -qxF "$MARK" "$HOME/.ssh/config" 2>/dev/null; then

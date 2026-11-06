@@ -228,6 +228,8 @@ def box_cfg(key):
 def renamed(tmp_path, *extra):
     cfg = box_cfg(tmp_path / "k")
     cfg["pub"].write_text(OLD_NAME_LINE + "\n")         # ssh-keygen -C wrote the tag the Box had then
+    cfg["key"].write_text("private\n")                  # this Box holds its private key (T245: boxkeys.vouched)
+    cfg["key"].chmod(0o600)
     ak = tmp_path / ".ssh" / "authorized_keys"
     ak.parent.mkdir()
     ak.write_text("\n".join(["ssh-rsa AAAAother someone@laptop", OLD_NAME_LINE, OTHER_BOX_SAME_OLD_NAME,

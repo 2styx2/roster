@@ -64,6 +64,10 @@ export interface Host {
   /** `shell_hooks:` in roster.yml (ticket 121): roster sends the Session's shell the hook line
    * that turns on its prompt marks. Passed through as written; absent when it isn't set. */
   shell_hooks?: boolean | null;
+  /** The key type this Box's key Login uses there (`key_type:` in roster.yml: `ed25519`, `ecdsa`, `rsa-4096`, ...)
+   * and that key's file on the Box (a path, never key material). Sent since serve API 30 (T239); absent before. */
+  key_type?: string;
+  key_file?: string;
 }
 
 /** One of a Host's services, as roster resolves it. `auth` is a vault reference such as

@@ -21,7 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from .common import UTC_TIME, die, program_argv, replace_file, say, utc_now
-from .context import box_file
+from .context import Context, box_file, current
+from .errors import KEY_TYPE_DRIFT, Problem
 
 DEFAULT = "ed25519"
 # key_max_age:'s default (decision Q204): the strict end of NIST SP 800-57 Part 1 Rev. 5's cryptoperiod for a
@@ -55,6 +56,13 @@ class KeyType:
     def file_name(self) -> str:
         return f"roster_{self.name}"
 
+    @property
+    def mesh_file(self) -> str:
+        """The name of a Mesh key of this type on a source Host (T245, decision Q212): `id_ed25519` as before T245,
+        `roster_mesh_<name>` for the rest (`roster_mesh_ecdsa`, `roster_mesh_rsa-4096`): never one of OpenSSH's own
+        names for a user's key (`id_rsa`, `id_ecdsa`; #505's review H1), and a type change is a key of another name."""
+        return "id_ed25519" if self.name == DEFAULT else f"roster_mesh_{self.name}"
+
 
 def parse(value: Any) -> KeyType:
     """VALUE as roster.yml has it (any case), or ValueError naming the allowed values."""
@@ -75,6 +83,11 @@ def parse(value: Any) -> KeyType:
         raise ValueError(f"{value!r} isn't a key type roster makes: an RSA key has {RSA_MIN} to {RSA_MAX} bits "
                          f"(fewer is too weak) ({ALLOWED})")
     return KeyType("rsa" if bits == RSA_MIN else f"rsa-{bits}", "rsa", bits)
+
+
+# every Mesh key name a source Host may hold (mesh_file), as an sh `case` pattern: what the Mesh's scripts look for
+MESH_FILES = ("id_ed25519|roster_mesh_ecdsa|roster_mesh_ecdsa-256|roster_mesh_ecdsa-521|roster_mesh_rsa|"
+              "roster_mesh_rsa-[0-9][0-9][0-9][0-9]|roster_mesh_rsa-[0-9][0-9][0-9][0-9][0-9]")
 
 
 def key_file(box_key: Path, box_type: str, name: str) -> Path:
@@ -142,6 +155,16 @@ def owned(key: Path) -> bool:
     return st.st_uid == os.getuid() and not st.st_mode & 0o077
 
 
+def vouched(key: BoxKey, own: Path) -> bool:
+    """Does this Box hold KEY (T245, #471's review LOW-6)? Its private key is this user's alone (owned) and gives KEY.pub
+    (matches): a .pub with no private key beside it, or another's, is never this Box's, whatever roster.yml names.
+    OWN (key_path: this Box's own key, which may be the user's own with a passphrase, Q200 (c)) counts when ssh-keygen
+    can't read it without one."""
+    if not owned(key.key):
+        return False
+    return matches(key.key) or (key.key == own and derived(key.key) is None and public_words(key.pub) is not None)
+
+
 def rsa_bits(pub: Path) -> int | None:
     """An RSA public key's size in bits (`ssh-keygen -l`), or None when it can't tell."""
     try:
@@ -169,7 +192,11 @@ def ensure_key(key: BoxKey, tag: str) -> None:
     if key.key.exists():
         if not key.pub.exists():
             die(f"{key.key} exists but {key.pub} is missing")
-        fix = "move it away (roster makes the new key there), or point key_path at another file"
+        # key_path written out by an older template names the Ed25519 key's file, which a later top-level key_type:
+        # then finds holding another type
+        fix = (f"remove key_path from roster.yml (roster then keeps this key at {key.key.with_name(key.type.file_name)}) "
+               "or point it at another file" if key.key.name != key.type.file_name else
+               "move it away (roster makes the new key there), or point key_path at another file")
         if key.type.name != "ed25519":
             have = (key.pub.read_text().split() or ["nothing"])[0]
             if have != key.type.public_word:
@@ -255,6 +282,61 @@ def all_keys(cfg: dict[str, Any]) -> list[BoxKey]:
             other = Path(str(k.key) + suffix)
             if other.exists() and owned(other) and matches(other):
                 out.append(BoxKey(k.type, other))
+    return out
+
+
+# ---------------------------------------------------------------- the types on each Host (T245, #478 items 4 and 7)
+
+def installed(ctx: Context | None = None) -> dict[str, list[str]]:
+    """{host: the key types of this Box's lines there}, as roster last left them for the Inventory CTX (default:
+    this run's): written by setup's install, its cleanup and a rotation, taken off by revoke (context.FILES'
+    key_types: `HOST<TAB>TYPE TYPE`). A Host roster hasn't installed on since T245 isn't in it: nothing is known
+    there."""
+    try:
+        text = (ctx or current()).file("key_types").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {}
+    out: dict[str, list[str]] = {}
+    for line in text.splitlines():
+        host, _, types = line.partition("\t")
+        if host and types.split():
+            out[host] = sorted(set(types.split()))
+    return out
+
+
+def record(changes: dict[str, Any], ctx: Context | None = None) -> None:
+    """Update the record (installed): {host: its types now (an iterable), or None when this Box has no line there}."""
+    f = (ctx or current()).file("key_types")
+    rows = installed(ctx)
+    for host, types in changes.items():
+        if types:
+            rows[host] = sorted(set(types))
+        else:
+            rows.pop(host, None)
+    if rows:
+        replace_file(f, "".join(f"{h}\t{' '.join(t)}\n" for h, t in sorted(rows.items())), 0o600)
+    else:
+        f.unlink(missing_ok=True)
+
+
+def drift(cfg: dict[str, Any], hosts: Any = None) -> dict[str, Problem]:
+    """{host: what differs} between the record and roster.yml's key_type, for HOSTS' key Hosts (every one's when
+    None): a line of another type still there, or none of roster.yml's type (it changed since the last setup)."""
+    rec = installed()
+    out: dict[str, Problem] = {}
+    for h in (cfg["hosts"].values() if hosts is None else hosts):
+        have = rec.get(h["name"])
+        if not h["enroll"] or not have or have == [h["key_type"]]:
+            continue
+        if h["key_type"] not in have:
+            out[h["name"]] = Problem(KEY_TYPE_DRIFT, f"{h['name']} holds this Box's {' and '.join(have)} key, and "
+                                     f"roster.yml says key_type: {h['key_type']} (changed since its last setup): "
+                                     f"roster setup --host {h['name']} installs it and takes the other off")
+        else:
+            others = [t for t in have if t != h["key_type"]]
+            out[h["name"]] = Problem(KEY_TYPE_DRIFT, f"{h['name']} still holds this Box's {' and '.join(others)} key "
+                                     f"line besides its {h['key_type']} one (setup --key-type's, or a cleanup that "
+                                     "failed): roster setup takes it off")
     return out
 
 

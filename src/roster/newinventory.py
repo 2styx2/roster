@@ -43,8 +43,6 @@ HEADER = """\
 """
 
 BLANK = HEADER + f"""
-key_path: ~/.ssh/roster_ed25519
-
 groups:
   {GROUP}:
     hosts:
@@ -423,7 +421,7 @@ def imported(path, source):
     head = [HEADER.rstrip("\n"),
             f"# The Hosts below came from {shown} (each one's HostName, User, Port and IdentityFile; nothing else, and",
             f"# {shown} itself is unchanged). Check them, then:  roster setup", "",
-            "key_path: ~/.ssh/roster_ed25519", "", "groups:", f"  {IMPORTED}:", f"    title: {scalar('From ' + shown)}"]
+            "groups:", f"  {IMPORTED}:", f"    title: {scalar('From ' + shown)}"]
     if user:
         head.append(f"    user: {scalar(user)}                # ssh's own default for a Host with no User: your login name")
     head.append("    hosts:")

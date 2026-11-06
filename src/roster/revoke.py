@@ -9,13 +9,13 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from . import authorized, boxkeys, keyline, rotation
+from . import authorized, boxkeys, keyline, rotate, rotation
 from .authorized import box_key_re, remove_script
 from .boxsetup import LEFT_OUT, locked, skip_left_out, warn_os
 from .common import die, program_argv, say
 from .config import load_config, selected
 from .context import Context, current, ssh_index_file
-from .errors import KEY_FILE, InventoryError
+from .errors import KEY_FILE, KEY_FILE_SHARED, InventoryError, Problem, tagged
 from .hosts import is_windows
 
 
@@ -50,6 +50,28 @@ def key_files(cfg: dict[str, Any]) -> list[str]:
         if key.key != cfg["key"] and (key.key.exists() or key.pub.exists()):
             out += [str(key.key), str(key.pub)]
     return out
+
+
+def kept_key_files(cfg: dict[str, Any], files: list[str]) -> list[str]:
+    """Take out of FILES (revoke's to delete) each key file another Inventory on this Box uses too, and its .pub: a
+    note (221) for each, naming the Inventory. When another Inventory's roster.yml doesn't load, no key file is
+    listed: roster can't tell which it uses."""
+    notes: list[str] = []
+    users = rotate.key_users(cfg)
+    broken = [u.label for u in users if u.cfg is None]
+    keys = [Path(f) for f in files[::2]]                # key_files: each key, then its .pub
+    for key in keys:
+        base = Path(str(key).removesuffix(".new").removesuffix(".old"))    # a rotation's: its key's users' too
+        who = [u.label for u in users if base in u.shared]
+        if not who and not broken:
+            continue
+        files.remove(str(key))
+        files.remove(str(key) + ".pub")
+        why = ((f"the Inventory {who[0]} uses" if len(who) == 1 else f"the Inventories {', '.join(who)} use") +
+               " it too: revoke there (`roster --inv NAME revoke`, or `roster revoke --all`) before deleting it" if who
+               else f"{', '.join(broken)}: its roster.yml doesn't load, so roster can't tell whether it uses it")
+        notes.append(f"note: {tagged(Problem(KEY_FILE_SHARED, f'keep {key}: {why}'))}")
+    return notes
 
 
 def revoke_line(label: str, h: dict[str, Any], why: object) -> None:
@@ -93,6 +115,7 @@ def revoke_run(cfg: dict[str, Any], only: str | None, yes: bool) -> int:
                 gone.append(h["name"])
     # a Host without this Box's key holds no old key either; with every one done, no record
     rotation.forget(gone, everything=not bad and len(hosts) == len(keyed) and not only)
+    boxkeys.record(dict.fromkeys(gone))     # no line of this Box's there now
     done = f"\nremoved from {len(hosts) - bad}/{len(hosts)} hosts."
     # the files go only once every Host this file names has lost the key; with any skipped, failed or
     # left to --only, deleting the key would leave it on those for good
@@ -105,12 +128,19 @@ def revoke_run(cfg: dict[str, Any], only: str | None, yes: bool) -> int:
     else:
         from .named import unnamed_from_elsewhere
         files = key_files(cfg)
+        # never a key file another Inventory on this Box uses too (its Hosts still need it)
+        for message in kept_key_files(cfg, files):
+            say(message)
         # never another roster.yml's config.d/roster: its Hosts still need it
         if unnamed_from_elsewhere() is None:
             files.append(str(current().ssh_config))
         if current().key_name.is_file():    # the name setup recorded the key's lines under
             files.append(str(current().key_name))
-        say(f"{done} To finish, delete {', '.join(files[:-1])} and {files[-1]} on this box.")
+        if not files:
+            say(done)
+        else:
+            say(f"{done} To finish, delete " + (f"{', '.join(files[:-1])} and {files[-1]}" if len(files) > 1 else
+                                                files[0]) + " on this box.")
     return 1 if bad or len(hosts) < len(keyed) or not hosts else 0
 
 
@@ -191,8 +221,10 @@ def revoke_all(yes: bool = False) -> int:
         for (label, h, _), why in zip(jobs, whys, strict=True):
             bad += why is not None
             revoke_line(f"{label}: ", h, why)
-            if why is None:                 # each Inventory's record
-                rotation.forget([h["name"]], Context(next(n for lb, n, _ in targets if lb == label)))
+            if why is None:                 # each Inventory's records
+                ctx = Context(next(n for lb, n, _ in targets if lb == label))
+                rotation.forget([h["name"]], ctx)
+                boxkeys.record({h["name"]: None}, ctx)
     files: list[str] = []
     for _, cfg, _ in plan:
         files += key_files(cfg)

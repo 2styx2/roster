@@ -165,9 +165,9 @@ def set_aside(f: Path) -> Path | None:
 
 def remove(name: str) -> Removed:
     """Forget NAME (its roster.yml stays) and every file roster keeps for it (context.FILES): its generated ssh
-    config, key-name and lock go; its known_hosts, Mesh state and Box key rotation record are set aside (renamed
-    roster_known_hosts-NAME.removed-TIME, ...), so a new Inventory of that name never inherits another file's keys,
-    Mesh or pending rotation."""
+    config, key-name, key-types and lock go; its known_hosts, Mesh state and Box key rotation record are set aside
+    (renamed roster_known_hosts-NAME.removed-TIME, ...), so a new Inventory of that name never inherits another
+    file's keys, Mesh or pending rotation."""
     inv = load()
     x = inv.get(name)
     if x is None:
