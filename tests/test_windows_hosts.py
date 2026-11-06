@@ -858,3 +858,37 @@ def test_a_windows_install_cleans_up_over_the_key_only_when_another_line_of_this
     assert main(["setup", "--only", "dc-01"]) == 0
     assert over_key("dc-01") == 0
     assert win.admin_file("dc-01").read_bytes() == key_line(win)
+
+
+# ---------------------------------------------------------------- T257 (#509 items 4, 7)
+
+def over_key_runs(win, host):
+    """How many scripts went to HOST over the key login (the install's own goes with the password)."""
+    return sum(f" {host} powershell" in ln and "BatchMode=yes" in ln for ln in win.ssh_log().splitlines())
+
+
+@needs_powershell
+def test_a_fresh_windows_install_that_finds_another_line_of_this_box_takes_it_off_over_the_new_key(win, capsys):
+    """#509 item 7: with `keys`, the stand-in's sshd takes only a key the ssh config offers, so a line of this Box's
+    another key (OLD) no longer passes for a working key login: setup installs with the password, the install says
+    OTHERS, and the second connection, over the new key, takes OLD off."""
+    win.user_file("ws-01").parent.mkdir(parents=True)
+    win.user_file("ws-01").write_bytes(OTHER + OLD)
+    (win.root / "ws-01" / "keys").touch()
+    assert main(["setup", "--only", "ws-01"]) == 0, capsys.readouterr().out
+    assert "0 already work, 1 need the key installed" in capsys.readouterr().out
+    assert over_key_runs(win, "ws-01") == 1
+    assert win.user_file("ws-01").read_bytes() == OTHER + key_line(win)
+
+
+@needs_powershell
+def test_an_administrators_install_takes_this_boxs_line_off_its_user_file_too(win, capsys):
+    """#509 item 4: an account that joined Administrators keeps this Box's line in its user file, which sshd no longer
+    reads for it; the install looks there too (OTHERS), and the cleanup takes it from both files, every other line
+    kept byte for byte."""
+    win.user_file("dc-01").parent.mkdir(parents=True)
+    win.user_file("dc-01").write_bytes(OTHER + OLD)
+    assert main(["setup", "--only", "dc-01"]) == 0, capsys.readouterr().out
+    assert over_key_runs(win, "dc-01") == 1
+    assert win.admin_file("dc-01").read_bytes() == key_line(win)
+    assert win.user_file("dc-01").read_bytes() == OTHER

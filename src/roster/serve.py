@@ -2708,9 +2708,10 @@ def mesh_status(state, params):
     """No connections: who reaches whom, what's pending, and whether the Mesh is out of date on this Box.
 
     Params: `{brief?: bool, grouped?: bool}` (`brief` since API 17, `grouped` since API 19)
-    Result: `{links, excluded, reach, members, pending, cut_pending, out_of_date}`: the Links as `roster.yml` asks
-        for them (no `status`), `members` the Hosts roster visits, `out_of_date: true` when `roster.yml` changed the
-        Mesh since the last complete apply on this Box. `brief: true` keeps it small when every pair of hundreds of
+    Result: `{links, excluded, reach, members, pending, cut_pending, out_of_date, warnings}`: the Links as
+        `roster.yml` asks for them (no `status`), `members` the Hosts roster visits, `out_of_date: true` when
+        `roster.yml` changed the Mesh since the last complete apply on this Box, `warnings` what `roster.yml` alone
+        shows (220: an Ed25519 source's peer of another `key_type`, as `mesh.plan` says it). `brief: true` keeps it small when every pair of hundreds of
         Hosts is a Link: `links` only those worth a look (with a `via`, `no-via` marked), at most 1000
         (`links_more` counts the rest), and `link_count`, `link_statuses` and `reached` for the rest. `grouped: true`
         (for a map, such as the Topology Plugin's, that draws who reaches whom) keeps every Link but says each

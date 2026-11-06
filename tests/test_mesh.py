@@ -2561,3 +2561,88 @@ def test_leftovers_remove_leaves_a_users_own_keys_in_a_mesh_dir(net, keys_dir):
     reinstall()
     assert main(["mesh", "leftovers", "--remove", "-y"]) == 0
     assert mine == names(keys_dir)
+
+
+# ---------------------------------------------------------------- T257 (#509): the current type's key is checked too
+
+@pytest.fixture
+def ed_dir(net):
+    """orion-2's Mesh in a mesh_dir: of its own, Ed25519 (the default type), applied: roster's tagged id_ed25519."""
+    d = net.host("orion-2") / "srv/keys"
+    (net.host("orion-2") / "srv").mkdir()
+    net.cfg_path.write_text(CONFIG.replace("      orion-2: 10.0.0.2\n",
+                                           f"      orion-2: {{ip: 10.0.0.2, mesh_dir: {net.seen(d)}}}\n"))
+    assert mesh.run(net.cfg(), apply=True)["pending"] == {}
+    return d
+
+
+def users_own_id_ed25519(d):
+    """The user's own Ed25519 key in place of roster's, by the same name (no roster-mesh: tag): its bytes."""
+    for n in ("id_ed25519", "id_ed25519.pub"):
+        (d / n).unlink()
+    user_key(d / "id_ed25519", "ed25519")
+    return {n: (d / n).read_bytes() for n in ("id_ed25519", "id_ed25519.pub")}
+
+
+@pytest.mark.parametrize("rotate", [(), ("orion-2",)])
+def test_a_users_own_key_by_the_current_types_name_is_never_used_or_replaced(net, ed_dir, rotate):
+    """#509 item 1: the key the source would use (or --rotate replace) is checked as a retype's is: an untagged
+    id_ed25519 is the user's, so the source is pending with that file named, and nothing there changes."""
+    before = users_own_id_ed25519(ed_dir)
+    lines = net.mesh_lines("nas-1")
+    for apply in (False, True):
+        r = mesh.run(net.cfg(), apply=apply, rotate=rotate)
+        assert "orion-2" in r["pending"], r
+        assert f"{net.seen(ed_dir)}/id_ed25519 isn't a Mesh key roster made" in r["pending"]["orion-2"]
+    assert {n: (ed_dir / n).read_bytes() for n in before} == before
+    pub = before["id_ed25519.pub"].split()[1].decode()
+    assert net.mesh_lines("nas-1") == lines and pub not in net.ak("nas-1")      # the user's key never let in
+
+
+@pytest.mark.parametrize("how", ["gone", "passphrase"])
+def test_a_cut_says_a_mesh_public_key_with_no_matching_private_key_was_left(net, ed_dir, capsys, how):
+    """#509 item 2: roster's tagged .pub whose private key is gone (or now has a passphrase) stays, said as such."""
+    if how == "gone":
+        (ed_dir / "id_ed25519").unlink()
+    else:
+        subprocess.run(["ssh-keygen", "-q", "-p", "-P", "", "-N", "secret", "-f", str(ed_dir / "id_ed25519")],
+                       check=True)
+    assert main(["mesh", "cut", "orion-2", "--yes"]) == 0
+    out = capsys.readouterr()
+    said = out.out + out.err
+    assert (ed_dir / "id_ed25519.pub").exists()
+    assert f"a Mesh public key with no matching private key was left: {net.seen(ed_dir)}/id_ed25519.pub" in said
+    assert "isn't a Mesh key roster made" not in said
+
+
+def test_mesh_status_says_220_too_without_connecting(net, capsys):
+    """#509 item 6: an Ed25519 source with a peer of another key_type is said by mesh status (and its --json), as the
+    plan, apply and check say it; status still connects to nothing."""
+    net.cfg_path.write_text(CONFIG.replace("      nas-1: 10.0.0.30\n", "      nas-1: {ip: 10.0.0.30, key_type: ecdsa}\n"))
+    said = "[220] orion-2's Mesh key is Ed25519 (its key_type), and nas-1's key_type is ecdsa"
+    assert any(w.startswith(said) for w in mesh.status(net.cfg())["warnings"])
+    assert main(["mesh", "status"]) == 0
+    assert f"warning: {said}" in capsys.readouterr().out
+    assert main(["mesh", "status", "--json"]) == 0
+    assert any(w.startswith(said) for w in json.loads(capsys.readouterr().out)["warnings"])
+    assert net.connections() == []
+    net.cfg_path.write_text(CONFIG)
+    assert mesh.status(net.cfg())["warnings"] == []
+
+
+def test_leftovers_lists_a_file_by_a_mesh_keys_name_that_isnt_rosters_and_remove_leaves_it(net, keys_dir, capsys):
+    """#509 item 5: mesh leftovers says what's in roster's own Mesh folder by a Mesh key's name but isn't a key roster
+    made (a user's own id_ed25519), which --remove never takes; OpenSSH's other names (id_rsa) aren't the Mesh's."""
+    mine = users_keys(keys_dir)
+    user_key(keys_dir / "id_ed25519", "ed25519")
+    r = mesh.find_leftovers(net.cfg())
+    assert r["strays"] == {"orion-2": [f"{net.seen(keys_dir)}/id_ed25519"]}, r
+    assert "orion-2" not in r["hosts"]
+    capsys.readouterr()
+    assert main(["mesh", "leftovers"]) == 0
+    out = capsys.readouterr().out
+    assert (f"orion-2: {net.seen(keys_dir)}/id_ed25519 isn't a Mesh key roster made, so mesh leftovers --remove "
+            "leaves it: move it out of the Mesh's directory") in out, out
+    net.cfg_path.write_text(typed_mesh_dir(net, keys_dir, L3))          # orion-2's Mesh files are leftovers now
+    assert main(["mesh", "leftovers", "--remove", "-y"]) == 0
+    assert mine | {"id_ed25519", "id_ed25519.pub"} == names(keys_dir)

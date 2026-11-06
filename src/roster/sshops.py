@@ -664,7 +664,7 @@ def drop_others(h, pub, drop_re, why="the new key works"):
     fail = f"{why}, but this Box's other key lines there couldn't be taken off: "
     if is_windows(h):
         try:
-            done = winhost.over_key(h, "add", drop_re, pub=pub)
+            done = winhost.over_key(h, "add", drop_re, pub=pub, sweep=True)     # both files (#509 item 4)
         except RuntimeError as e:
             raise RuntimeError(fail + str(e)) from None
         from .errors import KEY_FILE

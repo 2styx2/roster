@@ -679,6 +679,8 @@ export interface MeshStatus {
   pending: Record<string, string>;
   cut_pending: Record<string, string[]>;
   out_of_date: boolean;
+  /** What roster.yml alone shows (220), as `mesh.plan` says it; absent from a roster before #509. */
+  warnings?: string[];
 }
 
 /** `vault.logout`: where the vault stands now (not-logged-in, with `sign_in`), and the account it

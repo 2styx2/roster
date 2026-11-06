@@ -275,8 +275,13 @@ def setup_run(cfg, args):
                 f"{h['key_type']} key)")
         for h in retag:
             say(f"  would re-tag key on {h['name']}")
+        by_name = {h["name"]: h for h in key_hosts}
         for name, types in tidy.items():
-            say(f"  would take this Box's {' and '.join(types)} key line off {name}")
+            left = cleanup_re(cfg, pub(by_name[name]), types)[1] if override else []
+            if took := [t for t in types if t not in left]:
+                say(f"  would take this Box's {' and '.join(took)} key line off {name}")
+            if left:
+                say(f"  would leave this Box's {' and '.join(left)} key line on {name}: {unmatched_words(left)}")
         return 0
 
     # T226 (#435, 2): renamed onto a name another Box's key line has on a Host: the same-name rule (this Box's revoke
@@ -315,7 +320,13 @@ def setup_run(cfg, args):
                 try:
                     notes = f.result()
                     boxkeys.record({name: (set(held.get(name, [])) - set(tidy[name])) | set(unmatched.get(name, ()))})
-                    say(f"  ok    {name} (took this Box's {' and '.join(tidy[name])} key line off)")
+                    left = unmatched.get(name) or []
+                    took = [t for t in tidy[name] if t not in left]
+                    # #509 item 3: a type with no key here to match its line by stays (L2), said as left
+                    say(f"  ok    {name} (" + "; ".join(
+                        ([f"took this Box's {' and '.join(took)} key line off"] if took else [])
+                        + ([f"left this Box's {' and '.join(left)} key line: {unmatched_words(left)}"] if left else []))
+                        + ")")
                     for note in notes:
                         say(f"        {note}")
                 except Exception as e:
@@ -358,6 +369,8 @@ def setup_run(cfg, args):
                         if extra := sorted(have - keep(h)):
                             drop_re, left = cleanup_re(cfg, pub(h), extra)
                             notes = [*(notes or []), *drop_others(h, pub(h), drop_re)]
+                            if left:        # #509 item 3: said as left, as the tidy says it
+                                notes.append(f"left this Box's {' and '.join(left)} key line: {unmatched_words(left)}")
                         boxkeys.record({h["name"]: keep(h) | set(left)})      # L2: a line it couldn't match stays
                     else:
                         boxkeys.record({h["name"]: [h["key_type"]]})
@@ -419,6 +432,11 @@ def setup_next_line(installed, locked_vaults=()):
         left.append(Gap("check", tuple(installed), "check them", f"roster check {which}".strip()))
     changed = [f"{'key' if len(installed) == 1 else 'keys'} on {plural(len(installed), 'Host')} ({names(installed)})"]
     return next_line(changed if installed else [], left)
+
+
+def unmatched_words(types):
+    """Why setup --key-type's tidy leaves this Box's lines of TYPES (cleanup_re's second half): #509 item 3."""
+    return f"no {' or '.join(types)} key on this Box to match it by; roster revoke takes it"
 
 
 def cleanup_re(cfg, pub, types):
@@ -778,6 +796,9 @@ def mesh_leftovers(cfg, args):
         say(f"{host}: {', '.join(mesh.leftover_words(found))}")
     for host, why in r["pending"].items():
         say(f"  not looked at  {host}: {why}")
+    for host, paths in r["strays"].items():
+        for path in paths:
+            say(f"{host}: {mesh.stray_words(path)}")
     if not r["hosts"]:
         say("no Mesh entries this roster.yml doesn't ask for" + (" on the Hosts that answered" if r["pending"] else ""))
         return 1 if r["pending"] else 0
@@ -813,6 +834,8 @@ def cmd_mesh(cfg, args):
         if st["pending"]:
             say(f"pending on {plural(len(st['pending']), 'Host')}: {', '.join(st['pending'])}")
         warn_cut(st["cut_pending"])
+        for w in st["warnings"]:
+            say(f"warning: {w}")
         say("mesh out of date: run `roster mesh`" if st["out_of_date"] else "mesh up to date")
         if not mesh.load_state()["known"]:         # T193: new here, or roster removed and installed again
             say("no Mesh record on this Box: the Hosts may hold Mesh entries an earlier roster left here (or another "
