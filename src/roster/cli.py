@@ -34,7 +34,9 @@ from .common import (
 )
 from .completion import COMMANDS, DIRS, FILES, GROUPS, HOSTS, INVENTORIES, ONLY, RESOURCES, SHELLS, values
 from .config import (
+    HIDDEN_FILE,
     HIDDEN_PATH,
+    RENAME_HINT,
     access_label,
     find_config,
     is_windows,
@@ -2122,7 +2124,7 @@ def cmd_inv(args):
             return 0 if path.is_file() else 1
         if not path.is_file():
             die(f"roster would use {shown or HIDDEN_PATH}, but it isn't there")
-        say(str(path.expanduser().resolve()))
+        say(shown or f"{HIDDEN_FILE} - {RENAME_HINT}")      # one in a token-named folder (#498)
         return 0
     if act == "list":
         inv = inventories.load()
