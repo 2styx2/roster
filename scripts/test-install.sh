@@ -23,7 +23,12 @@ set -uo pipefail
 if [[ ${1:-} == --inside ]]; then           # ---- in the container, as the new user, in ~/roster
     fails=0
     check() { if eval "$2"; then echo "  PASS $1"; else echo "  FAIL $1"; fails=$((fails + 1)); fi; }
-    sudo mkdir -p /run/sshd && sudo /usr/sbin/sshd -p 2222 -o PasswordAuthentication=yes
+    # OpenSSH 9.8+ (Fedora's) penalises a source address whose logins fail: every roster run here comes from
+    # 127.0.0.1, and with two Hosts the refusals after uninstall's revoke add up until sshd stops answering. Off where
+    # sshd has the option (Ubuntu 24.04's 9.6 doesn't: it would refuse to start with it)
+    sudo mkdir -p /run/sshd
+    penalty=(); sudo /usr/sbin/sshd -t -o PerSourcePenalties=no 2>/dev/null && penalty=(-o PerSourcePenalties=no)
+    sudo /usr/sbin/sshd -p 2222 -o PasswordAuthentication=yes "${penalty[@]}"
     # Ubuntu's image has `service` (as a WSL box without systemd does); Fedora's has no init system at all, so
     # install.sh starts crond itself there (#444)
     if command -v service >/dev/null; then sudo service cron start >/dev/null 2>&1; fi
