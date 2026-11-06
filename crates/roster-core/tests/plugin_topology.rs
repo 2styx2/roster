@@ -14,6 +14,7 @@
 mod common;
 
 use common::unhurried;
+use roster_core::plugin::By;
 use roster_core::rpc::CallError;
 
 use roster_core::config::PackageSpec;
@@ -416,7 +417,7 @@ impl World {
     }
 
     fn call(&self, handler: u64, args: Value) -> Reply {
-        self.settle(self.host.call(NAME, handler, args))
+        self.settle(self.host.call(NAME, handler, args, By::User))
     }
 
     /// What the Plugin did with an event, its answers included: a reply of its own when it only
@@ -973,7 +974,7 @@ fn it_reads_the_inventory_without_holding_up_its_own_calls() {
     // the ceiling instead of hanging.
     let host = Arc::clone(&w.host);
     let r = common::within_ceiling(":topology's answer", move || {
-        host.call(NAME, run, json!({ "args": "", "words": [] }))
+        host.call(NAME, run, json!({ "args": "", "words": [] }), By::User)
     });
     ok(&r);
     // Once serve answers, the new Host is on the map.
@@ -1050,9 +1051,12 @@ fn its_check_section_says_whether_mesh_status_is_available() {
     *old.serve.mesh.lock().unwrap() = Value::Null;
     let reply = old.load(ALL);
     ok(&reply);
-    let r = old
-        .host
-        .call(NAME, handler(&one(&reply.ops, "health")["spec"]["check"]), json!({}));
+    let r = old.host.call(
+        NAME,
+        handler(&one(&reply.ops, "health")["spec"]["check"]),
+        json!({}),
+        By::User,
+    );
     assert_eq!(r.result[0]["level"], "warn");
     assert!(
         r.result[0]["message"]
@@ -1166,7 +1170,7 @@ fn its_tutorial_runs_on_the_demo_inventory_and_its_mesh_and_every_step_can_be_do
         .find(|o| o["op"] == "timer" && o["every"] == false)
         .map(|t| handler(&t["run"]))
         .unwrap();
-    let mut ops = demo.call(NAME, first, json!({})).ops;
+    let mut ops = demo.call(NAME, first, json!({}), By::User).ops;
     let started = Instant::now();
     while !ops.iter().any(|o| o["op"] == "view") {
         assert!(started.elapsed() < common::CEILING, "no map: {ops:#?}");
@@ -1230,7 +1234,12 @@ fn its_tutorial_runs_on_the_demo_inventory_and_its_mesh_and_every_step_can_be_do
     // `:topology demo-lab`, as its step asks: the lab's clusters (its meshed Hosts, and the switch
     // kept out of the Mesh), not "There's no group".
     let run = handler(&one(&reply.ops, "command")["run"]);
-    let r = demo.call(NAME, run, json!({ "args": "demo-lab", "words": ["demo-lab"] }));
+    let r = demo.call(
+        NAME,
+        run,
+        json!({ "args": "demo-lab", "words": ["demo-lab"] }),
+        By::User,
+    );
     ok(&r);
     assert_eq!(
         r.ops[0],

@@ -5,6 +5,7 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{Limits, Permission, PluginHost, Serve, Source};
 use roster_core::rpc::CallError;
 use serde_json::{Value, json};
@@ -263,7 +264,7 @@ fn a_timer_that_loops_is_stopped_even_inside_a_coroutine() {
         .collect();
     assert_eq!(timers.len(), 2, "{ops:?}");
     for t in timers {
-        let r = host.call("t", t, json!({}));
+        let r = host.call("t", t, json!({}), By::User);
         let e = r.error.expect("it ran out of time").to_string();
         assert!(e.contains("an endless loop?"), "{e}");
         // A failed run's UI changes are dropped, so `has` is checked on its own below.
@@ -298,7 +299,7 @@ fn cmd_and_env_references_in_raw_text_reach_a_plugin_cut() {
     );
     assert_eq!(error, None);
     let go = loaded[0]["run"]["handler"].as_u64().unwrap();
-    let r = host.call("t", go, json!({ "args": "", "words": [] }));
+    let r = host.call("t", go, json!({ "args": "", "words": [] }), By::User);
     assert!(r.error.is_none(), "{:?}", r.error);
     let ops = r.ops;
     assert_eq!(

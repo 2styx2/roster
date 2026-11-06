@@ -5,6 +5,7 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{Limits, Permission, PluginHost, Reply, Serve, Source};
 use roster_core::rpc::CallError;
 use serde_json::{Value, json};
@@ -203,10 +204,10 @@ roster.commands.add("quick", { run = function() return "here" end })
     // waits behind that one, on the Plugin's own thread.
     let waiting = {
         let host = Arc::clone(&host);
-        std::thread::spawn(move || host.call("waiter", count, json!({ "args": "", "words": [] })))
+        std::thread::spawn(move || host.call("waiter", count, json!({ "args": "", "words": [] }), By::User))
     };
     serve.wait_asked("hosts.list");
-    let next = host.call("waiter", quick, json!({ "args": "", "words": [] }));
+    let next = host.call("waiter", quick, json!({ "args": "", "words": [] }), By::User);
     ok(&next);
     assert_eq!(next.result, "here");
     let counted = waiting.join().unwrap();
@@ -241,6 +242,7 @@ end })
         "waiter",
         command(&loaded.ops, "ask"),
         json!({ "args": "", "words": [] }),
+        By::User,
     );
     ok(&asked);
     assert_eq!(asked.result, "asked");
@@ -330,7 +332,7 @@ end })
     let timer = loaded.ops.iter().find(|o| o["op"] == "timer").unwrap()["run"]["handler"]
         .as_u64()
         .unwrap();
-    let fired = host.call("waiter", timer, json!({}));
+    let fired = host.call("waiter", timer, json!({}), By::User);
     ok(&fired);
     assert_eq!(fired.ops[0]["text"], "timer refused");
 
@@ -338,6 +340,7 @@ end })
         "waiter",
         command(&loaded.ops, "scan"),
         json!({ "args": "", "words": [] }),
+        By::User,
     ));
     let first = rx.recv_timeout(Duration::from_secs(3)).unwrap();
     ok(&first);
@@ -349,9 +352,10 @@ end })
         "waiter",
         command(&loaded.ops, "poll"),
         json!({ "args": "", "words": [] }),
+        By::User,
     );
     let timer = polled.ops[0]["run"]["handler"].as_u64().unwrap();
-    ok(&host.call("waiter", timer, json!({})));
+    ok(&host.call("waiter", timer, json!({}), By::User));
     assert_eq!(notices(&rx, 1), ["timer didn't ask"]);
     settled(&host);
 }
@@ -486,7 +490,7 @@ end }})
     // fair-c's looping call: 6 calls behind its 8 requests, 150 ms each, 2 at a time and sharing
     // 4 with the others: far past its budget plus grace, and never given up on for it.
     let started = Instant::now();
-    let r = host.call("fair-c", sync, json!({ "args": "", "words": [] }));
+    let r = host.call("fair-c", sync, json!({ "args": "", "words": [] }), By::User);
     ok(&r);
     assert_eq!(r.result, "done");
     assert!(
@@ -611,6 +615,7 @@ end })
         "waiter",
         command(&loaded.ops, "ask"),
         json!({ "args": "", "words": [] }),
+        By::User,
     ));
     settled(&host);
     assert_eq!(*seen.0.lock().unwrap(), ["first", "second"]);
@@ -663,6 +668,7 @@ end })
         "waiter",
         command(&loaded.ops, "ask"),
         json!({ "args": "", "words": [] }),
+        By::User,
     ));
     let said = notices_within(&rx, 3, Duration::from_secs(20));
     assert_eq!(said, ["one", "two", "three"]);
@@ -695,6 +701,7 @@ end })
         "waiter",
         command(&loaded.ops, "ask"),
         json!({ "args": "", "words": [] }),
+        By::User,
     ));
     let said = notices_within(&rx, 2, Duration::from_secs(20));
     assert_eq!(said, ["called: running, 1 Host", "asked: 1"]);
@@ -723,6 +730,7 @@ end })
         "waiter",
         command(&loaded.ops, "ask"),
         json!({ "args": "", "words": [] }),
+        By::User,
     ));
     let mut said = notices_within(&rx, 6, Duration::from_secs(20));
     said.sort();
@@ -817,6 +825,7 @@ roster.commands.add("uncaught", { run = function() roster.serve.call("mesh.statu
         "waiter",
         command(&loaded.ops, "uncaught"),
         json!({ "args": "", "words": [] }),
+        By::User,
     );
     let error = r.error.expect("an error");
     assert!(error.message.ends_with(text), "{}", error.message);

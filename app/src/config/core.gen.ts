@@ -790,3 +790,8 @@ export type OpenedSession = {
    */
   user?: string,
 };
+
+/**
+ * Whose call a run is (decision Q98, issue #183), as the app says it with each call.
+ */
+export type PluginCallBy = "user" | "carried" | "app";

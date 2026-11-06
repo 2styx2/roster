@@ -6,6 +6,7 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{Event, Limits, PluginHost, Serve, Source};
 use roster_core::rpc::CallError;
 use serde_json::{Value, json};
@@ -87,12 +88,13 @@ fn a_view_is_data_with_a_table_whose_actions_get_the_row() {
             "remove": ["a"] } })
     );
     let keep = handler(&view["spec"]["table"]["actions"][0]["run"]);
-    let r = host.call("scan", keep, json!({ "view": "scan", "row": "b" }));
+    let r = host.call("scan", keep, json!({ "view": "scan", "row": "b" }), By::User);
     assert!(r.error.is_none(), "{:?}", r.error);
     assert_eq!(r.result, "scan:b");
     let open = handler(&view["spec"]["table"]["open"]);
     assert_eq!(
-        host.call("scan", open, json!({ "view": "scan", "row": "b" })).result,
+        host.call("scan", open, json!({ "view": "scan", "row": "b" }), By::User)
+            .result,
         "opened b"
     );
 }
@@ -118,20 +120,20 @@ fn only_the_user_opens_a_view_but_the_plugin_may_close_it() {
             .unwrap();
         handler(&op["run"])
     };
-    let r = host.call("scan", command("scan"), json!({ "args": "", "words": [] }));
+    let r = host.call("scan", command("scan"), json!({ "args": "", "words": [] }), By::User);
     assert_eq!(r.ops, [json!({ "op": "view_open", "id": "scan" })]);
-    let r = host.call("scan", command("done"), json!({ "args": "", "words": [] }));
+    let r = host.call("scan", command("done"), json!({ "args": "", "words": [] }), By::User);
     assert_eq!(r.ops, [json!({ "op": "view_close", "id": "scan" })]);
     // At a row or node (T99, api 4).
-    let r = host.call("scan", command("at"), json!({ "args": "b", "words": ["b"] }));
+    let r = host.call("scan", command("at"), json!({ "args": "b", "words": ["b"] }), By::User);
     assert_eq!(r.ops, [json!({ "op": "view_open", "id": "scan", "select": "b" })]);
-    let r = host.call("scan", command("bad"), json!({ "args": "", "words": [] }));
+    let r = host.call("scan", command("bad"), json!({ "args": "", "words": [] }), By::User);
     let message = &r.error.as_ref().unwrap().message;
     assert!(
         message.contains("roster.views.open: select is the id of a node or row"),
         "{message}"
     );
-    let r = host.call("scan", command("bad2"), json!({ "args": "", "words": [] }));
+    let r = host.call("scan", command("bad2"), json!({ "args": "", "words": [] }), By::User);
     let message = &r.error.as_ref().unwrap().message;
     assert!(
         message.contains("roster.views.open: opts is a table, as { select = ID }"),
@@ -189,7 +191,12 @@ fn a_details_section_is_set_per_host_and_its_actions_get_the_host() {
     assert_eq!(reply.ops[3], json!({ "op": "remove", "kind": "details", "id": "mesh" }));
     // Removed: its functions are gone with it.
     let cut = handler(&reply.ops[0]["spec"]["table"]["actions"][0]["run"]);
-    let r = host.call("scan", cut, json!({ "host": "esx-02", "section": "mesh", "row": "p" }));
+    let r = host.call(
+        "scan",
+        cut,
+        json!({ "host": "esx-02", "section": "mesh", "row": "p" }),
+        By::User,
+    );
     assert!(r.error.unwrap().message.contains("gone"));
 }
 
@@ -212,6 +219,7 @@ fn a_details_section_keeps_its_actions_until_it_is_set_again_for_that_host() {
         "scan",
         first,
         json!({ "host": "esx-02", "section": "mesh", "row": "p" }),
+        By::User,
     );
     assert!(
         r.error.is_none(),
@@ -242,7 +250,10 @@ fn heading_actions_are_functions_and_a_notices_actions_are_command_lines() {
     assert!(reply.error.is_none(), "{:?}", reply.error);
     let view = &reply.ops[0];
     let apply = handler(&view["spec"]["actions"][0]["run"]);
-    assert_eq!(host.call("scan", apply, json!({ "view": "plan" })).result, "apply plan");
+    assert_eq!(
+        host.call("scan", apply, json!({ "view": "plan" }), By::User).result,
+        "apply plan"
+    );
     assert_eq!(
         reply.ops[1],
         json!({ "op": "notify", "text": "Plan ready", "level": "info",

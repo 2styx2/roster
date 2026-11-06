@@ -13,6 +13,7 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
+use roster_core::plugin::By;
 use roster_core::plugin::{Event, Limits, Load, Permission, PluginHost, Reply, Serve, Source};
 use roster_core::rpc::CallError;
 use serde_json::{Map, Value, json};
@@ -261,7 +262,7 @@ impl World {
     }
 
     fn call(&self, handler: u64, args: Value) -> Reply {
-        let r = self.host.call(NAME, handler, args);
+        let r = self.host.call(NAME, handler, args, By::User);
         self.settled(r)
     }
 
@@ -484,10 +485,12 @@ fn behind_a_busy_roster_serve_the_question_comes_when_it_answers() {
     // It answers while serve is still busy (`publish` is held until below): a call that waited
     // for serve wouldn't come back at all, and fails at the ceiling instead of hanging.
     let (host, run, args) = (Arc::clone(&w.host), command(&loaded.ops), words.clone());
-    let asked = common::within_ceiling("the scan command's answer", move || host.call(NAME, run, args));
+    let asked = common::within_ceiling("the scan command's answer", move || {
+        host.call(NAME, run, args, By::User)
+    });
     ok(&asked);
     assert!(!has(&asked.ops, "confirm"));
-    let again = w.host.call(NAME, command(&loaded.ops), words);
+    let again = w.host.call(NAME, command(&loaded.ops), words, By::User);
     ok(&again);
     assert!(
         op(&again.ops, "notify")["text"]
@@ -751,10 +754,10 @@ roster.commands.add("go", { run = function() roster.serve.call("discover.start",
     ok(&loaded);
     assert_eq!(serve.methods(), ["discover.status"]);
     let timer = handler(&op(&loaded.ops, "timer")["run"]);
-    let fired = host.call("sneaky", timer, json!({}));
+    let fired = host.call("sneaky", timer, json!({}), By::User);
     assert_eq!(op(&fired.ops, "notify")["text"], "refused");
     let go = handler(&loaded.ops.iter().find(|o| o["op"] == "command").unwrap()["run"]);
-    ok(&host.call("sneaky", go, json!({ "args": "", "words": [] })));
+    ok(&host.call("sneaky", go, json!({ "args": "", "words": [] }), By::User));
     assert_eq!(serve.methods(), ["discover.status", "discover.start"]);
 }
 

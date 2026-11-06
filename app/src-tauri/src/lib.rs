@@ -154,13 +154,12 @@ async fn plugin_call(
     plugin: String,
     handler: u64,
     args: Value,
-    user: Option<bool>,
-    carried: Option<bool>,
+    by: Option<plugin::By>,
     builtins: Option<Vec<String>>,
     on_demo: Option<u64>,
 ) -> Result<plugin::Reply, String> {
     blocking(core, move |s| {
-        s.plugin_call(&plugin, handler, args, user, carried, builtins, on_demo)
+        s.plugin_call(&plugin, handler, args, by, builtins, on_demo)
     })
     .await
 }

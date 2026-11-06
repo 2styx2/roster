@@ -603,29 +603,18 @@ impl Shell {
         Ok(json!({ "manifest": manifest, "dir": shown, "reply": reply, "refused": refused }))
     }
 
-    /// Runs a Plugin's handler. `user: false`: the app runs it on its own (a finder's items, a
-    /// `:check`, a timer, a question's cancel because another took its place, a command a carried
-    /// run's `roster.cmd` named), never the user's call. `carried`: the Plugin's own command its
-    /// `roster.cmd` ran from the user's call, that call carried one hop (issue #183).
-    #[allow(clippy::too_many_arguments)] // one per argument of the command
+    /// Runs a Plugin's handler as `by`'s call (the user's when the app doesn't say).
     pub fn plugin_call(
         &self,
         plugin: &str,
         handler: u64,
         args: Value,
-        user: Option<bool>,
-        carried: Option<bool>,
+        by: Option<plugin::By>,
         builtins: Option<Vec<String>>,
         on_demo: Option<u64>,
     ) -> Result<plugin::Reply, String> {
         let host = self.plugin_host(builtins, on_demo)?;
-        Ok(if user == Some(false) {
-            host.call_by_app(plugin, handler, args)
-        } else if carried == Some(true) {
-            host.call_carried(plugin, handler, args)
-        } else {
-            host.call(plugin, handler, args)
-        })
+        Ok(host.call(plugin, handler, args, by.unwrap_or_default()))
     }
 
     pub fn plugin_event(

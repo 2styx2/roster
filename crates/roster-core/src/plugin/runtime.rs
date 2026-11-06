@@ -8,7 +8,7 @@ use super::api::EVENTS;
 use super::folder::Storage;
 use super::network::{self, Answer, Net};
 use super::op::Op;
-use super::{Builtins, Event, OpenSessions, Outcome, PluginError, Serve, ServeWait, permission::Permission};
+use super::{Builtins, By, Event, OpenSessions, Outcome, PluginError, Serve, ServeWait, permission::Permission};
 use crate::config::Os;
 use crate::config::lua::{self, Budget, Clock, Coded};
 use crate::rpc::CallError;
@@ -234,19 +234,6 @@ struct Before {
     timers: HashMap<u64, bool>,
     commands: BTreeSet<String>,
     quiet: BTreeSet<u64>,
-}
-
-/// Whose call a run is (decision Q98, issue #183).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum By {
-    /// The user chose it: a command, a key, a row's or button's action, a finder item, a toolbar
-    /// control, a question's answer.
-    User,
-    /// The Plugin's own command its `roster.cmd` ran from the user's call: that call carried one
-    /// hop, as a `roster.serve.request`'s answer is (Q103d), so nothing made in it carries it on.
-    Carried,
-    /// The app's doing, never the user's call.
-    App,
 }
 
 /// Hands a request's answer back to the host (request id, answer), from a network or serve thread.

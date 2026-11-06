@@ -4,6 +4,7 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{Limits, Load, Permission, PluginHost, Reply, Serve, Source};
 use roster_core::rpc::CallError;
 use serde_json::{Value, json};
@@ -851,7 +852,7 @@ fn the_plugin_isnt_blocked_while_a_request_runs() {
     let host = Arc::new(host);
     let h = Arc::clone(&host);
     let r = common::within_ceiling("the command's answer while a request runs", move || {
-        h.call("fetcher", handler, json!({}))
+        h.call("fetcher", handler, json!({}), By::User)
     });
     assert_eq!(r.ops[0]["text"], "pong");
     assert!(rx.try_recv().is_err(), "the request answered while the server held it");
@@ -874,7 +875,7 @@ fn the_plugin_answers_soon_while_a_request_runs() {
     server.wait_for("/held");
     let handler = reply.ops[0]["run"]["handler"].as_u64().unwrap();
     let started = std::time::Instant::now();
-    let r = host.call("fetcher", handler, json!({}));
+    let r = host.call("fetcher", handler, json!({}), By::User);
     assert_eq!(r.ops[0]["text"], "pong");
     assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
 }

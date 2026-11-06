@@ -14,6 +14,7 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
+use roster_core::plugin::By;
 use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
 use roster_core::rpc::CallError;
 use serde_json::{Value, json};
@@ -402,7 +403,7 @@ impl Run {
     }
 
     fn call(&mut self, handler: u64, args: Value) -> Vec<Value> {
-        let reply = self.host.call(NAME, handler, args);
+        let reply = self.host.call(NAME, handler, args, By::User);
         self.take(reply)
     }
 
@@ -814,14 +815,22 @@ fn the_controls_answer_while_roster_serve_is_busy_and_catch_up_after() {
     // for serve wouldn't come back at all, and fails at the ceiling instead of hanging.
     let (host, run_handler) = (Arc::clone(&run.host), handler(&c["run"]));
     let reply = common::within_ceiling("the plan command's answer", move || {
-        host.call(NAME, run_handler, json!({ "args": "plan", "words": ["plan"] }))
+        host.call(
+            NAME,
+            run_handler,
+            json!({ "args": "plan", "words": ["plan"] }),
+            By::User,
+        )
     });
     assert!(reply.error.is_none() && reply.disabled.is_none(), "{reply:?}");
     assert_eq!(of(&reply.ops, "view_open")[0]["id"], "mesh-plan");
     // Asked again before serve answers: it says it's starting, and asks nothing more.
-    let again = run
-        .host
-        .call(NAME, handler(&c["run"]), json!({ "args": "plan", "words": ["plan"] }));
+    let again = run.host.call(
+        NAME,
+        handler(&c["run"]),
+        json!({ "args": "plan", "words": ["plan"] }),
+        By::User,
+    );
     assert!(texts(&again.ops)[0].contains("is starting"));
     std::thread::sleep(Duration::from_millis(2600));
     assert!(run.host.list()[0].disabled.is_none());

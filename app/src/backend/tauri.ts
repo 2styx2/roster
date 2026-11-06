@@ -4,7 +4,7 @@
 // imported when running inside Tauri (see index.ts).
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { CallErrorWire, OpenedSession } from "../config/core.gen";
+import type { CallErrorWire, OpenedSession, PluginCallBy } from "../config/core.gen";
 import {
   BackendCallError,
   BackendStartError,
@@ -40,6 +40,7 @@ import {
   type PackageChecked,
   type PackageStatus,
   type OpenSession,
+  type PluginCaller,
   type PluginReply,
   type PublishResult,
   type PullResult,
@@ -160,6 +161,13 @@ function openSessionArg(o: OpenSession) {
   return { session: o.session, host: o.host, cwd: o.cwd ?? null };
 }
 
+/** Whose call a Plugin's run is, as the core's `By` (plugin/mod.rs): the user's unless the app
+ * says otherwise. */
+function callBy(user: PluginCaller | undefined): PluginCallBy {
+  if (user === "carried") return "carried";
+  return user === false ? "app" : "user";
+}
+
 /** A serve method the core passes on as it is (`serve_call`). Secrets in `params` (a typed
  * password, a vault answer) go once to serve's stdin and are wiped there. */
 function serve<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
@@ -236,7 +244,7 @@ export function tauriBackend(): Backend {
     pluginManifest: (path) => call("plugin_manifest", { path }),
     pluginTypes: (path) => call<string>("plugin_types", { path }),
     pluginLoad: (path, grants, settings, builtins) => call("plugin_load", { path, grants, settings: settings ?? null, builtins: builtins ?? null }),
-    pluginCall: (plugin, handler, args, user, builtins) => call<PluginReply>("plugin_call", { plugin, handler, args, user: user !== false, carried: user === "carried", builtins: builtins ?? null }),
+    pluginCall: (plugin, handler, args, user, builtins) => call<PluginReply>("plugin_call", { plugin, handler, args, by: callBy(user), builtins: builtins ?? null }),
     pluginEvent: (name, payload, builtins) => call<PluginReply[]>("plugin_event", { name, payload, builtins: builtins ?? null }),
     pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map(openSessionArg) }).then(() => undefined),
     pluginUnload: (plugin) => call<boolean>("plugin_unload", { plugin }),
@@ -257,7 +265,7 @@ export function tauriBackend(): Backend {
         pluginTypes: (path) => call<string>("plugin_types", { path }),
         pluginLoad: (path, grants, settings, builtins) => call("plugin_load", { path, grants, settings: settings ?? null, builtins: builtins ?? null, onDemo }),
         pluginCall: (plugin, handler, args, user, builtins) =>
-          call<PluginReply>("plugin_call", { plugin, handler, args, user: user !== false, carried: user === "carried", builtins: builtins ?? null, onDemo }),
+          call<PluginReply>("plugin_call", { plugin, handler, args, by: callBy(user), builtins: builtins ?? null, onDemo }),
         pluginEvent: (name, payload, builtins) => call<PluginReply[]>("plugin_event", { name, payload, builtins: builtins ?? null, onDemo }),
         pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map(openSessionArg), onDemo }).then(() => undefined),
         pluginUnload: (plugin) => call<boolean>("plugin_unload", { plugin, onDemo }),

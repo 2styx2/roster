@@ -137,6 +137,8 @@ fn generated() -> String {
         decl::<CallError>(&cfg),
         decl::<CheckStarted>(&cfg),
         decl::<OpenedSession>(&cfg),
+        // Plugins (plugin/).
+        decl::<roster_core::plugin::By>(&cfg),
     ];
     format!(
         "// Generated from roster-core's Rust types by crates/roster-core/tests/ts_types.rs: don't edit.\n\

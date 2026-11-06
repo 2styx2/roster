@@ -6,6 +6,7 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{DemoHost, Limits, Permission, Reply, Source};
 use serde_json::{Value, json};
 use std::sync::Mutex;
@@ -348,7 +349,7 @@ fn a_plugin_in_the_demo_lists_the_demos_sessions() {
         .and_then(|op| op["run"]["handler"].as_u64())
         .expect("its command's handler");
     let call = |host: &DemoHost| {
-        let r = host.call("teacher", handler, Value::Null);
+        let r = host.call("teacher", handler, Value::Null, By::User);
         ok(&r);
         notices(&r.ops)
     };

@@ -5,6 +5,7 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::api::{self, Needs};
 use roster_core::plugin::{Limits, Permission, PluginHost, Serve, Source};
 use roster_core::rpc::CallError;
@@ -184,6 +185,7 @@ fn the_pinned_example_answers_an_unknown_host_with_a_notice() {
         "pinned",
         pin["run"]["handler"].as_u64().unwrap(),
         json!({ "args": "web-9", "words": ["web-9"] }),
+        By::User,
     );
     assert!(r.error.is_none(), "{:?}", r.error);
     assert_eq!(

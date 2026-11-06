@@ -5,6 +5,7 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{Event, Limits, OpenSession, Permission, PluginHost, Reply, Serve, Source};
 use roster_core::rpc::CallError;
 use serde_json::{Value, json};
@@ -275,7 +276,7 @@ roster.on("inventory_changed", function() roster.inventory.hosts() end)
         .find(|o| o["op"] == "command" && o["name"] == "note")
         .and_then(|o| o["run"]["handler"].as_u64())
         .unwrap();
-    ok(&host.call("reader", run, json!({ "words": [] })));
+    ok(&host.call("reader", run, json!({ "words": [] }), By::User));
     assert_eq!(
         serve.count("hosts.list"),
         2,
@@ -360,7 +361,7 @@ end })
         .find(|o| o["op"] == "command" && o["name"] == "cut")
         .and_then(|o| o["run"]["handler"].as_u64())
         .unwrap();
-    ok(&host.call("reader", run, json!({ "words": [] })));
+    ok(&host.call("reader", run, json!({ "words": [] }), By::User));
     assert_eq!(
         serve.count("hosts.list"),
         2,

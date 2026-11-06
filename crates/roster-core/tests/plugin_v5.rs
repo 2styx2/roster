@@ -6,6 +6,7 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{Limits, PluginHost, Serve, Source};
 use roster_core::rpc::CallError;
 use serde_json::{Value, json};
@@ -197,9 +198,13 @@ fn a_failed_call_adds_nothing() {
             .and_then(|o| o["run"]["handler"].as_u64())
             .unwrap()
     };
-    assert!(host.call(&manifest.name, handler("boom"), json!({})).error.is_some());
+    assert!(
+        host.call(&manifest.name, handler("boom"), json!({}), By::User)
+            .error
+            .is_some()
+    );
     assert_eq!(
-        host.call(&manifest.name, handler("check"), json!({})).result,
+        host.call(&manifest.name, handler("check"), json!({}), By::User).result,
         "false true"
     );
 }

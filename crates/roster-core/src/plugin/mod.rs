@@ -76,6 +76,26 @@ pub mod code {
     pub const INVALID_PARAMS: i64 = -32602;
 }
 
+/// Whose call a run is (decision Q98, issue #183), as the app says it with each call.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginCallBy"))]
+pub enum By {
+    /// The user chose it: a command, a key, a row's or button's action, a finder item, a toolbar
+    /// control, a question's answer.
+    #[default]
+    User,
+    /// The Plugin's own command its `roster.cmd` ran from the user's call (a `cmd` op without
+    /// `"user": false`): that call carried one hop, as a `roster.serve.request`'s answer is
+    /// (Q103d). It may copy, ask or echo, but a `roster.cmd` or a request made in it doesn't carry
+    /// the call further: the line's op says `"user": false`, and the app runs what it names as
+    /// [`By::App`].
+    Carried,
+    /// The app's doing, never the user's call (another Plugin's question took this one's place and
+    /// its `cancel` runs, a finder's items, a timer).
+    App,
+}
+
 /// The prefix of a built-in Plugin's path (`builtin:hosts`).
 pub const BUILTIN_PREFIX: &str = "builtin:";
 /// The prefix of a Package's Plugin path (`package:recent-alerts`, ticket 24).
@@ -350,7 +370,7 @@ pub struct Status {
 enum Job {
     Load(String),
     /// A handler, its arguments, and whose call it is.
-    Call(u64, Json, runtime::By),
+    Call(u64, Json, By),
     Event(Event),
     /// A `roster.http` or `roster.serve.request` answer, for the function waiting for it.
     Answer(u64, runtime::Arrival),
@@ -616,30 +636,10 @@ impl PluginHost {
     }
 
     /// Calls a function the Plugin handed over (`{ "handler": N }` in its ops) with `args`, as
-    /// the user's call: they chose it (a command, a row or button, a finder item, a toolbar
-    /// control, a key, a question's answer). A timer's run, a command's `complete`, a finder's
-    /// `items` and a `:check` section's `check` are never the user's call, whoever runs them.
-    pub fn call(&self, plugin: &str, handler: u64, args: Json) -> Reply {
-        self.call_as(plugin, handler, args, runtime::By::User)
-    }
-
-    /// [`PluginHost::call`] for a Plugin's own command that its `roster.cmd` ran from the user's
-    /// call (a `cmd` op without `"user": false`): the user's call carried one hop (decision Q98,
-    /// issue #183). It may copy, ask or echo, but a `roster.cmd` or a `roster.serve.request` made
-    /// in it doesn't carry the call further: the line's op says `"user": false`, and the app runs
-    /// what it names of the Plugin's with [`PluginHost::call_by_app`].
-    pub fn call_carried(&self, plugin: &str, handler: u64, args: Json) -> Reply {
-        self.call_as(plugin, handler, args, runtime::By::Carried)
-    }
-
-    /// [`PluginHost::call`] for what the app runs on its own, not the user's choice (another
-    /// Plugin's question took this one's place and its `cancel` runs): never the user's call, so
-    /// it can't copy, ask, run a command line or act on the network or the Inventory.
-    pub fn call_by_app(&self, plugin: &str, handler: u64, args: Json) -> Reply {
-        self.call_as(plugin, handler, args, runtime::By::App)
-    }
-
-    fn call_as(&self, plugin: &str, handler: u64, args: Json, by: runtime::By) -> Reply {
+    /// `by`'s call ([`By`]): only the user's may copy, ask, run a command line or act on the
+    /// network or the Inventory. A timer's run, a command's `complete`, a finder's `items` and a
+    /// `:check` section's `check` are never the user's call, whoever runs them.
+    pub fn call(&self, plugin: &str, handler: u64, args: Json, by: By) -> Reply {
         let wall = self.limits.call + self.limits.grace;
         let Some((sender, serving)) = self.sender(plugin) else {
             let why = self.why_not(plugin);
