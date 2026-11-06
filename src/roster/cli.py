@@ -259,6 +259,9 @@ def mesh_leftovers(cfg, args):
         say(f"{host}: {', '.join(mesh.leftover_words(found))}")
     for host, why in r["pending"].items():
         say(f"  not looked at  {host}: {why}")
+    for host, paths in r["strays"].items():
+        for path in paths:
+            say(f"{host}: {mesh.stray_words(path)}")
     if not r["hosts"]:
         say("no Mesh entries this roster.yml doesn't ask for" + (" on the Hosts that answered" if r["pending"] else ""))
         return 1 if r["pending"] else 0
@@ -294,6 +297,8 @@ def cmd_mesh(cfg, args):
         if st["pending"]:
             say(f"pending on {plural(len(st['pending']), 'Host')}: {', '.join(st['pending'])}")
         meshview.warn_cut(st["cut_pending"])
+        for w in st["warnings"]:
+            say(f"warning: {w}")
         say("mesh out of date: run `roster mesh`" if st["out_of_date"] else "mesh up to date")
         if not mesh.load_state()["known"]:         # new here, or roster removed and installed again
             say("no Mesh record on this Box: the Hosts may hold Mesh entries an earlier roster left here (or another "

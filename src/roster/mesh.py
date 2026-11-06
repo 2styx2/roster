@@ -251,17 +251,26 @@ mkeys() {
   done
   echo $s
 }
-# tagged DIR K: K is a Mesh key this run may replace or remove (#505's review H1): its .pub's comment is a $TAG:
-# tag of an owner this run takes (ours_by), and its private key gives that very .pub (ssh-keygen -y, never asking for a
-# passphrase). Anything else by that name (a user's own key) is left where it is, and said (NOTOURS)
-tagged() {
-  [ -f "$1/$2" ] && [ -f "$1/$2.pub" ] || return 1
-  tp=$(cat "$1/$2.pub" 2>/dev/null) || return 1
+# keystate DIR K: what the Mesh key K in DIR is (#505's review H1, #509): ours (its .pub's comment is a roster-mesh: tag
+# of an owner this run takes, ours_by, and its private key gives that very .pub: ssh-keygen -y, never asking for a
+# passphrase), theirs (the same, but another owner's tag), half (a roster-mesh: tag, but no private key that gives it:
+# none there, a passphrase on it, or another key), or not (no roster-mesh: tag: a user's own key by that name)
+keystate() {
+  [ -f "$1/$2.pub" ] && tp=$(cat "$1/$2.pub" 2>/dev/null) || { echo not; return; }
   tc=${tp##* }
-  case "$tc" in "$TAG":*@*) ours_by "${tc#*@}" || return 1;; "$TAG":*) ours_by - || return 1;; *) return 1;; esac
-  ty=$("$KG" -y -P '' -f "$1/$2" </dev/null 2>/dev/null) || return 1
-  [ "$(printf '%s\n' "$tp" | cut -d ' ' -f 1,2)" = "$(printf '%s\n' "$ty" | cut -d ' ' -f 1,2)" ]
+  case "$tc" in "$TAG":*@*) to=${tc#*@};; "$TAG":*) to=-;; *) echo not; return;; esac
+  ty=; [ -f "$1/$2" ] && ty=$("$KG" -y -P '' -f "$1/$2" </dev/null 2>/dev/null)
+  if [ -z "$ty" ] || [ "$(printf '%s\n' "$tp" | cut -d ' ' -f 1,2)" != "$(printf '%s\n' "$ty" | cut -d ' ' -f 1,2)" ]; then
+    echo half; return
+  fi
+  if ours_by "$to"; then echo ours; else echo theirs; fi
 }
+# tagged DIR K: K is a Mesh key this run may use, replace or remove (ours). Anything else by that name is left where it
+# is, and said (left)
+tagged() { [ "$(keystate "$1" "$2")" = ours ]; }
+# left DIR K STATE: a file by a Mesh key's name that roster leaves (NOTOURS; HALF: a Mesh public key with no private
+# key that gives it, #509 item 2)
+left() { if [ "$3" = half ]; then echo "HALF $1/$2.pub"; else echo "NOTOURS $1/$2"; fi; }
 mine() {
   for k in $(mkeys "$1"); do grep -qs " $TAG:" "$1/$k.pub" && return 0; done
   head -n 1 "$1/config" 2>/dev/null | grep -q '^# Written by roster mesh'
@@ -349,17 +358,29 @@ case "$O" in /*) r=$(cd "$O" 2>/dev/null && pwd -P) && [ -n "$(mkeys "$P")" ] &&
 WHO=$(whose "$P")
 if ! ours_by "$WHO"; then   # another's Mesh key: used as it is (its public half), never replaced or made (T199)
   [ "$ROTATE" = 1 ] && { echo "ERROR its Mesh key in $P is $(whose_words "$WHO"): roster doesn't replace it"; echo ROSTER_DONE; exit 0; }
-  # of whatever type it is (T245): its owner's key_type may differ from this roster.yml's
-  if ! { [ -f "$K" ] && [ -f "$K.pub" ]; }; then
-    for k in $(mkeys "$P"); do grep -qs " $TAG:" "$P/$k.pub" && [ -f "$P/$k" ] && { K=$P/$k; break; }; done
+  # of whatever type it is (T245): its owner's key_type may differ from this roster.yml's; only a whole tagged key
+  # (#509: never a user's own by a Mesh key's name)
+  whole() { case "$(keystate "$P" "$1")" in ours|theirs) true;; *) false;; esac; }
+  if ! whole "$KF"; then
+    K=; for k in $(mkeys "$P"); do whole "$k" && { K=$P/$k; break; }; done
   fi
-  { [ -f "$K" ] && [ -f "$K.pub" ]; } || { echo "ERROR $P holds Mesh files that are $(whose_words "$WHO"), and no key"; echo ROSTER_DONE; exit 0; }
+  [ -n "$K" ] || { echo "ERROR $P holds Mesh files that are $(whose_words "$WHO"), and no key"; echo ROSTER_DONE; exit 0; }
 else
+  # the key of roster.yml's type (#509 item 1): used, or replaced by --rotate, only when it's one roster made: whole,
+  # with a roster-mesh: tag (this Box's, or one it had before a rename or an older roster's: the folder is this Box's,
+  # whose); anything else by its name is left as it is, and this source has no Mesh key until it's moved: said
+  if [ -e "$K" ] || [ -e "$K.pub" ]; then
+    case "$(keystate "$P" "$KF")" in
+      ours|theirs) ;;
+      half) echo "ERROR $K.pub is a Mesh public key with no matching private key (none there, a passphrase on it, or another key), so roster neither uses nor replaces it: delete both halves if they're roster's, or move them out of $P"; echo ROSTER_DONE; exit 0;;
+      *) echo "ERROR $K isn't a Mesh key roster made (no $TAG: tag), so roster neither uses nor replaces it: move it (and $K.pub) out of $P"; echo ROSTER_DONE; exit 0;;
+    esac
+  fi
   # this Box's Mesh key of another type (key_type: changed since, T245): it goes, and one of $KF's type is made, as
   # --rotate replaces a key; its public half is said (OLDPUB), so an older roster's line for it is this Box's to take
   for k in $(mkeys "$P"); do
     [ "$k" = "$KF" ] && continue
-    tagged "$P" "$k" || { echo "NOTOURS $P/$k"; continue; }     # a user's own key by that name: never touched
+    s=$(keystate "$P" "$k"); [ "$s" = ours ] || { left "$P" "$k" "$s"; continue; }   # never touched: a user's own
     [ -f "$P/$k.pub" ] && echo "OLDPUB $(cat "$P/$k.pub")"
     echo "KEY retype $k"
     [ "$MODE" = apply ] && rm -f "$P/$k" "$P/$k.pub"
@@ -471,7 +492,7 @@ fi
 NOT_SOURCE = r"""
 clean() {  # clean DIR: roster's files in it (a key of any type, T245, only one it made: tagged, #505's H1); the public
            # halves go last: until they do, mine knows the rest is roster's
-  ks=; for k in $(mkeys "$1"); do if tagged "$1" "$k"; then ks="$ks $k"; else echo "NOTOURS $1/$k"; fi; done
+  ks=; for k in $(mkeys "$1"); do s=$(keystate "$1" "$k"); if [ "$s" = ours ]; then ks="$ks $k"; else left "$1" "$k" "$s"; fi; done
   for k in $ks; do drop "$1/$k" "remove $k"; done
   for f in known_hosts config ROSTER.md; do drop "$1/$f" "remove $f"; done
   for k in $ks; do drop "$1/$k.pub" "remove $k.pub"; done
@@ -1050,11 +1071,16 @@ def whose_words(owner):
 
 
 def not_ours(out, name, lines):
-    """A warning for each file by a Mesh key's name that NAME's script left because roster didn't make it (#505's H1)."""
+    """A warning for each file by a Mesh key's name that NAME's script left because roster didn't make it (#505's H1),
+    or because it's a Mesh public key with no private key that gives it (HALF, #509 item 2)."""
     for path in dict.fromkeys(report(lines, "NOTOURS ")):
         out.setdefault("warnings", []).append(
-            f"{name}: {path} isn't a Mesh key roster made (no roster-mesh: tag of this Box's, or its private key doesn't "
-            "give that .pub), so roster left it there; move it out of the Mesh's directory")
+            f"{name}: {path} isn't a Mesh key roster made (no roster-mesh: tag of this Box's), so roster left it there; "
+            "move it out of the Mesh's directory")
+    for path in dict.fromkeys(report(lines, "HALF ")):
+        out.setdefault("warnings", []).append(
+            f"{name}: a Mesh public key with no matching private key was left: {path} (its private key isn't there, "
+            "has a passphrase, or is another key); delete it, and its private key if that's roster's too")
 
 
 def stale(out, name, lines):
@@ -1159,7 +1185,9 @@ def status(cfg: dict[str, Any], grouped: bool = False) -> dict[str, Any]:
     links = g["links"]
     out = {"links": links, "excluded": g["excluded"], "reach": reach(g), "members": g["visit"],
            "pending": st["pending"], "cut_pending": st["cut"],
-           "out_of_date": bool(g["links"] or st["members"]) and st["applied"] != digest(cfg, g)}
+           "out_of_date": bool(g["links"] or st["members"]) and st["applied"] != digest(cfg, g),
+           # 220 from roster.yml alone (#509 item 6), as the plan, apply and check say it
+           "warnings": key_type_warnings(cfg, links)}
     if grouped:
         group_of = {n: grp for grp, names in g["meshed"].items() for n in names}
         out["links"] = [x for x in links if x.get("via") or group_of.get(x["from"]) is None
@@ -1305,6 +1333,16 @@ if grep -qxF "$MARK" "$HOME/.ssh/config" 2>/dev/null; then
   w=$(whose "$INCD"); ours_by "$w" && echo "INCLUDE ${w:--}"
 fi
 [ -z "$ESXI" ] && ours "$R" && ours_by "$(mdwhose "$R")" && echo "MD $(mdwhose "$R") $R"
+# a file by a Mesh key's name in a folder the Mesh uses that isn't a key roster made (#509 item 5): a user's own, or a
+# public half with no private key that gives it; said (STRAY), never removed
+seen=
+for d in "$P" "$INCD"; do
+  [ -n "$d" ] && [ -d "$d" ] && mine "$d" || continue
+  r=$(cd "$d" && pwd -P); case " $seen " in *" $r "*) continue;; esac; seen="$seen $r"
+  for k in $(mkeys "$d"); do
+    case "$(keystate "$d" "$k")" in half) echo "STRAY $d/$k.pub";; not) echo "STRAY $d/$k";; esac
+  done
+done
 echo ROSTER_DONE
 """
 
@@ -1333,8 +1371,10 @@ def find_leftovers(cfg, say=None):
     Inventory's), and an older roster's (no Box in the tag; also for a source asked for, beside this Box's own line:
     #384), never
     another Box's or Inventory's (T199). Returns
-    {hosts: {host: {lines: [(source, from, older)], files: [dir], include, md, older}}, pending: {host: why}}: only
-    Hosts holding any; older: some of them are an older roster's."""
+    {hosts: {host: {lines: [(source, from, older)], files: [dir], include, md, older}}, pending: {host: why},
+    strays: {host: [path]}}: only Hosts holding any; older: some of them are an older roster's. strays (#509 item 5):
+    files by a Mesh key's name in a folder the Mesh uses that aren't a key roster made (a .pub: a Mesh public key with
+    no private key that gives it), which remove_leftovers never takes: only said."""
     say = say or (lambda msg: None)
     hosts = with_mesh_dirs(cfg)
     g = graph(cfg)
@@ -1343,7 +1383,7 @@ def find_leftovers(cfg, say=None):
     for x in g["links"]:
         if x["kind"] == "key" and "skip" not in x:
             wanted.setdefault(x["to"], set()).add(x["from"])
-    out: dict[str, Any] = {"hosts": {}, "pending": {}}
+    out: dict[str, Any] = {"hosts": {}, "pending": {}, "strays": {}}
     for name in sorted(n for n, h in hosts.items() if visitable(h)):
         say(f"  look   {name}")
         lines, err = on_host(hosts[name], preamble(hosts[name], "check", own, ["-"]) + LOOK)
@@ -1377,7 +1417,17 @@ def find_leftovers(cfg, say=None):
                 older = older or by == "-"
         if found:
             out["hosts"][name] = {**found, **({"older": True} if older else {})}
+        if strays := report(lines, "STRAY "):
+            out["strays"][name] = strays
     return out
+
+
+def stray_words(path):
+    """A file find_leftovers found by a Mesh key's name that isn't roster's (#509 item 5), as words."""
+    if path.endswith(".pub"):
+        return (f"{path} is a Mesh public key with no matching private key, so mesh leftovers --remove leaves it: "
+                "delete it, and its private key if that's roster's too")
+    return f"{path} isn't a Mesh key roster made, so mesh leftovers --remove leaves it: move it out of the Mesh's directory"
 
 
 def leftover_words(found):
