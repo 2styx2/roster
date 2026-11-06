@@ -9,7 +9,7 @@ from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from typing import Any
 
-from . import authorized, boxkeys, boxlock, catchup, keyline, mesh, meshview, providers, rotation
+from . import authorized, boxkeys, boxlock, catchup, keyline, mesh, meshview, providers, rotate, rotation
 from .authorized import TAKEN, NameTaken, NoLine, box_key_re, box_public_keys, enroll, key_named
 from .boxkeys import ensure_key, public_key_line
 from .claude import write_claude_files
@@ -138,6 +138,7 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
     # type's line too, so its tries never pile up
     held = boxkeys.installed()
     pending_rotation = rotation.pending(cfg)
+    elsewhere = rotate.entries_elsewhere(cfg)       # other Inventories' Hosts: one may share an account (T253)
 
     def keep(h: dict[str, Any]) -> set[str]:
         return {h["key_type"], yml["hosts"][h["name"]]["key_type"]} if override else {h["key_type"]}
@@ -201,10 +202,10 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
             h = by_name[name]
             with turn(h):
                 if not override:
-                    return authorized.drop_others(h, pub(h), mine_on(cfg, h, pub(h), box_key_re(cfg)),
+                    return authorized.drop_others(h, pub(h), mine_on(cfg, h, pub(h), box_key_re(cfg), elsewhere=elsewhere),
                                                   why="the key works")
                 drop_re, unmatched[name] = cleanup_re(cfg, pub(h), tidy[name])
-                return authorized.drop_others(h, pub(h), mine_on(cfg, h, pub(h), drop_re, tidy[name]),
+                return authorized.drop_others(h, pub(h), mine_on(cfg, h, pub(h), drop_re, tidy[name], elsewhere),
                                               why="the key works")
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
             futs = {ex.submit(tidy_on, n): n for n in tidy if n not in failed}
@@ -259,7 +260,7 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
         say(f"installing   key on {len(todo)} hosts...")
         def enroll_one(h: dict[str, Any]) -> list[str]:
             with turn(h):
-                return enroll(h, pub(h), mine_on(cfg, h, pub(h), mine), taken, own, bool(override))
+                return enroll(h, pub(h), mine_on(cfg, h, pub(h), mine, elsewhere=elsewhere), taken, own, bool(override))
         mine = box_key_re(cfg)
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
             # --key-type: this run's line goes in beside roster.yml's type's, which the next sync offers again
@@ -276,7 +277,7 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                             drop_re, left = cleanup_re(cfg, pub(h), extra)
                             with turn(h):
                                 notes = [*(notes or []), *authorized.drop_others(
-                                    h, pub(h), mine_on(cfg, h, pub(h), drop_re, extra))]
+                                    h, pub(h), mine_on(cfg, h, pub(h), drop_re, extra, elsewhere))]
                             if left:        # #509 item 3: said as left, as the tidy says it
                                 notes.append(f"left this Box's {' and '.join(left)} key line: {unmatched_words(left)}")
                         boxkeys.record({h["name"]: keep(h) | set(left)})      # a line it couldn't match stays
@@ -330,20 +331,30 @@ def unmatched_words(types: list[str]) -> str:
     return f"no {' or '.join(types)} key on this Box to match it by; roster revoke takes it"
 
 
-def shared_types(cfg: dict[str, Any], h: dict[str, Any]) -> set[str]:
-    """T258: the key types the other key Host entries on Host H's account (hosts.account: its authorized_keys) use,
-    other than H's own: their lines there are theirs, so H's cleanup never takes them."""
-    return {o["key_type"] for o in cfg["hosts"].values()
-            if o["enroll"] and o["name"] != h["name"] and account(o) == account(h)} - {h["key_type"]}
+def on_account(cfg: dict[str, Any], h: dict[str, Any], elsewhere: Sequence[dict[str, Any]] = ()) -> list[dict[str, Any]]:
+    """The other key Host entries on Host H's account (hosts.account: its authorized_keys): this Inventory's (T258)
+    and ELSEWHERE's, the key Hosts of the other Inventories on this Box (rotate.entries_elsewhere: T253 item 4)."""
+    same = [o for o in cfg["hosts"].values() if o["name"] != h["name"]]
+    return [o for o in [*same, *elsewhere] if o["enroll"] and account(o) == account(h)]
 
 
-def mine_on(cfg: dict[str, Any], h: dict[str, Any], pub: str, mine: str, types: list[str] | None = None) -> str:
+def shared_types(cfg: dict[str, Any], h: dict[str, Any], elsewhere: Sequence[dict[str, Any]] = ()) -> set[str]:
+    """T258: the key types the other key Host entries on Host H's account use (on_account), other than H's own:
+    their lines there are theirs, so H's cleanup never takes them."""
+    return {o["key_type"] for o in on_account(cfg, h, elsewhere)} - {h["key_type"]}
+
+
+def mine_on(cfg: dict[str, Any], h: dict[str, Any], pub: str, mine: str, types: list[str] | None = None,
+            elsewhere: Sequence[dict[str, Any]] = ()) -> str:
     """What Host H's cleanup takes after PUB's line went in (drop_others): MINE (every line of this Box's), or with
     TYPES only PUB's line and those types' (cleanup_re); either way, never the line of a key type another Host entry
-    on H's account uses (T258)."""
-    shared = shared_types(cfg, h)
+    on H's account uses (T258), in this Inventory or another on this Box (ELSEWHERE, T253 item 4), nor one of
+    another key file of H's type (another Inventory's key_path:): only this Box's lines matched by key, never by
+    the tag alone, go then."""
+    others = on_account(cfg, h, elsewhere)
+    shared = {o["key_type"] for o in others} - {h["key_type"]}
     if types is None:
-        if not shared:
+        if not shared and all(o["key_file"] == h["key_file"] for o in others):
             return mine
         types = [k.type.name for k in boxkeys.all_keys(cfg)]
     return cleanup_re(cfg, pub, [t for t in types if t not in shared and t != h["key_type"]])[0]

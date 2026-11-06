@@ -205,3 +205,39 @@ def test_a_refused_entry_on_an_account_another_entry_revoked_stays_a_failure_wit
     fail = next(ln for ln in out.splitlines() if ln.strip().startswith("FAIL") and "vip-" in ln)
     assert "this Box's key no longer logs in there" in fail and "another entry on this account" in fail
     assert "Not finished" in out
+
+
+def one_entry(name: str, extra: str = "") -> str:
+    return SHARED_YML.format(a=extra, b="").replace("      app-alias: {ip: 10.0.0.4}\n", "") if name == "app-01" \
+        else SHARED_YML.format(a="", b=extra).replace("      app-01: {ip: 10.0.0.4}\n", "")
+
+
+@pytest.mark.parametrize("home_yml", ["key_type: ecdsa\n" + one_entry("app-alias"),
+                                      one_entry("app-alias", ", key_type: ecdsa")], ids=["own-key", "rotated-together"])
+def test_two_inventories_holding_one_account_with_their_own_key_types_keep_both_lines(shared, isolated, capsys,
+                                                                                    home_yml):
+    """T253 item 4 (Q200 (c)): the Inventory work holds the account as app-01 (ed25519), the Inventory home as
+    app-alias (ecdsa). Neither's setup or Box key rotation takes the other's line off as one of another type.
+    own-key: ecdsa is home's top-level type, so it shares no key file with work and work's rotation leaves its line
+    as it is. rotated-together: home's own key is roster_ed25519 too, so both are rotated (Q204 (f)); neither Host's
+    cleanup takes the other's new line."""
+    from roster.cli import main
+    base = isolated["home"].parent
+    for inv, text in (("work", one_entry("app-01")), ("home", home_yml)):
+        (base / f"inv-{inv}").mkdir()
+        (base / f"inv-{inv}" / "roster.yml").write_text(text)
+        assert main(["inv", "add", inv, str(base / f"inv-{inv}" / "roster.yml")]) == 0
+    both = ["ecdsa-sha2-nistp384", "ssh-ed25519"]
+    for i, inv in enumerate(("home", "work", "home")):
+        rc = main(["--inv", inv, "setup"])
+        out = capsys.readouterr().out
+        assert rc == 0, out
+        assert sorted(ln.split()[0] for ln in shared.lines()) == (both if i else both[:1]), (inv, out)
+    ecdsa = next(ln for ln in shared.lines() if ln.startswith("ecdsa"))
+    rc = main(["--inv", "work", "setup", "--rotate"])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert sorted(ln.split()[0] for ln in shared.lines()) == both, out
+    keys = {(isolated["home"] / ".ssh" / f).read_text().split()[1] for f in ("roster_ed25519.pub", "roster_ecdsa.pub")}
+    assert {ln.split()[1] for ln in shared.lines()} == keys                 # each line is its key file's now
+    assert (ecdsa in shared.lines()) == home_yml.startswith("key_type")   # own-key: untouched; else rotated

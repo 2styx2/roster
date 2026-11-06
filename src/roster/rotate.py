@@ -38,7 +38,7 @@ from .common import die, program_argv, replace_file, ssh_path
 from .config import load_config
 from .context import WINDOWS, Context, current
 from .errors import NEW_KEY_REFUSED, UNKNOWN_HOST, InventoryError, Problem, tagged
-from .hosts import is_windows
+from .hosts import account, is_windows
 from .keyline import key_ere
 from .rotation import (
     Record,
@@ -255,6 +255,12 @@ def key_users(cfg: dict[str, Any]) -> list[KeyUser]:
     return out
 
 
+def entries_elsewhere(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """The key Host entries of every other Inventory on this Box that loads (key_users): one may be on an account
+    of this Inventory's under another name or key type (T253 item 4, Q200 (c)), and its line there is its own."""
+    return [h for u in key_users(cfg) if u.cfg is not None for h in u.cfg["hosts"].values() if h["enroll"]]
+
+
 def group(cfg: dict[str, Any]) -> list[tuple[Context, dict[str, Any]]]:
     """This run's Inventory, then every other named Inventory one of whose key files is one of this one's (Q188 (d):
     they share this Box's key): rotated together (owner, Q204), each with its context. One that doesn't load stops
@@ -336,19 +342,35 @@ def delete_old(slot: Slot) -> None:
         f.unlink(missing_ok=True)
 
 
-def old_lines_re(m: Member, groups: Groups, new_words: list[str], abandoned: list[str] | None = None) -> str:
+def old_lines_re(m: Member, groups: Groups, new_words: list[str], abandoned: list[str] | None = None,
+                 kept: list[list[str]] | None = None) -> str:
     """This Box's key lines on M that aren't its new key's: each of this Box's public keys but the new one, only those
     boxkeys.all_keys vouches for (KEY.old included only when this user's and its .pub is its own: #482's LOW-4), and
     the rotation's own earlier new keys whose file went away (ABANDONED, `TYPE BASE64` as the record names them: T253
-    item 1), with a roster-managed tag of any Box name. Never a roster-mesh: line."""
+    item 1), with a roster-managed tag of any Box name. Never a roster-mesh: line, nor one of KEPT's keys (the ones
+    another Host entry on M's account logs in with: T253 item 4)."""
     found: list[list[str]] = [w for w in (str(a).split()[:2] for a in abandoned or []) if len(w) == 2]
     for _, c in groups:
         for key in boxkeys.all_keys(c):
             w = boxkeys.public_words(key.pub)
             if w:
                 found.append(w)
-    alts = dict.fromkeys(key_ere(*w[:2]) for w in found if w[:2] != new_words[:2])
+    keep = [new_words[:2], *(w[:2] for w in kept or [])]
+    alts = dict.fromkeys(key_ere(*w[:2]) for w in found if w[:2] not in keep)
     return "|".join(alts)
+
+
+def kept_keys(m: Member, groups: Groups, elsewhere: list[dict[str, Any]], rotated: set[Path]) -> list[list[str]]:
+    """The public keys another Host entry on M's account (hosts.account) logs in with, in any Inventory on this Box,
+    of the key files this run doesn't rotate (ROTATED): their lines there are theirs (T253 item 4, as T258's)."""
+    out: list[list[str]] = []
+    for o in [h for _, c in groups for h in c["hosts"].values()] + elsewhere:
+        if o is m.h or not o["enroll"] or account(o) != account(m.h) or Path(o["key_file"]) in rotated:
+            continue
+        w = boxkeys.public_words(pub_of(Path(o["key_file"])))
+        if w:
+            out.append(w[:2])
+    return out
 
 
 def old_keys(m: Member, groups: Groups) -> list[Path]:
@@ -514,6 +536,7 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
             die(f"{slot.new} isn't the key the Box key rotation's record names as its new key (the record, or the key "
                 f"file, changed since): nothing was changed. Restore whichever changed, then run roster setup --rotate")
 
+    elsewhere = entries_elsewhere(cfg)
     conn = Connect()
     failed: dict[Member, str] = {}
     proven: list[Member] = []
@@ -576,7 +599,11 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
         done: list[Member] = []
         notes: dict[str, str] = {}
         for m in proven:                         # pass 2: the old lines off, over the new key
-            ere = old_lines_re(m, groups, news[m.slot.key], entries[str(m.slot.key)].get("abandoned"))
+            # never a new key's line, whichever key file's (two rotated together can share an account), nor one
+            # another entry on the account logs in with; the new keys moved aside, any key file's
+            ere = old_lines_re(m, groups, news[m.slot.key],
+                               [a for k in slots for a in entries[str(k)].get("abandoned") or []],
+                               kept_keys(m, groups, elsewhere, set(slots)) + list(news.values()))
             try:
                 taken = conn.script(m, [m.slot.key], remove_key_script(ere, m.h["ssh"]["user"]), "remove", ere) \
                     if ere else []
