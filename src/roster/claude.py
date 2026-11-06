@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .common import roster_command, say
+from .common import replace_file, roster_command, say
 from .config import access_label, load_config
 from .context import Context, current
 from .errors import InventoryError
@@ -29,6 +29,12 @@ def written_by_the_mesh(md: Path) -> bool:
         return False
 
 
+def shared(path: Path, text: str) -> None:
+    """Write PATH whole or not at all (common.replace_file), keeping its mode; a new one is readable by others, as
+    the team's files beside roster.yml are."""
+    replace_file(path, text, 0o644, like=path if path.exists() else None)
+
+
 def write_roster_md(cfg: dict[str, Any], ctx: Context | None = None, only_if_there: bool = False) -> bool:
     """ROSTER.md next to the Inventory CFG's roster.yml (CTX: its context, default this run's), unless it's the Mesh's;
     ONLY_IF_THERE: only a file that's there, and only when its text changes. True when it's this Inventory's (written,
@@ -38,7 +44,7 @@ def write_roster_md(cfg: dict[str, Any], ctx: Context | None = None, only_if_the
         return False
     text = roster_md(cfg, ctx)
     if not (only_if_there and md.read_text() == text):
-        md.write_text(text)
+        shared(md, text)
     return True
 
 
@@ -176,7 +182,7 @@ def write_claude_settings(cfg):
     claude_md = proj / "CLAUDE.md"
     text = claude_md.read_text() if claude_md.exists() else ""
     if "@ROSTER.md" not in text:
-        claude_md.write_text((text.rstrip() + "\n\n" if text.strip() else "") + "@ROSTER.md\n")
+        shared(claude_md, (text.rstrip() + "\n\n" if text.strip() else "") + "@ROSTER.md\n")
 
     # Guardrail for Claude Code: keep Claude out of the key directory.
     settings = proj / ".claude" / "settings.json"
@@ -193,5 +199,5 @@ def write_claude_settings(cfg):
             if rule not in deny:
                 deny.append(rule)
         settings.parent.mkdir(exist_ok=True)
-        settings.write_text(json.dumps(data, indent=2) + "\n")
+        shared(settings, json.dumps(data, indent=2) + "\n")
     say(f"claude       {proj / 'ROSTER.md'} (imported from CLAUDE.md), .claude/settings.json")

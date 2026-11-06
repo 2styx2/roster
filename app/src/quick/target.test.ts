@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import vectors from "../../../tests/vectors/quick-target.json";
 import { formatQuickTarget, parseQuickTarget } from "./target";
 
 describe("a Quick Connect address (ticket 14)", () => {
@@ -34,5 +35,18 @@ describe("a Quick Connect address (ticket 14)", () => {
     expect(formatQuickTarget({ user: "root", address: "10.0.0.5", port: 2222 })).toBe("root@10.0.0.5:2222");
     expect(formatQuickTarget({ user: "pi", address: "fe80::1", port: 2200 })).toBe("pi@[fe80::1]:2200");
     expect(formatQuickTarget({ user: "pi", address: "fe80::1", port: 22 })).toBe("pi@fe80::1");
+  });
+});
+
+describe("the cases serve shares (tests/vectors/quick-target.json)", () => {
+  it("labels a Quick Connect as serve does", () => {
+    for (const c of vectors.labels) {
+      expect(formatQuickTarget({ user: c.user, address: c.address, port: c.port }), c.label).toBe(c.label);
+    }
+  });
+
+  it("takes the users serve takes, and no other", () => {
+    for (const user of vectors.users.valid) expect(parseQuickTarget(`${user}@10.0.0.5`), user).not.toBeNull();
+    for (const user of vectors.users.invalid) expect(parseQuickTarget(`${user}@10.0.0.5`), user).toBeNull();
   });
 });

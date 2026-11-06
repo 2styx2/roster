@@ -486,7 +486,9 @@ def test_a_token_expires(serve, write_config, capsys, fakes, monkeypatch):
     monkeypatch.setenv("ROSTER_ASKPASS_TTL", "0.2")              # shortens the 60 s; it can't lengthen it
     s = unlocked_serve(serve, write_config, capsys)
     spec = s.call("session.prepare", {"host": "esx"})["result"]
-    time.sleep(0.5)
+    expired = time.monotonic() + 0.2 + 0.05                      # its TTL, and the clock's grain
+    while time.monotonic() < expired:                            # waiting for the expiry itself, not a guess
+        time.sleep(0.01)
     r = run_askpass(spec)
     assert (r.returncode, r.stdout) == (1, "")
 
@@ -496,7 +498,6 @@ def test_an_unused_typed_password_leaves_memory_when_its_token_expires(monkeypat
     from roster.askpass import Channel, Typed
     monkeypatch.setenv("ROSTER_ASKPASS_TTL", "0.3")
     with Channel(lambda login: "unused") as ch:
-        time.sleep(0.5)                                          # the channel idles first: no token, nothing to wake for
         minted = time.monotonic()
         ch.mint(Typed("typed secret"), "quick")
         while ch.tokens and time.monotonic() - minted < 5:

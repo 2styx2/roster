@@ -1977,7 +1977,7 @@ def status_result(name, status, account, server=providers.ASK):
     if status == "unauthenticated" and PROVIDERS[name].get("login_info"):
         try:
             result["sign_in"] = PROVIDERS[name]["login_info"](providers.Ctx(name, None), server)
-        except providers.SecretError:
+        except providers.SecretError:       # the CLI can't say how to sign in now: the status alone still answers
             pass
     return result | ({"message": message} if message else {})
 

@@ -367,10 +367,10 @@ def login_failure(h, password, stderr, limited=(), resolved=None, nist_only=Fals
     NIST_ONLY: the host-key step saw the Host offer only NIST key exchange and host keys (T239)."""
     name, user = h["name"], h["ssh"]["user"]
     for line in stderr.splitlines():
-        if line.startswith("roster askpass: ["):
-            code, _, message = line.removeprefix("roster askpass: [").partition("] ")
-            fix = "log in by hand once (Quick Connect) to deal with it" if code == str(errors.UNEXPECTED_PROMPT) else None
-            return Problem(int(code) if code.isdigit() else errors.AUTH_FAILED, message, fix=fix, details=stderr)
+        if said := askpass.complaint(line):
+            code, message = said
+            fix = "log in by hand once (Quick Connect) to deal with it" if code == errors.UNEXPECTED_PROMPT else None
+            return Problem(errors.AUTH_FAILED if code is None else code, message, fix=fix, details=stderr)
     low = stderr.lower()
     if "too many authentication failures" in low:
         return Problem(errors.TOO_MANY_AUTH, f"{name} cut the connection after too many key attempts",
