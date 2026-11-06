@@ -7,6 +7,7 @@
 // Below it, `meshServe`: a stand-in roster serve for the Mesh's methods (API 17), as the Rust test's,
 // for `?fixture=mesh` and the UI tests.
 import type { FakePlugin, FakeRoster } from "./fakePlugins";
+import { errorText } from "../ui/format";
 
 type Obj = Record<string, unknown>;
 type Link = { from: string; to: string; kind?: string; via?: string; status?: string; why?: string };
@@ -100,7 +101,7 @@ export const words = {
     return encoder.encode(name).length <= 100 ? name : `#${i}`;
   },
   clean(e: unknown): string {
-    const s = e instanceof Error ? e.message : String(e);
+    const s = errorText(e);
     return s.replace(/^[\s\S]*?roster\.serve\.[a-z]+ [\w._]+: /, "");
   },
   keys(t: object | undefined | null): string[] {

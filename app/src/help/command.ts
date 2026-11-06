@@ -12,6 +12,7 @@ import { grepTexts } from "./grep";
 import { lineTopic } from "./lookup";
 import { findTopic, headingTag, pageBody, pageTexts, topics, type HelpContext, type Topic } from "./pages";
 import { helpText, type HelpText } from "./text";
+import { errorText } from "../ui/format";
 
 /** Where the help panel is: a page, and the entry or heading on it. */
 export interface HelpPlace {
@@ -100,7 +101,7 @@ export class HelpView {
     };
     this.text.load().then(
       () => arrive(),
-      (e: unknown) => arrive(e instanceof Error ? e.message : String(e)),
+      (e: unknown) => arrive(errorText(e)),
     );
   }
 

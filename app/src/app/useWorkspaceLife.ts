@@ -12,7 +12,7 @@ import type { StateStore } from "../state/store";
 import type { TutorialDef } from "../tutor/tutor";
 import type { Message } from "../ui/messages";
 import type { FocusReturn } from "../ui/useFocusReturn";
-import { Latest } from "../ui/latest";
+import { Latest, useLatest } from "../ui/latest";
 
 export function useWorkspaceLife(o: {
   store: StateStore;
@@ -70,8 +70,7 @@ export function useWorkspaceLife(o: {
   useEffect(() => {
     if (demoTutorial && registries.tutorials.get(demoTutorial.id) !== demoTutorial) return registries.tutorials.register(demoTutorial);
   }, [registries, demoTutorial]);
-  const [openTutorial] = useState(() => new Latest(o.openTutorial));
-  useLayoutEffect(() => openTutorial.set(o.openTutorial));
+  const openTutorial = useLatest(o.openTutorial);
   useEffect(() => {
     if (unlocked && demoTutorial) openTutorial.get()(demoTutorial);
   }, [unlocked, demoTutorial, openTutorial]);

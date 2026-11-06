@@ -15,6 +15,7 @@ import {
 } from "../backend/types";
 import { realClock, type Clock } from "../ui/clock";
 import { idleTimer } from "./idle";
+import { errorText } from "../ui/format";
 
 export type VaultView =
   /** Asking `vault.status` (the lock screen is up meanwhile). */
@@ -82,10 +83,6 @@ function signOutAccount(s: { account?: VaultAccount | undefined; can_sign_out?: 
   return s.can_sign_out && s.account ? s.account : undefined;
 }
 
-function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
-
 export function useVault(
   backend: Backend,
   active: boolean,
@@ -108,7 +105,7 @@ export function useVault(
       }
       setView(viewOf(s));
     } catch (e) {
-      setView({ state: "failed", message: messageOf(e) });
+      setView({ state: "failed", message: errorText(e) });
     }
   }, [backend]);
 
@@ -152,11 +149,11 @@ export function useVault(
           setView({ ...v, error: "Wrong master password. Try again." });
         } else if (code === VaultError.notLoggedIn || code === VaultError.cliMissing) {
           const status = code === VaultError.notLoggedIn ? "not-logged-in" : "missing-cli";
-          setView({ state: "unavailable", provider: v.provider, message: messageOf(e), status });
+          setView({ state: "unavailable", provider: v.provider, message: errorText(e), status });
         } else if (code === VaultError.unsupported) {
           setView({ state: "none" });
         } else {
-          setView({ ...v, error: messageOf(e) });
+          setView({ ...v, error: errorText(e) });
           void lockIfServeUnlocked(attempt);
         }
       }
@@ -171,8 +168,8 @@ export function useVault(
     return backend.lockVault().then(
       () => null,
       (e: unknown) => {
-        setView((cur) => (cur.state === "locked" ? { ...cur, error: `Locking the vault failed: ${messageOf(e)}` } : cur));
-        return messageOf(e);
+        setView((cur) => (cur.state === "locked" ? { ...cur, error: `Locking the vault failed: ${errorText(e)}` } : cur));
+        return errorText(e);
       },
     );
   }, [backend]);
@@ -230,7 +227,7 @@ export function useVault(
         await check();
         return;
       }
-      const message = `Signing out failed: ${messageOf(e)}`;
+      const message = `Signing out failed: ${errorText(e)}`;
       setView((cur) =>
         cur.state === "signout"
           ? { ...cur, error: message }

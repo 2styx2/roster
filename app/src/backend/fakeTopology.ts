@@ -5,6 +5,7 @@
 // Change the Lua, record the transcript again, and change this to match.
 import type { FakePlugin, FakeRoster } from "./fakePlugins";
 import type { Host, HostList } from "./types";
+import { errorText } from "../ui/format";
 
 type Obj = Record<string, unknown>;
 type Edge = { id: string; from: string; to: string; dir?: string; style?: string; tone?: string; cut?: boolean; label?: string };
@@ -411,7 +412,6 @@ function groupClusters(s: Structure, word: string): string[] {
   return s.clusters.filter((c) => c.id === base || c.id === `${base}/peers` || c.id === `${base}/out`).map((c) => c.id);
 }
 
-const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** plugins/topology, as its Lua. */
 export function topologyPlugin(): FakePlugin {

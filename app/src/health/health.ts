@@ -8,6 +8,7 @@ import { BOX_CHECK_API_VERSION, type BoxCheck, type HealthCheck, type HealthLeve
 import type { ConfigError } from "../config/types";
 import type { ConfigWarning } from "../config/apply";
 import { BUILTIN, Registry, type Entry, type Source } from "../registry";
+import { errorText } from "../ui/format";
 
 /** What the sections check, read when `:check` runs. */
 export interface HealthContext {
@@ -173,7 +174,7 @@ export async function runHealth(sections: readonly HealthSection[], ctx: HealthC
         if (checks === "late") return failed(s, `this section didn't answer within ${limit / 1000} seconds`);
         return { id: s.id, title: s.title, source: s.source, checks };
       } catch (e) {
-        return failed(s, `this section failed: ${e instanceof Error ? e.message : String(e)}`);
+        return failed(s, `this section failed: ${errorText(e)}`);
       } finally {
         clearTimeout(timer);
       }

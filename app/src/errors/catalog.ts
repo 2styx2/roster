@@ -11,6 +11,7 @@ import { Code, PATH_NOT_REPEATED } from "../backend/serveContract";
 import { BackendCallError, SETUP_HOST_API_VERSION } from "../backend/types";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import type { Problem, ProblemCode, ProblemData } from "./classify";
+import { errorText } from "../ui/format";
 
 /** Where a problem lives (docs/app/errors.md "Where it lives"). */
 export type Where =
@@ -696,7 +697,7 @@ export function problemFromCallError(host: string, e: unknown): Problem {
       ...(Object.keys(data).length ? { data } : {}),
     };
   }
-  const message = e instanceof Error ? e.message : String(e);
+  const message = errorText(e);
   return { code: Code.ROSTER_ERROR, host, message, details: message };
 }
 

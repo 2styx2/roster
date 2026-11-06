@@ -10,6 +10,7 @@
 // size either. Nothing animates (the animate skill: a key or a click is its own confirmation).
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { arrange, clamp, limitsPercent, limitsPx, percentOf, type PanelLayout, type PanelPlace, type Room, type Slot } from "./layout";
+import { isTyping } from "../ui/typing";
 
 export interface PanelControls {
   id: string;
@@ -213,8 +214,7 @@ export function PanelFrame({
   // Esc (a filter, a form) stays the field's.
   const onKeyDownCapture = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== "Escape" || place !== "full" || !held) return;
-    const t = e.target as HTMLElement;
-    if (t.closest("input, textarea, select, [contenteditable='true']")) return;
+    if (isTyping(e.target)) return;
     e.preventDefault();
     e.stopPropagation();
     layout.setPlace(id, "panel");

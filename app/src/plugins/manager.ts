@@ -33,6 +33,7 @@ import { applyOp, parseOp, type HandlerContext, type Loaded, type OpCall, type O
 import { OutputFeed } from "./outputFeed";
 import { Shown, type Notice, type PendingConfirm, type RunningProgress } from "./shown";
 import { backgroundQuiet, quiet, type Message } from "../ui/messages";
+import { errorText } from "../ui/format";
 
 export type { HandlerContext } from "./opRegistry";
 export type { Notice, PendingConfirm, RunningProgress } from "./shown";
@@ -424,7 +425,7 @@ export class PluginManager {
       try {
         statuses = await this.backend.packagesSync();
       } catch (e) {
-        this.notify("packages", "error", `Packages: ${e instanceof Error ? e.message : String(e)}`);
+        this.notify("packages", "error", `Packages: ${errorText(e)}`);
         return;
       }
       this.packages = statuses;
@@ -466,7 +467,7 @@ export class PluginManager {
           { kind: "install", path, manifest, asking: manifest.permissions.map((x) => x.name), package: { name: p.name, url: p.url, dir: p.dir, commit: p.commit } },
         ];
       } catch (e) {
-        this.notify(p.name, "error", `${p.name}: ${e instanceof Error ? e.message : String(e)}`);
+        this.notify(p.name, "error", `${p.name}: ${errorText(e)}`);
       }
       return;
     }
@@ -493,7 +494,7 @@ export class PluginManager {
       try {
         checked = await this.backend.packagesCheck(only);
       } catch (e) {
-        const why = e instanceof Error ? e.message : String(e);
+        const why = errorText(e);
         return only === undefined ? `Couldn't check the Packages: ${why}` : `Couldn't check ${only}: ${why}`;
       }
       const updates: string[] = [];
@@ -531,7 +532,7 @@ export class PluginManager {
       try {
         gone = await this.backend.packagesClean();
       } catch (e) {
-        return `Couldn't clean the Packages: ${e instanceof Error ? e.message : String(e)}`;
+        return `Couldn't clean the Packages: ${errorText(e)}`;
       }
       const paths = new Set(gone.map((n) => `${PACKAGE_PREFIX}${n}`));
       for (const entry of this.installed().filter((e) => paths.has(e.path))) {
@@ -582,7 +583,7 @@ export class PluginManager {
       this.changed();
       return null;
     } catch (e) {
-      return e instanceof Error ? e.message : String(e);
+      return errorText(e);
     }
   }
 
@@ -606,7 +607,7 @@ export class PluginManager {
         const pinned = await this.backend.packagesPin(pkg.name);
         this.packages = this.packages.map((p) => (p.name === pkg.name ? pinned : p));
       } catch (e) {
-        this.notify(name, "error", `${pkg.name}: ${e instanceof Error ? e.message : String(e)}`);
+        this.notify(name, "error", `${pkg.name}: ${errorText(e)}`);
         return;
       }
       this.packageConfig.set(name, JSON.stringify(this.packages.find((p) => p.name === pkg.name)?.config ?? {}));
@@ -618,7 +619,7 @@ export class PluginManager {
         const moved = await this.backend.packagesApply(pkg.name, pkg.update.to);
         this.packages = this.packages.map((p) => (p.name === pkg.name ? moved : p));
       } catch (e) {
-        this.notify(name, "error", `${pkg.name}: ${e instanceof Error ? e.message : String(e)}`);
+        this.notify(name, "error", `${pkg.name}: ${errorText(e)}`);
         return;
       }
     }
@@ -663,7 +664,7 @@ export class PluginManager {
       const file = await this.backend.pluginTypes(path);
       return `Wrote ${file}: the Plugin API ${pluginApiVersion}'s types, for lua-language-server`;
     } catch (e) {
-      return `Couldn't write the types: ${e instanceof Error ? e.message : String(e)}`;
+      return `Couldn't write the types: ${errorText(e)}`;
     }
   }
 
@@ -679,7 +680,7 @@ export class PluginManager {
       try {
         await this.backend.packagesRemove(pkg);
       } catch (e) {
-        return `Couldn't remove ${pkg}: ${e instanceof Error ? e.message : String(e)}`;
+        return `Couldn't remove ${pkg}: ${errorText(e)}`;
       }
       // Remembered like a cancelled install (issue #213): the next start doesn't ask again while
       // init.lua names the same repo and folder; `:packages install NAME` does.
@@ -834,7 +835,7 @@ export class PluginManager {
     try {
       return (await this.ui.builtinSettings?.(name)) ?? null;
     } catch (e) {
-      this.notify(name, "warn", `${name}: loads without its settings: ${e instanceof Error ? e.message : String(e)}`);
+      this.notify(name, "warn", `${name}: loads without its settings: ${errorText(e)}`);
       return null;
     }
   }
@@ -901,8 +902,8 @@ export class PluginManager {
       result = await this.backend.pluginLoad(path, granted ?? ["inventory.read", "inventory.write", "sessions.open", "terminal.read", "terminal.write"], settings, this.builtins());
     } catch (e) {
       await this.unload(name);
-      this.problems.set(name, e instanceof Error ? e.message : String(e));
-      this.notify(name, "error", `${this.named(name)}: ${e instanceof Error ? e.message : String(e)}`);
+      this.problems.set(name, errorText(e));
+      this.notify(name, "error", `${this.named(name)}: ${errorText(e)}`);
       return;
     }
     const { manifest, reply } = result;
@@ -934,7 +935,7 @@ export class PluginManager {
       plugin,
       result: null,
       ops: [],
-      error: { plugin, file: null, line: null, message: e instanceof Error ? e.message : String(e) },
+      error: { plugin, file: null, line: null, message: errorText(e) },
       disabled: null,
     };
   }

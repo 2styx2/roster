@@ -67,6 +67,9 @@ export interface HelpPage extends Entry {
   /** The topics on it, when they're known before its body is (a guide, from the build's tag table:
    * its text loads later, T213). Otherwise they're read off the body. */
   tags?: readonly PageTag[];
+  /** Made from what's in effect (the keymap, the Config, the Registries, this Box's health) rather
+   * than a guide's text: the website, with none of those, shows the defaults and says so. */
+  inEffect?: true;
   body(ctx: HelpContext): Block[];
 }
 
@@ -707,7 +710,15 @@ function guideBody(guide: Guide): Block[] {
   return blocks;
 }
 
-const page = (id: string, order: number, part: string, title: string, summary: string, body: (ctx: HelpContext) => Block[], aliases?: Record<string, string>): HelpPage => ({
+const page = (
+  id: string,
+  order: number,
+  part: string,
+  title: string,
+  summary: string,
+  body: (ctx: HelpContext) => Block[],
+  more: { aliases?: Record<string, string> | undefined; inEffect?: true } = {},
+): HelpPage => ({
   id,
   source: BUILTIN,
   order,
@@ -715,23 +726,27 @@ const page = (id: string, order: number, part: string, title: string, summary: s
   title,
   summary,
   body,
-  ...(aliases ? { aliases } : {}),
+  ...(more.aliases ? { aliases: more.aliases } : {}),
+  ...(more.inEffect ? { inEffect: true } : {}),
 });
+
+const inEffect = { inEffect: true } as const;
 
 const builtinHelpPages: readonly HelpPage[] = [
   page("index", 0, "Getting started", "roster help", "Where to start", indexPage),
-  page("quickref", 40, "Reference", "Quick reference", "The commands you'll use most, with their keys now", quickrefPage, { qr: "quickref", cheatsheet: "quickref" }),
-  page("commands", 50, "Reference", "Commands", "Every command, with its keys and where it comes from", commandsPage),
-  page("keys", 51, "Reference", "Key bindings", "The keymap in effect, with each binding's option and source", keysPage),
+  page("quickref", 40, "Reference", "Quick reference", "The commands you'll use most, with their keys now", quickrefPage, { ...inEffect, aliases: { qr: "quickref", cheatsheet: "quickref" } }),
+  page("commands", 50, "Reference", "Commands", "Every command, with its keys and where it comes from", commandsPage, inEffect),
+  page("keys", 51, "Reference", "Key bindings", "The keymap in effect, with each binding's option and source", keysPage, inEffect),
   page("options", 52, "Reference", "Options", "Every init.lua option and roster function: type, default, values, example, and its value now", optionsPage, {
-    ...referenceAliases(),
+    ...inEffect,
+    aliases: referenceAliases(),
   }),
-  page("themes", 53, "Reference", "Themes", "The registered Themes, and the one in use", themesPage),
-  page("finders", 54, "Reference", "Finders", "The finder sources: Sessions, Hosts, the tree, Themes, help topics…", findersPage),
-  page("errors", 60, "Reference", "Connection errors", "The error catalog: where each problem lives and its fix", errorsPage),
-  page("health", 61, "Reference", "Health", "This Box's health: the last :check with no Host, with each fix", healthPage, { checkhealth: "health" }),
-  page("all", 90, "Reference", "Every topic", "Every page, command, key, option and error, A to Z", allPage, { "help-index": "all" }),
-  ...guides.map((g) => ({ ...page(g.id, g.order, g.part, g.title, g.summary, () => guideBody(g), g.aliases), tags: guideTags[g.id] ?? [] })),
+  page("themes", 53, "Reference", "Themes", "The registered Themes, and the one in use", themesPage, inEffect),
+  page("finders", 54, "Reference", "Finders", "The finder sources: Sessions, Hosts, the tree, Themes, help topics…", findersPage, inEffect),
+  page("errors", 60, "Reference", "Connection errors", "The error catalog: where each problem lives and its fix", errorsPage, inEffect),
+  page("health", 61, "Reference", "Health", "This Box's health: the last :check with no Host, with each fix", healthPage, { ...inEffect, aliases: { checkhealth: "health" } }),
+  page("all", 90, "Reference", "Every topic", "Every page, command, key, option and error, A to Z", allPage, { aliases: { "help-index": "all" } }),
+  ...guides.map((g) => ({ ...page(g.id, g.order, g.part, g.title, g.summary, () => guideBody(g), { aliases: g.aliases }), tags: guideTags[g.id] ?? [] })),
 ];
 
 export function builtinHelpRegistry(): HelpRegistry {

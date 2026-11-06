@@ -1,12 +1,12 @@
 // The built-ins that act on the workspace's own objects (commands/builtins.ts), registered for as
 // long as the workspace lives; what they open is the workspace's as of its last render.
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect } from "react";
 import { registerBuiltins, type BuiltinDeps } from "../commands/builtins";
 import type { PluginManager } from "../plugins/manager";
 import type { Registries } from "../registries";
 import type { TutorialDef } from "../tutor/tutor";
 import type { TutorLink } from "../tutor/useDemo";
-import { Latest } from "../ui/latest";
+import { useLatest } from "../ui/latest";
 
 export interface Openers {
   plugins(): void;
@@ -15,16 +15,13 @@ export interface Openers {
   tutorial(def: TutorialDef): void;
 }
 
-const none: Openers = { plugins: () => {}, packages: () => {}, tutorial: () => {} };
-
 export function useBuiltins(
   registries: Registries,
   deps: Omit<BuiltinDeps, "plugins" | "tutor"> & { plugins: PluginManager },
   tutor: TutorLink | undefined,
   openers: Openers,
 ) {
-  const [open] = useState(() => new Latest(none));
-  useLayoutEffect(() => open.set(openers));
+  const open = useLatest(openers);
   const { help, theme, hints, messages, views, panels, plugins } = deps;
   useEffect(
     () =>

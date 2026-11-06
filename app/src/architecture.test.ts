@@ -200,7 +200,10 @@ describe("the frontend's import rules", () => {
       for (let at = queue.shift(); at !== undefined; at = queue.shift())
         for (const b of next(at)) {
           if (b === to) return true;
-          if (!seen.has(b)) queue.push(b), seen.add(b);
+          if (!seen.has(b)) {
+            seen.add(b);
+            queue.push(b);
+          }
         }
       return false;
     };

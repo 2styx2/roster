@@ -4,12 +4,13 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { configWith, defaultConfig } from "../config/fixture";
 import { defaultOptions, keymapOf, registerBindings } from "../keymap";
 import { builtinRegistries, type Registries } from "../registries";
-import { CONFIG } from "../registry";
+import { BUILTIN, CONFIG } from "../registry";
 import { plain, type Block, type Def } from "./doc";
 import { UPGRADE_TOPIC } from "../plugins/PluginsPanel";
 import { findTopic, helpContext, pageBody, topicIndex, topics, type HelpContext } from "./pages";
 import { blockTags } from "./guideBlocks";
 import { guides } from "./guides";
+import { optionTag } from "./reference";
 import { helpText } from "./text";
 
 // The guides' text is a chunk the app loads on the first :help (T213); these read it.
@@ -42,6 +43,11 @@ describe("the tag table (T213)", () => {
 });
 
 describe("topics", () => {
+  it("quote an entry named like any built-in page or guide (reference.ts's RESERVED)", () => {
+    const ids = builtinRegistries().help.list().filter((p) => p.source === BUILTIN).map((p) => p.id);
+    expect(ids.filter((id) => !optionTag(id).startsWith("'"))).toEqual([]);
+  });
+
   it("are the pages, each command, option, error row and guide heading", () => {
     const tags = topics(ctxOf()).map((t) => t.tag);
     for (const tag of ["index", "commands", "keys", "options", "themes", "finders", "errors", "config", "keyboard"]) {

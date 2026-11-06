@@ -10,7 +10,7 @@
 // sections are registries (ADR 0006), read live. What each part of the workspace does is its own
 // hook; this file wires them together and draws the screen.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import { Latest } from "./ui/latest";
+import { Latest, useLatest } from "./ui/latest";
 import { Overlays, type Overlay } from "./app/Overlays";
 import { PluginLayers } from "./app/PluginLayers";
 import { useBuiltins } from "./app/useBuiltins";
@@ -241,8 +241,7 @@ function Workspace({
 
   // `:tutor` (ticket 55): on the demo Inventory, what happens is fed to the tutorial running, whose
   // steps tick themselves; what a step ticks is said once (the page shows it as a ✓).
-  const [tutorNow] = useState(() => new Latest(tutor));
-  useLayoutEffect(() => tutorNow.set(tutor));
+  const tutorNow = useLatest(tutor);
   const tutorEvent = useCallback(
     (name: string, data: TutorEvent["data"]) => {
       const link = tutorNow.get();
