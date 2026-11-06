@@ -267,6 +267,9 @@ function Write-Keys($p, $text, $secure) {
     }
 }
 
+function Say-AdminFileUnread($f) {
+    Say "WARN this account isn't in Administrators now, so roster can't look in $f. If it was an administrator when this Box's key was added, the key may still be there, and it logs in as every administrator: have an administrator remove the line ending in this Box's tag, or run roster revoke as one"
+}
 function Admin-KeyFile {
     # the file sshd_config's `Match Group administrators` gives Administrators, or $null when it gives none. Whatever
     # else would change where sshd looks is refused: roster never guesses which file sshd reads
@@ -377,6 +380,11 @@ function Main {
         if ($mine -ne $adminFile -and -not $created) { User-AclWarnings $mine $me }
         if ($created -or $new -cne $old) { Write-Keys $mine $new $secure }
         if ($mine -eq $adminFile) { Set-AdminAcl $mine; Say 'SCOPE admins' }
+        # #522 item 2: a plain account can't read the admin file, which may still hold this Box's line from when it was
+        # an administrator: said, as remove says it (not again by setup's cleanup, $Sweep)
+        if ($adminFile -and -not $isAdmin -and -not $Sweep -and (Test-Path -LiteralPath $adminFile)) {
+            Say-AdminFileUnread $adminFile
+        }
         # #509 item 4: this account's other key file, the user file sshd read before it joined Administrators (a
         # plain user can't read the admin file, so that one isn't looked in, as remove warns): this Box's lines there
         # count for OTHERS too (none of them logs in now), and the cleanup ($Sweep) takes TagRe's from it as well,
@@ -421,7 +429,7 @@ function Main {
             Say "FILE $f"
         }
         if ($adminFile -and -not $isAdmin) {
-            Say "WARN this account isn't in Administrators now, so roster can't look in $adminFile. If it was an administrator when this Box's key was added, the key may still be there, and it logs in as every administrator: have an administrator remove the line ending in this Box's tag, or run roster revoke as one"
+            Say-AdminFileUnread $adminFile
         }
     } else {
         Say "FILE $mine"

@@ -5,6 +5,7 @@ TimedOut) takes the code of where it happened: 3, a lookup's 35, a sign-in's 59.
 
 Messages are safe to show: they carry item NAMES (and dates, URIs), never a value."""
 
+import json
 from collections.abc import Iterable
 from typing import Any
 
@@ -218,10 +219,32 @@ class ItemExists(SecretError):
 
 
 class WriteFailed(SecretError):
-    """The provider's CLI refused the create or delete; the message has its words (minus any value)."""
+    """The provider's CLI refused the create or delete; the message has its words (minus any value). FIX: the
+    provider's own, where Bitwarden's rights hint doesn't fit (KeePassXC's file)."""
 
     code = errors.WRITE_FAILED
     fix = "see the message; check your rights to the vault or collection"
+
+    def __init__(self, message: str, fix: str | None = None) -> None:
+        super().__init__(message)
+        if fix is not None:
+            self.fix = fix
+
+
+def repeats_secret(text: str, secret: str | None) -> bool:
+    """Whether a CLI's words TEXT hold SECRET as an error may carry it: as given, JSON-escaped, or with its whitespace
+    collapsed, in TEXT as it is or collapsed (#539's review, LOW-1). A caller then withholds TEXT whole: scrubbing
+    one form would leave another."""
+    if not secret:
+        return False
+    flat = " ".join(text.split())
+    secret_forms = {secret, json.dumps(secret)[1:-1], " ".join(secret.split())} - {""}
+    return any(f in text or f in flat for f in secret_forms)
+
+
+def withheld(tool: str) -> str:
+    """What's said instead of TOOL's words when they repeat the password (repeats_secret)."""
+    return f"{tool} refused the item (its message was withheld because it repeated the password)"
 
 
 # Where a Vault item goes: the personal vault, an organization's collection, a KeePassXC group.
