@@ -11,7 +11,7 @@ import type { Tabs } from "../session/tabs";
 import { errorText } from "../ui/format";
 import type { Message } from "../ui/messages";
 import type { FocusReturn } from "../ui/useFocusReturn";
-import type { Clock } from "./idle";
+import type { Clock } from "../ui/clock";
 import { TypedPasswords } from "./forgetOnLock";
 import { noAccountWords } from "./LockScreen";
 import { useVault, type Vault } from "./useVault";

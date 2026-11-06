@@ -57,7 +57,7 @@ import { terminalMode } from "./keyboard/mode";
 import { useAppKeys } from "./keyboard/useAppKeys";
 import { defaultOptions, keyHint, keymapOf, type CommandLine as Line, type Options } from "./keymap";
 import { TypedPasswordsContext } from "./lock/forgetOnLock";
-import type { Clock } from "./lock/idle";
+import type { Clock } from "./ui/clock";
 import { LockGate } from "./lock/LockScreen";
 import { SignOutPanel } from "./lock/SignOutPanel";
 import { useWorkspaceVault } from "./lock/useWorkspaceVault";

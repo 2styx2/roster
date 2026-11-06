@@ -3,7 +3,7 @@
 // uses the Tauri one (tauri.ts). Shapes follow roster's `roster serve` API, version 1 or newer
 // (2 adds `host.check` and the Login/askpass/network codes 30-48: `:check` needs it).
 import type { BackendInfo as CoreBackendInfo, BackendProblem, CheckStarted } from "../config/core.gen";
-import { CORE } from "../plugins/core.gen";
+import type { CORE } from "../plugins/core.gen";
 import type { QuickTarget } from "../quick/target";
 import {
   CHECK_STEPS,
@@ -1280,8 +1280,6 @@ export interface PluginReply {
   listens?: PluginEventName[] | null;
 }
 
-/** The events a Plugin can listen for, in the core's order. */
-export const PLUGIN_EVENTS: readonly PluginEventName[] = CORE.events.map((e) => e.name);
 /** An open Session as the core's `roster.sessions.list()` gets it: a Quick Connect Session's host is null. */
 export interface OpenSession {
   session: number;

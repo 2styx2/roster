@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_PASSWORD, fakeBackend, fixtures, makeHosts, type FakeScenario } from "./backend/fake";
 import { defaultOptions } from "./keymap";
-import { manualClock } from "./lock/manualClock";
+import { manualClock } from "./ui/manualClock";
 import { advanceTimers, fakeTimeouts, pass, realTimeouts } from "./test-timers";
 
 const MIN = 60_000;

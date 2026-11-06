@@ -8,7 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_PASSWORD, fakeBackend, makeHosts } from "./backend/fake";
 import { defaultOptions } from "./keymap";
-import { manualClock } from "./lock/manualClock";
+import { manualClock } from "./ui/manualClock";
 import { memoryPlatform } from "./platform/memory";
 import { builtinRegistries } from "./registries";
 import { BUILTIN } from "./registry";

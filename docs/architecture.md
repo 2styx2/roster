@@ -82,12 +82,11 @@ A pure module holds data and rules with no component: a test, the docs build or 
 
 ### Dependencies between folders
 
-Modules never import each other in a circle, and feature folders depend one way. The fake Backend counts as an adapter of its own beside `backend/`. Folder pairs that import each other today, each listed with its reason in `KNOWN_FOLDER_CYCLES` (the list only shrinks):
+Modules never import each other in a circle, and feature folders depend one way: the test finds every cycle between folders, of any length (the strongly connected folders), not only pairs. The fake Backend counts as an adapter of its own beside `backend/`, and `config/`'s data (`core.gen.ts`, `types.ts`, `defaults.ts`, `ranges.ts`, which `terminal/options.ts` and `panel/layout.ts` read) counts apart from applying it (`apply.ts`, `useConfigActions.ts`). Shared helpers with no feature of their own (`Clock` in `ui/clock.ts`) go in `ui/`. The folder imports that go up today, each listed with its reason in `KNOWN_BACK_EDGES` (the list only shrinks; an entry that no longer closes a cycle fails too):
 
-- `config` ↔ `terminal` and `config` ↔ `panel`: `config/` holds two layers, the Config's data (`core.gen.ts`, `types.ts`, `defaults.ts`, `ranges.ts`), which `terminal/options.ts` and `panel/layout.ts` read, and applying it (`apply.ts`, `useConfigActions.ts`), which uses them.
-- `terminal` ↔ `theme`: `terminal/options.ts` holds the ANSI palette a Theme is made of, and the terminal is drawn with the Theme.
-- `platform` ↔ `terminal`: the browser Platform probes fonts with `terminal/fonts.ts`; the terminal asks `platform/os.ts`.
-- `plugins` ↔ `tutor`: `opRegistry.ts` applies every op kind into its feature, the tutorial's too; `tutor/demo.ts` loads the demo's Plugins.
+- `theme` → `terminal`: `terminal/options.ts` holds the ANSI palette a Theme is made of, and the terminal is drawn with the Theme.
+- `platform` → `terminal`: the browser and Tauri Platforms probe fonts with `terminal/fonts.ts`; the terminal asks `platform/os.ts`.
+- `plugins` → `tutor`: `opRegistry.ts` applies every op kind into its feature, the tutorial's too; `tutor/demo.ts` loads the demo's Plugins.
 
 ## Where new code goes
 
@@ -178,7 +177,7 @@ The structure tests, each failing with the rule and this page's section:
 | Test | Guards |
 |---|---|
 | `tests/test_layers.py` | Python: every module has a layer, imports go down, leaves import nothing, nothing imports `cli`/`serve`, no new cycle, the table here matches the test's |
-| `app/src/architecture.test.ts` | App: the docs site and `:help` load no xterm, terminal view or PluginManager; pure modules load no `.tsx`; only wiring imports wiring; no module cycle; no new folder cycle |
+| `app/src/architecture.test.ts` | App: the docs site and `:help` load no xterm, terminal view or PluginManager; pure modules load no `.tsx`; only wiring imports wiring; no module cycle; no folder cycle (of any length) but through `KNOWN_BACK_EDGES` |
 | `app/src/docs-site/build.test.ts` | `npm run docs` builds under Node |
 | `crates/roster-core/tests/layers.rs` | Rust: the neutral modules use nothing of the crate's; `config/` doesn't use `plugin` |
 | `crates/roster-core/tests/backend.rs`, `backend.rs`'s `contract` tests | `PASS_THROUGH` holds no method the core keeps (Q129) and only methods serve has |

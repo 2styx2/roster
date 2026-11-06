@@ -7,7 +7,7 @@ import { PLUGIN_COMMANDS, ROSTER_ONLY } from "../plugins/cmd";
 import { CORE } from "../plugins/core.gen";
 import { fakeFoldersPlugin } from "./fakeFolders";
 import { redact, redactError } from "./redact";
-import { BackendCallError, PLUGIN_EVENTS, type Host, type OpenSession, type PluginEventName, type PluginCaller, type PluginData, type PluginLoaded, type PluginManifest, type PluginReply } from "./types";
+import { BackendCallError, type Host, type OpenSession, type PluginEventName, type PluginCaller, type PluginData, type PluginLoaded, type PluginManifest, type PluginReply } from "./types";
 
 type Fn = (arg: Record<string, unknown>) => unknown;
 type Spec = Record<string, unknown>;
@@ -855,7 +855,7 @@ export function fakePluginHost(
     const before = new Map([...r.own].map(([k, m]) => [k, new Map(m)]));
     // As mod.rs's settle: which events it listens for, when that's news (always at load).
     const listens = (): PluginEventName[] | null => {
-      const now = PLUGIN_EVENTS.filter((e) => (r.listeners.get(e)?.length ?? 0) > 0);
+      const now = CORE.events.map((e) => e.name).filter((e) => (r.listeners.get(e)?.length ?? 0) > 0);
       if (!loading && now.join() === r.told) return null;
       r.told = now.join();
       return now;

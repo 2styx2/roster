@@ -13,7 +13,8 @@ import {
   type VaultAccount,
   type VaultStatus,
 } from "../backend/types";
-import { idleTimer, realClock, type Clock } from "./idle";
+import { realClock, type Clock } from "../ui/clock";
+import { idleTimer } from "./idle";
 
 export type VaultView =
   /** Asking `vault.status` (the lock screen is up meanwhile). */
