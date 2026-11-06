@@ -40,7 +40,9 @@ def comment(text: object) -> str:
 
 # A roster.yml config.shown_path hides (a token-named folder an older roster made, #506) is named in the header by
 # this and a digest of its resolved path, never the path: roster still tells that file from another (same_source).
-HIDDEN_SOURCE = "the roster.yml at that path (not repeated), sha256 "
+# "of its path" (#529): the digest is neither a secret nor a checksum of the file's content.
+HIDDEN_SOURCE = "the roster.yml at that path (not repeated), sha256 of its path "
+OLD_HIDDEN_SOURCE = "the roster.yml at that path (not repeated), sha256 "    # #506's, until the next sync rewrites it
 
 
 def source_digest(path: str | Path) -> str:
@@ -57,12 +59,20 @@ def header(source: object, hidden: bool = False) -> str:
 
 def hidden_source(source: str | Path) -> bool:
     """Is SOURCE (source_of's) a header's hidden roster.yml, named only by its digest?"""
-    return str(source).startswith(HIDDEN_SOURCE)
+    return str(source).startswith(OLD_HIDDEN_SOURCE)       # HIDDEN_SOURCE starts with it too
+
+
+def hidden_digest(source: str | Path) -> str | None:
+    """The digest a hidden SOURCE names (either wording), or None when SOURCE is a path."""
+    for prefix in (HIDDEN_SOURCE, OLD_HIDDEN_SOURCE):
+        if str(source).startswith(prefix):
+            return str(source)[len(prefix):]
+    return None
 
 
 def same_source(a: str | Path, b: str | Path) -> bool:
     """Are A and B the same roster.yml, either one maybe a header's hidden source (HIDDEN_SOURCE and its digest)?"""
-    da, db = (str(x)[len(HIDDEN_SOURCE):] if str(x).startswith(HIDDEN_SOURCE) else None for x in (a, b))
+    da, db = (hidden_digest(x) for x in (a, b))
     if da is None and db is None:
         return Path(a).expanduser().resolve() == Path(b).expanduser().resolve()
     return (da or source_digest(a)) == (db or source_digest(b))
