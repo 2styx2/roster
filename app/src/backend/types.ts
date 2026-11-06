@@ -1,7 +1,9 @@
 // The ONE typed client between the UI and the Backend. Every component talks to the Backend
 // through this interface; tests and the plain-browser dev page use the fake (fake.ts), the app
-// uses the Tauri one (tauri.ts). Shapes follow roster's `roster serve` API, version 1 or newer
-// (2 adds `host.check` and the Login/askpass/network codes 30-48: `:check` needs it).
+// uses the Tauri one (tauri.ts). Shapes follow roster's `roster serve` API (docs/serve-api.md);
+// what each version added is in capabilities.ts. The params and results serve keeps as Pydantic
+// models (servemodels.py: `hosts.list`, `host.get`) come generated in serveContract.ts; the
+// others are written here by hand until their methods move to models (decision Q113).
 import type { BackendInfo as CoreBackendInfo, BackendProblem, CheckStarted } from "../config/core.gen";
 import type { CORE } from "../plugins/core.gen";
 import type { QuickTarget } from "../quick/target";
@@ -12,6 +14,9 @@ import {
   NO_PASSWORD_AUTHS,
   VAULT_STATUSES,
   VERIFY_STEPS,
+  type HostGetParams,
+  type HostsListResult,
+  type InventoryError,
 } from "./serveContract";
 
 // The core's own shapes, generated from its Rust types (config/core.gen.ts).
@@ -70,21 +75,11 @@ export interface Group {
   description: string;
 }
 
-export interface HostList {
-  hosts: Host[];
-  groups: Record<string, Group>;
-  /** roster.yml as it is now doesn't load (an outside edit): these are the last good Hosts, and
-   * this says why (API 8; catalog row 1). Null or absent when it loads. */
-  error?: InventoryFileError | null;
-}
+/** `hosts.list`; `error` is absent from a roster before API 8. */
+export type HostList = Omit<HostsListResult<Host, Group>, "error"> & { error?: InventoryFileError | null };
 
 /** Why roster.yml doesn't load right now, with the line when roster knows it. */
-export interface InventoryFileError {
-  message: string;
-  path: string | null;
-  line?: number;
-  fix?: string | null;
-}
+export type InventoryFileError = InventoryError;
 
 /** `inventory.info`. */
 export interface InventoryInfo {
@@ -882,7 +877,7 @@ export interface Backend {
   /** One Host by exact name. `settled` (serve API 20) waits for a write to roster.yml under way
    * first: serve answers concurrently, so a check after a timed-out `host.add` needs it. An older
    * serve answers in order, which settles it anyway. */
-  getHost(name: string, options?: { settled?: boolean }): Promise<Host>;
+  getHost(name: string, options?: Omit<HostGetParams, "name">): Promise<Host>;
   /** Where the vault stands. */
   vaultStatus(): Promise<VaultStatus>;
   /** Unlock the vault with its master password. Rejects with BackendCallError (VaultError codes). */

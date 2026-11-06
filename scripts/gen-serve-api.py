@@ -298,6 +298,56 @@ def ts_value(v):
     return json.dumps(v)
 
 
+TS_TYPES = {str: "string", int: "number", float: "number", bool: "boolean", type(None): "null", typing.Any: "unknown"}
+
+
+def ts_type(t, generic):
+    """A field's type in TypeScript. A model of models.py's is the type parameter GENERIC names for it (the app
+    keeps its own narrower Host and Group until those move here too)."""
+    origin, args = typing.get_origin(t), typing.get_args(t)
+    if origin is typing.Annotated:
+        return ts_type(args[0], generic)
+    if origin in (typing.Union, types.UnionType):
+        return " | ".join(ts_type(a, generic) for a in args)
+    if origin is typing.Literal:
+        return " | ".join(json.dumps(a) for a in args)
+    if origin in (list, tuple):
+        return f"{ts_type(args[0], generic)}[]"
+    if origin is dict:
+        return f"Record<{ts_type(args[0], generic)}, {ts_type(args[1], generic)}>"
+    if t in TS_TYPES:
+        return TS_TYPES[t]
+    if getattr(t, "__module__", "") == "roster.models":
+        return generic.setdefault(t.__name__, t.__name__)
+    return t.__name__
+
+
+def serve_models_ts():
+    """servemodels.py's params and results as TypeScript interfaces, in the order the module defines them. A field
+    with a default may be left out (params) or is left out when unset (results): it's optional."""
+    from roster import servemodels
+    out = []
+    for name, cls in vars(servemodels).items():
+        if not (isinstance(cls, type) and cls.__module__ == servemodels.__name__ and cls not in
+                (servemodels.Params, servemodels.Result) and issubclass(cls, (servemodels.Params, servemodels.Result))):
+            continue
+        if not cls.model_fields:
+            continue
+        generic = {}
+        rows = []
+        for field, info in cls.model_fields.items():
+            if info.exclude:
+                continue
+            key = info.alias or field
+            doc = f"  /** {info.description} */\n" if info.description else ""
+            optional = "?" if not info.is_required() else ""
+            rows.append(f"{doc}  {key}{optional}: {ts_type(info.annotation, generic)};\n")
+        params = f"<{', '.join(f'{g} = unknown' for g in generic)}>" if generic else ""
+        intro = " ".join(inspect.cleandoc(cls.__doc__ or name).split("\n\n")[0].split())
+        out.append(f"/** {intro} */\nexport interface {name}{params} {{\n{''.join(rows)}}}\n")
+    return out
+
+
 def contract_ts(c):
     """The contract as a TypeScript module: each fact `as const`, so the app's types follow it."""
     def record(name, doc, values, typed=None):
@@ -335,6 +385,9 @@ def contract_ts(c):
         f"/** `data.path` for a roster.yml path roster won't repeat (a -c value shaped like a token). */\n"
         f"export const PATH_NOT_REPEATED = {ts_value(c['path_not_repeated'])};\n",
         "export type CodeName = keyof typeof Code;\n",
+        "// serve's params and results that are Pydantic models (src/roster/servemodels.py, decision Q113). A model of\n"
+        "// models.py's in one (a Host, a group) is a type parameter: the app names its own.\n",
+        *serve_models_ts(),
     ]
     return "\n".join(parts)
 
