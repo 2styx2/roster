@@ -56,7 +56,7 @@ from .config import (
 )
 from .context import Context, current, ssh_index_file
 from .discover import cmd_discover
-from .errors import KEY_FILE, UNKNOWN_HOST, Exit, InventoryError, Problem
+from .errors import KEY_FILE, ROTATION_PENDING, UNKNOWN_HOST, Exit, HostRefused, InventoryError, Problem, tagged
 from .example import EXAMPLE_CONFIG
 from .hosts import PLACEHOLDER_USER, is_windows, placeholder_user
 from .keyline import key_ere
@@ -161,9 +161,10 @@ def refuse_left_out(h):
 
 def name_taken(cfg):
     from .errors import BOX_NAME_TAKEN
-    return (f"[{BOX_NAME_TAKEN}] another key's line there is tagged {cfg['tag']}: another Box already uses that "
-            "name, and this Box's setup and revoke would take that line too (one name, one owner), so nothing was "
-            "changed there. Give this Box another box_name:, or run roster setup --force to go ahead")
+    return tagged(Problem(BOX_NAME_TAKEN, f"another key's line there is tagged {cfg['tag']}: another Box already uses "
+                                          "that name, and this Box's setup and revoke would take that line too (one "
+                                          "name, one owner), so nothing was changed there. Give this Box another "
+                                          "box_name:, or run roster setup --force to go ahead"))
 
 
 @contextmanager
@@ -330,8 +331,8 @@ def setup_run(cfg, only, host, dry_run, override, force):
             "key is still on them; `roster setup --rotate` finishes it")
         return 1
     if found := rotation.problems(cfg):
-        for message, fix in found:
-            say(f"warning: {message} ({fix})")
+        for p in found:
+            say(f"warning: {tagged(p)} ({p.fix})")
         return 1
     return 1 if failed else 0
 
@@ -674,7 +675,7 @@ def cmd_check(cfg, args):
         broken = drift is not None and bool(drift["pending"] or any(h["changes"] for h in drift["hosts"])
                                             or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
         waiting = rotation_waiting(cfg, wanted)
-        found = [message for message, _ in rotation.problems(cfg)]
+        found = [tagged(p) for p in rotation.problems(cfg)]
         ok = all(r["ok"] for r in results) and not broken and not skipped and not waiting and not found
         from . import jsondocs
         jsonout.emit(jsondocs.CheckDoc.model_validate({"hosts": results, "mesh": drift, "rotation_pending": waiting,
@@ -704,12 +705,11 @@ def cmd_check(cfg, args):
         if windows:
             say("mesh         left out: " + ", ".join(f"{n} ({why})" for n, why in windows.items()))
     if waiting := rotation_waiting(cfg, wanted):
-        from .errors import ROTATION_PENDING
-        say(f"\nwarning: [{ROTATION_PENDING}] Box key rotation pending on {plural(len(waiting), 'Host')}: "
-            f"{', '.join(waiting)} (the old Box key is still on them; `roster setup --rotate` finishes it)")
+        say("\nwarning: " + tagged(Problem(ROTATION_PENDING, f"Box key rotation pending on {plural(len(waiting), 'Host')}: "
+            f"{', '.join(waiting)} (the old Box key is still on them; `roster setup --rotate` finishes it)")))
         bad += 1
-    for message, fix in rotation.problems(cfg):
-        say(f"warning: {message} ({fix})")
+    for p in rotation.problems(cfg):
+        say(f"warning: {tagged(p)} ({p.fix})")
         bad += 1
     if skipped:
         say("not every Host was checked: " + ("the ones above were skipped" if hosts else "none was reached"))
@@ -733,11 +733,13 @@ def check_windows_key(cfg, h):
         if found.admins:
             print(f"note: {h['name']}: {found.files[0] if found.files else 'its key file'}: "
                   f"{winhost.admins_note(h['name'])}", file=sys.stderr, flush=True)
+    except HostRefused as e:            # the code is the refusal's own
+        print(f"warning: {h['name']}: {e}", file=sys.stderr, flush=True)
+        return
     except RuntimeError as e:
         notes = [str(e)]
     for note in notes:
-        print(f"warning: [{KEY_FILE}] {h['name']}: {note}" if not note.startswith("[") else
-              f"warning: {h['name']}: {note}", file=sys.stderr, flush=True)
+        print(f"warning: [{KEY_FILE}] {h['name']}: {note}", file=sys.stderr, flush=True)
 
 
 def cmd_check_host(args):
@@ -793,7 +795,7 @@ def cmd_check_box(args):
         if c["section"] != section:
             say(("" if section is None else "\n") + str(health.SECTIONS.get(c["section"], c["section"])))
             section = c["section"]
-        say(f"  {c['level']:<5}  {c['message']}")
+        say(f"  {c['level']:<5}  {tagged(Problem(c['code'], c['message'])) if 'code' in c else c['message']}")
         if c.get("fix"):
             say(f"         fix: {c['fix']}")
         if c.get("topic"):
@@ -1571,7 +1573,7 @@ def cmd_vault_status(cfg, args):
     if checks:
         say("\nVault (as `roster check --box` says it)")
         for c in checks:
-            say(f"  {c['level']:<5}  {c['message']}")
+            say(f"  {c['level']:<5}  {tagged(Problem(c['code'], c['message'])) if 'code' in c else c['message']}")
             if c.get("fix"):
                 say(f"         fix: {c['fix']}")
     uses = health.provider_uses(cfg) if cfg else {}

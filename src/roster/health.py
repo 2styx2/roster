@@ -13,12 +13,14 @@ from .common import find_program
 from .config import load_config
 from .context import Context, current, ssh_index_file
 from .errors import (
+    INDEX_NOT_WRITTEN,
     KEY_TOO_OLD,
     OTHER_DOESNT_LOAD,
     ROTATION_PENDING,
     SAME_ADDRESS,
     SAME_HOST_NAME,
     SAME_MACHINE,
+    SHARED_BOX_NAME,
     InventoryError,
     Problem,
 )
@@ -40,9 +42,24 @@ COMMON_BOX_NAMES = frozenset({
 SHOWN = 5                   # names listed before "and N more"
 
 
+# The error catalog's row (docs/app/errors.md) of each code a check is about: its `:help` topic is E<row>
+# (tests/test_health.py checks them against the catalog).
+ROWS = {OTHER_DOESNT_LOAD: 192, SAME_MACHINE: 193, SAME_HOST_NAME: 194, SAME_ADDRESS: 195, INDEX_NOT_WRITTEN: 206,
+        SHARED_BOX_NAME: 222, ROTATION_PENDING: 268, KEY_TOO_OLD: 269}
+
+
+def topic_of(code):
+    return f"E{ROWS[code]}"
+
+
 def check(section, level, message, fix=None, topic=None, **extra):
     return {"section": section, "level": level, "message": message,
             **({"fix": fix} if fix else {}), **({"topic": topic} if topic else {}), **extra}
+
+
+def coded(section, level, problem):
+    """A check that is PROBLEM (a code of its own, which the CLI shows as `[CODE] `), with its fix and topic."""
+    return check(section, level, problem.message, problem.fix, topic_of(problem.code), code=problem.code)
 
 
 def names(items):
@@ -129,7 +146,7 @@ def named_inventories(cfg):
     which = (f"this is the named Inventory {here}" + (" (the active one)" if here == inv.active else "")
              if here else "this roster.yml isn't one of the named Inventories")
     out = [check("inventory", "ok", f"{which}; named: {', '.join(x.name for x in inv.inventories)}")]
-    out += [check("inventory", "warn", w["message"], w["fix"], f"E{w['row']}") for w in overlaps(cfg)]
+    out += [check("inventory", "warn", w["message"], w["fix"], topic_of(w["code"])) for w in overlaps(cfg)]
     for f in named.foreign_legacy_files(inv):
         out.append(check("inventory", "warn", f"{f} has the name roster once used for a named Inventory's ssh config, "
                                               "but roster didn't write it, so it's left as it is",
@@ -137,7 +154,7 @@ def named_inventories(cfg):
     if named.stale():
         out.append(check("inventory", "warn", f"{ssh_index_file()} is older than this Box's ssh config "
                                               "files and couldn't be rewritten", "make it writable, then run "
-                                              "`roster sync`", "E206"))
+                                              "`roster sync`", topic_of(INDEX_NOT_WRITTEN)))
     return out
 
 
@@ -173,7 +190,7 @@ def ssh(cfg):
                                         "Mesh the other's entries, off the Hosts they share",
                          "set box_name: in roster.yml to a name no other Box uses, then run `roster setup` (on a Box "
                          "already set up, it re-tags this Box's key under the new name where it works; a same-named "
-                         "Box whose key was taken runs `roster setup` again)", "E222"))
+                         "Box whose key was taken runs `roster setup` again)", topic_of(SHARED_BOX_NAME)))
     for key in boxkeys.in_use(cfg, hosts):          # one per key type its key Hosts use
         what = "this Box's key" if key.type.name == boxkeys.DEFAULT else f"this Box's {key.type.name} key"
         if key.key.exists():
@@ -210,21 +227,23 @@ def key_age(cfg, key, what):
     days = (datetime.now(timezone.utc) - made).days
     if days <= limit:
         return []
-    return [check("ssh", "warn", f"[{KEY_TOO_OLD}] {what} is {days} days old, past key_max_age: {limit}d ({key.key})",
-                  "rotate it: `roster setup --rotate` puts a new key on every Host, proves it, then removes the old "
-                  "(or set key_max_age: in roster.yml; off turns this off)", "E269")]
+    return [coded("ssh", "warn", Problem(
+        KEY_TOO_OLD, f"{what} is {days} days old, past key_max_age: {limit}d ({key.key})",
+        fix="rotate it: `roster setup --rotate` puts a new key on every Host, proves it, then removes the old (or set "
+            "key_max_age: in roster.yml; off turns this off)"))]
 
 
 def rotation_pending(cfg):
     """T240: the Box key rotation isn't finished: the old Box key is still on these Hosts (#471's LOW-5)."""
     waiting = rotation.pending(cfg)
     # the record unreadable, an old key kept: said even when no Host waits
-    out = [check("ssh", "warn", message, fix, "E268") for message, fix in rotation.problems(cfg)]
+    out = [coded("ssh", "warn", p) for p in rotation.problems(cfg)]
     if not waiting:
         return out
-    return out + [check("ssh", "warn", f"[{ROTATION_PENDING}] Box key rotation pending on {count(len(waiting), 'Host')}: "
-                                 f"{names(waiting)} (the old Box key is still on them)",
-                  "run `roster setup --rotate` again once they answer: it finishes them", "E268")]
+    return out + [coded("ssh", "warn", Problem(
+        ROTATION_PENDING, f"Box key rotation pending on {count(len(waiting), 'Host')}: {names(waiting)} (the old Box "
+                          "key is still on them)",
+        fix="run `roster setup --rotate` again once they answer: it finishes them"))]
 
 
 # ---------------------------------------------------------------- Vault
@@ -362,21 +381,21 @@ def repo(path):
 
 # (code, catalog row, fix) for each warning
 WARNINGS = {
-    "doesnt_load": (OTHER_DOESNT_LOAD, 192, "`roster --inv {other} check --box` says why; fix that file, or `roster inv remove "
-                              "{other}` if you no longer use it"),
-    "same_machine": (SAME_MACHINE, 193, "nothing to do if it's one machine you reach from both; if it isn't, one was cloned "
-                               "with the other's host key: give it its own (`ssh-keygen -A` on it, then record it "
-                               "again)"),
-    "same_name": (SAME_HOST_NAME, 194, "rename one of them in its roster.yml; until then roster reaches {other}'s `{name}` only "
-                            "once {other} is the active Inventory (`roster inv use {other}`)"),
-    "same_address": (SAME_ADDRESS, 195, "nothing to do if the two are on different networks; if it's one machine, its key "
-                               "changed: `roster check {name}` compares it with the recorded one"),
+    "doesnt_load": (OTHER_DOESNT_LOAD, "`roster --inv {other} check --box` says why; fix that file, or `roster inv "
+                                       "remove {other}` if you no longer use it"),
+    "same_machine": (SAME_MACHINE, "nothing to do if it's one machine you reach from both; if it isn't, one was cloned "
+                                   "with the other's host key: give it its own (`ssh-keygen -A` on it, then record it "
+                                   "again)"),
+    "same_name": (SAME_HOST_NAME, "rename one of them in its roster.yml; until then roster reaches {other}'s `{name}` "
+                                  "only once {other} is the active Inventory (`roster inv use {other}`)"),
+    "same_address": (SAME_ADDRESS, "nothing to do if the two are on different networks; if it's one machine, its key "
+                                   "changed: `roster check {name}` compares it with the recorded one"),
 }
 
 
 def warning(kind: str, message: str, **names: str) -> dict[str, Any]:
-    code, row, fix = WARNINGS[kind]
-    return {"code": code, "row": row, "message": message, "fix": fix.format(**names)}
+    code, fix = WARNINGS[kind]
+    return {"code": code, "row": ROWS[code], "message": message, "fix": fix.format(**names)}
 
 
 class Machine(NamedTuple):

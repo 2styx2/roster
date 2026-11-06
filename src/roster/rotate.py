@@ -35,7 +35,7 @@ from .authorized import add_key_script, remove_key_script
 from .common import die, program_argv, replace_file, ssh_path
 from .config import load_config
 from .context import Context, current
-from .errors import NEW_KEY_REFUSED, InventoryError
+from .errors import NEW_KEY_REFUSED, InventoryError, Problem, tagged
 from .hosts import is_windows
 from .keyline import key_ere
 from .rotation import (
@@ -162,7 +162,7 @@ class Connect:
         why = (r.stderr or r.stdout).strip()[:200] or f"exit {r.returncode}"
         if r.returncode == 255:
             raise Unreached(why)
-        raise RuntimeError(winhost.windows_hint(m.name) if winhost.looks_windows(r.stdout + r.stderr) else why)
+        raise winhost.windows_hint(m.name) if winhost.looks_windows(r.stdout + r.stderr) else RuntimeError(why)
 
 
 # ---------------------------------------------------------------- which keys, which Hosts
@@ -425,12 +425,12 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
                 say(f"  pending  {m.label}: not reached with the old key: {e}")
                 continue
             except RuntimeError as e:
-                failed[m] = f"[{NEW_KEY_REFUSED}] couldn't add the new key's line: {e}"
+                failed[m] = tagged(Problem(NEW_KEY_REFUSED, f"couldn't add the new key's line: {e}"))
                 continue
             ok, why = conn.logs_in(m, new)
             if not ok:
-                failed[m] = (f"[{NEW_KEY_REFUSED}] the new key's line went in, but the new key doesn't log in "
-                             f"({why}); the old key's line stays there")
+                failed[m] = tagged(Problem(NEW_KEY_REFUSED, f"the new key's line went in, but the new key doesn't "
+                                                            f"log in ({why}); the old key's line stays there"))
                 continue
             proven.append(m)
         for m in proven:

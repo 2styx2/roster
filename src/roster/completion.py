@@ -28,12 +28,12 @@ from .cliparser import (
     GROUPS,
     HOSTS,
     INVENTORIES,
-    NAME_RE,
     ONLY,
     RESOURCES,
     SHELLS,
     build_parser,
 )
+from .common import NAME_RE
 
 
 def main(argv: list[str]) -> int:

@@ -16,7 +16,8 @@ from typing import IO, Any, NoReturn, cast
 from .context import WINDOWS, current, ssh_dir, user_config_dir  # noqa: F401 (others import these from here)
 from .errors import ROSTER_ERROR, Exit, Problem
 
-NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")   # \Z: a trailing newline is not part of a name
+NAME_ERE = "[A-Za-z0-9][A-Za-z0-9._-]*"                 # a name (a Host's, a group's, ...), as an ERE for scripts
+NAME_RE = re.compile(rf"^{NAME_ERE}\Z")                  # \Z: a trailing newline is not part of a name
 
 
 class NotPrivate(Exception):

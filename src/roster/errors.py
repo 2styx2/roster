@@ -280,6 +280,15 @@ def tagged(problem):
     return problem.message if problem.code in UNTAGGED else f"[{problem.code}] {problem.message}"
 
 
+class HostRefused(Problem, RuntimeError):
+    """A Problem where callers catch a Host's failure as a RuntimeError (a script there refused): its str() is the
+    line the command line reports it with, tagged()."""
+
+    def __str__(self):
+        return tagged(self)
+
+
+
 class Exit(SystemExit):
     """A die(): roster refusing on the command line, as the Problem it is. Python prints its text, `error: ` and the
     message tagged(), with FULL ` (DETAILS) - FIX` after it (for a library's Problem whose message doesn't say them),

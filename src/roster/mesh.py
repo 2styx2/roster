@@ -22,7 +22,17 @@ from shlex import quote as q
 from typing import Any
 
 from . import boxkeys, boxlock, sshconfig
-from .common import current_deadline, deadline_at, kill_tree, past_deadline, program_argv, time_left, write_private
+from .claude import MESH_MARK
+from .common import (
+    NAME_ERE,
+    current_deadline,
+    deadline_at,
+    kill_tree,
+    past_deadline,
+    program_argv,
+    time_left,
+    write_private,
+)
 from .context import current
 from .errors import MESH_KEY_TYPE, MESH_WINDOWS, NOT_A_SOURCE, Problem
 from .hosts import is_windows
@@ -220,7 +230,7 @@ def ere(name):
 # A Host's mesh_dir: ($MD) overrides where the files go, on either; roster then only touches them there if they're
 # its own (mine: a Mesh key's public half, or a config roster wrote).
 WHERE = r"""
-mine() { grep -qs ' roster-mesh:' "$1/id_ed25519.pub" || head -n 1 "$1/config" 2>/dev/null | grep -q '^# Written by roster mesh'; }
+mine() { grep -qs " $TAG:" "$1/id_ed25519.pub" || head -n 1 "$1/config" 2>/dev/null | grep -q '^# Written by roster mesh'; }
 # Whose Mesh files are (T199, #379): the owner (BOX, or BOX/INVENTORY) their headers name. whose DIR: its config's
 # header, else its key's comment; - when an older roster wrote them (no owner in them); empty with no Mesh files there.
 whose() {
@@ -229,10 +239,10 @@ whose() {
   case "$h" in "# Written by roster mesh for "*)
     o=$(printf '%s\n' "$h" | sed -n 's/^# Written by roster mesh for [^ ]* (owner \([^)]*\)).*/\1/p'); echo "${o:--}"; return;; esac
   c=$(cat "$1/id_ed25519.pub" 2>/dev/null); c=${c##* }
-  case "$c" in roster-mesh:*@*) echo "${c#*@}";; roster-mesh:*) echo -;; esac
+  case "$c" in "$TAG":*@*) echo "${c#*@}";; "$TAG":*) echo -;; esac
 }
 mdwhose() {  # mdwhose FILE: the owner the Mesh's ROSTER.md names, or -
-  o=$(head -n 1 "$1" 2>/dev/null | sed -n 's/^<!-- roster-mesh: written by roster for [^ ;]* (owner \([^)]*\)).*/\1/p'); echo "${o:--}"
+  o=$(head -n 1 "$1" 2>/dev/null | sed -n "s/^$MDMARK[^ ;]* (owner \([^)]*\)).*/\1/p"); echo "${o:--}"
 }
 # ours_by OWNER: this run may change or remove what OWNER wrote: nothing there, this Box's (and Inventory's) own, or
 # one of PREV's: what this Box wrote before (an older roster's, -, or under an earlier owner) where its record proves
@@ -308,7 +318,7 @@ if [ "$ROTATE" = 1 ] && [ -f "$K" ]; then
 fi
 if [ ! -f "$K" ] || [ ! -f "$K.pub" ]; then
   if [ "$MODE" = apply ]; then
-    mkdir -p "$P" && rm -f "$K" "$K.pub" && "$KG" -q -t ed25519 -N '' -C "roster-mesh:$NAME@$OWNER" -f "$K" >/dev/null 2>&1 \
+    mkdir -p "$P" && rm -f "$K" "$K.pub" && "$KG" -q -t ed25519 -N '' -C "$TAG:$NAME@$OWNER" -f "$K" >/dev/null 2>&1 \
       || { echo "ERROR ssh-keygen couldn't make the Mesh's key in $P"; echo ROSTER_DONE; exit 0; }
     echo "KEY made"
   else
@@ -359,7 +369,7 @@ same() {  # same PATH LABEL N < content: whether PATH holds it from line N on (l
   if [ -f "$1" ] && tail -n +"$3" "$1" | cmp -s - "$t"; then :; else echo "DIFFERS $2"; fi
   rm -f "$t"
 }
-ours() { [ -f "$1" ] && head -n 1 "$1" | grep -q '^<!-- roster-mesh: written by roster for '; }
+ours() { [ -f "$1" ] && head -n 1 "$1" | grep -q "^$MDMARK"; }
 C=$HOME/.ssh/config; INC="Include $P/config"
 """
 
@@ -442,9 +452,9 @@ fi
 
 AUTHORIZED = r"""
 # this Box's (and Inventory's) lines only: roster-mesh:SOURCE@OWN (T199); every other line stays as it is
-TAGS=" roster-mesh:[A-Za-z0-9][A-Za-z0-9._-]*@$OWNER_RE\$"
+TAGS=" $TAG:$NAME_ERE@$OWNER_RE\$"
 H=$(mktemp); grep -E "$TAGS" "$AK" 2>/dev/null > "$H"
-[ -n "$KEEP" ] && grep -E " roster-mesh:($KEEP)@$OWNER_RE\$" "$H" >> "$W"
+[ -n "$KEEP" ] && grep -E " $TAG:($KEEP)@$OWNER_RE\$" "$H" >> "$W"
 # on a Host its record says it wrote on, the lines this Box wrote before: every line under an earlier owner of its
 # own (RETAG, a whole ERE), and an older roster's (no Box in the tag) only when it is exactly a line this Box writes
 # here, but for the tag (ADOPT, whole lines; #384); they go, and its own lines (W) take their place. Any other
@@ -452,12 +462,12 @@ H=$(mktemp); grep -E "$TAGS" "$AK" 2>/dev/null > "$H"
 # source's (KEEP) stay as they are.
 OL=$(mktemp)
 if [ -n "$RETAG" ]; then
-  grep -E "$RETAG" "$AK" 2>/dev/null | { if [ -n "$KEEP" ]; then grep -vE " roster-mesh:($KEEP)(@[^ ]*)?\$"; else cat; fi; } > "$OL"
+  grep -E "$RETAG" "$AK" 2>/dev/null | { if [ -n "$KEEP" ]; then grep -vE " $TAG:($KEEP)(@[^ ]*)?\$"; else cat; fi; } > "$OL"
 fi
 [ -s "$ADOPT" ] && grep -xFf "$ADOPT" "$AK" 2>/dev/null >> "$OL"
 if [ -n "$UNT" ]; then
   # each with its key (the field before the tag) and from=, so the Box can say when it's the key --rotate replaces
-  grep -E " roster-mesh:($UNT)\$" "$AK" 2>/dev/null | { if [ -s "$OL" ]; then grep -vxFf "$OL"; else cat; fi; } \
+  grep -E " $TAG:($UNT)\$" "$AK" 2>/dev/null | { if [ -s "$OL" ]; then grep -vxFf "$OL"; else cat; fi; } \
     | while read -r l; do
       f=$(printf '%s\n' "$l" | sed -n 's/^from="\([^"]*\)".*/\1/p'); k=$(printf '%s\n' "$l" | awk '{ print $(NF-1) }')
       echo "UNTAGGED ${l##*:} $k $f"
@@ -525,7 +535,8 @@ def preamble(h, mode, own, prev=()):
     """OWN: whose Mesh this run writes (owner_of). PREV: owners whose Mesh entries count as this run's too: what this
     Box wrote before (earlier_owner) where its record proves it wrote on the Host, or an older roster's (-) for
     mesh leftovers --remove and cut --all, asked first."""
-    return (f"NAME={q(h['name'])}\nU={q(h['ssh']['user'])}\nMODE={mode}\nMARK={q(MARK)}\n"
+    return (f"TAG={q(TAG)}\nNAME_ERE={q(NAME_ERE)}\nMDMARK={q(MESH_MARK)}\n"
+            f"NAME={q(h['name'])}\nU={q(h['ssh']['user'])}\nMODE={mode}\nMARK={q(MARK)}\n"
             f"MD={q(h.get('mesh_dir') or '')}\nOWNER={q(own)}\nOWNER_RE={q(ere(own))}\nPREV={q(' '.join(prev))}\n"
             f"IMPORT={q(CLAUDE_IMPORT)}\n" + WHERE)
 
@@ -574,7 +585,7 @@ def write_script(h, mode, files, keys, keep, own, prev=(), adopt=()):
     s.append(f"KEEP={q('|'.join(ere(k) for k in sorted(keep)))}\n")
     retag = sorted({k.rsplit(":", 1)[1].split("@", 1)[0] for k in keys} - set(keep))
     old = "-" in prev and bool(retag)
-    pattern = [f"( {TAG}:[A-Za-z0-9][A-Za-z0-9._-]*@{ere(p)}$)" for p in prev if p != "-"]
+    pattern = [f"( {TAG}:{NAME_ERE}@{ere(p)}$)" for p in prev if p != "-"]
     s.append(f"RETAG={q('|'.join(pattern))}\n")
     s.append("ADOPT=$(mktemp)\ncat > \"$ADOPT\" " + heredoc("".join(line + "\n" for line in sorted(adopt)) if old else ""))
     s.append(f"UNT={q('|'.join(ere(k) for k in retag) if old else '')}\n")
@@ -587,17 +598,17 @@ def cut_script(h, host, own, owner, prev=(), everything=False):
     Only OWNER's (this Box's and Inventory's) lines and files (T199), and PREV's (this Box's record says it wrote
     on this Host before as them: an older roster's lines, -, or an earlier owner's lines and files); EVERYTHING (cut
     --all, asked first): an older roster's lines and files too. UNTAGGED: an older roster's line for HOST is left."""
-    tag = "[A-Za-z0-9][A-Za-z0-9._-]*" if own else ere(host)
+    tag = NAME_ERE if own else ere(host)
     prev = sorted({*prev, "-"}) if everything else list(prev)
     s = [preamble(h, "apply", owner, prev if everything else [p for p in prev if p != "-"]), WRITE]
     if own:
         s.append(NOT_SOURCE)
-    s.append(f"""T=' roster-mesh:{tag}{owners_re([owner, *prev])}$'
+    s.append(f"""T=' {TAG}:{tag}{owners_re([owner, *prev])}$'
 if [ -f "$AK" ] && grep -qE "$T" "$AK"; then
   t=$(mktemp); grep -vE "$T" "$AK" > "$t"; replace "$AK" < "$t"; rm -f "$t"; echo "CHANGE cut"
   [ -n "$ESXI" ] && [ -x /sbin/auto-backup.sh ] && /sbin/auto-backup.sh >/dev/null 2>&1
 fi
-grep -qE ' roster-mesh:{tag}$' "$AK" 2>/dev/null && echo "UNTAGGED"
+grep -qE ' {TAG}:{tag}$' "$AK" 2>/dev/null && echo "UNTAGGED"
 grep -qE "$T" "$AK" 2>/dev/null && echo "ERROR a roster-mesh line is still there" || echo ROSTER_DONE
 """)
     return "".join(s)
@@ -686,7 +697,7 @@ def ssh_config(cfg, src, peers, d, vias=None):
 def roster_md(src, peers, d, esxi, vias=None, owner=None):
     ssh = f"ssh -F {d}/config" if esxi else "ssh"
     by = f" (owner {owner})" if owner else ""
-    md = [f"<!-- roster-mesh: written by roster for {src}{by}; roster mesh rewrites it, don't edit by hand -->",
+    md = [f"{MESH_MARK}{src}{by}; roster mesh rewrites it, don't edit by hand -->",
           f"# Hosts {src} can reach", "",
           f"From this Host, `{ssh} <name>` logs in to the Hosts below as their own user. No password or vault is "
           "kept on this Host.", "",
@@ -1198,7 +1209,7 @@ def cut_all(cfg, workers=16, progress=None, stopped=None):
 # What the Mesh holds on a Host, and whose: every roster-mesh line with its tag (find_leftovers keeps this
 # Box's and an older roster's), and Mesh files, Include and ROSTER.md that are this Box's or an older roster's (OLD=1).
 LOOK = r"""
-T=' roster-mesh:[A-Za-z0-9][A-Za-z0-9._-]*(@[A-Za-z0-9_/.-]+)?$'
+T=" $TAG:$NAME_ERE(@[A-Za-z0-9_/.-]+)?\$"
 grep -E "$T" "$AK" 2>/dev/null | while read -r l; do
   f=$(printf '%s\n' "$l" | sed -n 's/^from="\([^"]*\)".*/\1/p'); echo "LINE ${l##*:} $f"
 done
@@ -1312,7 +1323,7 @@ def remove_leftovers(cfg, found):
             s.append(NOT_SOURCE)
         tags = sorted({ere(src) + ("" if old else "@" + ere(own)) for src, _, old in f.get("lines", [])})
         if tags:
-            s.append(f"""T=' roster-mesh:({'|'.join(tags)})$'
+            s.append(f"""T=' {TAG}:({'|'.join(tags)})$'
 if [ -f "$AK" ] && grep -qE "$T" "$AK"; then
   t=$(mktemp); grep -vE "$T" "$AK" > "$t"; replace "$AK" < "$t"; rm -f "$t"
   [ -n "$ESXI" ] && [ -x /sbin/auto-backup.sh ] && /sbin/auto-backup.sh >/dev/null 2>&1

@@ -5,7 +5,6 @@ its shell completion (completion.py) read. Each argument that takes names is tag
 # pyright: reportPrivateUsage=false
 
 import argparse
-import re
 import sys
 from typing import Any
 
@@ -18,7 +17,6 @@ SHELLS = ("bash", "zsh", "fish", "powershell")
 HOSTS, GROUPS, RESOURCES, INVENTORIES, FILES, DIRS = "hosts", "groups", "resources", "inventories", "files", "dirs"
 ONLY = "only"              # a comma-separated LIST of the other kinds (--only)
 COMMANDS = "commands"      # roster's own commands (`help COMMAND`)
-NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def values(action: argparse.Action, *kinds: str, new_after: tuple[str, ...] = ()) -> argparse.Action:

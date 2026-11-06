@@ -28,8 +28,18 @@ import subprocess
 from typing import IO, cast
 
 from . import keyline
-from .common import WINDOWS, program_argv
-from .errors import KEY_FILE, LOOKS_LIKE_WINDOWS, NOT_POWERSHELL, NOT_WINDOWS
+from .common import program_argv
+from .context import WINDOWS
+from .errors import (
+    KEY_FILE,
+    LOOKS_LIKE_WINDOWS,
+    NOT_POWERSHELL,
+    NOT_WINDOWS,
+    ROSTER_ERROR,
+    HostRefused,
+    Problem,
+    tagged,
+)
 
 # Reads the whole script from stdin, then runs it: a script given line by line (`-Command -`) runs as if typed, and
 # its multi-line blocks would need blank lines to end them.
@@ -592,18 +602,19 @@ def run_said(name, said, err):
     """What roster adds when `roster run` on Windows Host NAME didn't run CMD, or ran it with no exit code back, from
     its launcher's own lines (SAID, a RunOutcome) and, only when no launcher answered, the stderr ERR; or None."""
     if "NOT_POWERSHELL" in said.notes:
-        return (f"[{NOT_POWERSHELL}] the command isn't PowerShell, so nothing ran on {name}: roster run runs PowerShell "
-                f"on a Windows Host (for cmd.exe's syntax: cmd /c '...'). PowerShell said: {said.notes['NOT_POWERSHELL']}")
+        return Problem(NOT_POWERSHELL, f"the command isn't PowerShell, so nothing ran on {name}: roster run runs "
+                                       "PowerShell on a Windows Host (for cmd.exe's syntax: cmd /c '...'). PowerShell "
+                                       f"said: {said.notes['NOT_POWERSHELL']}")
     low = err.lower()
     if "NOT_WINDOWS" in said.notes or (said.code is None and "powershell" in low
                                        and ("not found" in low or "no such file" in low)):
-        return (f"[{NOT_WINDOWS}] {name} has os: windows, but it has no PowerShell or isn't Windows: nothing ran. "
-                "Fix os: for it in roster.yml")
+        return Problem(NOT_WINDOWS, f"{name} has os: windows, but it has no PowerShell or isn't Windows: nothing ran. "
+                                    "Fix os: for it in roster.yml")
     if "ERROR" in said.notes:
-        return f"roster's script on {name} couldn't run the command: {said.notes['ERROR']}"
+        return Problem(ROSTER_ERROR, f"roster's script on {name} couldn't run the command: {said.notes['ERROR']}")
     if said.code is None:
-        return (f"roster's script on {name} ended without the command's exit code (ssh's was {{rc}}), so it may not "
-                "have run")
+        return Problem(ROSTER_ERROR, f"roster's script on {name} ended without the command's exit code (ssh's was "
+                                     "{rc}), so it may not have run")
     return None
 
 
@@ -649,7 +660,7 @@ def run(h, command, password=None, key=True):
         sys.stderr.write(err)
     why = run_said(h["name"], said, err)
     if why:
-        print(f"error: {clean(why.replace('{rc}', str(rc)))}", file=sys.stderr, flush=True)
+        print(f"error: {clean(tagged(why).replace('{rc}', str(rc)))}", file=sys.stderr, flush=True)
         if said.code is None or "ERROR" in said.notes:
             return 255
     return exit_code(1 if said.code is None else said.code)
@@ -670,8 +681,9 @@ def looks_windows(text):
 
 def windows_hint(name):
     """The error for a POSIX script a Windows Host couldn't run (code 155)."""
-    return (f"[{LOOKS_LIKE_WINDOWS}] {name} looks like a Windows Host (its shell says 'sh' is not recognized): set "
-            f"os: windows for it (or its group) in roster.yml, run `roster sync`, then try again")
+    return HostRefused(LOOKS_LIKE_WINDOWS, f"{name} looks like a Windows Host (its shell says 'sh' is not recognized): "
+                                           "set os: windows for it (or its group) in roster.yml, run `roster sync`, "
+                                           "then try again")
 
 
 class Result:
@@ -698,24 +710,25 @@ def outcome(name, rc, out, err):
     warnings = [ln[5:] for ln in lines if ln.startswith("WARN ")]
     for ln in lines:
         if ln.startswith("REFUSED "):
-            raise RuntimeError(f"[{KEY_FILE}] {ln[8:]} - nothing was changed there")
+            raise HostRefused(KEY_FILE, f"{ln[8:]} - nothing was changed there")
         if ln.startswith("ERROR "):
             raise RuntimeError(ln[6:][:300])
         if ln == "NOT_WINDOWS":
-            raise RuntimeError(not_windows(name))
+            raise not_windows(name)
     if keyline.OK in lines:
         return Result(files, warnings, "SCOPE admins" in lines, [ln[4:] for ln in lines if ln.startswith("TAG ")],
                       "NOLINE" in lines, "TAKEN" in lines)
     said = (err or out).strip()
     low = said.lower()
     if "powershell" in low and ("not found" in low or "no such file" in low):
-        raise RuntimeError(not_windows(name))
+        raise not_windows(name)
     raise RuntimeError(f"no answer from the script on {name} (exit {rc}): " + (said[:200] or "nothing printed"))
 
 
 def not_windows(name):
-    return (f"[{NOT_WINDOWS}] {name} has os: windows, but it has no PowerShell or isn't Windows: nothing was "
-            "changed. Fix os: for it in roster.yml")
+    return HostRefused(NOT_WINDOWS, f"{name} has os: windows, but it has no PowerShell or isn't Windows: nothing was "
+                                    "changed. Fix os: for it in roster.yml")
+
 
 
 class SshFailed(RuntimeError):

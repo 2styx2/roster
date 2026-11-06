@@ -364,7 +364,7 @@ Requests without an `id` (notifications) run but get no reply. `serve` sends thr
 
 | Method | Params | Result | Errors | Since API |
 |---|---|---|---|---|
-| `box.check` | none | `{checks: [{section, level, message, fix?, topic?}, ...], ok, roster_version, api_version}` |  | 16 |
+| `box.check` | none | `{checks: [{section, level, message, fix?, topic?, code?}, ...], ok, roster_version, api_version}`: `code` is a warning's own (206, 207), which the CLI shows as `[CODE] ` before the message |  | 16 |
 
 <!-- END generated:methods -->
 

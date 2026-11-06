@@ -14,13 +14,17 @@ from .resources import login, summary
 # ---------------------------------------------------------------- Claude files
 
 
+# The first line of the ROSTER.md `roster mesh` writes on a Host (mesh.roster_md), and its scripts look for
+MESH_MARK = "<!-- roster-mesh: written by roster for "
+
+
 def written_by_the_mesh(md: Path) -> bool:
     """Is the ROSTER.md at MD the Mesh's (T193)? On a Host that is a roster Box too, with its roster.yml in its home
     folder, its own ROSTER.md and the one `roster mesh` writes there for its peers are the same file: neither writer
     overwrites the other's."""
     try:
         with md.open(encoding="utf-8", errors="replace") as f:
-            return f.readline().startswith("<!-- roster-mesh:")
+            return f.readline().startswith(MESH_MARK)
     except OSError:
         return False
 

@@ -453,7 +453,7 @@ def test_check_box_warns_once_the_box_key_is_older_than_key_max_age(write_config
     assert [c["level"] for c in fresh] == ["ok"]
     old = age_checks(write_config, isolated, days_old=400)
     warn = [c for c in old if c["level"] == "warn"]
-    assert len(warn) == 1 and "[207]" in warn[0]["message"] and "400 days old" in warn[0]["message"]
+    assert len(warn) == 1 and warn[0]["code"] == 207 and "400 days old" in warn[0]["message"]
     assert "key_max_age: 365d" in warn[0]["message"] and "roster setup --rotate" in warn[0]["fix"]
     assert warn[0]["topic"] == "E269"
     assert [c["level"] for c in age_checks(write_config, isolated, "key_max_age: off\n", days_old=4000)] == ["ok"]

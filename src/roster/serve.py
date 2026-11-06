@@ -686,7 +686,8 @@ def box_check(state, params):
     load is an error even while the app shows the last good Inventory.
 
     Params: none
-    Result: `{checks: [{section, level, message, fix?, topic?}, ...], ok, roster_version, api_version}`
+    Result: `{checks: [{section, level, message, fix?, topic?, code?}, ...], ok, roster_version, api_version}`:
+        `code` is a warning's own (206, 207), which the CLI shows as `[CODE] ` before the message
     Since: API 16
     """
     error = state.error

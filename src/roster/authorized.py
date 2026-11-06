@@ -171,7 +171,7 @@ def over_ssh(h, script, timeout=None):
 def failure(h, r):
     """Why a key script R didn't finish on H."""
     if winhost.looks_windows(r.stdout + r.stderr):
-        return winhost.windows_hint(h["name"])
+        return str(winhost.windows_hint(h["name"]))
     return (r.stderr or r.stdout).strip()[:200] or f"no answer (exit {r.returncode})"
 
 
@@ -210,7 +210,8 @@ def enroll(h, pub, tag_re, taken=None, own=None, keep_others=False):
         raise NameTaken(pub.split()[2])
     if not said.ok:
         if winhost.looks_windows(out + err):
-            raise RuntimeError(winhost.windows_hint(h["name"]))
+            raise winhost.windows_hint(h["name"])
+
         raise RuntimeError("couldn't write authorized_keys: " + (err or out).strip()[:200])
     if not sshops.ssh_ok(h["name"]):
         raise RuntimeError("key installed but key login still fails (sshd PubkeyAuthentication off, bad home-dir "
