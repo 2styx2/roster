@@ -15,6 +15,29 @@ use std::process::Command;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+/// Why making an Inventory failed (`inventory_create`): which roster to run couldn't be found or
+/// started (a [`BackendError`], with its kind and what to do, as `backend_connect` says it), or
+/// serve's call failed. On the wire it's either shape as it is.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "InventoryCreateError"))]
+pub enum CreateError {
+    Start(BackendError),
+    Call(CallError),
+}
+
+impl From<BackendError> for CreateError {
+    fn from(e: BackendError) -> Self {
+        CreateError::Start(e)
+    }
+}
+
+impl From<CallError> for CreateError {
+    fn from(e: CallError) -> Self {
+        CreateError::Call(e)
+    }
+}
+
 /// The oldest `roster serve` API this app understands.
 pub const REQUIRED_API_VERSION: i64 = 1;
 
@@ -364,14 +387,14 @@ impl Backend {
     /// as it is (`-32601`, or `1` from one that answers every method so). `cancel` stops it from
     /// another thread while it runs: serve stops a clone under way and takes away what it left
     /// (#417 L5).
-    pub fn create_inventory(c: &Candidate, params: Value, cancel: &CreateCancel) -> Result<Value, CallError> {
+    pub fn create_inventory(c: &Candidate, params: Value, cancel: &CreateCancel) -> Result<Value, CreateError> {
         let client = Arc::new(spawn_serve(c, None).map_err(|e| CallError::Io {
             message: format!("the backend couldn't be started: {e}"),
         })?);
         *lock(&cancel.0) = Some(Arc::clone(&client));
         let r = client.call_timeout("inventory.create", params, timeout_for("inventory.create"));
         lock(&cancel.0).take();
-        r
+        Ok(r?)
     }
 
     /// The `api_version` serve reported at start.

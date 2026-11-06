@@ -213,7 +213,15 @@ export function tauriBackend(): Backend {
     // Named Inventories (ticket 115, API 27): which one serve runs on, and making another one active.
     listInventories: () => serve<Inventories>("inventories.list"),
     useInventory: (name) => serve<InventoryUsed>("inventories.use", { name }),
-    createInventory: (params) => call<NewInventory>("inventory_create", { params }),
+    // Which roster to run may be what failed: a BackendStartError says what to do, as connect's does.
+    async createInventory(params) {
+      try {
+        return await invoke<NewInventory>("inventory_create", { params });
+      } catch (e) {
+        if (isProblem(e)) throw new BackendStartError(e);
+        throw callError(e);
+      }
+    },
     cancelCreateInventory: () => call<boolean>("inventory_create_cancel"),
     verifyLogin: (host, changes: HostChanges) => serve<HostCheck>("host.verify_login", { host, changes }),
     updateHost: (host, changes: HostChanges) => serve<HostUpdate>("host.update", { host, changes }),

@@ -4,7 +4,7 @@
 //! Tauri. Each method blocks: the shell runs the slow ones on a blocking thread.
 
 use crate::backend::{
-    Backend, BackendInfo, CheckStarted, CreateCancel, Open, OpenedSession, QuickTarget, Typed, timeout_for,
+    Backend, BackendInfo, CheckStarted, CreateCancel, CreateError, Open, OpenedSession, QuickTarget, Typed, timeout_for,
 };
 use crate::config::{self, Config, Loader, Report};
 use crate::detect::BackendError;
@@ -263,6 +263,13 @@ impl Shell {
         self.config.as_ref().map(|l| l.settled()).unwrap_or_default()
     }
 
+    /// Which roster to run, from the Config (`roster_command`, `backend`), with the development
+    /// env vars winning. Reading the Config waits for init.lua's first load at startup (at most the
+    /// Lua wall-clock limit) rather than starting the default roster.
+    fn candidate(&self) -> Result<crate::detect::Candidate, BackendError> {
+        crate::detect::for_config(&self.settled_config())
+    }
+
     fn config_dir(&self) -> Result<PathBuf, String> {
         self.config
             .as_ref()
@@ -270,13 +277,9 @@ impl Shell {
             .ok_or_else(|| NO_CONFIG_DIR.into())
     }
 
-    /// Find and start the Backend (or return the running one). Errors explain what to fix. It
-    /// reads the Config first: at startup that waits for init.lua's first load (at most the Lua
-    /// wall-clock limit) rather than starting the default roster. Which roster runs comes from
-    /// the Config (`roster_command`, `backend`), with the development env vars winning; a change
-    /// takes effect at the next (re)start.
+    /// Find and start the Backend (or return the running one). Errors explain what to fix. A
+    /// change to which roster runs ([`Shell::candidate`]) takes effect at the next (re)start.
     pub fn backend_connect(&self, restart: bool) -> Result<BackendInfo, BackendError> {
-        let config = self.settled_config();
         // serve's notifications (`inventory.changed`, ticket 28; `job.progress`, API 21) go to the
         // frontend as one event.
         let emit = Arc::clone(&self.emit);
@@ -284,7 +287,7 @@ impl Shell {
             emit("roster-notification", json!({ "method": method, "params": params }))
         });
         let backend = self.backend.0.connect(restart, Backend::is_alive, || {
-            Backend::start(&crate::detect::for_config(&config)?, Some(notify))
+            Backend::start(&self.candidate()?, Some(notify))
         })?;
         Ok(backend.info.clone())
     }
@@ -293,10 +296,8 @@ impl Shell {
     /// that one call ([`Backend::create_inventory`]). serve writes roster.yml (ADR 0001); the
     /// frontend then connects again. The params are the dialog's choice: how, a folder, a path or
     /// a URL. Nothing secret is in them.
-    pub fn inventory_create(&self, params: Value) -> Result<Value, CallError> {
-        let config = self.settled_config();
-        let c = crate::detect::for_config(&config).map_err(|e| CallError::Io { message: e.message })?;
-        Backend::create_inventory(&c, params, &self.create)
+    pub fn inventory_create(&self, params: Value) -> Result<Value, CreateError> {
+        Backend::create_inventory(&self.candidate()?, params, &self.create)
     }
 
     /// The first-run dialog's Cancel (#417 L5): the serve making the Inventory stops (a clone

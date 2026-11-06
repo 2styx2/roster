@@ -3,7 +3,7 @@
 //! (docs/app/dev/testing.md) and run by the end-to-end bridge. Each command here only turns
 //! Tauri's arguments, channels and events into the core's, on a blocking thread where it waits.
 
-use roster_core::backend::{BackendInfo, CheckStarted, OpenedSession, QuickTarget};
+use roster_core::backend::{BackendInfo, CheckStarted, CreateError, OpenedSession, QuickTarget};
 use roster_core::config::{self, Report};
 use roster_core::detect::BackendError;
 use roster_core::package;
@@ -35,7 +35,7 @@ async fn backend_connect(core: Core<'_>, restart: bool) -> Result<BackendInfo, B
 }
 
 #[tauri::command]
-async fn inventory_create(core: Core<'_>, params: Value) -> Result<Value, CallError> {
+async fn inventory_create(core: Core<'_>, params: Value) -> Result<Value, CreateError> {
     blocking(core, move |s| s.inventory_create(params)).await
 }
 

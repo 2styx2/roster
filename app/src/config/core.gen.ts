@@ -752,6 +752,13 @@ export type BackendProblemKind = "no-wsl" | "roster-missing" | "roster-too-old" 
 export type CallErrorWire = { "kind": "rpc", code: number, message: string, data: unknown, } | { "kind": "exited", code: number | null, stderr: string, } | { "kind": "timeout" } | { "kind": "io", message: string, };
 
 /**
+ * Why making an Inventory failed (`inventory_create`): which roster to run couldn't be found or
+ * started (a [`BackendError`], with its kind and what to do, as `backend_connect` says it), or
+ * serve's call failed. On the wire it's either shape as it is.
+ */
+export type InventoryCreateError = BackendProblem | CallErrorWire;
+
+/**
  * A check the core has under way (`host.check {background: true}`), as it starts: serve's job id,
  * and whether it's the app's own to stop (#221 item 1): the core started it, or joined a check it
  * had started itself. A check another caller started (a Plugin's `host.check`) isn't: stopping it
