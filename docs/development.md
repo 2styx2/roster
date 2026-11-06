@@ -47,7 +47,7 @@ src/roster/
                     new ones since the last run (the seen file), and the walk adding each through addhost
   catchup.py        what's left after the vault or the map changed (T243, Q210): local state only (no connection, no
                     vault call), the "next" line sync, setup, vault sync and vault unlock end with, setup's record of
-                    the Hosts it didn't finish
+                    the Hosts it didn't finish; explain: a failed login's cause and its one fix (T243 part B, Q211)
   vaultsync.py      `roster vault sync` (T222, Q194): each vault roster.yml uses, synced, and the items added, changed
                     or removed since the last sync, from a snapshot of ids and revision dates (vault-sync/, 0600)
   discover.py       nmap / built-in scanning, type guessing, merging into roster.yml; Scan: serve's discover.* scan

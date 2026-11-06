@@ -1385,3 +1385,53 @@ def test_update_skips_the_pull_of_a_plain_or_local_inventory(stale):
     r = script("update.sh", checkout, env, prefix, "--dry-run")
     assert "no upstream to pull from" in r.stdout, r.stdout
     assert "couldn't fast-forward" not in r.stdout
+
+
+def cloned_map(tmp_path, env):
+    """HOME/infra as a clone of a bare repo (the team's map), on main, with roster.yml."""
+    home = Path(env["HOME"])
+    import shutil
+    shutil.rmtree(home / "infra", ignore_errors=True)        # installed()'s plain file: a clone takes its place
+    bare = tmp_path / "map.git"
+    git(tmp_path, "init", "-q", "--bare", "-b", "main", str(bare))
+    git(tmp_path, "clone", "-q", str(bare), str(home / "infra"))
+    (home / "infra/roster.yml").write_text("groups: {}\n")
+    git(home / "infra", "add", "-A")
+    git(home / "infra", "commit", "-qm", "map")
+    git(home / "infra", "push", "-q", "-u", "origin", "HEAD:main")
+    return bare, home / "infra"
+
+
+@posix_shell
+@pytest.mark.parametrize("case", ["branch-gone", "dirty", "diverged", "offline"])
+def test_update_says_why_the_map_didnt_pull_and_keeps_it(stale, tmp_path, case):
+    """T243 (#476): the map's pull failing says which case it is, and never resets or discards anything."""
+    upstream, checkout, env, prefix = stale
+    installed(prefix, env=env)
+    bare, infra = cloned_map(tmp_path, env)
+    if case == "branch-gone":                   # the owner's 2026-11-05 case: merged and deleted on the server
+        git(infra, "switch", "-q", "-c", "add-hosts")
+        git(infra, "push", "-q", "-u", "origin", "add-hosts")
+        git(bare, "branch", "-D", "add-hosts")
+        said = "origin/add-hosts is gone from the server (merged and deleted?): git -C ~/infra switch main"
+    else:
+        other = tmp_path / "other"
+        git(tmp_path, "clone", "-q", str(bare), str(other))
+        (other / "roster.yml").write_text("groups: {lab: {}}\n")
+        git(other, "commit", "-qam", "theirs")
+        git(other, "push", "-q")
+        if case == "dirty":
+            (infra / "roster.yml").write_text("groups: {mine: {}}\n")
+            said = "uncommitted edits in ~/infra block the fast-forward (they're kept)"
+        elif case == "diverged":
+            (infra / "README.md").write_text("mine\n")
+            git(infra, "add", "-A")
+            git(infra, "commit", "-qm", "mine")
+            said = "~/infra and origin/main both have new commits (diverged): merge or rebase it yourself"
+        else:
+            git(infra, "remote", "set-url", "origin", str(tmp_path / "gone.git"))
+            said = "couldn't reach the map's server (offline?)"
+    before = git(infra, "rev-parse", "HEAD")
+    r = script("update.sh", checkout, env, prefix)
+    assert f"{said}; using the map as it is" in r.stdout, r.stdout
+    assert git(infra, "rev-parse", "HEAD") == before

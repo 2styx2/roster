@@ -253,6 +253,7 @@ def test_sudos_password_reaches_the_remote_sh_without_a_carriage_return(as_windo
 
     from roster import cli
     write_config(SUDO_CFG)
+    assert cli.main(["sync", "--no-vault"]) == 0           # T243: `roster run` needs the Host in the ssh config
     monkeypatch.setenv("ROSTER_TEST_PW", "s3cret")
     seen = {}
     monkeypatch.setattr(cli.subprocess, "run", fake_run_answering(seen, "root\n"))

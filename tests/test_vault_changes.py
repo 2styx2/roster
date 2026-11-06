@@ -679,3 +679,80 @@ def test_a_deleted_box_key_is_made_again_and_said(capsys, box, scans, monkeypatc
 def test_check_host_on_a_group_points_at_only(capsys, box):
     said = run_dies("check", "--host", "lab")
     assert "lab is a group (--only lab takes its Hosts)" in said
+
+
+def test_sync_says_a_host_s_address_changed_and_how_to_check_its_key(capsys, box, write_config):
+    answered("10.0.0.5", "10.0.0.6")
+    run(capsys, "sync", "--no-vault")
+    write_config(MAP.replace("10.0.0.6", "10.0.0.9"))
+    rc, out, _ = run(capsys, "sync", "--no-vault")
+    assert rc == 0
+    assert "map: 1 Host with a new address (new-01)" in out
+    assert "note: new-01's address changed (10.0.0.6 to 10.0.0.9): `roster setup --host new-01` records its host key" \
+        in out
+    assert "next: roster setup --host new-01" in out          # never reached at its new address
+
+
+def test_a_reinstalled_host_says_so_and_how_to_set_it_up_again(box):
+    from roster import errors
+    answered("10.0.0.6")
+    p = explained(box, "new-01", "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.")
+    assert p.code == errors.HOST_KEY_CHANGED
+    assert "reinstalled" in p.message and "roster setup --host new-01" in p.fix
+
+
+def test_a_lookup_with_the_vault_server_offline_says_how_old_its_copy_is(capsys, box, write_config, monkeypatch):
+    from roster.providers import get_secret
+    monkeypatch.setenv("FAKE_BW_LAST_SYNC", "2026-11-05T07:00:00.000Z")
+    monkeypatch.setenv("FAKE_BW_SYNC_FAIL", "Sync failed: server unreachable")
+    assert get_secret("bw:web-01 ssh", "lab") == "pw-web-SECRET"          # the Login still works
+    out = capsys.readouterr().out
+    assert "`bw sync` failed - using the vault as last synced " in out and " ago" in out
+
+
+def test_two_providers_one_locked_are_each_reported_and_the_open_one_still_works(capsys, box, write_config,
+                                                                                 monkeypatch):
+    from roster.providers import get_secret
+    write_config(MAP + '      orion-01: {ip: 10.0.0.7, user: deploy, auth: "op:Infra/Orion servers"}\n')
+    monkeypatch.delenv("BW_SESSION")
+    monkeypatch.setenv("OP_SESSION_test", "tok")
+    rc, out, _ = run(capsys, "vault", "sync")
+    assert rc == 1
+    assert "FAIL  bw: " in out and "fix: run in a terminal: roster vault unlock" in out
+    assert "ok    op: keeps no local copy" in out
+    assert get_secret("op:Infra/Orion servers", "lab") == "pw-deploy"
+
+
+def test_sync_says_a_host_waiting_for_review_and_setup_skips_it(capsys, box, scans, write_config, monkeypatch):
+    write_config(MAP.replace('auth: "bw:new-01 ssh"}', 'auth: "bw:new-01 ssh", reviewed: false}'))
+    answered("10.0.0.5")
+    rc, out, _ = run(capsys, "sync", "--no-vault")
+    assert "next: review them in roster.yml, then set reviewed: true (new-01 waiting for review (reviewed: false))" in out
+    from roster import cli
+    monkeypatch.setattr(cli, "ssh_ok", lambda name, timeout=10: True)
+    rc, out, _ = run(capsys, "setup")
+    assert rc == 0 and "skipping     1 hosts with reviewed: false" in out and "new-01:" not in out
+
+
+def test_sync_with_a_roster_yml_that_doesnt_load_names_the_line_and_does_nothing(capsys, box, write_config):
+    write_config(MAP + "  broken: [\n")
+    with pytest.raises(SystemExit) as e:
+        main(["sync"])
+    assert "line" in str(e.value)
+    from roster.common import ssh_config_file
+    assert not ssh_config_file().exists()
+
+
+def test_a_password_only_host_is_never_a_setup_failure(capsys, box, scans, write_config, monkeypatch):
+    write_config(PW_MAP)
+    from roster import cli
+    monkeypatch.setattr(cli, "ssh_ok", lambda name, timeout=10: True)
+    rc, out, _ = run(capsys, "setup")
+    assert rc == 0 and "1 key hosts ready, 1 password-only hosts, 0 failed" in out
+
+
+def test_sync_with_bw_not_logged_in_names_the_login_command(capsys, box, monkeypatch):
+    monkeypatch.delenv("BW_SESSION")
+    monkeypatch.setenv("FAKE_BW_LOGGED_OUT", "1")
+    rc, out, _ = run(capsys, "sync")
+    assert rc == 0 and "vault: bw not synced (not logged in: roster vault bw --write -- login)" in out

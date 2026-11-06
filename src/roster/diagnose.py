@@ -423,8 +423,10 @@ def login_failure(h, password, stderr, limited=(), resolved=None, nist_only=Fals
         return Problem(errors.TOO_MANY_AUTH, f"{name} cut the connection after too many key attempts",
                        fix="run `roster sync`: roster's ssh config offers one key, or none, per Host", details=stderr)
     if "host key verification failed" in low or "remote host identification has changed" in low:
-        return Problem(errors.HOST_KEY_CHANGED, f"{name}'s host key changed - not connecting",
-                       fix="compare the fingerprint with the Host's console or owner before trusting it", details=stderr)
+        return Problem(errors.HOST_KEY_CHANGED, f"{name}'s host key changed - not connecting (reinstalled, or another "
+                       "machine at its address?)", fix="compare the fingerprint with the Host's console or owner "
+                       f"before trusting it; if it was reinstalled, delete its line in {known_hosts_label()} and run "
+                       f"`roster setup --host {name}` (its keys went with the reinstall)", details=stderr)
     if "permission denied" in low:
         if password:
             return Problem(errors.PASSWORD_REFUSED, f"{name} refused the password for user {user}",

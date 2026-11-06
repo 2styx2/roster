@@ -13,6 +13,7 @@ from pathlib import Path
 from .common import WINDOWS, git_program, kill_tree, program_argv, time_left
 from .edit import keep_backup, load_text, read_text
 from .errors import (
+    BRANCH_GONE,
     COMMIT_FAILED,
     DIRTY,
     DIVERGED,
@@ -144,11 +145,17 @@ def pull(path):
         return {"updated": False, "upstream": None, "commits": 0, "ahead": 0,
                 "message": "this branch has no upstream, so there's nothing to pull"}
     remote = upstream.split("/", 1)[0]
-    r = git(repo.top, "fetch", "--quiet", remote)
+    # --prune: a branch merged and deleted on the server goes from here too, so it's seen as gone (T243)
+    r = git(repo.top, "fetch", "--quiet", "--prune", remote)
     if r.returncode != 0:
         raise Problem(PULL_FAILED, f"couldn't fetch {upstream} for the infra repo", {"upstream": upstream},
                       fix=f"check the network and your access to the repo; `git -C {repo.top} fetch` shows the same",
                       details=r.stderr.strip() or None)
+    if out(repo.top, "rev-parse", "--verify", "--quiet", "@{u}") is None:
+        default = (out(repo.top, "rev-parse", "--abbrev-ref", f"{remote}/HEAD") or f"{remote}/main").split("/", 1)[1]
+        raise Problem(BRANCH_GONE, f"{upstream} is gone from the server (merged and deleted?), so there's nothing to "
+                                   "pull from it; roster.yml is used as it is", {"upstream": upstream},
+                      fix=f"switch to the main branch: git -C {repo.top} switch {default} (then pull again)")
     behind = int(out(repo.top, "rev-list", "--count", "HEAD..@{u}") or 0)
     ahead = int(out(repo.top, "rev-list", "--count", "@{u}..HEAD") or 0)
     if behind and ahead:

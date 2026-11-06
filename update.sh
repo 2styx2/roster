@@ -77,6 +77,22 @@ step() {                        # step "what" cmd...  - output to the log, shown
 
 plural() { (( $1 == 1 )) && echo "$1 $2" || echo "$1 ${2}s"; }
 
+why_no_pull() {                 # why_no_pull DIR: why the map's `git pull --ff-only` failed, said once (T243, #476)
+    local d=$1 up                # read-only but for a fetch: never a reset, a stash or a switch
+    up=$(git -C "$d" rev-parse --abbrev-ref '@{u}' 2>/dev/null)
+    if ! git -C "$d" fetch --quiet --prune 2>/dev/null; then
+        echo "couldn't reach the map's server (offline?)"
+    elif ! git -C "$d" rev-parse --verify --quiet '@{u}' >/dev/null 2>&1; then
+        echo "${up:-its branch} is gone from the server (merged and deleted?): git -C $(home "$d") switch main"
+    elif [[ -n $(git -C "$d" status --porcelain --untracked-files=no 2>/dev/null) ]]; then
+        echo "uncommitted edits in $(home "$d") block the fast-forward (they're kept)"
+    elif [[ $(git -C "$d" rev-list --count '@{u}..HEAD' 2>/dev/null) != 0 ]]; then
+        echo "$(home "$d") and $up both have new commits (diverged): merge or rebase it yourself"
+    else
+        echo "couldn't fast-forward"
+    fi
+}
+
 check_source() {                # check_source DIR: fetch, offer a fast-forward, warn about an old version
     local src=$1 branch upstream remote behind ahead dirty newest version refs err tags
     target=""                   # the commit a real run installs: @{u} when a dry run would fast-forward
@@ -213,7 +229,7 @@ elif ! git -C "$(dirname "$cfg")" -c core.fsmonitor=false rev-parse --abbrev-ref
     skip "$(home "$(dirname "$cfg")") has no upstream to pull from: nothing to pull"
 elif ask "Pull the latest map into $(home "$(dirname "$cfg")")?" Y; then
     if step "git pull" git -C "$(dirname "$cfg")" pull --ff-only --quiet; then done_stage
-    else warn "couldn't fast-forward; using the map as it is"; fail_stage; fi
+    else warn "$(why_no_pull "$(dirname "$cfg")"); using the map as it is"; fail_stage; fi
 else
     skip "kept the map as it is"
 fi

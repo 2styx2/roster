@@ -546,8 +546,18 @@ def _bw_ready(ctx):
                 raise WrongPassword("Bitwarden unlock failed (wrong master password?)")
             set_session(r.stdout.strip())
     if ctx.settings.get("sync", True) and _bw(ctx, "sync").returncode != 0:
-        say("warning      `bw sync` failed - using the vault as last synced")
+        say(f"warning      `bw sync` failed - using the vault as last synced{_last_sync(ctx)}")
     ctx.state["ready"] = True
+
+
+def _last_sync(ctx):
+    """` 3 h ago` for bw's last sync (`bw status`'s lastSync; T243: offline, roster says how old its copy is), or ""."""
+    from ..vaultsync import ago
+    try:
+        when = _bw_status_json(ctx).get("lastSync")
+    except SecretError:
+        return ""
+    return f" {ago(when)}" if when else ""
 
 
 def _bw_unlock(password, ctx):

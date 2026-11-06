@@ -147,7 +147,7 @@ print JSON for scripts and tools, never a secret (see Machine\-readable output i
 .PP
 \fBroster run [\-\-sudo] host ...\fR
 .PP
-Run a command; password\-only hosts get their password from the provider. \fB\-\-sudo\fR runs it as root, handing sudo the login's password (never shown). On an \fBos: windows\fR Host CMD always runs under PowerShell, whatever its DefaultShell, with its exit code passed on; \fB\-\-sudo\fR there is refused (159). See Windows Hosts
+Run a command; password\-only hosts get their password from the provider. A Host not in this Box's ssh config yet names \fBroster sync\fR; on a Host this Box never reached or setup didn't finish, a failed login is followed by its cause and fix (\fBroster: [211] no key on new\-01 yet: roster setup \-\-host new\-01\fR); a Login whose vault item is gone, doubled or locked says so with its code and fix. \fB\-\-sudo\fR tells sudo's refusals apart: not in sudoers, sudo wanting a terminal (requiretty), or the Login's password refused (a sudo password that differs). \fB\-\-sudo\fR runs it as root, handing sudo the login's password (never shown). On an \fBos: windows\fR Host CMD always runs under PowerShell, whatever its DefaultShell, with its exit code passed on; \fB\-\-sudo\fR there is refused (159). See Windows Hosts
 .TP
 \fB\-\-sudo\fR
 run it as root with sudo; roster gives sudo the login's password (never shown)
@@ -464,7 +464,7 @@ The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBh
 \fB{version, resources: [resource]}\fR\&. Exit 1 when \fB\-\-only\fR or \fB\-\-find\fR matches nothing
 .TP
 \fBcheck \-\-json\fR
-\fB{version, hosts: [{name, ok, ssh, checks}], mesh, ok}\fR: \fBchecks\fR is \fB{ssh: bool, SERVICE: bool, ...}\fR, \fBssh\fR says what was tested (\fBlogin\fR with this Box's key, \fBport\fR for a password\-only Host). \fBmesh\fR is the drift (the plan \fBroster mesh \-\-dry\-run\fR would show), or \fBnull\fR with no Mesh or with \fB\-\-only\fR\&. Exit 1 unless \fBok\fR
+\fB{version, hosts: [{name, ok, ssh, checks, problem}], mesh, ok}\fR: \fBchecks\fR is \fB{ssh: bool, SERVICE: bool, ...}\fR, \fBssh\fR says what was tested (\fBlogin\fR with this Box's key, \fBport\fR for a password\-only Host). \fBproblem\fR is a failed key login's cause, \fB{code, message, fix}\fR (codes 209\-215, or the \fBcheck HOST\fR step codes; \fBnull\fR when it logged in): the same words as the plain output, never a value. \fBmesh\fR is the drift (the plan \fBroster mesh \-\-dry\-run\fR would show), or \fBnull\fR with no Mesh or with \fB\-\-only\fR\&. Exit 1 unless \fBok\fR
 .TP
 \fBcheck HOST \-\-json\fR
 \fB{version, host, ok, steps: [{step, status, message, code?, fix?, details?, data?}]}\fR, as \fBhost.check\fR: \fBstatus\fR is \fBok\fR, \fBfail\fR or \fBskipped\fR\&. An unknown Host is a failed \fBinventory\fR step (code 2), not an error. Exit 1 unless \fBok\fR

@@ -431,6 +431,16 @@ One person may have several Inventories, the team's for work and their own for h
 | `206` | A warning, not an error: a Box key rotation is pending on some Hosts (`roster check`, `setup`; in `box.check` as topic `E268`) (T240) |
 | `207` | A warning, not an error: this Box's key is older than `key_max_age:` (`check --box`; in `box.check` as topic `E269`) (T240) |
 | `208` | `roster setup --rotate`: a Host refused the new key, so no old key line was removed anywhere. A CLI error (T240) |
+| `209` | A Host this Box has never reached didn't answer: is it on, is that its address? `roster check`'s `problem` and setup's failed lines. A CLI code (T243) |
+| `210` | A Host that answered before didn't answer. A CLI code (T243) |
+| `211` | A to-do, not a failure: no key on the Host yet (`roster setup --host NAME`). A CLI code (T243) |
+| `212` | This Box's key no longer logs in where setup put it. A CLI code (T243) |
+| `213` | The Host's account is locked or its password expired. A CLI code (T243) |
+| `214` | The Host takes no password login, so setup can't put the key on with one. A CLI code (T243) |
+| `215` | The connection was dropped before ssh spoke: a rate limiter. A CLI code (T243) |
+| `216` | `roster setup`: the vault was locked part way through the run. A CLI code (T243) |
+| `217` | `inventory.pull`: the infra repo's branch is gone from the server (merged and deleted); `data.upstream`, the fix names the branch to switch to. Nothing was switched (T243) |
+| `218` | This Box's key file is gone though roster made it (`check --box`, as topic `E280`; setup makes a new one). A CLI code (T243) |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 

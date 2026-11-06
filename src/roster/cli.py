@@ -504,6 +504,10 @@ def cmd_sync(cfg, args):
     for name in sorted(set(before or {}) - set(cfg["hosts"]) - renamed(before or {}, cfg).keys()):
         say(f"note: {name} left roster.yml, so its ssh entry is gone; this Box's key may still be on it: remove its "
             f"{KEY_TAG} line there by hand (next time, `roster revoke --only {name}` before taking a Host out)")
+    for name, was in sorted(readdressed(before or {}, cfg).items()):
+        say(f"note: {name}'s address changed ({was} to {cfg['hosts'][name]['ip']}): `roster setup --host {name}` "
+            "records its host key there; compare that key with the Host's console first (a moved Host keeps its key, "
+            "a reinstalled or another machine shows a new one)")
     if line := catchup.next_line(changed, catchup.gaps(cfg, unmapped=unmapped)):
         say(line)
     return 0
@@ -538,8 +542,15 @@ def map_changes(before, cfg):
     added = sorted(n for n in cfg["hosts"] if n not in before and n not in moved.values())
     gone = sorted(n for n in before if n not in cfg["hosts"] and n not in moved)
     pairs = ", ".join(f"{a} to {b}" for a, b in sorted(moved.items()))
+    new_address = sorted(readdressed(before, cfg))
     return counted("Host", [(len(added), f"added ({names(added)})"), (len(gone), f"removed ({names(gone)})"),
-                            (len(moved), f"renamed ({pairs})")])
+                            (len(moved), f"renamed ({pairs})"),
+                            (len(new_address), f"with a new address ({names(new_address)})")])
+
+
+def readdressed(before, cfg):
+    """{name: old address}: a Host of the map whose address isn't the one roster last wrote for it (T243)."""
+    return {n: was for n, was in before.items() if n in cfg["hosts"] and was and was != cfg["hosts"][n]["ip"]}
 
 
 def counted(noun, parts):

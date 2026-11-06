@@ -179,6 +179,8 @@ def test_run_sudo_password_host(capsys, write_config, monkeypatch):
 
 def test_run_sudo_key_host(capsys, write_config, monkeypatch):
     write_config(SUDO_CFG)
+    assert main(["sync", "--no-vault"]) == 0               # T243: `roster run` needs the Host in the ssh config
+    capsys.readouterr()
     monkeypatch.setenv("ROSTER_TEST_PW", "s3cret")
     seen = {}
 
