@@ -325,6 +325,8 @@ fn platform_info(core: Core<'_>) -> PlatformInfo {
 /// meant for the shell; tauri doesn't expose wry's switch, so set it on the WebView2 settings.
 #[cfg(windows)]
 fn disable_browser_accelerators(window: &tauri::WebviewWindow) {
+    // Each step that fails leaves WebView2's own shortcuts on: an annoyance (Ctrl+F opens its find
+    // bar), never a reason to keep the window from opening.
     let _ = window.with_webview(|w| unsafe {
         use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
         use windows::core::Interface;
@@ -344,6 +346,7 @@ fn restore_and_show(shell: &Shell, window: &tauri::WebviewWindow) {
     use roster_core::window::{Rect, placement};
     use tauri::{PhysicalPosition, PhysicalSize};
     let state = shell.state_load().unwrap_or(Value::Null);
+    // No monitors known: no placement fits, and the window opens where the OS puts it.
     let monitors: Vec<Rect> = window
         .available_monitors()
         .unwrap_or_default()
@@ -355,6 +358,8 @@ fn restore_and_show(shell: &Shell, window: &tauri::WebviewWindow) {
             height: m.size().height,
         })
         .collect();
+    // A move or resize the OS refuses leaves the window where it opened, still usable; showing it
+    // is what matters.
     if let Some(p) = placement(&state, &monitors) {
         let _ = window.set_size(PhysicalSize::new(p.rect.width, p.rect.height));
         let _ = window.set_position(PhysicalPosition::new(p.rect.x, p.rect.y));
@@ -362,6 +367,7 @@ fn restore_and_show(shell: &Shell, window: &tauri::WebviewWindow) {
             let _ = window.maximize();
         }
     }
+    // Fails only once the window is gone, when there's nothing left to show.
     let _ = window.show();
 }
 
@@ -371,6 +377,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             use tauri::{Emitter, Manager};
+            // None: no app data folder here, which Places reports where the State is needed.
             let app_local = app.path().app_local_data_dir().ok();
             // State is only a convenience: a copy that fails is said, and the app starts anyway.
             if let Some(line) = app_local.as_deref().and_then(roster_core::migrate::state_at_start) {

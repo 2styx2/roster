@@ -261,6 +261,7 @@ fn page(stream: TcpStream, token: &str, shell: Arc<Shell>, pages: &Pages) -> std
                 Message::Json(m) => json!({ "channel": id, "message": m }),
                 Message::Bytes(b) => json!({ "channel": id, "bytes": b }),
             };
+            // The page's writer has gone (it disconnected): nobody is left for the message.
             let _ = tx.send(text.to_string());
         })
     };
@@ -287,6 +288,7 @@ fn page(stream: TcpStream, token: &str, shell: Arc<Shell>, pages: &Pages) -> std
                 Err(Failure::Args(m)) => json!({ "id": id, "err": format!("command {cmd}: {m}") }),
                 Err(Failure::Unknown) => json!({ "id": id, "err": format!("command {cmd} not found") }),
             };
+            // As above: a page that disconnected mid-command gets no answer.
             let _ = tx.send(reply.to_string());
         });
     }

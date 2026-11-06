@@ -12,7 +12,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -93,6 +93,8 @@ pub struct RpcClient {
     stdin: Mutex<Option<ChildStdin>>,
     child: Arc<Mutex<Child>>,
     shared: Arc<Mutex<Shared>>,
+    /// Set (and notified) once the reader has seen the child go: what closing waits for.
+    gone: Arc<(Mutex<bool>, Condvar)>,
     next_id: AtomicU64,
     stderr_tail: Arc<Mutex<String>>,
     reader: Option<JoinHandle<()>>,
@@ -121,12 +123,15 @@ impl RpcClient {
 
         let child = Arc::new(Mutex::new(child));
         let shared = Arc::new(Mutex::new(Shared::default()));
+        let gone = Arc::new((Mutex::new(false), Condvar::new()));
         let reader = {
             let (shared, child, tail) = (Arc::clone(&shared), Arc::clone(&child), Arc::clone(&stderr_tail));
+            let gone = Arc::clone(&gone);
             thread::spawn(move || {
                 read_answers(stdout, &shared, notify.as_ref());
                 // stdout closed: the child is gone (or going). Collect its stderr and exit code,
                 // then fail everything still waiting.
+                // A stderr reader that panicked leaves the tail as far as it got.
                 let _ = err_thread.join();
                 let code = child.lock().unwrap().wait().ok().and_then(|s| s.code());
                 let err = CallError::Exited {
@@ -135,9 +140,13 @@ impl RpcClient {
                 };
                 let mut s = shared.lock().unwrap();
                 for (_, tx) in s.pending.drain() {
+                    // A caller that stopped waiting (timed out) has dropped its receiver.
                     let _ = tx.send(Err(err.clone()));
                 }
                 s.dead = Some(err);
+                drop(s);
+                *gone.0.lock().unwrap() = true;
+                gone.1.notify_all();
             })
         };
 
@@ -145,6 +154,7 @@ impl RpcClient {
             stdin: Mutex::new(stdin),
             child,
             shared,
+            gone,
             next_id: AtomicU64::new(1),
             stderr_tail,
             reader: Some(reader),
@@ -240,14 +250,17 @@ impl Drop for RpcClient {
     /// Closing stdin is how serve is told to exit. Give it [`EXIT_GRACE`], then make sure.
     fn drop(&mut self) {
         self.stdin.lock().unwrap().take();
-        let deadline = std::time::Instant::now() + EXIT_GRACE;
-        while !self.is_dead() && std::time::Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(25));
-        }
-        if !self.is_dead() {
+        let (gone, went) = &*self.gone;
+        let (gone, _) = went
+            .wait_timeout_while(gone.lock().unwrap(), EXIT_GRACE, |gone| !*gone)
+            .unwrap();
+        if !*gone {
+            drop(gone);
+            // A kill that fails is a child that has just exited on its own.
             let _ = self.child.lock().unwrap().kill();
         }
         if let Some(r) = self.reader.take() {
+            // A reader that panicked has nothing left to hand over: the client is going anyway.
             let _ = r.join();
         }
     }

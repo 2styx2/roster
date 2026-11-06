@@ -4,6 +4,7 @@
 
 use std::io::Read;
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 /// What a finished command printed, and how it ended.
@@ -22,45 +23,50 @@ pub fn run(mut cmd: Command, limit: Option<Duration>) -> std::io::Result<Finishe
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     no_console_window(&mut cmd);
     let mut child = cmd.spawn()?;
+    // Each pipe is read to its end on a thread of its own, which says when it's done: both ends
+    // closed is the process gone (or closing), so nothing waits on a timer.
+    let (closed, ends) = mpsc::channel();
     let reader = |r: Option<Box<dyn Read + Send>>| {
+        let closed = closed.clone();
         std::thread::spawn(move || {
             let mut buf = Vec::new();
             if let Some(mut r) = r {
+                // A read error ends the output there: what came before is still the answer.
                 let _ = r.read_to_end(&mut buf);
             }
+            // The receiver is gone only once run has returned, timed out: nobody wants it then.
+            let _ = closed.send(());
             buf
         })
     };
     let out = reader(child.stdout.take().map(|x| Box::new(x) as Box<dyn Read + Send>));
     let err = reader(child.stderr.take().map(|x| Box::new(x) as Box<dyn Read + Send>));
-    let status = match limit {
-        None => child.wait()?,
-        Some(limit) => {
-            let deadline = Instant::now() + limit;
-            loop {
-                if let Some(status) = child.try_wait()? {
-                    break status;
-                }
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        format!(
-                            "{} didn't answer within {} s",
-                            cmd.get_program().to_string_lossy(),
-                            limit.as_secs()
-                        ),
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(20));
+    if let Some(limit) = limit {
+        let deadline = Instant::now() + limit;
+        for _ in 0..2 {
+            if ends
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .is_err()
+            {
+                // Killed and reaped; one that ended meanwhile can't be killed, which is fine.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "{} didn't answer within {} s",
+                        cmd.get_program().to_string_lossy(),
+                        limit.as_secs()
+                    ),
+                ));
             }
         }
-    };
+    }
+    let status = child.wait()?;
     Ok(Finished {
         status,
-        stdout: out.join().unwrap_or_default(),
-        stderr: err.join().unwrap_or_default(),
+        stdout: out.join().expect("a pipe reader panicked"),
+        stderr: err.join().expect("a pipe reader panicked"),
     })
 }
 
