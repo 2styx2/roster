@@ -80,7 +80,7 @@ Rules, as `crates/roster-core/tests/layers.rs` checks them (a `crate::` path in 
 
 ### Pure modules and components
 
-A pure module holds data and rules with no component: a test, the docs build or another feature can load it alone. It may use React hooks, never a `.tsx` module. The pure modules are `sidebar/model.ts`, `session/status.ts`, `graph/model.ts`, `ui/table.ts`, `ui/when.ts`, `ui/dot.ts`, `backend/capabilities.ts`, `panel/stack.ts`, `view/segments.ts`, `edit/diff.ts` and `plugins/sessionEvents.ts` (`PURE` in `app/src/architecture.test.ts`). A component file (`.tsx`) draws; when a type or a word list that a component defines is needed elsewhere, move it into a pure module (as `ui/dot.ts` holds `StateDot`'s states and words).
+A pure module holds data and rules with no component: a test, the docs build or another feature can load it alone. It may use React hooks, never a `.tsx` module. The pure modules are <!-- pure:app -->`sidebar/model.ts`, `session/status.ts`, `graph/model.ts`, `ui/table.ts`, `ui/when.ts`, `ui/dot.ts`, `backend/capabilities.ts`, `panel/stack.ts`, `view/segments.ts`, `edit/diff.ts` and `plugins/sessionEvents.ts`<!-- /pure:app --> (`app/src/architecture.test.ts` reads this list). A component file (`.tsx`) draws; when a type or a word list that a component defines is needed elsewhere, move it into a pure module (as `ui/dot.ts` holds `StateDot`'s states and words).
 
 ### The docs build runs under Node
 
@@ -88,11 +88,13 @@ A pure module holds data and rules with no component: a test, the docs build or 
 
 ### Dependencies between folders
 
-Modules never import each other in a circle, and feature folders depend one way: the test finds every cycle between folders, of any length (the strongly connected folders), not only pairs. The fake Backend counts as an adapter of its own beside `backend/`, and `config/`'s data (`core.gen.ts`, `types.ts`, `defaults.ts`, `ranges.ts`, which `terminal/options.ts` and `panel/layout.ts` read) counts apart from applying it (`apply.ts`, `useConfigActions.ts`). Shared helpers with no feature of their own (`Clock` in `ui/clock.ts`) go in `ui/`. The folder imports that go up today, each listed with its reason in `KNOWN_BACK_EDGES` (the list only shrinks; an entry that no longer closes a cycle fails too):
+Modules never import each other in a circle, and feature folders depend one way: the test finds every cycle between folders, of any length (the strongly connected folders), not only pairs. The fake Backend counts as an adapter of its own beside `backend/`, and `config/`'s data (`core.gen.ts`, `types.ts`, `defaults.ts`, `ranges.ts`, which `terminal/options.ts` and `panel/layout.ts` read) counts apart from applying it (`apply.ts`, `useConfigActions.ts`). Shared helpers with no feature of their own (`Clock` in `ui/clock.ts`) go in `ui/`. The folder imports that go up today, each with its reason (`app/src/architecture.test.ts` reads this list; it only shrinks, and an entry that no longer closes a cycle fails too):
 
+<!-- back-edges:app -->
 - `theme` → `terminal`: `terminal/options.ts` holds the ANSI palette a Theme is made of, and the terminal is drawn with the Theme.
 - `platform` → `terminal`: the browser and Tauri Platforms probe fonts with `terminal/fonts.ts`; the terminal asks `platform/os.ts`.
 - `plugins` → `tutor`: `opRegistry.ts` applies every op kind into its feature, the tutorial's too; `tutor/demo.ts` loads the demo's Plugins.
+<!-- /back-edges:app -->
 
 ## Where new code goes
 
