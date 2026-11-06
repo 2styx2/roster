@@ -9,6 +9,10 @@ import sys
 import pytest
 from conftest import POSIX_SH, WINDOWS
 
+from roster.keyline import LOCK_SUFFIX
+
+LOCK_FILE = "authorized_keys" + LOCK_SUFFIX      # the Host lock's (T263), which stays
+
 SHARED_YML = """\
 box_name: ws1
 groups:
@@ -55,7 +59,8 @@ def shared(fakes, isolated, write_config, monkeypatch):
             return [ln for ln in (ssh / "authorized_keys").read_text().splitlines() if "roster-managed:" in ln]
 
         def leftovers(self) -> list[str]:
-            return sorted(p.name for p in ssh.iterdir() if p.name != "authorized_keys")
+            # the Host lock's file stays (T263): empty, and never a lock by itself
+            return sorted(p.name for p in ssh.iterdir() if p.name not in ("authorized_keys", LOCK_FILE))
     return Shared()
 
 
@@ -106,7 +111,7 @@ def test_key_scripts_run_at_once_on_one_file_never_lose_their_temp_file_or_leave
     errors = [p.communicate()[1] for p in procs]
     assert not [e for e in errors if "No such file" in e or "cannot stat" in e]
     assert sum(p.returncode == 0 for p in procs) > 0
-    assert sorted(p.name for p in ssh.iterdir()) == ["authorized_keys"]
+    assert sorted(p.name for p in ssh.iterdir()) == ["authorized_keys", LOCK_FILE]
     text = (ssh / "authorized_keys").read_text()
     assert text.startswith("ssh-ed25519 AAAAown own@laptop\n") and "roster-managed:box" in text
 

@@ -11,7 +11,7 @@ from typing import Any
 from . import boxkeys, keyline, sshops, winhost
 from .common import program_argv
 from .context import current
-from .errors import KEY_FILE
+from .errors import KEY_FILE, host_keys_busy, no_host_lock
 from .hosts import is_windows
 from .keyline import key_ere
 from .providers import get_secret
@@ -84,8 +84,10 @@ AK_FILE = ('if [ "$(uname -s 2>/dev/null)" = VMkernel ]; then ESXI=1; f=/etc/ssh
 # The new file is a new inode: on an SELinux-enforcing Host it may lack the old one's label (ssh_home_t) and sshd
 # would refuse it. So the old file's context is copied (chcon --reference) before the mv, and restorecon sets the
 # policy's after it. Both only where they exist, and never fatal (ESXi's busybox, macOS, Alpine have neither).
-# No mktemp: said, never a fixed name instead (#524's review F3)
-REPLACE_AK = ("[ -L \"$f\" ] && f=$(readlink -f \"$f\"); "
+# No mktemp: said, never a fixed name instead (#524's review F3). From before the read to the script's end it holds
+# the Host lock beside $f (keyline.HOST_LOCK, T263): another Box's run on this account waits its turn, or stops this
+# one, nothing changed (BUSY)
+REPLACE_AK = ("[ -L \"$f\" ] && f=$(readlink -f \"$f\"); umask 077; hostlock \"$f\" || exit 1; "
               "command -v mktemp >/dev/null 2>&1 || { echo \"this Host has no mktemp: roster needs it to write $F's "
               "new version beside it: nothing was changed\" >&2; exit 1; }; "
               "t=$(mktemp \"$f.roster.XXXXXX\"); trap 'rm -f \"$t\"' EXIT; trap 'exit 1' HUP INT TERM; "
@@ -112,7 +114,7 @@ BACKUP = "if [ -n \"$ESXI\" ] && [ -x /sbin/auto-backup.sh ]; then /sbin/auto-ba
 
 
 def key_script_head(user: str) -> str:
-    return f"set -e; U={shlex.quote(user)}; " + AK_FILE
+    return f"set -e; U={shlex.quote(user)}; " + keyline.HOST_LOCK + AK_FILE
 
 
 def taken_guard(name_re: str | None, own: str) -> str:
@@ -224,13 +226,15 @@ def enroll(h: dict[str, Any], pub: str, tag_re: str, taken: str | None = None, o
                                "administrators applies to this account)"
                                + ("; this Box's other key lines there were kept" if done.others else ""))
         notes = ([f"key file {f}" for f in done.files] + ([f"note: {winhost.admins_note(h['name'])}"] if done.admins
-                 else []) + [f"warning: [{KEY_FILE}] {w}" for w in done.warnings])
+                 else []) + [f"warning: [{KEY_FILE}] {w}" for w in done.warnings] + lock_notes(done.nolock))
         if done.others and not keep_others:
             notes += [n for n in drop_others(h, pub, tag_re) if n not in notes]
         return notes
     _, out, err = sshops.password_exec(h, "sh -c " + shlex.quote(add_key_script(pub, this, h["ssh"]["user"], taken, own,
                                                                          others=tag_re)), pw)
     said = keyline.said(out)
+    if said.busy:
+        raise host_keys_busy(said.busy)
     if said.taken:
         raise NameTaken(pub.split()[2])
     if not said.ok:
@@ -242,9 +246,15 @@ def enroll(h: dict[str, Any], pub: str, tag_re: str, taken: str | None = None, o
         raise RuntimeError("key installed but key login still fails (sshd PubkeyAuthentication off, bad home-dir "
                            "permissions, or a key type it refuses?)"
                            + ("; this Box's other key lines there were kept" if said.others else ""))
+    notes = lock_notes(said.nolock)
     if said.others and not keep_others:
-        drop_others(h, pub, tag_re)
-    return []
+        notes += [n for n in drop_others(h, pub, tag_re) if n not in notes]
+    return notes
+
+
+def lock_notes(nolock: str | None) -> list[str]:
+    """The warning for a rewrite that ran without the Host lock (keyline.Said.nolock, winhost's NOLOCK), if it did."""
+    return [no_host_lock(nolock)] if nolock else []
 
 
 def drop_others(h: dict[str, Any], pub: str, drop_re: str, why: str = "the new key works") -> list[str]:
@@ -257,11 +267,14 @@ def drop_others(h: dict[str, Any], pub: str, drop_re: str, why: str = "the new k
             done = winhost.over_key(h, "add", drop_re, pub=pub, sweep=True)     # both files (#509 item 4)
         except RuntimeError as e:
             raise RuntimeError(fail + str(e)) from None
-        return [f"warning: [{KEY_FILE}] {w}" for w in done.warnings]
+        return [f"warning: [{KEY_FILE}] {w}" for w in done.warnings] + lock_notes(done.nolock)
     r = over_ssh(h, "sh -c " + shlex.quote(add_key_script(pub, drop_re, h["ssh"]["user"])), timeout=120)
-    if not keyline.said(r.stdout).ok:
+    said = keyline.said(r.stdout)
+    if said.busy:
+        raise RuntimeError(fail + str(host_keys_busy(said.busy)))
+    if not said.ok:
         raise RuntimeError(fail + ((r.stderr or r.stdout).strip()[:200] or f"exit {r.returncode}"))
-    return []
+    return lock_notes(said.nolock)
 
 
 @dataclass(frozen=True)
@@ -277,12 +290,14 @@ TAKEN = "name taken"        # retag: another key's line is under the new name th
 class Done:
     """What a re-tag or revoke on one Host came to: WHY (None: done; else why not, or for re-tag a NoLine or TAKEN),
     the warnings a Windows Host's script gave (KEY_FILE), and for revoke the tag names of the lines it took. REFUSED:
-    revoke's login was refused (ssh's "Permission denied"): this Box's key doesn't log in there."""
+    revoke's login was refused (ssh's "Permission denied"): this Box's key doesn't log in there. NOTES: whole lines
+    to say (the Host lock's 227 when it ran without one, T263)."""
 
     why: object = None
     warnings: list[str] = field(default_factory=list[str])
     names: list[str] = field(default_factory=list[str])
     refused: bool = False
+    notes: list[str] = field(default_factory=list[str])
 
 
 def retag(h: dict[str, Any], pub: str, taken: str | None = None, own: str | None = None) -> Done:
@@ -296,17 +311,19 @@ def retag(h: dict[str, Any], pub: str, taken: str | None = None, own: str | None
                                     own=(own or key_ere(kind, key)) if taken else "")
             why = TAKEN if done.taken else NoLine(done.files[0] if done.files else "its key file") if done.noline \
                 else None
-            return Done(why, done.warnings)
+            return Done(why, done.warnings, notes=lock_notes(done.nolock))
         r = over_ssh(h, "sh -c " + shlex.quote(retag_key_script(pub, h["ssh"]["user"], taken, own)), timeout=120)
     except (RuntimeError, ValueError, subprocess.TimeoutExpired) as e:     # ValueError: an ssh that won't take it
         return Done(str(e))
     said = keyline.said(r.stdout)
+    if said.busy:
+        return Done(str(host_keys_busy(said.busy)))
     if said.taken:
         return Done(TAKEN)
     if said.none is not None:
         return Done(NoLine(said.none or "~/.ssh/authorized_keys"))
     if said.ok:
-        return Done()
+        return Done(notes=lock_notes(said.nolock))
     return Done((r.stderr or r.stdout).strip()[:200] or f"no answer (exit {r.returncode})")
 
 
@@ -319,11 +336,14 @@ def revoke(h: dict[str, Any], tag_re: str) -> Done:
         try:
             done = winhost.over_key(h, "remove", tag_re)
         except RuntimeError as e:
-            return Done(str(e))
-        return Done(None, done.warnings, done.tags)
+            # #534 item 3: a refused key login is ssh's own "Permission denied" (no script ran), as on POSIX
+            return Done(str(e), refused=isinstance(e, winhost.SshFailed) and "permission denied" in str(e).lower())
+        return Done(None, done.warnings, done.tags, notes=lock_notes(done.nolock))
     r = over_ssh(h, remove_script(tag_re, h["ssh"]["user"]))
     subprocess.run(program_argv(["ssh", "-O", "exit", h["name"]]), capture_output=True)  # drop cached connection
     said = keyline.said(r.stdout)
+    if said.busy:
+        return Done(str(host_keys_busy(said.busy)))
     if said.ok:
-        return Done(None, names=said.names)
+        return Done(None, names=said.names, notes=lock_notes(said.nolock))
     return Done(failure(h, r), refused=r.returncode == 255 and "permission denied" in r.stderr.lower())

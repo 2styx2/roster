@@ -117,7 +117,7 @@ def test_an_interrupted_key_change_never_truncates_authorized_keys(tmp_path):
         subprocess.run(["sh", "-c", script], env={**os.environ, "HOME": str(tmp_path),
                                                   "PATH": f"{bin_}:{os.environ['PATH']}"}, capture_output=True)
         assert ak.read_text().startswith("ssh-rsa AAAAother someone@laptop\n")
-        assert not list(ak.parent.glob("*.roster*"))
+        assert [p.name for p in ak.parent.glob("*.roster*")] in ([], ["authorized_keys.roster-lock"])   # T263's stays
 
 
 def failing_writes(d):
@@ -149,7 +149,7 @@ def test_a_failed_write_of_the_new_key_file_changes_nothing(tmp_path):
         assert r.returncode != 0 and "ROSTER_OK" not in r.stdout
         assert "couldn't write the new ~/.ssh/authorized_keys" in r.stderr and "nothing was changed" in r.stderr
         assert ak.read_text() == before
-        assert sorted(p.name for p in ak.parent.iterdir()) == ["authorized_keys"]
+        assert sorted(p.name for p in ak.parent.iterdir()) == ["authorized_keys", "authorized_keys.roster-lock"]
 
 
 @posix_shell

@@ -450,6 +450,8 @@ One person may have several Inventories, the team's for work and their own for h
 | `223` | `roster add --save-to-vault`: there's no terminal to ask the new item's password on, or it can't hide what's typed; nothing was asked, saved or written. A CLI error (T265) |
 | `224` | `roster add --save-to-vault`: the password and its confirmation differ, or none was typed; nothing was saved or written. A CLI error (T265) |
 | `225` | `roster add --save-to-vault`: the vault item was saved, then writing `roster.yml` failed; `data.left` names the item (`{provider, id, name, target}`) to delete by hand, and no Host points at it. A CLI error (T265) |
+| `226` | Another Box's (or another roster run's) rewrite of the same account's `authorized_keys` held the lock on the Host past its wait: nothing was changed there; run it again in a moment. A CLI error (T263) |
+| `227` | A warning: a Host's `authorized_keys` was rewritten without the lock on the Host (no `flock` there, or its lock file couldn't be opened), so another Box's run at the same moment could drop a line. A CLI warning (T263) |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 

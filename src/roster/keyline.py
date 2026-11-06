@@ -78,23 +78,69 @@ NAMED = "ROSTER_TAG"        # remove: a line it took, by its tag's name
 NONE = "ROSTER_NONE"        # re-tag: no line of this key there (then the key file it looked in)
 TAKEN = "ROSTER_TAKEN"      # another key's line is under the new name there: nothing changed
 OTHERS = "ROSTER_OTHERS"    # add: this Box's line of another key is there too
+BUSY = "ROSTER_BUSY"        # another run held the Host lock (then its lock file): nothing changed
+NOLOCK = "ROSTER_NOLOCK"    # the rewrite ran without the Host lock (then why: no flock there)
+
+# ---------------------------------------------------------------- the lock on the Host (T263, #534)
+
+# Two Boxes (or two roster runs) rewriting one account's authorized_keys at once each read it, then renamed their new
+# version over it, and the first one's line was gone (T258 made each run's temp file its own; AccountLocks makes Host
+# entries take turns only inside one roster process). Every rewrite (setup's, revoke's, re-tag's, the Mesh's) now
+# holds an advisory lock on LOCK_SUFFIX beside the file (its link resolved), from before it reads the file until the
+# script ends. The lock is a file of its own: authorized_keys itself is replaced by a rename (a new inode), and the
+# lock file's absence or a stale one never blocks (flock's lock goes with the process; the file stays, empty).
+LOCK_SUFFIX = ".roster-lock"
+LOCK_WAIT = 10              # seconds a run waits for another's turn there before it stops, nothing changed
+# hostlock FILE (POSIX sh): flock (util-linux's, or BusyBox's applet) on FILE.roster-lock, held on fd 9 until the
+# script ends. Prints BUSY LOCKFILE and returns 1 when another run still holds it after LOCK_WAIT seconds; prints
+# NOLOCK WHY and goes on unlocked (as before T263) where there's no flock or the lock file can't be opened (a link
+# there, a read-only folder), never silently; returns 0 with nothing said when FILE's folder isn't there yet (no file
+# to lose a line of). `flock -n` in a loop: BusyBox's flock has no -w.
+def host_lock(wait: int = LOCK_WAIT) -> str:
+    """HOST_LOCK, waiting WAIT seconds (a test's shorter wait)."""
+    return ("hostlock() { "
+            'k=$1; [ -L "$k" ] && k=$(readlink -f "$k" 2>/dev/null || echo "$k"); k=$k@SUFFIX@; '
+            '[ -d "${k%/*}" ] || return 0; '
+            "if command -v flock >/dev/null 2>&1; then KL=flock; "
+            "elif command -v busybox >/dev/null 2>&1 && busybox --list 2>/dev/null | grep -qx flock; "
+            'then KL="busybox flock"; '
+            'else echo "@NOLOCK@ this Host has no flock"; return 0; fi; '
+            'if [ -L "$k" ] || { [ -e "$k" ] && [ ! -f "$k" ]; }; then echo "@NOLOCK@ $k isn\'t a plain file"; '
+            "return 0; fi; "
+            '( : >> "$k" ) 2>/dev/null || { echo "@NOLOCK@ couldn\'t open $k"; return 0; }; '
+            'exec 9>> "$k"; i=0; '
+            "until $KL -n 9 2>/dev/null; do "
+            'i=$((i + 1)); [ "$i" -lt @WAIT@ ] || { echo "@BUSY@ $k"; return 1; }; sleep 1; '
+            "done; }; "
+            ).replace("@SUFFIX@", LOCK_SUFFIX).replace("@NOLOCK@", NOLOCK).replace("@BUSY@", BUSY).replace(
+                "@WAIT@", str(wait))
+
+
+HOST_LOCK = host_lock()
 
 
 @dataclass
 class Said:
     """What a key script printed: OK (it finished), the tag names of the lines remove took, the key file re-tag found
-    no line in (None: it found one), and the TAKEN and OTHERS signs."""
+    no line in (None: it found one), the TAKEN and OTHERS signs, and the Host lock's BUSY and NOLOCK (T263)."""
 
     ok: bool = False
     names: list[str] = field(default_factory=list[str])
     none: str | None = None
     taken: bool = False
     others: bool = False
+    busy: str | None = None         # the lock file another run held
+    nolock: str | None = None       # why the rewrite ran without the lock
+
+
+def after(lines: list[str], marker: str) -> str | None:
+    """What follows MARKER on the first line that starts with it (None: no such line)."""
+    return next((ln.partition(" ")[2].strip() for ln in lines if ln.split()[:1] == [marker]), None)
 
 
 def said(out: str) -> Said:
     lines = out.splitlines()
     words = out.split()
-    none = next((ln.partition(" ")[2].strip() for ln in lines if ln.split()[:1] == [NONE]), None)
     return Said(ok=OK in out, names=[ln.split()[1] for ln in lines if ln.startswith(NAMED + " ") and len(ln.split()) > 1],
-                none=none, taken=TAKEN in words, others=OTHERS in words)
+                none=after(lines, NONE), taken=TAKEN in words, others=OTHERS in words, busy=after(lines, BUSY),
+                nolock=after(lines, NOLOCK))

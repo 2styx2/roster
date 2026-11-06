@@ -19,8 +19,9 @@ Microsoft's (SYSTEM and Administrators, full control, inheritance removed, set b
 gets an ACL only when roster creates it (this account, SYSTEM, Administrators); an existing one is never changed, only
 reported when others can use it (sshd ignores such a file).
 
-What the script prints, one per line: `FILE <path>` (a file it wrote, or read for check), `WARN <text>`, then
-`ROSTER_OK`; or `REFUSED <text>` (the key file, code 157), `ERROR <text>`, or `NOT_WINDOWS` (code 156)."""
+What the script prints, one per line: `FILE <path>` (a file it wrote, or read for check), `WARN <text>`, `NOLOCK
+<why>` (it ran without the Host lock, T263: 227), then `ROSTER_OK`; or `REFUSED <text>` (the key file, code 157),
+`BUSY <lock file>` (another run held the Host lock: 226), `ERROR <text>`, or `NOT_WINDOWS` (code 156)."""
 
 import base64
 import re
@@ -38,6 +39,7 @@ from .errors import (
     ROSTER_ERROR,
     HostRefused,
     Problem,
+    host_keys_busy,
     tagged,
 )
 
@@ -267,6 +269,36 @@ function Write-Keys($p, $text, $secure) {
     }
 }
 
+function Lock-Keys($p, $owners) {
+    # T263: the Host lock on P (keyline.LOCK_SUFFIX beside it), opened with no sharing, held until the script ends, so
+    # another Box's run on this account waits its turn ($LockWait seconds), or this one stops with nothing changed
+    # (BUSY). Nothing (no lock, nothing said) when P's folder isn't there yet, or isn't one roster writes in (OWNERS:
+    # Assert-Folder's; every write there checks it first and refuses, so nothing is made in it); a link or folder at
+    # the lock's name is never opened, and a lock file this account can't open is said (NOLOCK) and the run goes on,
+    # as before T263
+    $dir = Split-Path -Parent $p
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return }
+    try { Assert-Folder $dir $me $owners } catch { return }
+    $k = $p + $LockSuffix
+    if (Test-Path -LiteralPath $k) {
+        $item = Get-Item -LiteralPath $k -Force
+        if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            Say "NOLOCK $k isn't a plain file"; return
+        }
+    }
+    $until = [DateTime]::UtcNow.AddSeconds($LockWait)
+    while ($true) {
+        try {
+            return [IO.File]::Open($k, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        } catch [UnauthorizedAccessException] {
+            Say "NOLOCK couldn't open $k"; return
+        } catch [IO.IOException] {
+            if ([DateTime]::UtcNow -ge $until) { Say "BUSY $k"; throw "another run holds $k" }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+}
+
 function Say-AdminFileUnread($f) {
     Say "WARN this account isn't in Administrators now, so roster can't look in $f. If it was an administrator when this Box's key was added, the key may still be there, and it logs in as every administrator: have an administrator remove the line ending in this Box's tag, or run roster revoke as one"
 }
@@ -322,6 +354,12 @@ function Main {
     $sshDir = Join-Path $env:USERPROFILE '.ssh'
     $userFile = Join-Path $sshDir 'authorized_keys'
     $mine = if ($isAdmin -and $adminFile) { $adminFile } else { $userFile }
+    if ($Mode -ne 'check') {
+        # before anything is read: the file sshd reads, and the other one setup's cleanup or revoke may write; the
+        # user's first, then the administrators', always in that order
+        $script:Locks = @(Lock-Keys $userFile @($me, $Admins, $System)) +
+                        @(if ($isAdmin -and $adminFile) { Lock-Keys $adminFile @($Admins, $System) })
+    }
     $adminSecure = { param($f) Set-AdminAcl $f }
     $userSecure = { param($f) Set-UserAcl $f $me }
 
@@ -449,9 +487,12 @@ function Main {
     Say 'ROSTER_OK'
 }
 
+$script:Locks = @()
 try { Main } catch {
     $m = "$($_.Exception.Message)" -replace '\s+', ' '
     if ($m.StartsWith('REFUSED ')) { Say $m } else { Say "ERROR $m" }
+} finally {
+    foreach ($l in $script:Locks) { if ($l) { $l.Dispose() } }
 }
 """
 
@@ -473,7 +514,8 @@ def script(mode, tag_re, pub="", taken="", own="", others="", sweep=False):
     header = (f"$Mode = {ps_literal(mode)}\n$Pub = {ps_literal(pub)}\n$TagRe = {ps_literal(tag_re)}\n"
               f"$Taken = {ps_literal(taken)}\n$Own = {ps_literal(own)}\n$Others = {ps_literal(others)}\n"
               f"$TagEnd = {ps_literal(keyline.PS_TAG_END)}\n$NameEnd = {ps_literal(keyline.PS_NAME_END)}\n"
-              f"$Sweep = {'$true' if sweep else '$false'}\n")
+              f"$Sweep = {'$true' if sweep else '$false'}\n$LockSuffix = {ps_literal(keyline.LOCK_SUFFIX)}\n"
+              f"$LockWait = {int(keyline.LOCK_WAIT)}\n")
     return header + SCRIPT
 
 
@@ -723,11 +765,12 @@ class Result:
     (a key there logs in as every administrator on the Host: Microsoft's design)."""
 
     def __init__(self, files: list[str], warnings: list[str], admins: bool = False, tags: Iterable[str] = (),
-                 noline: bool = False, taken: bool = False, others: bool = False) -> None:
+                 noline: bool = False, taken: bool = False, others: bool = False, nolock: str | None = None) -> None:
         self.files, self.warnings, self.admins = files, warnings, admins
         self.tags, self.noline = list(tags), noline       # remove: the names of the lines taken; retag: none found
         self.taken = taken                                # add, retag: another key's line under the new name
         self.others = others                              # add: this Box's lines of another key are still there
+        self.nolock = nolock                              # why it ran without the Host lock (T263), or None
 
 
 def admins_note(name: str) -> str:
@@ -742,6 +785,8 @@ def outcome(name, rc, out, err):
     out, err = "\n".join(lines), " ".join(clean(ln) for ln in err.splitlines())
     files = [ln[5:] for ln in lines if ln.startswith("FILE ")]
     warnings = [ln[5:] for ln in lines if ln.startswith("WARN ")]
+    if busy := keyline.after(lines, "BUSY"):
+        raise host_keys_busy(busy)
     for ln in lines:
         if ln.startswith("REFUSED "):
             raise HostRefused(KEY_FILE, f"{ln[8:]} - nothing was changed there")
@@ -751,7 +796,7 @@ def outcome(name, rc, out, err):
             raise not_windows(name)
     if keyline.OK in lines:
         return Result(files, warnings, "SCOPE admins" in lines, [ln[4:] for ln in lines if ln.startswith("TAG ")],
-                      "NOLINE" in lines, "TAKEN" in lines, "OTHERS" in lines)
+                      "NOLINE" in lines, "TAKEN" in lines, "OTHERS" in lines, keyline.after(lines, "NOLOCK"))
     said = (err or out).strip()
     low = said.lower()
     if "powershell" in low and ("not found" in low or "no such file" in low):

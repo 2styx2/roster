@@ -25,6 +25,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -36,7 +37,17 @@ from .authorized import add_key_script, key_named, remove_key_script
 from .common import die, program_argv, replace_file, ssh_path
 from .config import load_config
 from .context import Context, current
-from .errors import NEW_KEY_REFUSED, UNKNOWN_HOST, InventoryError, Problem, tagged
+from .errors import (
+    HOST_KEYS_BUSY,
+    NEW_KEY_REFUSED,
+    UNKNOWN_HOST,
+    HostRefused,
+    InventoryError,
+    Problem,
+    host_keys_busy,
+    no_host_lock,
+    tagged,
+)
 from .hosts import is_windows
 from .keyline import key_ere
 from .rotation import (
@@ -156,10 +167,16 @@ class Connect:
                 done = winhost.over_key(m.h, mode, tag_re, pub=pub, ssh_opts=["-F", ssh_path(self.config(m, keys))])
             except winhost.SshFailed as e:
                 raise Unreached(str(e)) from None
+            if done.nolock:
+                print(no_host_lock(done.nolock, m.label), file=sys.stderr, flush=True)
             return done.tags
         r = self.run(m, keys, "sh -c " + shlex.quote(posix))
         said = keyline.said(r.stdout)
+        if said.busy:
+            raise host_keys_busy(said.busy)
         if said.ok:
+            if said.nolock:
+                print(no_host_lock(said.nolock, m.label), file=sys.stderr, flush=True)
             return said.names
         why = (r.stderr or r.stdout).strip()[:200] or f"exit {r.returncode}"
         if r.returncode == 255:
@@ -484,6 +501,13 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
             except Unreached as e:
                 recs[m.ctx].pending[m.name] = f"not reached with the old key: {e}"
                 say(f"  pending  {m.label}: not reached with the old key: {e}")
+                continue
+            except HostRefused as e:
+                if e.code != HOST_KEYS_BUSY:
+                    failed[m] = tagged(Problem(NEW_KEY_REFUSED, f"couldn't add the new key's line: {e}"))
+                    continue
+                recs[m.ctx].pending[m.name] = str(e)    # T263: another run's turn there, not a refusal
+                say(f"  pending  {m.label}: {e}")
                 continue
             except RuntimeError as e:
                 failed[m] = tagged(Problem(NEW_KEY_REFUSED, f"couldn't add the new key's line: {e}"))

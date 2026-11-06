@@ -271,7 +271,8 @@ def test_setup_puts_an_admins_key_in_the_admin_file_with_microsofts_acl(win, cap
     assert acl["protected"] and sids(acl) == [SYSTEM, ADMINS] and acl["owner"] == ADMINS
     # the password was only the login's: never in a command or a script
     assert all("hunter2" not in c + s for c, s in win.sent) and "hunter2" not in win.ssh_log()
-    assert not [p for p in win.admin_file("dc-01").parent.iterdir() if ".roster-" in p.name]     # no temp file left
+    assert [p.name for p in win.admin_file("dc-01").parent.iterdir() if ".roster-" in p.name] == [
+        "administrators_authorized_keys.roster-lock"]           # no temp file left; the Host lock's stays (T263)
     # again: the key login works now, so nothing is sent
     sent = len(win.sent)
     assert main(["setup", "--only", "dc-01"]) == 0
