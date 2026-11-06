@@ -45,6 +45,11 @@ class Store:
         top = None if self.top is None else PATH_NOT_REPEATED if self.hidden else str(self.top)
         return {"path": PATH_NOT_REPEATED if self.hidden else str(self.path), "repo": top}
 
+    def shown_backup(self, bak):
+        """BAK (a backup's path, or None) as a result may name it: PATH_NOT_REPEATED for a hidden one's (#538), kept
+        beside it or in its work tree's git dir."""
+        return None if bak is None else PATH_NOT_REPEATED if self.hidden else str(bak)
+
     def view(self):
         """{kind, note, repo}: for serve's inventory.info and `roster check --box`."""
         return {"kind": self.kind, "note": self.note, "repo": self.shown()["repo"]}
@@ -102,16 +107,17 @@ class RepoStore(Store):
         return self.repo.backup(text)
 
     def pull(self):
-        return changes.pull(self.path)
+        return changes.pull(self.path, self.hidden)
 
     def diff(self):
         return {**changes.diff(self.path), **self.shown(), "kind": REPO}
 
     def discard(self):
-        return changes.discard(self.path)
+        result = changes.discard(self.path, self.hidden)
+        return {**result, "backup": self.shown_backup(result["backup"])}
 
     def publish(self, message=None):
-        return changes.publish(self.path, message)
+        return changes.publish(self.path, message, self.hidden)
 
 
 def named(path, hidden):
@@ -176,4 +182,4 @@ def detect(path, hidden=False):
         return Store(path, f"{'Its git repo (not repeated)' if hidden else top} has no remote, so {name} is kept as a "
                            "plain file: every edit saves straight to it (commit when you like; add a remote for "
                            "Pending changes and Publish)", top, git_dir, hidden)
-    return RepoStore(changes.Repo(path), hidden)
+    return RepoStore(changes.Repo(path, hidden), hidden)

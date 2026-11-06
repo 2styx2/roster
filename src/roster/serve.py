@@ -115,7 +115,7 @@ from .sshops import (
     recorded_host_keys,
 )
 
-API_VERSION = 31            # bump when a method or result changes in a way the app has to know about
+API_VERSION = 32            # bump when a method or result changes in a way the app has to know about
 
 
 def busy_error(resource, who, subject=None):
@@ -745,8 +745,13 @@ def inventories_list(state, params):
         looks like a token (as `inventory.info`'s)
     Errors: 143
     Since: API 31
+    Params: none
+    Result: each of `inventories[].path` (#538) is `"(not repeated)"` when that named Inventory's `roster.yml` is in a
+        folder (or has a name) that looks like a token, as `path` is
+    Errors: 143
+    Since: API 32
     """
-    return {**named.load().view(), "name": current().name, "path": state.shown()}
+    return {**inventories.listed(), "name": current().name, "path": state.shown()}
 
 
 @method("inventories.use")
@@ -759,6 +764,11 @@ def inventories_use(state, params):
     Result: `{active, path, restart: true}`: `path` is its `roster.yml`
     Errors: 140, 143
     Since: API 27
+    Params: `{name}`
+    Result: `path` (#538) is `"(not repeated)"` when its `roster.yml` is in a folder (or has a name) that looks like
+        a token (as `inventories.list`'s)
+    Errors: 140, 143
+    Since: API 32
     """
     name = params.get("name")
     if not isinstance(name, str) or not name:
@@ -768,7 +778,7 @@ def inventories_use(state, params):
     if chosen is None:
         named.unknown(name, inv, typed=False)
     inventories.use(name)
-    return {"active": name, "path": str(chosen.path), "restart": True}
+    return {"active": name, "path": shown_path(chosen.path) or PATH_NOT_REPEATED, "restart": True}
 
 
 @method("inventory.create", deadline=75, cancel="running")
@@ -954,6 +964,10 @@ def host_update(state, params):
         nothing changed)
     Errors: 2, 70, 74, 75
     Since: API 5
+    Params: `{host, changes}`
+    Result: `backup` (#538) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s `path`)
+    Since: API 32
     """
     h, new, wanted = edited_host(state, params)
     if not wanted:
@@ -1018,6 +1032,10 @@ def changes_discard(state, params):
     Params: none
     Result: a plain file (T212) has nothing to discard: `{discarded: false, backup: null}`
     Since: API 28
+    Params: none
+    Result: `backup` (#538) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s `path`)
+    Since: API 32
     """
     result = store.at(inventory_path(state), hidden=state.hidden).discard()
     state.reload()
@@ -1501,6 +1519,10 @@ def quick_save(state, params):
         (`sync`, T150, as `host.add`'s)
     Errors: 80, 81, 74, 60-62, 64, 65, 14, 66, 67
     Since: API 13
+    Params: `{quick, name, group, item?, title?, provider?, save_to?}`
+    Result: `backup` (#538) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s `path`)
+    Since: API 32
     """
     hid = text_param(params, "quick")
     name, group = text_param(params, "name"), text_param(params, "group")
@@ -1535,7 +1557,7 @@ def quick_save(state, params):
                                       "port": q["port"], "save_to": save_to},
                                      lambda path: edit.added(path, group, name, fields)[:2], f"{name} wasn't added",
                                      then=record_key)
-    return {"added": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "item": made,
+    return {"added": True, "host": state.inventory()["hosts"][name], "backup": repo.shown_backup(backup), "item": made,
             "warnings": warnings, "sync": synced}
 
 
@@ -1555,6 +1577,10 @@ def host_save_login(state, params):
         as `host.add`'s)
     Errors: 75, 66, 67, 60-65, 14
     Since: API 13
+    Params: `{held, item?, provider?, save_to?}`
+    Result: `backup` (#538) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s `path`)
+    Since: API 32
     """
     hid = text_param(params, "held")
     held, password = logged_in_with(state, hid, "host")
@@ -1575,7 +1601,7 @@ def host_save_login(state, params):
                                       "address": h["ip"], "port": h["ssh"]["port"], "save_to": save_to},
                                      lambda path: edit.edited(path, name, wanted)[:2],
                                      f"{name}'s Login wasn't changed")
-    return {"changed": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "item": made,
+    return {"changed": True, "host": state.inventory()["hosts"][name], "backup": repo.shown_backup(backup), "item": made,
             "warnings": [], "sync": synced}
 
 
@@ -1609,6 +1635,10 @@ def host_add(state, params):
         address that's neither an IP address nor a DNS name
     Errors: 80, 81, 74, 61, 11, 12, 14, 30-35, 40-48, 60, 62, 64, 65
     Since: API 6
+    Params: `{name, group, address, user?, port?, type?, title?, description?, enroll?, auth? | password +
+    Result: `backup` (#538) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s `path`)
+    Since: API 32
     """
     name, group = text_param(params, "name"), text_param(params, "group")
     fields = add_fields(params)
@@ -1713,6 +1743,10 @@ def host_review(state, params):
         sits over an unreviewed group or defaults, its line is taken out again, so the text goes back to what it was
     Errors: 2, 70, 74
     Since: API 9
+    Params: `{host}`
+    Result: `backup` (#538) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s `path`)
+    Since: API 32
     """
     name = text_param(params, "host")
     wanted = params.get("reviewed", True)
@@ -1738,9 +1772,9 @@ def write_edit(state, old_text, new_text, repo=None, then=None):
     """Write an edit of roster.yml through REPO (default: store.at, a Pending change in a repo, saved in place in a
     plain file), keeping what it replaced as the backup; THEN(the backup's path); load it again and sync this Box
     (T150). Returns `{backup, sync}`, for the result."""
-    backup, synced = (repo or store.at(state.path, hidden=state.hidden)).write(old_text, new_text, then=then,
-                                                                               sync=lambda: resynced(state))
-    return {"backup": str(backup), "sync": synced}
+    repo = repo or store.at(state.path, hidden=state.hidden)
+    backup, synced = repo.write(old_text, new_text, then=then, sync=lambda: resynced(state))
+    return {"backup": repo.shown_backup(backup), "sync": synced}
 
 
 def name_param(params, key):
@@ -1766,6 +1800,10 @@ def host_remove(state, params):
         Its group stays, even empty. **Never touches the vault**: its vault item, if any, stays
     Errors: 1, 2, 70, 74
     Since: API 8
+    Params: `{host}`
+    Result: `backup` (#538) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s `path`)
+    Since: API 32
     """
     name = name_param(params, "host")
     repo = live_repo(state)
@@ -1783,6 +1821,10 @@ def host_rename(state, params):
         its name. `100` if `to` is taken
     Errors: 1, 2, 70, 74, 80, 100
     Since: API 8
+    Params: `{host, to}`
+    Result: `backup` (#538) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s `path`)
+    Since: API 32
     """
     name, to = name_param(params, "host"), name_param(params, "to")
     repo = live_repo(state)
@@ -1806,6 +1848,10 @@ def host_move(state, params):
         would still come out different
     Errors: 1, 2, 70, 74, 101, 103
     Since: API 8
+    Params: `{host, group}`
+    Result: `backup` (#538) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s `path`)
+    Since: API 32
     """
     name, group = name_param(params, "host"), name_param(params, "group")
     repo = live_repo(state)
@@ -1824,6 +1870,10 @@ def group_new(state, params):
     Result: `{group, backup, sync}`: `NAME:` with `hosts: {}` (and its `title:`) after the last group. `100` if taken
     Errors: 1, 70, 74, 80, 100
     Since: API 8
+    Params: `{name, title?}`
+    Result: `backup` (#538) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s `path`)
+    Since: API 32
     """
     name = name_param(params, "name")
     title = params.get("title") or ""
@@ -1844,6 +1894,10 @@ def group_rename(state, params):
         `100` if taken
     Errors: 1, 70, 74, 80, 100, 101
     Since: API 8
+    Params: `{group, to}`
+    Result: `backup` (#538) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s `path`)
+    Since: API 32
     """
     group, to = name_param(params, "group"), name_param(params, "to")
     repo = live_repo(state)
@@ -1865,6 +1919,10 @@ def group_delete(state, params):
         (`102`, `data.hosts`) unless `to` names the group they move to first (as `host.move` moves them)
     Errors: 1, 70, 74, 101-103
     Since: API 8
+    Params: `{group, to?}`
+    Result: `backup` (#538) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s `path`)
+    Since: API 32
     """
     group = name_param(params, "group")
     to = params.get("to")
@@ -2622,6 +2680,10 @@ def mesh_cut(state, params):
         With `background: true`, `{job, action, total, host}` at once, and the result comes in `mesh.job`
     Errors: 1, 2, 111, 205
     Since: API 15
+    Params: `{host, background?: bool}` (`background` since API 17)
+    Result: `change.backup` (#538) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s `path`)
+    Since: API 32
     """
     name = text_param(params, "host")
     background = background_param(params)
@@ -2837,6 +2899,10 @@ def discover_add(state, params):
     Result: `{group, added: [{address, name}], backup, sync}`: `sync` (T150) as `host.add`'s
     Errors: 1, -32602, 70, 74, 100, 122, 123
     Since: API 18
+    Params: `{scan, addresses: [address], group?}`: `group` is new (`discovered-YYYYMMDD` if left out)
+    Result: `backup` (#538) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s `path`)
+    Since: API 32
     """
     scan = the_scan(state, {"scan": text_param(params, "scan")})
     addresses = params.get("addresses")

@@ -115,7 +115,7 @@ def cmd_init(args, parser):
             newinventory.name_new(path, args.name)
         except Problem as e:
             refuse(e)
-        say(f"named {args.name}: {named.path_of(args.name)} (`roster --inv {args.name} setup` sets this Box up "
+        say(f"named {args.name}: {shown_path(named.path_of(args.name)) or HIDDEN_PATH} (`roster --inv {args.name} setup` sets this Box up "
             f"for it; `roster inv use {args.name}` makes it the active one)")
     return 0
 
@@ -1383,20 +1383,25 @@ def cmd_inv(args):
         inv = named.load()
         if args.json:
             from . import jsondocs
-            jsonout.emit(jsondocs.InventoriesDoc.model_validate(inv.view()))
+            jsonout.emit(jsondocs.InventoriesDoc.model_validate(inventories.listed(inv)))
             return 0
         if not inv.inventories:
             say("no named Inventories (roster inv add NAME PATH names one)")
         width = max((len(x.name) for x in inv.inventories), default=0)
         for x in inv.inventories:
             missing = "" if x.path.is_file() else "  (not there)"
-            say(f"{'*' if x.name == inv.active else ' '} {x.name:<{width}}  {x.path}{missing}")
+            say(f"{'*' if x.name == inv.active else ' '} {x.name:<{width}}  {inventories.shown(x.path)}{missing}")
+        if any(shown_path(x.path) is None for x in inv.inventories):       # #538
+            say(f"note: {RENAME_HINT} (`roster inv remove NAME`, then `roster inv add NAME NEW-PATH`)")
         return 0
     if act == "add":
         added = inventories.add(args.name, args.path)
-        say(f"named {args.name}: {named.path_of(args.name)}"
+        path = named.path_of(args.name)
+        say(f"named {args.name}: {inventories.shown(path)}"
             + (f"; {args.name} is the active Inventory" if added.first else f" (`roster inv use {args.name}` makes it "
                "the active one)"))
+        if shown_path(path) is None:                # #538
+            say(f"note: {RENAME_HINT} (`roster inv remove {args.name}`, then `roster inv add {args.name} NEW-PATH`)")
         if added.mesh_state:
             say(f"its Mesh state (from this file's `roster mesh` before it was named) is in {added.mesh_state} now")
         if added.mesh_kept:
@@ -1408,10 +1413,14 @@ def cmd_inv(args):
     if act == "use":
         inventories.use(args.name)
         name = named.canonical(args.name)
-        say(f"{name} is the active Inventory: {named.path_of(name)}")
+        path = named.path_of(name)
+        say(f"{name} is the active Inventory: {inventories.shown(path)}")
+        if shown_path(path) is None:                # #538
+            say(f"note: {RENAME_HINT} (`roster inv remove {name}`, then `roster inv add {name} NEW-PATH`)")
         if os.environ.get("ROSTER_CONFIG"):
-            say(f"note: ROSTER_CONFIG is set ({os.environ['ROSTER_CONFIG']}), and it comes before the active "
-                "Inventory: unset it for roster to use this one")
+            given = shown_path(os.environ["ROSTER_CONFIG"]) or HIDDEN_PATH
+            say(f"note: ROSTER_CONFIG is set ({given}), and it comes before the active Inventory: unset it for roster "
+                "to use this one")
         return 0
     removed = inventories.remove(args.name)
     say(f"forgot {args.name} (its roster.yml stays where it is)"

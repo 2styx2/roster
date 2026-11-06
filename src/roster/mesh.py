@@ -1595,4 +1595,4 @@ def write_cut(cfg, name, sync=None):
         backup, synced = kept.write(old, new, sync=sync)
     except Problem as e:
         return {"written": False, "error": e.message, "fix": f"set mesh: false for {name} in roster.yml by hand"}
-    return {"written": True, "backup": str(backup), "kind": kept.kind, "sync": synced}
+    return {"written": True, "backup": kept.shown_backup(backup), "kind": kept.kind, "sync": synced}
