@@ -510,6 +510,21 @@ next: roster add --from-vault (1 new vault item not in roster.yml)
 
 Added and changed items are named, removed ones only counted. To tell, it keeps a snapshot per vault in `~/.config/roster/vault-sync/PROVIDER.json` (0600): each login item's id and revision date and when it was taken, never a name, password or any other value. The items come from the same listing as [`roster add --from-vault`](#vault-items-not-in-rosteryml-roster-add---from-vault), which never reads a password. The first sync only counts the items; a sync that fails leaves the snapshot as it was, says when roster last synced it, and exits 1. `roster vault status` says when each vault last synced ("last synced 3 h ago; run `roster vault sync` for what changed"), from the snapshot, without asking the vault. `roster vault bw -- sync` still runs bw's own sync, the raw passthrough, without the report; `roster add --from-vault` syncs first by itself.
 
+### When your vault changes
+
+An item added or changed in the vault, a Host added to `roster.yml`, a password changed on one side: there's no set routine after any of them. Run whichever of these you reach for first. Each catches up what it needs itself, or names the one command that does, and ends with what changed and, only if something is left, `next:` and that command.
+
+| Command | What it catches up | What it names when something's missing |
+|---|---|---|
+| `roster sync` | The map: this Box's ssh config and ROSTER.md from `roster.yml` (Hosts added, removed, renamed, at a new address). The vault: each vault's local copy synced, unless `--no-vault` | A Host that needs this Box's key (`roster setup --host NAME`), a new vault item `roster.yml` doesn't name yet (`roster add --from-vault`, until it does), a locked vault (`roster vault unlock`), the Mesh or a Box key rotation left to do |
+| `roster setup` | This Box's key on every Host it isn't on yet, each Host's host key recorded, the ssh config. Its own lookup syncs the vault, so a new item needs no `vault sync` first | Each Host it couldn't finish, with the cause: never answered at its address, the vault item's password refused, no password login, the vault locked (from the start, or part way), then `roster check --host` for the Hosts it keyed |
+| `roster check` | Nothing: it reads. One login per Host, never a retry, and it stops trying Hosts behind a rate limiter that dropped one | Each failed login's cause and fix: no key yet (a to-do: `roster setup --host NAME`), the key taken off, never answered or stopped answering, a locked or expired account, a FIPS Host (`key_type: ecdsa`) |
+| `roster run HOST -- CMD` | Nothing: it runs one command | A Host not in this Box's ssh config yet (`roster sync`), no key there yet (`roster setup --host NAME`), a vault item renamed, deleted or doubled, a locked vault |
+| `roster vault sync` | The vault alone: each local copy synced, and what changed since the last sync, by name | A new item `roster.yml` doesn't name (`roster add --from-vault`); offline, when it last synced |
+| `roster vault unlock` | Bitwarden unlocked for every roster run on this Box | What the locked vault held up (`roster setup --host NAME`) |
+
+None of them asks for a password without a terminal; each says what it couldn't do and the command for it. `update.sh` ends with `roster sync`'s line (it syncs the map only, and never asks).
+
 ### Old command names
 
 The 14 commands came from regrouping older ones (decision Q194). Each old name still works, hidden from `roster --help`, the man page and Tab completion, and says its new form once on stderr; `roster completion`, which an older rc line runs at every shell start, says nothing. With `--json` it says nothing either, so stderr stays JSON. They go away in a later Release ([Deprecated names](deprecated.md#deprecated-in-06)).
