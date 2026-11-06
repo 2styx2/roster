@@ -422,7 +422,7 @@ One person may have several Inventories, the team's for work and their own for h
 | `197` | `roster vault op`: an op command roster vault op doesn't know (or an option among its words, or before it, that isn't one of op's valueless ones), or `--write` among op's arguments; op didn't run. A CLI error |
 | `198` | `roster vault op`: `op run`, `op plugin run`, `--session` or `--config` on op's command line, always refused; op didn't run. A CLI error |
 | `199` | `host.check`: the Host refused this Box's Ed25519 key and offers only NIST key exchange and host keys (no curve25519, no Ed25519 host key): a FIPS-mode Host, which never takes Ed25519. The fix is `key_type: ecdsa` for it, then `roster setup --host NAME` (T239); without those signs a refused key is still `46` |
-| `200` | A note, not an error: a Host whose `key_type:` isn't `ed25519` is left out of the Mesh (its keys are Ed25519 only for now). It's the start of that Host's reason in `excluded` (`mesh.plan`, `mesh.apply`, `mesh.status`), as `160` is, never an error code (T239) |
+| `200` | Until T245, a note: a Host whose `key_type:` wasn't `ed25519` was left out of the Mesh, the start of its reason in `excluded`. The Mesh now follows `key_type:`, so roster no longer gives it (T239, T245) |
 | `201` | `roster setup`: the file a key type's key goes in (`~/.ssh/roster_ecdsa`, or `key_path:`) holds a key of another type, an RSA key with fewer bits than its type, or a `.pub` that isn't its private key's, so roster made none and installed nothing. A CLI error (T239) |
 | `202` | `roster vault unlock`: a `bw-session` file is already there that isn't yours alone (a symlink, another user's, not a plain file, readable by others), or its folder, or one above it up to your home folder, isn't (another user's, writable by others; T248), so roster won't write over it; refused before the master password is asked, nothing written (T241). A CLI error, never a serve answer: serve never reads or writes that file |
 | `203` | `roster vault unlock` / `vault lock` for a provider with no session roster keeps: KeePassXC has none, and 1Password's `op signin` keeps its own (Bitwarden only for now). A CLI error |
@@ -441,6 +441,9 @@ One person may have several Inventories, the team's for work and their own for h
 | `216` | `roster setup`: the vault was locked part way through the run. A CLI code (T243) |
 | `217` | `inventory.pull`: the infra repo's branch is gone from the server (merged and deleted); `data.upstream`, the fix names the branch to switch to. Nothing was switched (T243) |
 | `218` | This Box's key file is gone though roster made it (`check --box`, as topic `E280`; setup makes a new one). A CLI code (T243) |
+| `219` | A warning, not an error: by roster's record, a Host holds this Box's key line of another type than its `key_type:`, or none of it (`roster check`, `check --json`'s `key_type_drift`, `roster sync`) (T245) |
+| `220` | A warning, not an error: a Mesh source whose key is Ed25519 has a key Link to a peer (or through a `via:` hop) whose `key_type:` isn't `ed25519`, which a FIPS-mode one refuses. In a Mesh result's `warnings` (`mesh.plan`, `mesh.apply`) (T245) |
+| `221` | A note, not an error: `roster revoke` keeps a key file another Inventory on this Box uses too off its list of files to delete. CLI only (T245) |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.
 

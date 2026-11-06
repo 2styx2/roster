@@ -199,7 +199,7 @@ OP_REFUSED = 198            # never run: `op run`/`op plugin run` (another progr
 
 # The SSH key type (T239, #436, decision Q200; catalog rows 261-263)
 KEY_TYPE_FIPS = 199         # check HOST: the Host refused this Box's Ed25519 key and offers only NIST algorithms (FIPS)
-MESH_KEY_TYPE = 200         # a note, not an error: a Host whose key_type isn't ed25519 is left out of the Mesh
+MESH_KEY_TYPE = 200         # no longer raised (T245, Q212: the Mesh follows key_type); was: left out of the Mesh
 KEY_TYPE_MISMATCH = 201     # setup: the file a key type's key goes in holds a key of another type; nothing was made
 
 # A saved Bitwarden session (T241, #474, decision Q203; catalog rows 264-266): roster vault unlock / vault lock
@@ -225,6 +225,11 @@ SSH_RATE_LIMITED = 215      # the connection was dropped before ssh spoke: a rat
 VAULT_LOCKED_DURING_RUN = 216  # setup: the vault was open for one lookup and locked for the next; nothing more asked
 BRANCH_GONE = 217           # the Inventory's branch was merged and deleted upstream: pull from main instead
 BOX_KEY_REMADE = 218        # a warning: this Box's key was gone, so setup made a new one every Host needs again
+
+# key_type follow-ups (T245, #478, decision Q212; catalog rows 281-283)
+KEY_TYPE_DRIFT = 219        # a warning: a Host holds this Box's key lines of other types than roster.yml's
+MESH_KEY_PEER = 220         # a warning: a source's Ed25519 Mesh key goes to a peer whose key_type isn't ed25519
+KEY_FILE_SHARED = 221       # a note: revoke keeps a key file another Inventory on this Box still uses
 
 
 class Problem(Exception):

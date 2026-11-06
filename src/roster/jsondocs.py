@@ -144,6 +144,7 @@ class CheckDoc(Part, frozen=True):
     mesh: MeshPlanDoc | None
     rotation_pending: dict[str, str] = Field(default_factory=dict)    # T240: Box key rotation, host: why
     rotation_problems: list[str] = Field(default_factory=list)        # T240: its record or key files, each said
+    key_type_drift: dict[str, str] = Field(default_factory=dict)      # T245: a key line of another type, host: why
     ok: bool
 
 

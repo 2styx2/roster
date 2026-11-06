@@ -59,7 +59,8 @@
 #   headless boxes, or `eval $(op signin)` first.
 
 box_name: ""                 # name tagged on this box's key; blank = this machine's hostname
-key_path: ~/.ssh/roster_ed25519
+# key_path: ~/.ssh/roster_ed25519  # this Box's key; default ~/.ssh/roster_<key_type>, so leave
+#                            # it out unless the key lives elsewhere
 # key_type: ecdsa           # the SSH key type (default ed25519); also per group or host, e.g.
 #                            # ecdsa for FIPS-mode hosts, which refuse ed25519
 workers: 32                  # how many hosts to work on in parallel

@@ -219,7 +219,7 @@ def test_uninstall_removes_every_file_roster_writes_in_its_own_folder(box):
     names = roster_state_files()
     # the scan still finds what it should (a regex that stopped matching would pass everything)
     assert {"mesh.json", "mesh-lab.json", "inventories.json", "run.lock", "run-lab.lock", "key-created", "key-name",
-            "key-name-lab", "key-rotation", "key-rotation-lab", "bw-session", "vault-sync", "roster.yml"} <= set(names)
+            "key-name-lab", "key-types", "key-types-lab", "key-rotation", "key-rotation-lab", "bw-session", "vault-sync", "roster.yml"} <= set(names)
     conf = home / ".config/roster"
     for name, folder in names.items():
         if name in USER_OWNED:
