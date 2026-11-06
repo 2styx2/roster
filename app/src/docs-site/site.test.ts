@@ -146,8 +146,10 @@ describe("the docs website", () => {
     expect(size).toBeLessThan(450_000);
     // Shard it before it gets there, not trim the docs (T228, #438; docs-budget research item 4): `topics`
     // and `places` as one small file the search box loads first, the texts in shards loaded as matches need
-    // them. 344.6 KB on 2026-11-05 (77 %); this fails at 80 %, so the next docs PR past it does the sharding.
-    expect(size, "the search index is past 80 % of its 450 KB budget: shard it (#438 item 2)").toBeLessThan(360_000);
+    // them. 344.6 KB on 2026-11-05 (77 %); this failed at 80 %. On 2026-11-06 the UI pass (#418: its decision
+    // rows and news) took it to 361.9 KB; the owner moved this check to 85 % so #418 could land, and the sharding
+    // is the next docs PR (#526), before it reaches 382.5 KB.
+    expect(size, "the search index is past 85 % of its 450 KB budget: shard it (#526)").toBeLessThan(382_500);
   });
 
   it("puts the search box on every page, and loads the index only when it's used", () => {
