@@ -7,6 +7,7 @@ use roster_core::backend::{BackendInfo, BackendKind, CheckStarted, CreateError, 
 use roster_core::config::{self, *};
 use roster_core::error::{BackendError, ErrorKind};
 use roster_core::rpc::CallError;
+use roster_core::serve_api::PASS_THROUGH;
 use roster_core::wt::{DiffKind, DiffLine, Overridden, Preview, Previewed, Wins};
 use std::path::Path;
 use ts_rs::TS;
@@ -75,7 +76,7 @@ fn one_field_a_line(decl: &str) -> String {
 fn generated() -> String {
     // serde_json sends every integer as a number.
     let cfg = ts_rs::Config::new().with_large_int("number");
-    let decls = [
+    let mut decls = vec![
         // The Config (config/schema.rs, config/mod.rs).
         decl::<config::Report>(&cfg),
         decl::<config::ConfigError>(&cfg),
@@ -158,10 +159,21 @@ fn generated() -> String {
         decl::<roster_core::package::Update>(&cfg),
         decl::<roster_core::package::Checked>(&cfg),
     ];
+    decls.push(pass_through());
     format!(
         "// Generated from roster-core's Rust types by crates/roster-core/tests/ts_types.rs: don't edit.\n\
          // `ROSTER_WRITE_TS=1 cargo test --test ts_types` writes it again.\n\n{}\n",
         decls.join("\n\n")
+    )
+}
+
+/// serve_api.rs's `PASS_THROUGH` as a union, so the frontend's `serve_call` can't name another.
+fn pass_through() -> String {
+    let names: Vec<String> = PASS_THROUGH.iter().map(|m| format!("\n  | \"{m}\"")).collect();
+    format!(
+        "/**\n * A serve method the frontend calls as it is, through `serve_call` (serve_api.rs's `PASS_THROUGH`).\n \
+         */\nexport type PassThrough ={};",
+        names.concat()
     )
 }
 

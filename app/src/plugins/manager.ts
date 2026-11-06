@@ -19,7 +19,7 @@
 //   old version.
 //
 // `:plugins` (the command and panel), `:packages` and the prompts are drawn by PluginsPanel.tsx.
-import type { Backend, OpenSession, PackageStatus, PackageUpdate, PluginErrorInfo, PluginEventName, PluginCaller, PluginManifest, PluginData, PluginReply, SiteRequests } from "../backend/types";
+import type { Backend, OpenSession, PackageStatus, PackageUpdate, PluginErrorInfo, PluginEventName, PluginCallBy, PluginManifest, PluginData, PluginReply, SiteRequests } from "../backend/types";
 import type { CommandContext } from "../commands/table";
 import type { Registries } from "../registries";
 import { BUILTIN } from "../registry";
@@ -247,7 +247,7 @@ export class PluginManager {
   /** While a Plugin's `roster.cmd` line runs (issue #183): whose call the Plugin's own command it
    * names is. The user's carried one hop when the line was made in the user's own call, else the
    * app's, so a chain of a Plugin's commands never keeps the user's call alive. */
-  private lineCaller: { plugin: string; by: PluginCaller } | null = null;
+  private lineCaller: { plugin: string; by: PluginCallBy } | null = null;
   private readonly waiting = new Map<string, Prompt>();
   private readonly uses = new Map<string, Use[]>();
   private requests: Record<string, SiteRequests[]> = {};
@@ -313,7 +313,7 @@ export class PluginManager {
         this.runningCommands.add(running);
         try {
           // Run by the Plugin's own `roster.cmd`, it's the user's call carried, or the app's.
-          run(this.lineCaller?.plugin === plugin ? this.lineCaller.by : true);
+          run(this.lineCaller?.plugin === plugin ? this.lineCaller.by : "user");
         } finally {
           this.runningCommands.delete(running);
         }
@@ -729,7 +729,7 @@ export class PluginManager {
 
   /** Runs what a Plugin's row, action, finder item or segment handed over, telling it which one
    * (`context`) and, when it may know, the Session on screen. */
-  callWith(plugin: string, handler: number, context: HandlerContext, what = "ran an action", user: PluginCaller = true): Promise<unknown> {
+  callWith(plugin: string, handler: number, context: HandlerContext, what = "ran an action", user: PluginCallBy = "user"): Promise<unknown> {
     return this.call(plugin, handler, { ...context, ...this.onScreen(plugin) }, what, user);
   }
 
@@ -746,11 +746,11 @@ export class PluginManager {
    * `:plugins` lists it among its recent use (null: not at all, a timer). `user`: whether the user
    * chose it (false: the app runs it on its own, never the user's call; "carried": the Plugin's own
    * command its `roster.cmd` ran from the user's call, that call one hop on). */
-  async call(plugin: string, handler: number, args: unknown = {}, what: string | null = "ran an action", user: PluginCaller = true): Promise<unknown> {
+  async call(plugin: string, handler: number, args: unknown = {}, what: string | null = "ran an action", user: PluginCallBy = "user"): Promise<unknown> {
     if (!this.loaded.has(plugin)) return undefined;
     if (what !== null) this.used(plugin, what);
     const reply = await this.backend.pluginCall(plugin, handler, args, user, this.builtins()).catch((e: unknown) => this.lost(plugin, e));
-    this.apply(reply, { background: user === false });
+    this.apply(reply, { background: user === "app" });
     return reply.result;
   }
 
@@ -1023,7 +1023,7 @@ export class PluginManager {
 
   /** Runs what `plugin` handed over: its function (with `context`, and the Session on screen
    * when it may know it), or its line. */
-  private runFor(plugin: string, run: Run, context: HandlerContext = {}, user: PluginCaller = true) {
+  private runFor(plugin: string, run: Run, context: HandlerContext = {}, user: PluginCallBy = "user") {
     if ("command" in run) this.runLine(plugin, run.command);
     else void this.callWith(plugin, run.handler, context, "ran an action", user);
   }
@@ -1084,7 +1084,7 @@ export class PluginManager {
     });
     let result: unknown;
     try {
-      const reply = await this.backend.pluginCall(plugin, handler, { health: id, check: run, ...this.onScreen(plugin) }, false, this.builtins()).catch((e: unknown) => this.lost(plugin, e));
+      const reply = await this.backend.pluginCall(plugin, handler, { health: id, check: run, ...this.onScreen(plugin) }, "app", this.builtins()).catch((e: unknown) => this.lost(plugin, e));
       this.used(plugin, "ran its :check section");
       this.apply(reply);
       if (reply.error) return error(`check failed: ${describeError(reply.error)}`);
@@ -1131,7 +1131,7 @@ export class PluginManager {
     const key = `${plugin}\0${command}`;
     const last = this.completions.get(key);
     if (last && last.arg === arg) return last.list;
-    void this.call(plugin, handler, arg, null, false).then((result) => {
+    void this.call(plugin, handler, arg, null, "app").then((result) => {
       const list = Array.isArray(result) ? result.filter((x): x is string => typeof x === "string").slice(0, 200) : [];
       const before = this.completions.get(key);
       this.completions.set(key, { arg, list });

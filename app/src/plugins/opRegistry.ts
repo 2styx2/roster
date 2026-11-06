@@ -18,7 +18,7 @@ import { DEFAULT_TUTORIAL, TUTOR_EVENTS, tutorPage, type StepMatch } from "../tu
 import { quiet as quietMessage } from "../ui/messages";
 import { mergeRows, type TableRow } from "../ui/table";
 import { detailsId, type Content } from "../view/views";
-import type { Host, PluginCaller, PluginManifest } from "../backend/types";
+import type { Host, PluginCallBy, PluginManifest } from "../backend/types";
 import { CORE } from "./core.gen";
 import { GraphInvalid, MAX_CLUSTERS, MAX_EDGES, MAX_NODES, parseGraph, parseGraphUpdate, type PluginGraph } from "./graphOps";
 import {
@@ -107,9 +107,9 @@ export interface OpHost {
   notify(plugin: string, level: "info" | "warn" | "error", text: string, actions?: readonly { label: string; command: string }[], asked?: boolean, background?: boolean): void;
   /** The command line that runs `run` for `plugin` (`plugins run …` or `plugins call …`). */
   line(plugin: string, run: Run, context?: HandlerContext): string;
-  runFor(plugin: string, run: Run, context?: HandlerContext, user?: PluginCaller): void;
+  runFor(plugin: string, run: Run, context?: HandlerContext, user?: PluginCallBy): void;
   runLine(plugin: string, line: string): void;
-  call(plugin: string, handler: number, args: unknown, what: string | null, user: PluginCaller): Promise<unknown>;
+  call(plugin: string, handler: number, args: unknown, what: string | null, user: PluginCallBy): Promise<unknown>;
   /** The Plugin running now by that name, if any. */
   current(plugin: string): Loaded | undefined;
   /** A `:check` section's `check`, called for its lines. */
@@ -117,9 +117,9 @@ export interface OpHost {
   /** The lines for a `:check` run whose `check` said "later" (decision Q112h). */
   answerCheck(plugin: string, check: number, checks: unknown): void;
   /** Runs Plugin command `name` for `plugin`, as the user's or the one its `roster.cmd` carried. */
-  runCommand(plugin: string, name: string, run: (by: PluginCaller) => void): void;
+  runCommand(plugin: string, name: string, run: (by: PluginCallBy) => void): void;
   /** Runs `line` as made by `plugin`'s `roster.cmd`: its own command it names is `by`'s call. */
-  runCmdLine(plugin: string, by: PluginCaller, line: string): void;
+  runCmdLine(plugin: string, by: PluginCallBy, line: string): void;
   /** A Plugin command's completions: the last list, kept to what still matches, while it asks again. */
   complete(plugin: string, command: string, handler: number, arg: string): string[];
   /** What a Plugin's command hears of the Sidebar (api 3). */
@@ -487,7 +487,7 @@ const OPS: { [K in OpKind]: Entry<K> } = {
       let current: () => void;
       const open = () => {
         const mine = current;
-        void h.call(plugin, handler, {}, `listed ${op.id}`, false).then((result) => {
+        void h.call(plugin, handler, {}, `listed ${op.id}`, "app").then((result) => {
           // Replaced (or gone) meanwhile: what came back is for a finder that isn't there.
           if (l.disposers.get(key) !== mine || h.current(plugin) !== l) return;
           const items = parseFinderItems(result ?? [], `roster.finders.set ${op.id}`);
@@ -867,7 +867,7 @@ const OPS: { [K in OpKind]: Entry<K> } = {
       // One question at a time: a newer one replaces it (another Plugin's hears its cancel).
       const before = c.host.shown.ask(c.plugin, op.confirm);
       // The app's doing, not the user's answer: never the user's call for that Plugin.
-      if (before && before.plugin !== c.plugin && before.cancel) c.host.runFor(before.plugin, before.cancel, { confirm: "no" }, false);
+      if (before && before.plugin !== c.plugin && before.cancel) c.host.runFor(before.plugin, before.cancel, { confirm: "no" }, "app");
     },
   },
   cmd: {
@@ -877,7 +877,7 @@ const OPS: { [K in OpKind]: Entry<K> } = {
     apply(c, op) {
       // One hop (issue #183): made in the user's own call, the Plugin's own command it names is
       // that call carried; made in a carried run (`user: false`), it's the app's call.
-      c.host.runCmdLine(c.plugin, op.user === false ? false : "carried", op.line);
+      c.host.runCmdLine(c.plugin, op.user === false ? "app" : "carried", op.line);
     },
   },
   echo: {
@@ -970,7 +970,7 @@ const OPS: { [K in OpKind]: Entry<K> } = {
         handle = null;
         // A deferred one is gone in the core as it runs.
         if (!op.every) l.disposers.delete(key);
-        await h.call(plugin, op.run.handler, {}, null, false);
+        await h.call(plugin, op.run.handler, {}, null, "app");
         if (live && op.every && h.current(plugin) === l) handle = setTimeout(() => void fire(), op.ms);
       };
       handle = setTimeout(() => void fire(), op.ms);
