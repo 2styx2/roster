@@ -10,7 +10,7 @@ from typing import Any, NamedTuple, cast
 
 from . import __version__, boxkeys, changes, named, providers, rotation, store
 from .common import find_program
-from .config import load_config
+from .config import load_config, shown_file
 from .context import Context, current, ssh_index_file
 from .errors import (
     BOX_KEY_REMADE,
@@ -117,7 +117,7 @@ def inventory(cfg, error):
         return out
     hosts = list(cfg["hosts"].values())
     if error is None:
-        out.append(check("inventory", "ok", f"roster.yml loads: {cfg['path']} ({count(len(hosts), 'Host')}, "
+        out.append(check("inventory", "ok", f"roster.yml loads: {shown_file(cfg)} ({count(len(hosts), 'Host')}, "
                                             f"{count(len(cfg['groups']), 'group')})"))
     waiting = [h["name"] for h in hosts if not h["reviewed"]]
     if waiting:

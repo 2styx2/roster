@@ -9,13 +9,13 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from . import authorized, boxkeys, keyline, rotate, rotation
+from . import authorized, boxkeys, keyline, rotate, rotation, sshconfig
 from .authorized import box_key_re, remove_script
 from .boxsetup import LEFT_OUT, locked, skip_left_out, warn_os
 from .common import die, program_argv, say
-from .config import load_config, selected
+from .config import HIDDEN_FILE, load_config, selected, shown_path
 from .context import Context, current, ssh_index_file
-from .errors import KEY_FILE, KEY_FILE_SHARED, InventoryError, Problem, tagged
+from .errors import KEY_FILE, KEY_FILE_SHARED, RENAME_HINT, InventoryError, Problem, tagged
 from .hosts import AccountLocks, account, is_windows
 
 
@@ -197,12 +197,18 @@ def revoke_all(yes: bool = False) -> int:
     problems = 0
     left_alone = 0                          # left-out Hosts: skipped, so not finished (exit 1)
     for label, name, path in targets:
-        again = f"roster --inv {name}" if name else f"roster -c {shlex.quote(str(path))}"
+        if name is None and sshconfig.hidden_source(path):  # the header names it by its digest alone (#506)
+            say(f"  {label}: {HIDDEN_FILE} - not revoked: {RENAME_HINT} (`roster -c NEW-PATH sync`, then "
+                "`roster revoke --all`)")
+            problems += 1
+            continue
+        shown = shown_path(path)
+        again = f"roster --inv {name}" if name else f"roster -c {shlex.quote(shown or 'PATH')}"
         try:
             cfg = load_config(path)
         except InventoryError:              # its words could quote a line of that file: they stay with it
-            say(f"  {label}: its roster.yml doesn't load or isn't there ({path}) - not revoked (`{again} check "
-                "--box` says why)")
+            say(f"  {label}: its roster.yml doesn't load or isn't there ({shown or HIDDEN_FILE}) - not revoked "
+                f"(`{again} check --box` says why)")
             problems += 1
             continue
         keyed = [h for h in cfg["hosts"].values() if h["enroll"]]

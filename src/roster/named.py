@@ -114,7 +114,8 @@ def save(inv: Inventories) -> None:
 
 
 def same_file(a: str | Path, b: str | Path) -> bool:
-    return Path(a).expanduser().resolve() == Path(b).expanduser().resolve()
+    """A and B are the same roster.yml (either may be a hidden ssh config header's source: sshconfig.same_source)."""
+    return sshconfig.same_source(a, b)
 
 
 def unknown(name: str, inv: Inventories | None = None, typed: bool = True) -> NoReturn:
