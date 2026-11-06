@@ -17,7 +17,7 @@ const WIRING = (p: string) => WIRING_FILES.includes(p) || p.startsWith("app/") |
 
 /** The pure modules: data and rules with no component, so a test, the docs build or another
  * feature can load them alone. */
-const PURE = ["sidebar/model.ts", "session/status.ts", "graph/model.ts", "ui/table.ts", "ui/when.ts", "backend/capabilities.ts", "panel/stack.ts", "ui/dot.ts"];
+const PURE = ["sidebar/model.ts", "session/status.ts", "graph/model.ts", "ui/table.ts", "ui/when.ts", "backend/capabilities.ts", "panel/stack.ts", "ui/dot.ts", "view/segments.ts", "edit/diff.ts", "plugins/sessionEvents.ts"];
 
 /** The folder imports that go up, each with why. Without them the folders depend one way: the test
  * fails on any other import that closes a cycle (of any length), and on an entry here that's gone

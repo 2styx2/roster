@@ -74,7 +74,7 @@ Process-wide state is in two places, and new code adds none:
 
 ### Pure modules and components
 
-A pure module holds data and rules with no component: a test, the docs build or another feature can load it alone. It may use React hooks, never a `.tsx` module. The pure modules are `sidebar/model.ts`, `session/status.ts`, `graph/model.ts`, `ui/table.ts`, `ui/when.ts`, `ui/dot.ts`, `backend/capabilities.ts` and `panel/stack.ts` (`PURE` in `app/src/architecture.test.ts`). A component file (`.tsx`) draws; when a type or a word list that a component defines is needed elsewhere, move it into a pure module (as `ui/dot.ts` holds `StateDot`'s states and words).
+A pure module holds data and rules with no component: a test, the docs build or another feature can load it alone. It may use React hooks, never a `.tsx` module. The pure modules are `sidebar/model.ts`, `session/status.ts`, `graph/model.ts`, `ui/table.ts`, `ui/when.ts`, `ui/dot.ts`, `backend/capabilities.ts`, `panel/stack.ts`, `view/segments.ts`, `edit/diff.ts` and `plugins/sessionEvents.ts` (`PURE` in `app/src/architecture.test.ts`). A component file (`.tsx`) draws; when a type or a word list that a component defines is needed elsewhere, move it into a pure module (as `ui/dot.ts` holds `StateDot`'s states and words).
 
 ### The docs build runs under Node
 
