@@ -479,3 +479,7 @@ def time_left(timeout, floor=1):
     if at is None:
         return timeout
     return max(floor, min(timeout, at - time.monotonic()))
+
+
+def plural(n, word):
+    return f"{n} {word}" + ("" if n == 1 else "s")

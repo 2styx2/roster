@@ -146,7 +146,7 @@ def lab(fakes, isolated, write_config, monkeypatch):
 
     from conftest import POSIX_SH, WINDOWS
 
-    from roster import cli, sshops
+    from roster import sshops
     if WINDOWS:
         pytest.skip("the stand-in Hosts' key scripts run in a POSIX sh")
     for f in (fakes / "host").iterdir():
@@ -159,7 +159,7 @@ def lab(fakes, isolated, write_config, monkeypatch):
     (root / "web-01" / "keys").touch()
     monkeypatch.setenv("FAKE_HOSTS", str(root))
     monkeypatch.setenv("FAKE_SH", POSIX_SH)
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: set())
     monkeypatch.setenv("PW", "pw")                              # auth: env:PW (a stand-in: no Host checks it)
     monkeypatch.setattr(sshops, "password_exec", lambda h, command, pw, **k: (
         lambda r: (r.returncode, r.stdout, r.stderr))(subprocess.run(
@@ -468,7 +468,7 @@ def test_setup_doesnt_take_a_member_out_of_the_mesh_for_its_key_type(write_confi
     key_type leaves it out, it warns and leaves the Mesh alone: `roster mesh --dry-run` shows it, `roster mesh` does it."""
     from roster import cli, mesh
     from roster.cli import main
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: {h["name"] for h in hosts})
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: {h["name"] for h in hosts})
     applied = []
     monkeypatch.setattr(cli, "mesh_apply", lambda cfg: applied.append(1) or {})
     yml = MESH_YML.replace("      fips-01: {ip: 10.0.0.5, key_type: ecdsa}\n", "      fips-01: 10.0.0.5\n")

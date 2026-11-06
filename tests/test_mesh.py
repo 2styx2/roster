@@ -1060,11 +1060,10 @@ def test_cut_stops_at_the_deadline_too(net):
 # ---------------------------------------------------------------- setup and serve
 
 def test_setup_applies_the_mesh_for_meshed_groups(net, capsys, monkeypatch):
-    from roster import cli
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())
-    monkeypatch.setattr(cli, "ssh_ok", lambda name: True)
-    monkeypatch.setattr(cli, "ensure_key", lambda key, tag: None)
-    monkeypatch.setattr(cli, "public_key_line", lambda key, tag: "ssh-ed25519 AAAAbox roster-managed:box")
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: set())
+    monkeypatch.setattr("roster.boxsetup.ssh_ok", lambda name: True)
+    monkeypatch.setattr("roster.boxsetup.ensure_key", lambda key, tag: None)
+    monkeypatch.setattr("roster.boxsetup.public_key_line", lambda key, tag: "ssh-ed25519 AAAAbox roster-managed:box")
     main(["setup"])
     assert "mesh" in capsys.readouterr().out
     assert net.mesh_lines("nas-1") == [key_line_of(net, "orion-2", "10.0.0.2")]
@@ -2265,8 +2264,7 @@ def test_revoke_on_esxi_refuses_a_user_that_isnt_the_login(net, isolated, capsys
 
 def setup_box(monkeypatch):
     """`roster setup` with the stand-in Hosts' key logins: no ssh-keyscan (the host keys are recorded already)."""
-    from roster import cli
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: set())
 
 
 @key_scripts_run

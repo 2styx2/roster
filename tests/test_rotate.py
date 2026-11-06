@@ -31,7 +31,7 @@ def lab(fakes, isolated, write_config, monkeypatch, request):
     stand-in ssh too (FAKE_SSH_AS_PASSWORD)."""
     from conftest import POSIX_SH, WINDOWS
 
-    from roster import cli, sshops
+    from roster import sshops
     if WINDOWS:
         pytest.skip("the stand-in Hosts' key scripts run in a POSIX sh")
     for f in (fakes / "host").iterdir():
@@ -43,7 +43,7 @@ def lab(fakes, isolated, write_config, monkeypatch, request):
         (root / name / "keys").touch()
     monkeypatch.setenv("FAKE_HOSTS", str(root))
     monkeypatch.setenv("FAKE_SH", POSIX_SH)
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: set())
     monkeypatch.setenv("PW", "pw")
     monkeypatch.setattr(sshops, "password_exec", lambda h, command, pw, **k: (
         lambda r: (r.returncode, r.stdout, r.stderr))(subprocess.run(

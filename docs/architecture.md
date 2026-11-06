@@ -28,7 +28,7 @@ The seam vocabulary (module, interface, depth, seam, adapter) is from the `codeb
 | `base` | `common`, `winfile`, `conpty`, `providers.problems` | Shared helpers over the leaves: output, the one atomic writer, private files, running programs; a provider failure's code. |
 | `format` | `sshconfig`, `boxkeys`, `boxlock`, `rotation`, `resources`, `named`, `models`, `askpass`, `vaultcli`, `jobs` | One owner per file or format roster keeps (ssh config blocks, this Box's keys, the lock, the rotation record, `inventories.json`, roster.yml's models), and the small services over them. |
 | `core` | `config`, `edit`, `changes`, `claude`, `sshops`, `servemodels`, `jsondocs`, `jsonout`, `providers`, `providers.bitwarden`, `providers.builtin`, `providers.bw_login`, `providers.keepassxc`, `providers.onepassword` | roster.yml loaded, searched and edited as text; its git; ROSTER.md; ssh from this Box; the vaults; serve's and `--json`'s documents. |
-| `feature` | `boxsync`, `store`, `inventories`, `newinventory`, `mesh`, `diagnose`, `fill`, `health`, `web`, `discover`, `addhost`, `fromvault`, `authorized`, `winhost`, `rotate`, `vaultsync`, `cliparser`, `completion`, `manpage` | What a command or a serve method does. Both front doors call the same function, so neither holds logic the other needs. |
+| `feature` | `boxsync`, `store`, `inventories`, `newinventory`, `mesh`, `diagnose`, `fill`, `health`, `web`, `discover`, `addhost`, `fromvault`, `authorized`, `winhost`, `rotate`, `vaultsync`, `cliparser`, `completion`, `manpage`, `boxsetup`, `revoke` | What a command or a serve method does. Both front doors call the same function, so neither holds logic the other needs. |
 | `top` | `serve`, `cli`, `__main__` | The front doors. Nothing imports them, except `__main__` → `cli` and `cli` → `serve` (the `roster serve` command). |
 <!-- /layers:python -->
 
@@ -47,7 +47,7 @@ Known cycles, each kept on purpose (`KNOWN_CYCLES` in the test; a new one fails,
 Process-wide state is in two places, and new code adds none:
 
 - **The Inventory:** one per process, `context.current()`, set once by `config.find_config` through `context.use()`. Code that needs the Inventory's files asks the Context (`current().file("key_name")`, or its properties), never builds a path of its own.
-- **The vaults:** `providers/__init__.py` holds the secrets this process unlocked, each provider's settings and state, and serve's and `--json`'s modes; `providers.reset()` forgets them all (a test calls it, never clears a dict).
+- **The vaults:** `providers/__init__.py` holds the secrets this process unlocked, each provider's settings and state, and serve's and `--json`'s modes, set only through its functions (`only_unlock_unlocks()`, `set_json_output()`); `providers.reset()` forgets them all (a test calls it, never clears a dict or sets a global). What a provider is (its tool, its save_to shapes, its session, whether it holds items) is a field of its `PROVIDERS` entry, never a table elsewhere.
 
 ## The Rust core
 
@@ -129,7 +129,7 @@ Shared fixtures that two implementations both read: `tests/vectors/redaction.jso
 
 ## Standards
 
-- **Errors carry their code.** Python: `die(msg, code=NAME)` or raise `errors.Problem`; a provider's failure is a `providers.problems` kind with its code; serve and jobs answer through `errors.problem_of`. Rust: `CallError` and `ErrorKind`. The app switches on the code (`Code.NAME` from `serveContract.ts`). Never parse a message's text to learn what happened.
+- **Errors carry their code.** Python: `die(msg, code=NAME)` or raise `errors.Problem` (a roster.yml that isn't found or doesn't load is `errors.InventoryError`, with its path and line; a Host's refusal where a `RuntimeError` is caught is `errors.HostRefused`); a provider's failure is a `providers.problems` kind with its code; serve and jobs answer through `errors.problem_of`. A message never holds its code: the command line's `[N] ` comes from `errors.tagged` (`UNTAGGED` lists the codes it prints bare). Rust: `CallError` and `ErrorKind`. The app switches on the code (`Code.NAME` from `serveContract.ts`). Never parse a message's text to learn what happened.
 - **No new process-wide mutable state.** Python has the two above (["The CLI"](#the-cli)), the core the one Backend slot (`slot.rs`). Pass what a function needs; a test sets state up through public functions.
 - **No pass-through modules or functions.** A wrapper that only renames a call is deleted and its callers call the owner. The deletion test: if removing a module makes no complexity reappear, it shouldn't exist.
 - **No parameter for one caller, no extension point for a second adapter that doesn't exist.** Add the seam when the second caller or adapter arrives.

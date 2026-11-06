@@ -130,8 +130,7 @@ def test_the_write_is_said_before_this_box_syncs(capsys, yml, isolated):
 
 
 def test_setup_runs_setup_then_check_for_the_new_host(capsys, yml, monkeypatch, fakes):
-    import roster.cli as cli
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())     # no network: no host key scan
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: set())     # no network: no host key scan
     monkeypatch.setenv("NAS_PW", "x")
     rc, out, _ = run(capsys, "nas", "--ip", "127.0.0.1", "--port", "1", "--group", "lab", "--auth", "env:NAS_PW",
                      "--no-enroll", "--setup", "--yes")                # port 1 here: nothing answers, nothing leaves
@@ -342,10 +341,9 @@ INV_TYPED = YML.replace("esx-02: {ip: 10.0.0.5}", "esx-02: {ip: 10.0.0.5, type: 
 
 def test_setup_sets_up_only_the_new_host_even_when_its_name_is_another_hosts_type(capsys, write_config,
                                                                                   monkeypatch, fakes):
-    import roster.cli as cli
     write_config(INV_TYPED)
     scanned = []
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: scanned.extend(h["name"] for h in hosts) or set())
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: scanned.extend(h["name"] for h in hosts) or set())
     monkeypatch.setenv("NAS_PW", "x")
     run(capsys, "nas", "--ip", "127.0.0.1", "--port", "1", "--group", "lab", "--auth", "env:NAS_PW", "--no-enroll",
         "--setup", "--yes")
