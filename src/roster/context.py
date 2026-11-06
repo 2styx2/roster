@@ -136,7 +136,7 @@ BOX_FILES = {
 
 def box_file(kind: str) -> Path:
     """One of the files (or folders) roster keeps for this Box, whatever the Inventory: BOX_FILES' KIND in roster's
-    folder. uninstall.sh removes each (tests/test_uninstall_state.py)."""
+    folder. uninstall.sh removes each (tests/test_install_scripts.py)."""
     return user_config_dir() / BOX_FILES[kind]
 
 

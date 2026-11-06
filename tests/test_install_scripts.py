@@ -5,6 +5,7 @@ the tests): each logs how it was called to HOME/calls. The full run on a fresh b
 scripts/test-install.sh, in a container."""
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -189,6 +190,76 @@ def test_uninstall_again_is_a_no_op(box):
     r = run(UNINSTALL_SH, env)
     assert r.returncode == 0, r.stdout
     assert "roster setup never ran on this box" in r.stdout
+
+
+# What roster writes in its own folder (~/.config/roster), read from its source: every `user_config_dir() / NAME`,
+# an f-string's {placeholder} as an Inventory name. A new file there fails this fast test until uninstall.sh's list
+# takes it too, rather than only the weekly install test (scripts/test-install.sh) on a fresh box.
+USER_OWNED = {"roster.yml", "providers"}      # the map and provider plugins: the user's, asked about, never "mine"
+# Names roster derives from those, beside them: a removed Inventory's Mesh state set aside (inventories.set_aside),
+# mesh.py's temp file and replace_file's / bw-session's hidden ones (left only by a run cut short)
+DERIVED = ["mesh-lab.json.removed-20261105-120000", "inventories.json.removed-20261105-120000", "mesh.new",
+           "mesh-lab.new", ".mesh.json.k2x9a1.new", ".key-created.q81zz0.new", ".bw-session.0123abcd4567ef89.new"]
+STATE_RE = re.compile(r'user_config_dir\(\)\s*/\s*(\([^)]*\)|f?"[^"]*")(\s*/)?')
+
+
+def roster_state_files() -> dict[str, bool]:
+    """Each name roster writes in ~/.config/roster (an Inventory's named `lab`): is it a folder?"""
+    from roster import context
+
+    out: dict[str, bool] = {}
+    # the tables roster names its own files in (context.FILES per Inventory, BOX_FILES once per Box)
+    for f in context.FILES.values():
+        if f.folder is context.user_config_dir:
+            out[f.unnamed] = False
+            out[f.named.format("lab")] = False
+    for name in context.BOX_FILES.values():
+        out[name] = name in ("vault-seen", "vault-sync")
+    # and any path still written as user_config_dir() / "NAME" outside them
+    for src in (ROOT / "src/roster").rglob("*.py"):
+        for m in STATE_RE.finditer(src.read_text(encoding="utf-8")):
+            for lit in re.findall(r'f?"([^"]*)"', m.group(1)):
+                out[re.sub(r"\{[^}]*\}", "lab", lit)] = bool(m.group(2))
+    return out
+
+
+@posix_shell
+def test_uninstall_removes_every_file_roster_writes_in_its_own_folder(box):
+    home, env = box
+    names = roster_state_files()
+    # the scan still finds what it should (a regex that stopped matching would pass everything)
+    assert {"mesh.json", "mesh-lab.json", "inventories.json", "run.lock", "run-lab.lock", "key-created", "key-name",
+            "key-name-lab", "key-rotation", "key-rotation-lab", "bw-session", "vault-sync", "roster.yml"} <= set(names)
+    conf = home / ".config/roster"
+    for name, folder in names.items():
+        if name in USER_OWNED:
+            continue
+        if folder:
+            (conf / name).mkdir()
+            (conf / name / "lab.json").write_text("{}\n")
+        else:
+            (conf / name).write_text("x\n")
+    for name in DERIVED:
+        (conf / name).write_text("x\n")
+    r = run(UNINSTALL_SH, env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    left = sorted(p.name for p in conf.iterdir()) if conf.exists() else []
+    assert not left, f"uninstall.sh left {left} in ~/.config/roster: add them to its list of roster's own state"
+
+
+@posix_shell
+def test_uninstall_keeps_an_unfinished_rotation_s_record_while_its_old_key_is_kept(box):
+    """Q204 (d2): a KEY.old or KEY.new is roster's own only while the rotation's record names it. uninstall.sh
+    doesn't delete those key files, so the record stays with them (a later roster can still finish or clean up)."""
+    home, env = box
+    (home / ".ssh/roster_ed25519.old").write_text("x\n")
+    conf = home / ".config/roster"
+    for name in ("key-rotation", "key-rotation-lab", "key-name", "run.lock"):
+        (conf / name).write_text("x\n")
+    r = run(UNINSTALL_SH, env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert sorted(p.name for p in conf.iterdir()) == ["key-rotation", "key-rotation-lab"]
+    assert "kept the Box key rotation's record" in r.stdout
 
 
 @posix_shell

@@ -50,6 +50,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **`roster add --from-vault --json` prints JSON alone**: the vault sync's line ("synced bw (the previous sync was ...)") came first on stdout, so a script couldn't read the list; it goes to stderr now, so stdout is the one JSON document.
 - **No paramiko traceback when a Host never sends its banner**: a check that gave up on a Host that took the connection but never answered (a cancelled `host.check`, a frozen Host) could print paramiko's own `Exception (client): Error reading SSH protocol banner` traceback on stderr, in the CLI's output or serve's log.
+- **`uninstall.sh` removes roster's newer files in `~/.config/roster`**: the run lock (`run.lock`), the key's age and name (`key-created`, `key-name`), a finished key rotation's record and the vault snapshots (`vault-sync/`, `vault-seen/`) were left there, so `uninstall.sh --yes` kept the folder and asked about them as if they were yours. They go with the rest of roster's state now; a key rotation's record stays only while its `.old` or `.new` key is still in `~/.ssh`.
 - **1Password items list their URLs primary first** (#500): the list of vault items (`roster add --from-vault` with no NAME) kept 1Password's order, while `--from-vault NAME` took the primary URL, so a listed item's address could differ from the one it filled in. Both use the primary URL first now.
 
 **App**
