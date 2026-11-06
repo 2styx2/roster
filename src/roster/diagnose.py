@@ -16,7 +16,7 @@ from . import askpass, errors, hosts, providers, rotation, sshconfig
 from .common import end_group, find_program, not_reviewed, time_left
 from .context import current
 from .errors import Problem, login_problem, no_user, unknown_provider, vault_problem
-from .hosts import ip_of, is_windows, placeholder_user
+from .hosts import ip_of, is_windows, placeholder_user, prompted, provider_of
 from .providers import PROVIDERS
 from .sshops import (
     fingerprint,
@@ -53,7 +53,7 @@ def check_provider(h, auth=None, what="ssh"):
     14 locked). Providers without a status (env, prompt, cmd) are left to try. AUTH: another of the Host's
     references than its ssh Login (its sudo: one), named WHAT in errors."""
     auth = str((password_login(h) or h["ssh"])["auth"] if auth is None else auth)
-    name = auth.partition(":")[0].strip()
+    name = provider_of(auth)
     if name not in PROVIDERS:
         raise unknown_provider(h, auth, what)
     try:
@@ -73,7 +73,7 @@ def resolve_password(h, auth=None, what="ssh"):
     """The Login's password, looked up now (into this process's memory only; never returned to the app).
     Raises a Problem: item not found, several match, no password/field, or the provider's own failure."""
     auth = (password_login(h) or h["ssh"])["auth"] if auth is None else auth
-    if str(auth).partition(":")[0].strip() not in PROVIDERS:
+    if provider_of(auth) not in PROVIDERS:
         raise unknown_provider(h, auth, what)
     try:
         return providers.get_secret(auth, h["group"])
@@ -426,7 +426,7 @@ VERIFY_STEPS = ("user", "provider", "vault-item", "dns", "tcp", "host-key", "aut
 def stored_password(h):
     """The Host's password Login, if roster can look it up without asking anyone (so not `prompt`)."""
     login = password_login(h)
-    return login if login and str(login["auth"]).partition(":")[0].strip() != "prompt" else None
+    return login if login and not prompted(login["auth"]) else None
 
 
 def verify_login(h, key_path, previous=None, typed=None, host_key=None, limited=()):

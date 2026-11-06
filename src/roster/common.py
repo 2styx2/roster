@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import IO, Any, NoReturn, cast
 
-from .context import WINDOWS, current, ssh_dir, user_config_dir  # noqa: F401 (others import these from here)
+from . import context
 from .errors import ROSTER_ERROR, Exit, Problem
 
 NAME_ERE = "[A-Za-z0-9][A-Za-z0-9._-]*"                 # a name (a Host's, a group's, ...), as an ERE for scripts
@@ -32,7 +32,7 @@ def never_look_in_the_current_folder() -> None:
     starts. find_program already keeps it out of what roster runs by name; this covers what goes through cmd.exe (a
     `cmd:` provider, a `providers:` command template), what Python 3.12+'s shutil.which would find, and the programs
     roster's programs start (a bw.cmd's node). A no-op elsewhere."""
-    if WINDOWS:
+    if context.WINDOWS:
         os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
 
 
@@ -51,7 +51,7 @@ def read_private_bytes(path: Path, dir_fd: int | None = None) -> bytes:
     name in, so the folder can't be swapped for another by name (T248); PATH is then only what messages show.
     FileNotFoundError if there's nothing there; NotPrivate if it isn't yours alone or can't be read (whatever went
     wrong: never a traceback)."""
-    if WINDOWS:
+    if context.WINDOWS:
         from . import winfile
         try:
             return winfile.read_private_bytes(str(path))
@@ -129,7 +129,7 @@ def write_private(path: Path, text: str) -> None:
 def ssh_path(path: str | Path) -> str:
     """PATH as ssh reads it in its config and -o values: as is, but with forward slashes on Windows (Windows'
     OpenSSH takes C:/Users/..., and a backslash is an escape character in some of its option values)."""
-    return Path(path).as_posix() if WINDOWS else str(path)
+    return Path(path).as_posix() if context.WINDOWS else str(path)
 
 
 # ---------------------------------------------------------------- starting other programs (Windows too)
@@ -156,7 +156,7 @@ def find_program(name: str) -> str | None:
     or ssh.cmd left in whatever folder roster was started from would run in its place, with the vault's session in its
     env. A relative PATH entry (empty, ".", or one with no drive) depends on the current folder too, so it's skipped. A
     NAME with a folder in it is taken as named."""
-    if not WINDOWS or "/" in name or "\\" in name:
+    if not context.WINDOWS or "/" in name or "\\" in name:
         return shutil.which(name)
     # only what CreateProcess can start: PATHEXT also lists .JS, .VBS, .MSC, .PY...
     exts = [e for e in (x.strip() for x in (os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD").split(";"))
@@ -176,7 +176,7 @@ def find_program(name: str) -> str | None:
 def git_program() -> str:
     """The git to run: on Windows git.exe wherever it is on PATH, ahead of a git.cmd or git.bat shim earlier on it
     (which can't be handed a quote, a % or a ! in a commit message or URL; #424 L5)."""
-    return (find_program("git.exe") or "git") if WINDOWS else "git"
+    return (find_program("git.exe") or "git") if context.WINDOWS else "git"
 
 
 def program_argv(argv):
@@ -185,7 +185,7 @@ def program_argv(argv):
     PATH, as subprocess would raise, rather than leave Windows to look in the current folder), and a .cmd or .bat
     program is refused an argument cmd.exe would act on: roster passes item names and paths there, and those come from
     roster.yml and the vault."""
-    if not WINDOWS:
+    if not context.WINDOWS:
         return list(argv)
     named = "/" in argv[0] or "\\" in argv[0]
     found = (shutil.which(argv[0]) or argv[0]) if named else find_program(argv[0])
@@ -203,7 +203,7 @@ def program_argv(argv):
 def kill_tree(p):
     """Kill P and everything it started. On Windows a tool is often a batch file (npm's bw.cmd) whose real program is
     its child, which would outlive a plain kill and keep the output pipes open."""
-    if WINDOWS:
+    if context.WINDOWS:
         # Windows' own, by its full path: PATH may lack System32
         taskkill = os.path.join(os.environ.get("SystemRoot") or r"C:\Windows", "System32", "taskkill.exe")
         try:
@@ -232,7 +232,7 @@ def end_group(p, gentle=False):
                     p.kill()
                 except OSError:
                     pass
-    if WINDOWS:
+    if context.WINDOWS:
         kill_tree(p)
     else:
         if gentle:
@@ -278,7 +278,7 @@ STDERR_CAP = 64 * 1024         # bytes of a producer's stderr kept by run_filter
 def filter_env():
     """The environment run_filtered's filter gets: next to nothing (none of this process's variables, so no session
     key, token or password a variable holds); on Windows SYSTEMROOT, which Python itself needs to start."""
-    return {k: os.environ[k] for k in ("SYSTEMROOT",) if k in os.environ} if WINDOWS else {}
+    return {k: os.environ[k] for k in ("SYSTEMROOT",) if k in os.environ} if context.WINDOWS else {}
 
 
 def run_filtered(producer, filt, timeout=None, env=None, filter_env=None):
@@ -329,7 +329,7 @@ def run_instead(argv):
     """Run ARGV in this process's place and return its exit code (`roster run` handing over to ssh). On Linux and
     macOS the process becomes it (execvp); Windows has no such thing, so roster waits for it and passes on its code."""
     argv = program_argv(argv)
-    if not WINDOWS:
+    if not context.WINDOWS:
         os.execvp(argv[0], argv)        # noqa: S606 - an argv list (no shell): roster's own ssh command line
     try:
         return subprocess.run(argv).returncode

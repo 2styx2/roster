@@ -1463,7 +1463,7 @@ def test_a_cut_whose_write_waits_too_long_for_roster_yml_says_so_and_still_cut(n
 # ---------------------------------------------------------------- one mesh.json per Inventory (T182, #346)
 
 def config_dir():
-    from roster.common import user_config_dir
+    from roster.context import user_config_dir
     return user_config_dir()
 
 

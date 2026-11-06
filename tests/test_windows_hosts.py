@@ -70,7 +70,7 @@ def test_type_windows_without_os_warns_and_suggests_os_windows(write_config, cap
 def test_a_windows_hosts_ssh_config_never_shares_a_connection(isolated, write_config):
     """A Windows Host's sshd refuses a second session on a shared connection ("No existing session"): its block says
     ControlMaster no, with no ControlPath or ControlPersist to reuse one."""
-    from roster.common import WINDOWS
+    from roster.context import WINDOWS
     from roster.sshops import write_ssh_config
     write_ssh_config(load_config(write_config(CASCADE)))
     text = (isolated["home"] / ".ssh" / "config.d" / "roster").read_text()

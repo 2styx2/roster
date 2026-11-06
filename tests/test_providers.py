@@ -7,7 +7,7 @@ import pytest
 from conftest import WINDOWS, posix_shell
 
 from roster import providers
-from roster.common import user_config_dir
+from roster.context import user_config_dir
 from roster.providers import Ctx, SecretError, bitwarden, get_secret, setup_providers
 
 

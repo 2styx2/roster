@@ -11,7 +11,8 @@ from urllib.parse import urlparse
 import yaml
 
 from . import boxkeys, context, keyline
-from .common import NAME_RE, die, oneline, typed_token, user_config_dir
+from .common import NAME_RE, die, oneline, typed_token
+from .context import user_config_dir
 from .errors import PATH_NOT_REPEATED, InventoryError
 from .hosts import vault_login
 from .resources import load_resources

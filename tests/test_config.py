@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from roster.common import user_config_dir
 from roster.config import find_config, load_config, matches, selected
+from roster.context import user_config_dir
 from roster.errors import InventoryError
 from roster.example import EXAMPLE_CONFIG
 

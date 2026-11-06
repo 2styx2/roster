@@ -282,7 +282,7 @@ def add(capsys, *argv):
 
 
 def seen_files(isolated):
-    from roster.common import user_config_dir
+    from roster.context import user_config_dir
     return sorted((user_config_dir() / "vault-seen").glob("*.json"))
 
 

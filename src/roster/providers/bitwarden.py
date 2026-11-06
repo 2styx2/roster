@@ -5,7 +5,9 @@ import json
 import os
 import sys
 
-from ..common import WINDOWS, NotPrivate, find_program, read_private_bytes, say, user_config_dir
+from .. import context
+from ..common import NotPrivate, find_program, read_private_bytes, say
+from ..context import user_config_dir
 from . import (
     LOOKUP_FLOOR,
     PROVIDERS,
@@ -182,7 +184,7 @@ def check_session_dir():
     every folder above it from $HOME down, as open_session_dir checks them. Nothing there yet is fine (roster makes it
     0700). Windows: not checked here: %APPDATA% is kept private by its ACL, and the file's own owner and ACL are
     (common.read_private_bytes)."""
-    if WINDOWS:
+    if context.WINDOWS:
         return
     try:
         os.close(open_session_dir())
@@ -199,7 +201,7 @@ def read_session_file():
     f = session_file()
     if not os.path.lexists(f):
         raise FileNotFoundError(f)
-    if WINDOWS:
+    if context.WINDOWS:
         return read_private_bytes(f)
     try:
         fd = open_session_dir()
@@ -309,7 +311,7 @@ def save_session_file(key):
     data = key.encode("ascii") + b"\n"
     old = os.umask(0o077)
     try:
-        if WINDOWS:
+        if context.WINDOWS:
             check_session_file()
             _save_by_name(f, data, key)
         else:
@@ -403,7 +405,7 @@ def remove_session_file():
 
 
 def _remove_in_its_folder(f):
-    if WINDOWS:
+    if context.WINDOWS:
         f.unlink()
         return
     try:

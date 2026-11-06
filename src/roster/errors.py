@@ -379,7 +379,7 @@ def login_problem(e, h, what="ssh"):
 
 
 def unknown_provider(h, auth, what="ssh"):
-    name = str(auth).partition(":")[0].strip()
+    name = str(auth).partition(":")[0].strip()      # hosts.provider_of (errors imports nothing of roster's)
     return Problem(NO_PROVIDER, f"{h['name']}'s {what} Login uses '{name}:', which isn't set up on this box",
                    {"provider": name}, fix="see `roster vault status` for the ones that are, then fix auth: in "
                                            "roster.yml (or add the provider)")

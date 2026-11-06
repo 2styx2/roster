@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from ..common import WINDOWS
+from ..context import WINDOWS
 from . import (
     ASK,
     PROVIDERS,

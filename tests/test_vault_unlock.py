@@ -10,7 +10,7 @@ import pytest
 
 from roster import providers
 from roster.cli import main
-from roster.common import WINDOWS, user_config_dir
+from roster.context import WINDOWS, user_config_dir
 from roster.providers import bitwarden, get_secret
 
 FAKE_BW = os.path.join(os.path.dirname(__file__), "fakes", "bw")

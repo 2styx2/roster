@@ -10,9 +10,10 @@ import sys
 import threading
 from pathlib import Path
 
-from ..common import filter_env, program_argv, run, run_filtered, say, time_left, user_config_dir
+from ..common import filter_env, program_argv, run, run_filtered, say, time_left
+from ..context import user_config_dir
 from ..errors import InventoryError
-from ..hosts import NO_PASSWORD  # noqa: F401 (providers.NO_PASSWORD: what its callers read)
+from ..hosts import NO_PASSWORD, prompted, provider_of
 from .problems import (  # noqa: F401 (what a provider or plugin raises: providers.ItemNotFound, ...)
     AlreadyLoggedIn,
     ApiKeyRejected,
@@ -291,12 +292,11 @@ def get_secret(ref, group):
     """Resolve an auth reference via its provider. Cached for this run, never written anywhere."""
     if ref in (None, "") or ref in NO_PASSWORD:
         return None
-    name, _, spec = str(ref).partition(":")
-    name = name.strip()
+    name, spec = provider_of(ref), str(ref).partition(":")[2]
     if name not in PROVIDERS:
         raise SecretError(f"unknown password source {name!r} in auth {ref!r} - available: "
                           f"{', '.join(sorted(PROVIDERS))} (see `roster vault status`)")
-    cache_key = (ref, group) if name == "prompt" else ref
+    cache_key = (ref, group) if prompted(ref) else ref
     with _secret_lock:
         if cache_key in _secrets:
             return _secrets[cache_key]

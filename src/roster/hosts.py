@@ -20,9 +20,24 @@ def password_login(ref: str | None) -> bool:
     return ref not in (None, "", *NO_PASSWORD)
 
 
-def vault_login(ref: str | None) -> bool:
+def provider_of(ref: object) -> str:
+    """The provider a Login reference names: `bw` of `bw:ITEM`, `prompt` of `prompt`, `key` of `key`; "" for none."""
+    return str(ref or "").partition(":")[0].strip()
+
+
+def item_of(ref: object) -> str:
+    """What a Login reference asks its provider for: `ITEM` of `bw:ITEM` ("" when it names none)."""
+    return str(ref or "").partition(":")[2].strip()
+
+
+def prompted(ref: object) -> bool:
+    """Is REF `auth: prompt`: a password nobody saved, which the user types?"""
+    return provider_of(ref) == "prompt"
+
+
+def vault_login(ref: object) -> bool:
     """Is REF a vault reference with a password behind it: not `prompt`, and not one of NO_PASSWORD?"""
-    return (ref or "").partition(":")[0].strip() not in ("", "prompt", *NO_PASSWORD)
+    return provider_of(ref) not in ("", "prompt", *NO_PASSWORD)
 
 
 def placeholder_user(h: dict[str, Any]) -> bool:

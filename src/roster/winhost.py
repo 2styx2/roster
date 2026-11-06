@@ -27,9 +27,8 @@ import re
 import subprocess
 from typing import IO, cast
 
-from . import keyline
+from . import context, keyline
 from .common import program_argv
-from .context import WINDOWS
 from .errors import (
     KEY_FILE,
     LOOKS_LIKE_WINDOWS,
@@ -669,7 +668,7 @@ def run(h, command, password=None, key=True):
 def exit_code(code):
     """CODE as this Box can pass it on: one past 255 (Windows' are 32-bit) would wrap on a POSIX Box (9009 as 49, 256 as
     0), so it's 1 there, as is a negative one anywhere."""
-    return code if 0 <= code <= (0xFFFFFFFF if WINDOWS else 255) else 1
+    return code if 0 <= code <= (0xFFFFFFFF if context.WINDOWS else 255) else 1
 
 
 def looks_windows(text):

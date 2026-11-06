@@ -24,7 +24,7 @@ from .errors import (
     InventoryError,
     Problem,
 )
-from .hosts import placeholder_user
+from .hosts import NO_PASSWORD, placeholder_user, provider_of
 from .providers import PROVIDERS
 from .sshops import fingerprint, hk_name, known_names
 
@@ -253,8 +253,8 @@ def provider_uses(cfg):
     counts = {}
     for h in cfg["hosts"].values():
         for login in (h["ssh"], h["login"], *h["services"].values()):
-            name = str(login.get("auth") or "").partition(":")[0].strip()
-            if name and name not in providers.NO_PASSWORD:
+            name = provider_of(login.get("auth"))
+            if name and name not in NO_PASSWORD:
                 counts[name] = counts.get(name, 0) + 1
     return counts
 

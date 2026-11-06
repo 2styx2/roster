@@ -58,9 +58,9 @@ from .context import Context, current, ssh_index_file
 from .discover import cmd_discover
 from .errors import KEY_FILE, ROTATION_PENDING, UNKNOWN_HOST, Exit, HostRefused, InventoryError, Problem, tagged
 from .example import EXAMPLE_CONFIG
-from .hosts import PLACEHOLDER_USER, is_windows, placeholder_user
+from .hosts import NO_PASSWORD, PLACEHOLDER_USER, is_windows, placeholder_user, prompted
 from .keyline import key_ere
-from .providers import NO_PASSWORD, PROVIDERS, errtext, get_secret, setup_providers
+from .providers import PROVIDERS, errtext, get_secret, setup_providers
 from .resources import TYPES, fields, login, summary, wifi_uri
 from .sshops import password_exec, record_fingerprints, ssh_ok, sudo_wrap, write_ssh_config
 from .web import cmd_web, mask
@@ -1748,7 +1748,7 @@ def cmd_auth_check(cfg, args):
     for ref, group in sorted(uses, key=lambda t: (t[1], str(t[0]))):
         users = sorted({u for _, _, u in uses[ref, group] if u})
         label = f"{group:<16} {str(ref):<36} users: {', '.join(users) or '-'}  for: {used_for(uses[ref, group])}"
-        if ref == "prompt":
+        if prompted(ref):
             say(f"  ask   {label}  (asked when setup runs)")
             continue
         try:
@@ -1770,7 +1770,7 @@ def auth_check_json(uses):
             by_svc.setdefault(svc, []).append(host)
         row = {"group": group, "auth": ref, "users": sorted({u for _, _, u in uses[ref, group] if u}),
                "used_for": [{"service": svc, "hosts": hs} for svc, hs in by_svc.items()], "status": "ok"}
-        if ref == "prompt":
+        if prompted(ref):
             row["status"] = "ask"
         else:
             try:

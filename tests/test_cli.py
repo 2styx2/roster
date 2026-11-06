@@ -8,7 +8,7 @@ from conftest import posix_shell
 
 import roster.cli as cli
 from roster.cli import main
-from roster.common import user_config_dir
+from roster.context import user_config_dir
 from roster.sshops import sudo_wrap
 
 

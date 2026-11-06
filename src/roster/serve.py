@@ -44,6 +44,7 @@ from . import (
     edit,
     fill,
     health,
+    hosts,
     inventories,
     jobs,
     mesh,
@@ -542,7 +543,7 @@ def need_askpass(state, what="password sessions"):
 def prompted(h):
     """Is the Host's ssh Login `auth: prompt`: a password nobody saved, which the user types (ticket 16)?"""
     login = diagnose.password_login(h)
-    return login is not None and str(login["auth"]).partition(":")[0].strip() == "prompt"
+    return login is not None and hosts.prompted(login["auth"])
 
 
 def prompt_session(state, h, ssh, params):
