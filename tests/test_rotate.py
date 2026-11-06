@@ -438,8 +438,8 @@ def age_checks(write_config, isolated, head="", days_old=None, stamped=True):
                    check=True)
     when = time.time() - (days_old or 0) * 86400
     os.utime(key, (when, when))
-    from roster.context import key_created_file
-    f = key_created_file()                      # %APPDATA%\roster on Windows
+    from roster.context import box_file
+    f = box_file("key_created")                # %APPDATA%\roster on Windows
     f.unlink(missing_ok=True)
     if stamped:                                 # as roster records it when it makes the key
         boxkeys.stamp(key)

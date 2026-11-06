@@ -547,6 +547,12 @@ What \fBroster vault sync\fR compares against (0600): each login item's id and r
 \fB~/.config/roster/inventories.json\fR
 The named Inventories and which one is active (\fBroster inv\fR)
 .TP
+\fB~/.config/roster/vault\-seen/\fR
+Per \fBroster.yml\fR, the vault items \fBroster add \-\-from\-vault\fR has seen (0600): ids and names, never a value
+.TP
+\fB~/.config/roster/inventory.create.lock\fR
+Held while the app's first run makes an Inventory, so two windows can't both make one
+.TP
 \fBROSTER.md\fR, \fBCLAUDE.md\fR, \fB\&.claude/settings.json\fR
 What Claude reads, written next to \fBroster.yml\fR by \fBsetup\fR and \fBsync\fR
 .TP
