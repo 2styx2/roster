@@ -80,6 +80,7 @@ def handshake(sock, key_types, timeout=10):
     log = logging.getLogger(channel)
     log.setLevel(logging.DEBUG)
     log.propagate = False               # nothing of it reaches roster's or the user's logging
+    log.addHandler(logging.NullHandler())     # stays when Kex goes: the transport thread can outlive this
     handler = Kex()
     log.addHandler(handler)
     try:
@@ -93,10 +94,21 @@ def handshake(sock, key_types, timeout=10):
         logging.Logger.manager.loggerDict.pop(channel, None)
 
 
+def quiet_paramiko():
+    """paramiko's transport thread logs a connection's end (a socket closed under it, a Host that never sent its
+    banner) as an error with its traceback, often after roster has its answer; with no handler anywhere, logging's
+    last resort would print that on stderr, in the middle of roster's own output or serve's log."""
+    import logging
+    log = logging.getLogger("paramiko")
+    if not any(isinstance(h, logging.NullHandler) for h in log.handlers):
+        log.addHandler(logging.NullHandler())
+
+
 def start_transport(sock, key_types, timeout=10, log_channel=None):
     """An SSH transport over SOCK with the key exchange done (preferring host keys of KEY_TYPES) and nobody
     logged in yet: the caller compares t.get_remote_server_key() before it tries a login, and closes it."""
     import paramiko
+    quiet_paramiko()
     wanted = [t for kt in key_types for t in
               (("rsa-sha2-512", "rsa-sha2-256", "ssh-rsa") if kt == "ssh-rsa" else (kt,))]
     t = paramiko.Transport(sock)
@@ -301,6 +313,7 @@ def password_exec(h, command, password, timeout=15, stdin=None):
         import paramiko
     except ImportError:
         raise RuntimeError("paramiko is not installed: pip install paramiko")
+    quiet_paramiko()
     c = paramiko.SSHClient()
     c.load_host_keys(str(current().known_hosts))
     c.set_missing_host_key_policy(paramiko.RejectPolicy())
