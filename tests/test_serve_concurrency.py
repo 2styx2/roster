@@ -4,6 +4,7 @@ not free in time is code 4 with nothing done. The Publish pushes to a bare repo 
 holds the push until the test lets it go; nothing connects anywhere."""
 import json
 import subprocess
+import sys
 import threading
 import time
 import types
@@ -421,6 +422,46 @@ def test_closing_refuses_whats_queued_before_any_clean_up(state, monkeypatch):
     assert server.drain(5)
     assert ran == []
     assert {r["id"]: r.get("error", {}).get("message") for r in out}[2] == "roster serve is closing"
+
+
+def test_a_request_waiting_for_a_job_serve_stops_as_it_closes_is_answered_before_serve_exits(
+        write_config, runtime_dir, monkeypatch):
+    # T268 (#540): serve stopped the jobs (Jobs.close) after its drain had given up on the requests waiting for them,
+    # then returned at once, so a waiting mesh.apply whose job had just ended could lose the race to write its
+    # answer: the process exited with that request never answered. The request here writes its answer only once
+    # serve waits for it again after the jobs are closed (events, no timing), so before the fix it's never written.
+    import io
+    write_config(INVENTORY)
+    started, answer = threading.Event(), threading.Event()
+
+    def waits_for_a_job(st, params):
+        job = st.jobs.start("mesh", "apply", lambda job: job.halted.wait() and {"stopped": True})
+        started.set()
+        job.wait()                                      # until serve's close stops it
+        answer.wait()                                   # and serve is waiting for this answer
+        return {"job": job.view()["state"]}
+    monkeypatch.setitem(rpc.METHODS, "test.waits_for_a_job", rpc.Method(waits_for_a_job))
+    drain = rpc.Server.drain
+
+    def waiting(server, wait):
+        if server.state.jobs.closing:                   # serve waits for its requests once the jobs are closed
+            answer.set()
+        return drain(server, wait)
+    monkeypatch.setattr(rpc.Server, "drain", waiting)
+    monkeypatch.setattr(rpc, "DRAIN_WAIT", 0)          # the first drain gives up at once: the job still runs then
+
+    class Stdin(io.StringIO):                           # the app's pipe: one request, then closed mid-job
+        def __iter__(self):
+            yield json.dumps({"jsonrpc": "2.0", "id": 1, "method": "test.waits_for_a_job"}) + "\n"
+            assert started.wait(5)
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdin", Stdin())
+    monkeypatch.setattr(sys, "stdout", out)
+    assert rpc.serve(None) == 0
+    written = out.getvalue()                            # what serve wrote before it returned (the process exits)
+    answer.set()                                        # a request left behind ends either way
+    answers = [m for m in map(json.loads, written.splitlines()) if m.get("id") == 1]
+    assert answers == [{"jsonrpc": "2.0", "id": 1, "result": {"job": "stopped"}}]
 
 
 def test_a_sign_in_that_starts_while_serve_closes_ends_its_cli(state, monkeypatch):

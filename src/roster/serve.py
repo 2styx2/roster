@@ -3384,7 +3384,11 @@ def serve(config_arg, inv=None):
                     state.watcher.stop.set()
                 server.close(DRAIN_WAIT)        # first: what's queued is refused, what runs gets a moment to answer
                 end_sign_in(state)              # a half-done `bw login` doesn't outlive serve
+                end = time.monotonic() + CLOSE_WAIT
                 state.jobs.close(CLOSE_WAIT)    # nor does a job: a Mesh run records what it didn't do, nmap ends
+                # T268: a request waiting for a job just stopped (a mesh.apply without background) answers with what
+                # the job recorded; wait for that answer in what's left of CLOSE_WAIT, or the process exits first
+                server.drain(max(0.0, end - time.monotonic()))
     finally:
         restore_signals(found)
     return 0
@@ -3412,4 +3416,5 @@ def restore_signals(found):
 
 
 DRAIN_WAIT = 1.0            # s: the requests running when stdin closes get this long to answer
-CLOSE_WAIT = 0.8            # s: then the jobs get this long to wind down; the app waits 3 s after closing stdin (rpc.rs)
+CLOSE_WAIT = 0.8            # s: then the jobs get this long to wind down, and the requests waiting for them to answer;
+                            # the app waits 3 s after closing stdin (rpc.rs)
