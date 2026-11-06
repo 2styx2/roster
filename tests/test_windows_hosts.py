@@ -846,3 +846,15 @@ def test_setup_rotate_replaces_the_box_key_on_windows_hosts(win, capsys):
     assert win.admin_file("dc-01").read_bytes() == OTHER + key_line(win)
     assert win.user_file("ws-01").read_bytes() == key_line(win)
     assert all("hunter2" not in c + s for c, s in win.sent) and "hunter2" not in win.ssh_log()
+
+
+@needs_powershell
+def test_a_windows_install_cleans_up_over_the_key_only_when_another_line_of_this_box_is_there(win, capsys):
+    """T245 (#471's NIT-1): as on POSIX, the second connection (this Box's other lines off, over the new key) is made
+    only when the install said there are any (test_setup_puts_an_admins_key_in_the_admin_file_with_microsofts_acl:
+    when there is one, it goes)."""
+    def over_key(host):          # the script run over the key login (the install's own goes with the password)
+        return sum(f" {host} powershell" in ln and "BatchMode=yes" in ln for ln in win.ssh_log().splitlines())
+    assert main(["setup", "--only", "dc-01"]) == 0
+    assert over_key("dc-01") == 0
+    assert win.admin_file("dc-01").read_bytes() == key_line(win)
