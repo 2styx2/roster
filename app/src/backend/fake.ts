@@ -100,7 +100,7 @@ import {
 } from "./worstCase";
 import { capabilities, sinceOf } from "./capabilities";
 import { setupHost } from "../errors/catalog";
-import { Code, SINCE } from "./serveContract";
+import { Code, PATH_NOT_REPEATED, SINCE } from "./serveContract";
 
 /** The fake's named Inventories (FakeScenario.inventories). */
 export interface FakeInventories {
@@ -1439,7 +1439,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       .join("\n");
     return {
       path: scenario.info?.path ?? "~/team-inventory/roster.yml",
-      repo: "~/team-inventory",
+      repo: scenario.info?.path === PATH_NOT_REPEATED ? PATH_NOT_REPEATED : "~/team-inventory",   // as serve hides it (#529)
       diff: diff || removedDiff || (groupChanges.length ? groupChanges.map((g) => `${g.change === "added" ? "+" : "-"}  ${g.group}:`).join("\n") : ""),
       hosts: changed,
       groups: groupChanges,
@@ -1760,7 +1760,9 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
                 store:
                   scenario.store === "file"
                     ? { kind: "file" as const, note: "roster.yml isn't in a git repo, so it's a plain file: every edit saves straight to it", repo: null }
-                    : { kind: "repo" as const, note: "in the git repo ~/team-inventory: edits are Pending changes until you Publish them", repo: "~/team-inventory" },
+                    : scenario.info?.path === PATH_NOT_REPEATED // as serve hides it (#529)
+                      ? { kind: "repo" as const, note: "in its git repo (not repeated): edits are Pending changes until you Publish them", repo: PATH_NOT_REPEATED }
+                      : { kind: "repo" as const, note: "in the git repo ~/team-inventory: edits are Pending changes until you Publish them", repo: "~/team-inventory" },
               }
             : {}),
         },

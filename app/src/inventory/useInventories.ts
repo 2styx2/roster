@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Capabilities } from "../backend/capabilities";
 import type { Backend, BackendInfo, Inventories } from "../backend/types";
+import { shownPath, thenRename } from "../backend/shown";
 import { usePanelState, type Layer, type PanelState } from "../panel/stack";
 import { isLive } from "../session/status";
 import type { Tabs, TabsSnapshot } from "../session/tabs";
@@ -77,10 +78,10 @@ export function useInventories(opts: {
     if (was === undefined || was === inventories.name) return;
     say(
       inventories.name !== null
-        ? afterSwitch(inventories, inventories.name)
-        : `roster runs on ${inventories.path ?? "no roster.yml"} now, which isn't a named Inventory`,
+        ? afterSwitch(inventories, inventories.name, caps)
+        : `roster runs on ${inventories.path === null ? "no roster.yml" : shownPath(inventories.path, caps, "the roster.yml")} now, which isn't a named Inventory${thenRename(inventories.path, caps)}`,
     );
-  }, [inventories, say]);
+  }, [inventories, say, caps]);
 
   const question = usePanelState<Confirm>(opts.focus, "switch");
   /** The Inventory a confirmed switch is going to, while it runs: a second `:inventory` waits. */
@@ -95,7 +96,7 @@ export function useInventories(opts: {
       async (list) => {
         if (info) keep(info, list);
         if (name === null) return list.inventories.length === 0 ? say(NONE_NAMED) : opts.openCommandLine("inventory ");
-        const plan = switchPlan(list, name, { sessions: openSessions(), pending: await opts.pendingNow() });
+        const plan = switchPlan(list, name, { sessions: openSessions(), pending: await opts.pendingNow() }, caps);
         if (plan.kind === "say") return say(plan.message);
         question.open(plan);
       },
@@ -129,7 +130,7 @@ export function useInventories(opts: {
     if (typeof now === "string") {
       return say(`${to} is the active Inventory now, but roster couldn't say which Inventory it started on (${now}): its Sessions from before stay marked`);
     }
-    if (now.name !== to) say(afterSwitch(now, to));
+    if (now.name !== to) say(afterSwitch(now, to, caps));
   };
 
   const confirm = async () => {
@@ -138,7 +139,7 @@ export function useInventories(opts: {
     const to = plan.to;
     // A list roster can't give now: the last one decides.
     const list = await backend.listInventories().catch(() => inventories);
-    const again = list ? switchPlan(list, to, { sessions: openSessions(), pending: await opts.pendingNow() }) : null;
+    const again = list ? switchPlan(list, to, { sessions: openSessions(), pending: await opts.pendingNow() }, caps) : null;
     if (!again) {
       question.close();
       return say("Couldn't list the named Inventories: nothing switched");

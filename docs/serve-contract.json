@@ -1,11 +1,11 @@
 {
   "generated": "by scripts/gen-serve-api.py from src/roster/serve.py and errors.py: don't edit, run  uv run python scripts/gen-serve-api.py",
-  "api_version": 30,
+  "api_version": 31,
   "after_deadline": 40,
   "methods": {
     "$/cancel": {"since": 21, "forms": [21], "deadline": null},
     "box.check": {"since": 16, "forms": [16], "deadline": 45},
-    "changes.diff": {"since": 5, "forms": [5, 28], "deadline": null},
+    "changes.diff": {"since": 5, "forms": [5, 28, 31], "deadline": null},
     "changes.discard": {"since": 5, "forms": [5, 28], "deadline": null},
     "changes.publish": {"since": 7, "forms": [7, 28], "deadline": 110},
     "discover.add": {"since": 18, "forms": [18], "deadline": null},
@@ -30,13 +30,13 @@
     "host.update": {"since": 5, "forms": [5], "deadline": null},
     "host.verify_login": {"since": 5, "forms": [5], "deadline": 45},
     "hosts.list": {"since": 1, "forms": [1], "deadline": null},
-    "inventories.list": {"since": 27, "forms": [27], "deadline": null},
+    "inventories.list": {"since": 27, "forms": [27, 31], "deadline": null},
     "inventories.use": {"since": 27, "forms": [27], "deadline": null},
     "inventory.create": {"since": 28, "forms": [28], "deadline": 75},
-    "inventory.info": {"since": 1, "forms": [1, 28], "deadline": null},
+    "inventory.info": {"since": 1, "forms": [1, 28, 31], "deadline": null},
     "inventory.pull": {"since": 5, "forms": [5, 28], "deadline": 45},
     "inventory.reload": {"since": 8, "forms": [8], "deadline": null},
-    "inventory.watch": {"since": 8, "forms": [8], "deadline": null},
+    "inventory.watch": {"since": 8, "forms": [8, 31], "deadline": null},
     "jobs.list": {"since": 20, "forms": [20], "deadline": null},
     "jobs.stop": {"since": 20, "forms": [20], "deadline": null},
     "mesh.apply": {"since": 15, "forms": [15], "deadline": 240},
@@ -220,6 +220,7 @@
   "vault_statuses": ["locked", "unlocked", "not-logged-in", "missing-cli", "unsupported"],
   "no_password_auths": ["agent", "key", "none"],
   "path_not_repeated": "(not repeated)",
+  "rename_hint": "rename the folder (or file) whose name looks like a token, then give roster its new path",
   "job_states": {
     "running": ["running", "stopping"],
     "over": ["done", "stopped", "failed"]

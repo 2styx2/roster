@@ -62,7 +62,7 @@ from .common import (
     not_reviewed,
     ssh_path,
 )
-from .config import find_config, load_config, load_inventory, locate_config
+from .config import HIDDEN_FILE, find_config, load_config, load_inventory, locate_config, shown_path
 from .context import current
 from .errors import (
     ALREADY_SIGNED_OUT,
@@ -91,6 +91,7 @@ from .errors import (
     NOTHING_HELD,
     PARSE_ERROR,
     PASSWORD_NEEDED,
+    PATH_NOT_REPEATED,
     ROSTER_ERROR,
     SCAN_RUNNING,
     SIGN_OUT_FAILED,
@@ -114,7 +115,7 @@ from .sshops import (
     recorded_host_keys,
 )
 
-API_VERSION = 30            # bump when a method or result changes in a way the app has to know about
+API_VERSION = 31            # bump when a method or result changes in a way the app has to know about
 
 
 def busy_error(resource, who, subject=None):
@@ -247,6 +248,20 @@ class State:
             return
         self.reload()
 
+    def shown(self):
+        """The roster.yml this serve runs on as a result or a Problem's data may name it (#529): None when it found
+        none, PATH_NOT_REPEATED when it's hidden (config.shown_path, from the path as given, as load_inventory
+        decided it), else its resolved path."""
+        if self.path is None:
+            return None
+        if self.cfg is not None and self.cfg.get("hidden"):
+            return PATH_NOT_REPEATED
+        return shown_path(self.given or self.path) or PATH_NOT_REPEATED
+
+    @property
+    def hidden(self):
+        return self.shown() == PATH_NOT_REPEATED
+
     def item_lock(self, provider):
         with self.item_locks_lock:
             return self.item_locks.setdefault(provider, Lock(f"{provider}'s items"))
@@ -331,10 +346,16 @@ def inventory_info(state, params):
         (a plain file: every edit is saved straight to it, and there's nothing to pull or publish); `note` says
         which in a sentence; `repo` is the git work tree it's in (`null` outside one)
     Since: API 28
+    Params: none
+    Result: `path` (#529) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token, which roster names nowhere (the app says to rename it); `store.repo` is too then (still `null` outside
+        a repo), and `store.note` names neither
+    Since: API 31
     """
     cfg = state.inventory()
-    return {"path": str(cfg["path"]), "box": cfg["box"], "host_count": len(cfg["hosts"]),
-            "providers": sorted(PROVIDERS), "store": store.at(cfg["path"], for_show=True).view(), **versions()}
+    return {"path": state.shown(), "box": cfg["box"], "host_count": len(cfg["hosts"]),
+            "providers": sorted(PROVIDERS), "store": store.at(cfg["path"], for_show=True, hidden=state.hidden).view(),
+            **versions()}
 
 
 @method("hosts.list", lane="quick")
@@ -719,10 +740,13 @@ def inventories_list(state, params):
         `path` its `roster.yml` (`null` when none was found). With no named Inventories, `inventories` is `[]`
     Errors: 143
     Since: API 27
+    Params: none
+    Result: `path` (#529) is `"(not repeated)"` when this serve's `roster.yml` is in a folder (or has a name) that
+        looks like a token (as `inventory.info`'s)
+    Errors: 143
+    Since: API 31
     """
-    inv = named.load()
-    path = state.path.expanduser().resolve() if state.path else None
-    return {**inv.view(), "name": current().name, "path": str(path) if path else None}
+    return {**named.load().view(), "name": current().name, "path": state.shown()}
 
 
 @method("inventories.use")
@@ -769,8 +793,8 @@ def inventory_create(state, params):
     """
     from . import newinventory
     if state.path is not None:
-        raise Problem(INVENTORY_THERE, f"this roster serve runs on {state.path} already, so it makes no other "
-                                        "Inventory", {"path": str(state.path)},
+        raise Problem(INVENTORY_THERE, f"this roster serve runs on {named_here(state.shown())} already, so it makes "
+                                        "no other Inventory", {"path": state.shown()},
                        fix="`roster init --inventory ... --name NAME` in a terminal makes another one beside it")
     how = params.get("how")
     if how not in ("blank", "file", "repo"):
@@ -804,7 +828,8 @@ def inventory_create(state, params):
     on_cancel(stop.set)                             # the app's Cancel: a clone under way stops
     with state.lock, boxlock.first_run():
         if state.path is not None:                  # another create got here first
-            raise Problem(INVENTORY_THERE, f"this roster serve made {state.path} already", {"path": str(state.path)})
+            raise Problem(INVENTORY_THERE, f"this roster serve made {named_here(state.shown())} already",
+                          {"path": state.shown()})
         made_meanwhile()
         made = newinventory.create(target, how, source, interactive=False, stop=stop)
         state.path = made.path.resolve()            # this serve makes no other
@@ -814,6 +839,11 @@ def inventory_create(state, params):
             "restart": True}
 
 
+def named_here(shown):
+    """State.shown()'s path as a message says it (#529)."""
+    return HIDDEN_FILE if shown == PATH_NOT_REPEATED else shown
+
+
 def made_meanwhile():
     """inventory.create, holding the first-run lock: an Inventory found now was made meanwhile (170)."""
     try:
@@ -821,7 +851,8 @@ def made_meanwhile():
     except Problem:                         # none found (or inventories.json doesn't load): nothing was made
         return
     if found.exists():
-        raise Problem(INVENTORY_THERE, f"an Inventory was made meanwhile: {found}", {"path": str(found)},
+        shown = shown_path(found) or PATH_NOT_REPEATED
+        raise Problem(INVENTORY_THERE, f"an Inventory was made meanwhile: {named_here(shown)}", {"path": shown},
                       fix="Retry: roster starts on it")
 
 
@@ -854,7 +885,7 @@ def inventory_pull(state, params):
         upstream: null, commits: 0, ahead: 0, message}`, never an error
     Since: API 28
     """
-    result = store.at(inventory_path(state)).pull()
+    result = store.at(inventory_path(state), hidden=state.hidden).pull()
     state.reload()
     if result["updated"]:
         result["sync"] = sync_box(state)
@@ -934,7 +965,7 @@ def host_update(state, params):
         if at is None or time.monotonic() - at > VERIFIED_FOR:
             raise Problem(NOT_VERIFIED, f"{h['name']}'s new address, user or Login hasn't passed a test login",
                            fix="test the login (host.verify_login) with these values, then save again")
-    repo = store.at(state.path)
+    repo = store.at(state.path, hidden=state.hidden)
     old_text, new_text, _ = edit.edited(repo.path, h["name"], wanted)
     warnings = []
 
@@ -966,8 +997,13 @@ def changes_diff(state, params):
     Result: `kind` (T212): `repo`, or `file` for a plain file, whose edits are saved already: then `repo: null`,
         `diff: ""`, `count: 0` and `last_commit: null`, never an error
     Since: API 28
+    Params: none
+    Result: `path` and `repo` (#529) are `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that
+        looks like a token (as `inventory.info`'s; `repo` stays `null` for a plain file)
+    Errors: 70
+    Since: API 31
     """
-    return store.at(inventory_path(state)).diff()
+    return store.at(inventory_path(state), hidden=state.hidden).diff()
 
 
 @method("changes.discard", locks=WRITES_INVENTORY)
@@ -983,7 +1019,7 @@ def changes_discard(state, params):
     Result: a plain file (T212) has nothing to discard: `{discarded: false, backup: null}`
     Since: API 28
     """
-    result = store.at(inventory_path(state)).discard()
+    result = store.at(inventory_path(state), hidden=state.hidden).discard()
     state.reload()
     if result["discarded"]:
         result["sync"] = sync_box(state)
@@ -1009,7 +1045,7 @@ def changes_publish(state, params):
     message = params.get("message")
     if message is not None and not isinstance(message, str):
         raise Problem(INVALID_PARAMS, "params.message must be a string")
-    result = store.at(inventory_path(state)).publish(message)
+    result = store.at(inventory_path(state), hidden=state.hidden).publish(message)
     state.reload()
     result["sync"] = sync_box(state)
     return result
@@ -1483,7 +1519,7 @@ def quick_save(state, params):
     except ValueError as e:
         raise Problem(INVALID_PARAMS, f"params: {e}") from None
     state.fresh()
-    repo = store.at(state.path)
+    repo = store.at(state.path, hidden=state.hidden)
     _, _, h = edit.added(repo.path, group, name, fields)      # a dry run: the name and group, before the vault
     warnings = []
 
@@ -1532,7 +1568,7 @@ def host_save_login(state, params):
                                      "Login) - nothing was saved",
                        fix=f"open a new Session to {name} and save from there")
     wanted = {"auth": f"{provider}:{item}"}
-    repo = store.at(state.path)
+    repo = store.at(state.path, hidden=state.hidden)
     edit.edited(repo.path, name, wanted)        # a dry run: the edit must be possible before the vault is touched
     made, backup, synced = save_held(state, repo, hid, password,
                                      {"provider": provider, "item": item, "user": h["ssh"]["user"],
@@ -1585,7 +1621,7 @@ def host_add(state, params):
     if typed:
         fields["auth"] = f"{typed['provider']}:{typed['item']}"
     state.fresh()
-    h = addhost.add(state.path, group, name, fields, dry_run=True)["host"]   # every check, before the network
+    h = addhost.add(state.path, group, name, fields, dry_run=True, hidden=state.hidden)["host"]   # every check, before the network
     login = typed is not None or diagnose.stored_password(h) is not None
     fields["reviewed"] = login
     verify = None
@@ -1618,7 +1654,8 @@ def host_add(state, params):
     written_in = []                             # set once the Host is in roster.yml: then the item stays
 
     try:                                        # until the Host is written, any failure takes the item back out
-        written = addhost.add(state.path, group, name, fields, sync=after, on_write=written_in.append)
+        written = addhost.add(state.path, group, name, fields, sync=after, on_write=written_in.append,
+                              hidden=state.hidden)
     except BaseException as e:
         if written_in:
             raise
@@ -1686,7 +1723,7 @@ def host_review(state, params):
         raise Problem(UNKNOWN_HOST, f"unknown host {name!r}")
     if h["reviewed"] == wanted:
         return {"changed": False, "host": h, "backup": None}
-    repo = store.at(state.path)
+    repo = store.at(state.path, hidden=state.hidden)
     old_text, new_text, _ = edit.reviewed(repo.path, name, wanted)
     written = write_edit(state, old_text, new_text, repo)
     return {"changed": True, "host": state.inventory()["hosts"][name], **written}
@@ -1701,7 +1738,8 @@ def write_edit(state, old_text, new_text, repo=None, then=None):
     """Write an edit of roster.yml through REPO (default: store.at, a Pending change in a repo, saved in place in a
     plain file), keeping what it replaced as the backup; THEN(the backup's path); load it again and sync this Box
     (T150). Returns `{backup, sync}`, for the result."""
-    backup, synced = (repo or store.at(state.path)).write(old_text, new_text, then=then, sync=lambda: resynced(state))
+    backup, synced = (repo or store.at(state.path, hidden=state.hidden)).write(old_text, new_text, then=then,
+                                                                               sync=lambda: resynced(state))
     return {"backup": str(backup), "sync": synced}
 
 
@@ -1715,7 +1753,7 @@ def name_param(params, key):
 def live_repo(state):
     """roster.yml as it is now, loaded, and how it's kept (store.at: a repo or a plain file, T212)."""
     state.fresh()
-    return store.at(state.path)
+    return store.at(state.path, hidden=state.hidden)
 
 
 @method("host.remove", locks=WRITES_INVENTORY)
@@ -1928,6 +1966,10 @@ def inventory_watch(state, params):
     Result: `{watching, auto, path?}`: start noticing outside edits of `roster.yml`; `auto` (the app's
         `auto_reload`) applies them
     Since: API 8
+    Params: `{auto}`
+    Result: `path` (#529) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a
+        token (as `inventory.info`'s)
+    Since: API 31
     """
     auto = params.get("auto", False)
     if not isinstance(auto, bool):
@@ -1939,7 +1981,7 @@ def inventory_watch(state, params):
         if state.watcher is None:
             state.watcher = Watcher(state)
             state.watcher.start()
-    return {"watching": True, "auto": auto, "path": str(state.path)}
+    return {"watching": True, "auto": auto, "path": state.shown()}
 
 
 

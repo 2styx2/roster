@@ -1590,7 +1590,7 @@ def write_cut(cfg, name, sync=None):
     if cfg["hosts"][name]["mesh"] is False:
         return {"written": False, "note": f"{name} already has mesh: false in roster.yml"}
     try:
-        kept = store.at(cfg["path"])
+        kept = store.at(cfg["path"], hidden=bool(cfg.get("hidden")))
         old, new, _ = edit.edited(kept.path, name, {"mesh": False})
         backup, synced = kept.write(old, new, sync=sync)
     except Problem as e:

@@ -813,7 +813,7 @@ function Workspace({
           mainRef={mainRef}
           onPaneClick={() => setMode(terminalMode)}
           tabStrip={options.sessions === "tabs"}
-          noHostsIn={conn.hosts.hosts.length === 0 ? conn.info.inventory.path : null}
+          noHostsIn={conn.hosts.hosts.length === 0 ? { path: conn.info.inventory.path, caps } : null}
           findKeys={findKeys}
           addHost={sidebar.addHost}
           recent={{ box: conn.info.inventory.box, hosts: short ? recent.hosts.slice(0, 3) : recent.hosts, title: recent.title }}

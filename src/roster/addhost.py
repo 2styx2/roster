@@ -38,7 +38,7 @@ from .errors import (
 from .hosts import ip_of, item_of, provider_of
 
 
-def add(path, group, name, fields, sync=None, dry_run=False, new_address=False, on_write=None):
+def add(path, group, name, fields, sync=None, dry_run=False, new_address=False, on_write=None, hidden=False):
     """Host NAME (FIELDS: edit.NEW_FIELDS, already checked with edit.check_new) added to GROUP of roster.yml at PATH,
     the group made when it's new. Returns `{host, group, new_group, lines, kind, note, backup, sync}`: the Host as
     it loads now, the lines the write changes (`- ` the ones it replaces, `+ ` the ones it writes), how roster.yml is kept (store.py: `repo` or `file`, and its note), the backup and
@@ -50,7 +50,7 @@ def add(path, group, name, fields, sync=None, dry_run=False, new_address=False, 
     ON_WRITE(result) runs once the Host is written, before the sync (the CLI says what it wrote there, so the sync's
     own lines come after it, as after `discover --write`; serve marks there that the Host is in, so nothing after it
     takes its new vault item back out)."""
-    kept = store.at(path)
+    kept = store.at(path, hidden=hidden)       # HIDDEN: the Inventory's, so store's errors don't name it (#529)
     old, new, h = edit.added(kept.path, group, name, fields)
     other = same_address(load_config(kept.path), h) if new_address else None
     if other is not None:
@@ -114,7 +114,7 @@ def save_item(provider, item, password, user, address, port, save_to=None):
 
 
 def add_saving(path, group, name, fields, provider, password, save_to=None, dry_run=False, on_write=None,
-               before_vault=None):
+               before_vault=None, hidden=False):
     """`roster add NAME --save-to-vault` (T265, Q217): Host NAME (FIELDS as add()'s, checked, without auth) added to
     GROUP with `auth: PROVIDER:<NAME> ssh`, its password saved as that vault item first. In order: PROVIDER can save
     (61); every check of add(), nothing asked or saved yet; BEFORE_VAULT() (the caller's note on what an unlock
@@ -122,7 +122,7 @@ def add_saving(path, group, name, fields, provider, password, save_to=None, dry_
     it raises to stop); the
     item (save_item: 60 when the name is taken, the vault's other refusals); the Host, written as add() writes it
     (ON_WRITE as add()'s, its result's `item` set); then PROVIDER's sync (`bw sync`), so other Boxes see the item at
-    their next sync. A write that fails once the item is made is 225, naming the item to delete by hand: no Host
+    their next sync. HIDDEN: as add()'s (#529). A write that fails once the item is made is 225, naming the item to delete by hand: no Host
     points at it. Returns add()'s result with `item` (save_item's) and `vault_sync` ({ok, error?}). DRY_RUN: nothing asked or saved, and `item` is
     the one it would make ({provider, name, uri, username, target}: the SAVE_TO given, or the setting, as set)."""
     if not providers.can_write(provider):
@@ -131,7 +131,7 @@ def add_saving(path, group, name, fields, provider, password, save_to=None, dry_
             f"password manager, then give --auth {provider}:ITEM"))
     item = item_name(name)
     fields = {**fields, "auth": edit.check_new("auth", f"{provider}:{item}")}
-    plan = add(path, group, name, fields, dry_run=True, new_address=True)
+    plan = add(path, group, name, fields, dry_run=True, new_address=True, hidden=hidden)
     h = plan["host"]
     user, address, port = h["ssh"]["user"], h["ip"], h["ssh"]["port"]
     if dry_run:
@@ -163,7 +163,7 @@ def add_saving(path, group, name, fields, provider, password, save_to=None, dry_
         if on_write is not None:
             on_write(r)
     try:
-        done = add(path, group, name, fields, new_address=True, on_write=in_file)
+        done = add(path, group, name, fields, new_address=True, on_write=in_file, hidden=hidden)
     except BaseException as e:
         if written:                             # the Host is in: what failed after that leaves no stray item
             raise

@@ -1,6 +1,8 @@
 // The status bar: its segments as the mode's layout picks and orders them (decision Q39), the
 // hints and the mode to the right, and what Plugins are doing.
 import { useSyncExternalStore, type ReactNode } from "react";
+import { capabilities } from "../backend/capabilities";
+import { isHidden, RENAME, shownPath } from "../backend/shown";
 import type { BackendInfo, Inventories } from "../backend/types";
 import { FitBar, NameForms } from "../ui/FitBar";
 import { PathText } from "../ui/PathText";
@@ -41,6 +43,9 @@ export interface StatusBarProps {
 
 export function StatusBar(p: StatusBarProps) {
   const { info, keymap, leader, run } = p;
+  const caps = capabilities(info.inventory);
+  /** A roster.yml path for a tooltip: one serve won't name says so, and what to do (#529). */
+  const tip = (path: string) => (isHidden(path, caps) ? `${shownPath(path, caps, "the roster.yml")}. ${RENAME}` : path);
   const statusDefs = useSyncExternalStore(p.registries.status.subscribe, p.registries.status.list);
   const sourceKeys = keyHint(keymap, "source");
   // The status bar teaches the keys that work now (taste.md: keycaps are the onboarding). In
@@ -100,16 +105,16 @@ export function StatusBar(p: StatusBarProps) {
     // The named Inventory serve runs on (ticket 115): always in sight while there is one.
     inventory: (id) =>
       p.inventories?.name && (
-        <span key={id} className="box" title={`Inventory ${p.inventories.name}: ${p.inventories.path ?? ""}`}>
+        <span key={id} className="box" title={`Inventory ${p.inventories.name}: ${p.inventories.path === null ? "" : tip(p.inventories.path)}`}>
           <span className="statusbar-cut">{p.inventories.name} Inventory</span>
         </span>
       ),
     path: (id) => (
-      <span key={id} className="path" title={`${info.inventory.path}\n${info.command.join(" ")}`}>
+      <span key={id} className="path" title={`${tip(info.inventory.path)}\n${info.command.join(" ")}`}>
         {/* Whole folders give way for one "…/", its first folder and file name kept longest
             ("~/…/roster.yml", then "…/roster.yml"; FitBar picks the form, round 20: a folder
-            cut inside read "~/ …ventory/roster.yml"). */}
-        <PathText path={info.inventory.path} />
+            cut inside read "~/ …ventory/roster.yml"). A path serve won't name says so (#529). */}
+        {isHidden(info.inventory.path, caps) ? "roster.yml (not repeated)" : <PathText path={info.inventory.path} />}
       </span>
     ),
     // Pending changes (ticket 10): only when there are some; it opens them.

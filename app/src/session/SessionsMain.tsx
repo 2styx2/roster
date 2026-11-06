@@ -1,6 +1,8 @@
 // The workspace's middle: the Sessions' terminals (with the tab strip when `sessions = "tabs"`), or
 // what to do when there are none; and the bottom line under them.
 import type { ReactNode } from "react";
+import type { Capabilities } from "../backend/capabilities";
+import { isHidden, RENAME, shownPath } from "../backend/shown";
 import type { Host } from "../backend/types";
 import { Logo } from "../chrome/Logo";
 import { PathText } from "../ui/PathText";
@@ -14,8 +16,9 @@ export interface SessionsMainProps {
   /** A click in a Session's pane: keys go back to its terminal. */
   onPaneClick(): void;
   tabStrip: boolean;
-  /** The Inventory has no Hosts yet: its file, where they go. */
-  noHostsIn: string | null;
+  /** The Inventory has no Hosts yet: its file, where they go (as serve named it: `caps` says
+   * whether that's a path it won't repeat, #529). */
+  noHostsIn: { path: string; caps: Capabilities } | null;
   findKeys: string | null;
   panes: SessionPanesProps;
   /** "Add a Host" (iteration 3 feedback): its keys, or why this roster can't (null: it can). */
@@ -76,9 +79,16 @@ export function SessionsMain({ mainRef, onPaneClick, tabStrip, noHostsIn, findKe
           )}
           {/* Whole when the pane has room for it; else whole folders give way as in the status
               bar (round 20: it was cut at 56ch with ~700 px to spare), whole in the tooltip. */}
-          <p className="empty-path" title={noHostsIn}>
-            <PathText path={noHostsIn} fit />
-          </p>
+          {/* A path serve won't name (#529) says so, with what to do, instead of the path. */}
+          {isHidden(noHostsIn.path, noHostsIn.caps) ? (
+            <p className="empty-hint">
+              Add them to {shownPath(noHostsIn.path, noHostsIn.caps, "the roster.yml")} and they show up here. {RENAME}
+            </p>
+          ) : (
+            <p className="empty-path" title={noHostsIn.path}>
+              <PathText path={noHostsIn.path} fit />
+            </p>
+          )}
           {/* The next action, with its command (taste.md: an empty state carries it). */}
           <button type="button" className="empty-find" onMouseDown={(e) => e.preventDefault()} onClick={() => run("help adding-hosts")}>
             How to add Hosts <span className="row-menu-cmd">:help adding-hosts</span>

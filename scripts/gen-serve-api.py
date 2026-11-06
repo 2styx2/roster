@@ -281,6 +281,7 @@ def contract():
         "vault_statuses": list(dict.fromkeys(serve.STATUS_WORDS.values())),
         "no_password_auths": list(providers.NO_PASSWORD),
         "path_not_repeated": errors.PATH_NOT_REPEATED,
+        "rename_hint": errors.RENAME_HINT,
         "job_states": {"running": list(jobs.RUNNING), "over": list(jobs.OVER)},
     }
 
@@ -385,8 +386,11 @@ def contract_ts(c):
               "but it's a provider of its own).", c["no_password_auths"]),
         record("JOB_STATES", "A job's `state` (`mesh.job`, `discover.status`, `host.check_job`, `job.progress`): "
                "`running` while it runs, `over` once it's over.", c["job_states"]),
-        f"/** `data.path` for a roster.yml path roster won't repeat (a -c value shaped like a token). */\n"
+        f"/** `data.path`, and a result's `path` since API 31 (#529), for a roster.yml path roster won't repeat (a -c "
+        f"value shaped like a token, or a roster.yml in a folder named like one). */\n"
         f"export const PATH_NOT_REPEATED = {ts_value(c['path_not_repeated'])};\n",
+        f"/** What to do about a roster.yml roster won't name: the words the CLI says it with. */\n"
+        f"export const RENAME_HINT = {ts_value(c['rename_hint'])};\n",
         "export type CodeName = keyof typeof Code;\n",
         "// serve's params and results that are Pydantic models (src/roster/servemodels.py, decision Q113). A model of\n"
         "// models.py's in one (a Host, a group) is a type parameter: the app names its own.\n",
