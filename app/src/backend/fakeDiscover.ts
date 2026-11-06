@@ -7,7 +7,7 @@ import type { FakePlugin, FakeRoster, FakeServe } from "./fakePlugins";
 import { PluginServeError } from "./redact";
 import { BackendCallError } from "./types";
 import { FIRST_PARTY } from "./fakeManifests";
-import { Code } from "./serveContract";
+import { Code, JsonRpcCode } from "./serveContract";
 
 const DEFAULT_LEADER = "y d";
 const MAX_ROWS = 10000;
@@ -459,7 +459,7 @@ function load(roster: FakeRoster) {
   const start = (targets: string[], force: boolean) => {
     request("discover.start", { targets, ports: s.ports, force }, (ok, r) => {
       if (!ok) {
-        roster.notify(`The scan didn't start: ${messageOf(r)}`, codeOf(r) === 120 ? "warn" : "error");
+        roster.notify(`The scan didn't start: ${messageOf(r)}`, codeOf(r) === Code.SCAN_RUNNING ? "warn" : "error");
         return;
       }
       started(r as Status);
@@ -487,7 +487,7 @@ function load(roster: FakeRoster) {
   };
 
   const confirm = (ok: boolean, plan: unknown) => {
-    if (!ok && codeOf(plan) === -32601) {
+    if (!ok && codeOf(plan) === JsonRpcCode.METHOD_NOT_FOUND) {
       roster.notify(
         "Not scanned: the roster on this Box is too old to scan from the app (it needs roster serve API 18). Update roster there, or run `roster discover` in a terminal.",
         "error",
@@ -578,7 +578,7 @@ function load(roster: FakeRoster) {
       if (gone.length > 0) return [{ level: "warn", message: `${list(gone)} not granted: Discover can't scan`, fix: "Allow them in :plugins" }];
       request("discover.plan", { targets: ["10.0.0.0/30"] }, (ok, plan) => {
         let out: Record<string, unknown>[];
-        if (!ok && codeOf(plan) === -32601)
+        if (!ok && codeOf(plan) === JsonRpcCode.METHOD_NOT_FOUND)
           out = [
             {
               level: "error",
@@ -703,7 +703,7 @@ export function fakeDiscoverServe(net: FakeNet): FakeServe {
         return { group, added, backup: "/home/you/team-inventory/.git/roster/roster.yml.bak" };
       }
       default:
-        throw new BackendCallError(`unknown method '${method}'`, -32601);
+        throw new BackendCallError(`unknown method '${method}'`, JsonRpcCode.METHOD_NOT_FOUND);
     }
   };
 }

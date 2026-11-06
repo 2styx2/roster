@@ -209,6 +209,8 @@ struct FakeServe {
     held_check: Mutex<Option<(String, Receiver<()>)>>,
     /// The `roster sync` after a cut wrote `mesh: false` (T150).
     cut_sync: Mutex<Value>,
+    /// What `mesh.job` answers before the cut's end, one state a call (none left: done).
+    cut_states: Mutex<Vec<&'static str>>,
 }
 
 impl FakeServe {
@@ -221,6 +223,7 @@ impl FakeServe {
             grouped: Value::Null,
             held_check: Mutex::new(None),
             cut_sync: Mutex::new(json!({ "ok": true })),
+            cut_states: Mutex::new(Vec::new()),
         }
     }
     fn grouped(mut self, grouped: Value) -> FakeServe {
@@ -278,10 +281,19 @@ impl Serve for FakeServe {
                 Ok(json!({ "job": 7, "action": "cut", "total": 3, "host": params["host"] }))
             }
             "mesh.cut" => Ok(mesh_cut(params["host"].as_str().unwrap_or(""))),
-            "mesh.job" => Ok(
-                json!({ "job": 7, "action": "cut", "host": "esx-01", "state": "done", "done": 3, "total": 3, "at": null, "stopped": false,
-                        "result": mesh_cut_synced("esx-01", self.cut_sync.lock().unwrap().clone()) }),
-            ),
+            "mesh.job" => {
+                let mut states = self.cut_states.lock().unwrap();
+                if !states.is_empty() {
+                    let state = states.remove(0);
+                    return Ok(
+                        json!({ "job": 7, "action": "cut", "host": "esx-01", "state": state, "done": 2, "total": 3, "at": null, "stopped": false }),
+                    );
+                }
+                Ok(
+                    json!({ "job": 7, "action": "cut", "host": "esx-01", "state": "done", "done": 3, "total": 3, "at": null, "stopped": false,
+                            "result": mesh_cut_synced("esx-01", self.cut_sync.lock().unwrap().clone()) }),
+                )
+            }
             _ => Err(CallError::Io {
                 message: format!("unknown method {method}"),
             }),
@@ -835,6 +847,33 @@ fn a_cut_whose_sync_failed_says_this_boxs_ssh_config_didnt_follow() {
                 "warn"
             )
         ]
+    );
+}
+
+/// A cut being stopped is still going (serve's job states: running and stopping): its progress
+/// stays and the timer asks again, rather than saying it failed.
+#[test]
+fn a_cut_that_is_stopping_is_still_going_not_failed() {
+    let w = World::new("cut-stopping");
+    *w.serve.cut_states.lock().unwrap() = vec!["running", "stopping"];
+    let reply = w.load(ALL);
+    let cut = action(view(&reply), "Cut");
+    let r = w.call(cut, on("esx-01"));
+    let r = w.call(
+        handler(&one(&r.ops, "confirm")["spec"]["run"]),
+        json!({ "confirm": "yes" }),
+    );
+    let timer = handler(&one(&r.ops, "timer")["run"]);
+    for _ in 0..2 {
+        let r = w.call(timer, json!({}));
+        ok(&r);
+        assert!(find(&r.ops, "notify").is_empty(), "{:?}", r.ops);
+        assert_eq!(one(&r.ops, "progress")["spec"]["done"], 2);
+    }
+    let r = w.call(timer, json!({}));
+    assert_eq!(
+        one(&r.ops, "notify")["text"],
+        "Cut esx-01: cut pending on 1 Host that didn't answer."
     );
 }
 

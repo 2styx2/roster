@@ -186,6 +186,7 @@ The structure tests, each failing with the rule and this page's section:
 | `tests/test_layers.py` | Python: every module has a layer, imports go down, leaves import nothing, nothing imports `cli`/`serve`, no new cycle, the table here matches the test's |
 | `app/src/architecture.test.ts` | App: the docs site and `:help` load no xterm, terminal view or PluginManager; pure modules load no `.tsx`; only wiring imports wiring; no module cycle; no folder cycle (of any length) but through `KNOWN_BACK_EDGES` |
 | `app/src/docs-site/build.test.ts` | `npm run docs` builds under Node |
+| `app/src/plugins/luaContract.test.ts` | The first-party Plugins (`plugins/`) name serve's codes as the contract does (`local SCAN_RUNNING = 120`, never a bare number after `model.code(r) ==`) and compare a job's state only with serve's job states |
 | `crates/roster-core/tests/layers.rs` | Rust: every module has a row in the table here, neutral modules use nothing of the crate's, parts use no facade, no cycle through any path |
 | `crates/roster-core/tests/backend.rs`, `backend.rs`'s `contract` tests | `PASS_THROUGH` holds no method the core keeps (Q129) and only methods serve has |
 | The "Fails when stale" column above | Every generated file matches its source |

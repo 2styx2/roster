@@ -11,6 +11,7 @@ import { PluginServeError } from "./redact";
 import { BackendCallError } from "./types";
 import { errorText } from "../ui/format";
 import { FIRST_PARTY } from "./fakeManifests";
+import { JsonRpcCode } from "./serveContract";
 
 type Obj = Record<string, unknown>;
 type Link = { from: string; to: string; kind?: string; via?: string; status?: string; why?: string };
@@ -128,7 +129,6 @@ const POLL = 1000;
 const DETAIL_LINKS = 20;
 const DETAILS_AT_ONCE = 300;
 /** JSON-RPC's code: this roster serve has no such method. */
-const METHOD_NOT_FOUND = -32601;
 const ACTIONS: Record<string, string> = { plan: "Planning the Mesh", apply: "Applying the Mesh", cut: "Cutting" };
 
 const HELP = `# Mesh controls
@@ -237,7 +237,7 @@ function load(roster: FakeRoster) {
         const e = words.clean(j);
         state.status = null;
         state.refreshing = false;
-        state.problem = j instanceof PluginServeError && j.code === METHOD_NOT_FOUND
+        state.problem = j instanceof PluginServeError && j.code === JsonRpcCode.METHOD_NOT_FOUND
           ? "This roster serve has no Mesh jobs (API 17): update roster to use the Mesh controls."
           : `roster serve couldn't say how the Mesh is: ${e}`;
         return show();
@@ -908,7 +908,7 @@ export function meshServe(world: MeshWorld): (method: string, params: Obj) => un
   return (method, params) => {
     switch (method) {
       case "mesh.job": {
-        if (!w.jobs) throw new BackendCallError("unknown method 'mesh.job'", METHOD_NOT_FOUND);
+        if (!w.jobs) throw new BackendCallError("unknown method 'mesh.job'", JsonRpcCode.METHOD_NOT_FOUND);
         if (!job || (params.job !== undefined && params.job !== job.number)) return null;
         const v: Obj = { job: job.number, action: job.action, state: "running", total: job.total, done: job.total - job.left, at: "orion-2", stopped: job.stopped };
         if (job.host) v.host = job.host;
@@ -941,7 +941,7 @@ export function meshServe(world: MeshWorld): (method: string, params: Obj) => un
         return { job: number, action, total, ...(host ? { host } : {}) };
       }
       default:
-        throw new BackendCallError(`unknown method '${method}'`, METHOD_NOT_FOUND);
+        throw new BackendCallError(`unknown method '${method}'`, JsonRpcCode.METHOD_NOT_FOUND);
     }
   };
 }
