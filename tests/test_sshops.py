@@ -7,15 +7,11 @@ import subprocess
 import pytest
 from conftest import posix_shell
 
+from roster import boxkeys
+from roster.authorized import add_key_script, box_key_re, remove_key_script, retag_key_script
+from roster.boxkeys import public_key_line
 from roster.config import load_config
-from roster.sshops import (
-    add_key_script,
-    box_key_re,
-    public_key_line,
-    remove_key_script,
-    retag_key_script,
-    write_ssh_config,
-)
+from roster.sshops import write_ssh_config
 
 PUB = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly roster-managed:ws1"
 TAG_RE = " (roster-managed|fleet-managed):ws1$"
@@ -62,7 +58,7 @@ def test_remove_key_only_touches_this_box(tmp_path):
 def test_public_key_line_carries_box_tag(write_config):
     cfg = load_config(write_config("box_name: ws1\nkey_path: ~/k\ngroups: {a: {user: u, hosts: {h: 1.2.3.4}}}\n"))
     cfg["pub"].write_text("ssh-ed25519 AAAAxyz someone@else\n")
-    assert public_key_line(cfg) == "ssh-ed25519 AAAAxyz roster-managed:ws1"
+    assert public_key_line(boxkeys.box_key(cfg), cfg["tag"]) == "ssh-ed25519 AAAAxyz roster-managed:ws1"
 
 
 def test_ssh_config_written_and_included_once(isolated, write_config):
@@ -121,7 +117,59 @@ def test_an_interrupted_key_change_never_truncates_authorized_keys(tmp_path):
         subprocess.run(["sh", "-c", script], env={**os.environ, "HOME": str(tmp_path),
                                                   "PATH": f"{bin_}:{os.environ['PATH']}"}, capture_output=True)
         assert ak.read_text().startswith("ssh-rsa AAAAother someone@laptop\n")
-        assert not list(ak.parent.glob("*.roster"))
+        assert not list(ak.parent.glob("*.roster*"))
+
+
+def failing_writes(d):
+    """A stand-in grep in D that, writing to a file, writes one line and fails as a full disk would (exit 2)."""
+    d.mkdir(exist_ok=True)
+    (d / "grep").write_text(f"""#!/bin/sh
+out=$(readlink /proc/$$/fd/1)
+if [ -f "$out" ]; then {shutil.which("grep")} "$@" | head -n 1; echo "grep: write error: No space left on device" >&2; exit 2; fi
+exec {shutil.which("grep")} "$@"
+""")
+    (d / "grep").chmod(0o755)
+    return d
+
+
+@posix_shell
+@pytest.mark.skipif(not os.path.exists("/proc/self/fd/1"), reason="needs /proc to see where grep writes")
+def test_a_failed_write_of_the_new_key_file_changes_nothing(tmp_path):
+    """#524's review F1: grep's exit 2 (a read or write error: a full disk) was taken for "no line left", and the
+    truncated file renamed into place, locking every other key out. Now the script stops before the mv."""
+    bin_ = failing_writes(tmp_path / "bin")
+    ak = tmp_path / ".ssh" / "authorized_keys"
+    ak.parent.mkdir()
+    before = "ssh-rsa AAAAother someone@laptop\nssh-rsa AAAAmore else@laptop\nssh-ed25519 AAAAold roster-managed:ws1\n"
+    for script in (add_key_script(PUB, TAG_RE, "admin"), remove_key_script(TAG_RE, "admin")):
+        ak.write_text(before)
+        r = subprocess.run(["sh", "-c", script], env={**os.environ, "HOME": str(tmp_path),
+                                                      "PATH": f"{bin_}:{os.environ['PATH']}"}, capture_output=True,
+                           text=True)
+        assert r.returncode != 0 and "ROSTER_OK" not in r.stdout
+        assert "couldn't write the new ~/.ssh/authorized_keys" in r.stderr and "nothing was changed" in r.stderr
+        assert ak.read_text() == before
+        assert sorted(p.name for p in ak.parent.iterdir()) == ["authorized_keys"]
+
+
+@posix_shell
+def test_a_host_without_mktemp_says_so_and_changes_nothing(tmp_path):
+    """#524's review F3: the key scripts need mktemp (a new file of their own beside authorized_keys); without it they
+    say so, never fall back to a fixed name."""
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    for tool in ("sh", "grep", "cp", "mv", "rm", "mkdir", "touch", "chmod", "readlink", "printf", "uname", "sed"):
+        if real := shutil.which(tool):
+            os.symlink(real, bin_ / tool)
+    ak = tmp_path / ".ssh" / "authorized_keys"
+    ak.parent.mkdir()
+    ak.write_text("ssh-rsa AAAAother someone@laptop\n")
+    for script in (add_key_script(PUB, TAG_RE, "admin"), remove_key_script(TAG_RE, "admin")):
+        r = subprocess.run([str(bin_ / "sh"), "-c", script], env={**os.environ, "HOME": str(tmp_path),
+                                                                  "PATH": str(bin_)}, capture_output=True, text=True)
+        assert r.returncode != 0 and "ROSTER_OK" not in r.stdout
+        assert "this Host has no mktemp" in r.stderr and "nothing was changed" in r.stderr, r.stderr
+        assert ak.read_text() == "ssh-rsa AAAAother someone@laptop\n"
 
 
 @posix_shell
@@ -146,7 +194,7 @@ def selinux_tools(tmp_path, ok):
 
 def test_the_key_scripts_relabel_authorized_keys_after_the_move():
     for script in (add_key_script(PUB, TAG_RE, "admin"), remove_key_script(TAG_RE, "admin")):
-        mv = script.index('mv -f "$f.roster" "$f"')
+        mv = script.index('mv -f "$t" "$f"')
         assert script.index("chcon --reference=") < mv < script.index('restorecon -F "$f"')
 
 
@@ -163,7 +211,7 @@ def test_the_key_scripts_finish_with_or_without_selinux_tools(tmp_path, tools):
                                                               for t in ("chcon", "restorecon")))
         path = f"{tmp_path / 'bin'}:{path}"
         (tmp_path / "bin").mkdir()
-        for tool in ("sh", "grep", "cp", "mv", "rm", "mkdir", "touch", "chmod", "readlink", "printf"):
+        for tool in ("sh", "grep", "cp", "mv", "rm", "mkdir", "touch", "chmod", "readlink", "printf", "mktemp"):
             real = shutil.which(tool)
             if real and not os.path.exists(tmp_path / "bin" / tool):
                 os.symlink(real, tmp_path / "bin" / tool)
@@ -224,9 +272,16 @@ OLD_NAME_LINE = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly roster
 OTHER_BOX_SAME_OLD_NAME = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherBox+Key/x= roster-managed:old-pi"
 
 
+def box_cfg(key):
+    """What box_key_re reads of an Inventory: this Box's tag_re and its key (an Ed25519 one at KEY), no Hosts."""
+    return {"tag_re": TAG_RE, "key": key, "pub": key.parent / (key.name + ".pub"), "key_type": "ed25519", "hosts": {}}
+
+
 def renamed(tmp_path, *extra):
-    cfg = {"tag_re": TAG_RE, "pub": tmp_path / "k.pub"}
+    cfg = box_cfg(tmp_path / "k")
     cfg["pub"].write_text(OLD_NAME_LINE + "\n")         # ssh-keygen -C wrote the tag the Box had then
+    cfg["key"].write_text("private\n")                  # this Box holds its private key (T245: boxkeys.vouched)
+    cfg["key"].chmod(0o600)
     ak = tmp_path / ".ssh" / "authorized_keys"
     ak.parent.mkdir()
     ak.write_text("\n".join(["ssh-rsa AAAAother someone@laptop", OLD_NAME_LINE, OTHER_BOX_SAME_OLD_NAME,
@@ -253,7 +308,7 @@ def test_add_key_retags_this_boxs_line_under_an_earlier_name(tmp_path):
 
 
 def test_box_key_re_is_the_tag_alone_without_a_public_key(tmp_path):
-    assert box_key_re({"tag_re": TAG_RE, "pub": tmp_path / "none.pub"}) == TAG_RE
+    assert box_key_re(box_cfg(tmp_path / "none")) == TAG_RE
 
 
 # #423's review M1: a Box key line someone hardened with options before it is still this Box's line (it ends in this
@@ -286,7 +341,7 @@ def test_retag_rewrites_only_this_boxs_lines_in_place_keeping_their_options(tmp_
 
 @posix_shell
 def test_retag_says_when_there_is_no_line_and_changes_nothing(tmp_path):
-    cfg = {"tag_re": TAG_RE, "pub": tmp_path / "k.pub"}
+    cfg = box_cfg(tmp_path / "k")
     cfg["pub"].write_text(OLD_NAME_LINE + "\n")
     out = run_remote(retag_key_script(PUB, "admin"), tmp_path)        # no file at all
     assert "ROSTER_NONE" in out and not (tmp_path / ".ssh").exists()
@@ -300,7 +355,7 @@ def test_retag_says_when_there_is_no_line_and_changes_nothing(tmp_path):
 
 @posix_shell
 def test_retag_fails_when_grep_fails(tmp_path):
-    cfg = {"tag_re": TAG_RE, "pub": tmp_path / "k.pub"}
+    cfg = box_cfg(tmp_path / "k")
     cfg["pub"].write_text(OLD_NAME_LINE + "\n")
     ak = tmp_path / ".ssh" / "authorized_keys"
     ak.parent.mkdir()

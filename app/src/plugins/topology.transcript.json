@@ -432,7 +432,7 @@
           "id": "topology",
           "op": "help",
           "spec": {
-            "markdown": "# Topology\n\nA map of this Box and every Host, grouped as the Inventory groups them, with the Mesh's reach and Links. `:topology` opens it (`:topology GROUP` shows one group), and so does `␣ T`; Esc goes back.\n\n- **Nodes:** this Box is the square; a filled node takes a key, a ring a password, a dashed ring isn't reviewed, a hollow one's Session ended. A live Session is in the accent, with its edge from this Box; a Host that's down (its Session couldn't connect, or a check of it failed) is crossed out.\n- **Edges:** grey from this Box to each group; solid for a Mesh key, dashed for a password peer, an arrow one way. A cluster drawn as a mesh reaches itself both ways. A broken, dotted edge is a cut not finished.\n- **Marks:** warn for a Host that didn't answer the last apply or has no Link to its hop, error for a cut not finished. The text above the map says when the Mesh is out of date.\n- **A group the Mesh touches** shows as up to three clusters: its Hosts that reach each other, its password peers (reached, never reaching), and the ones not in the Mesh.\n\nSelect a Host to light up what it can reach and what can reach it, every hop: what its key reaches, and what those Hosts' own keys reach, which is what someone on it could reach. Its details (`i`) say how many directly.\n\nKeys: `h` `j` `k` `l` move, `/` searches, `f` filters by group, kind or state (hiding the rest), `o` collapses a group, `+` `-` `0` zoom, `t` lists every node and edge. On a Host: Enter opens a Session, `i` its details, `c` Check, `x` Cut from the Mesh (after you type its name).\n\n`:tutor topology` teaches the map by using it, on the tutorial's demo Inventory.\n\nIt needs **inventory.read** for the Hosts, **serve:mesh.status** for the Mesh, **serve:host.check** for Check, **serve:host.check_job** to show a Host down when a check of it fails, and **serve:mesh.cut** with **serve:mesh.job** for Cut. Without one it says so above the map.",
+            "markdown": "# Topology\n\nA map of this Box and every Host, grouped as the Inventory groups them, with the Mesh's reach and Links. `:topology` opens it (`:topology GROUP` shows one group), and so does `␣ T`; Esc goes back.\n\n- **Nodes:** this Box is the square; a filled node takes a key, a ring a password, a dashed ring isn't reviewed, a hollow one's Session ended. A live Session is in the accent, with its edge from this Box; a Host that's down (its Session couldn't connect, or a check of it failed) is crossed out.\n- **Edges:** grey from this Box to each group; solid for a Mesh key, dashed for a password peer, an arrow one way. A cluster drawn as a mesh reaches itself both ways. A broken, dotted edge is a cut not finished.\n- **Marks:** warn for a Host that didn't answer the last apply or has no Link to its hop, error for a cut not finished. The text above the map says when the Mesh is out of date.\n- **A group the Mesh touches** shows as up to three clusters: its Hosts that reach each other, its password peers (reached, never reaching), and the ones not in the Mesh.\n\nSelect a Host to light up what it can reach and what can reach it, every hop: what its key reaches, and what those Hosts' own keys reach, which is what someone on it could reach. Its details (`i`) say how many directly.\n\nKeys: `h` `j` `k` `l` move, `/` searches (it opens empty each time), `f` filters by group, kind or state (hiding the rest), `o` collapses a group, `+` `-` `0` zoom, `t` lists every node and edge. On a Host: Enter opens a Session, `i` its details, `c` Check, `x` Cut from the Mesh (after you type its name).\n\n`:tutor topology` teaches the map by using it, on the tutorial's demo Inventory.\n\nIt needs **inventory.read** for the Hosts, **serve:mesh.status** for the Mesh, **serve:host.check** for Check, **serve:host.check_job** to show a Host down when a check of it fails, and **serve:mesh.cut** with **serve:mesh.job** for Cut. Without one it says so above the map.",
             "summary": "The map: this Box, your Hosts by group, the Mesh, and who can reach whom",
             "title": "Topology"
           }
@@ -441,7 +441,7 @@
           "id": "topology",
           "op": "tutor",
           "spec": {
-            "intro": "The Topology view draws this Box and every Host as a map, grouped as the Inventory groups them. This tutorial runs on the demo's six Hosts, in two groups.\n\nThe demo has no Mesh, so the line above its map says the Mesh isn't shown. On your own Inventory, the map also draws the Mesh: who can reach whom, and how.",
+            "intro": "The Topology view draws this Box and every Host as a map, grouped as the Inventory groups them. This tutorial runs on the demo's six Hosts, in two groups.\n\nThe map also draws the Mesh: who can reach whom, and how. The demo has a small, made-up one, so you can read it there; nothing on it connects anywhere.",
             "lessons": [
               {
                 "steps": [
@@ -489,10 +489,34 @@
                 ],
                 "text": "`h` `j` `k` `l` move between nodes, and `/` finds one by name. On a Host, `i` opens its details and Enter opens a Session to it. A live Session's node is in the accent, with its edge from this Box.",
                 "title": "From a node to its Host"
+              },
+              {
+                "steps": [
+                  {
+                    "id": "reach",
+                    "on": {
+                      "arg": "demo-01",
+                      "event": "command",
+                      "id": "info"
+                    },
+                    "text": "On the map (`:topology`), find `demo-01`: the lab and `demo-05` light up. Press `i`: its Reach says 3 Hosts directly."
+                  },
+                  {
+                    "id": "pending",
+                    "on": {
+                      "arg": "demo-05",
+                      "event": "command",
+                      "id": "info"
+                    },
+                    "text": "Find `demo-05`, marked Mesh pending: it didn't answer the last apply, so its key may not be there yet. Press `i`: its Reach says why."
+                  }
+                ],
+                "text": "In the demo's Mesh, the lab's `demo-01`, `demo-02` and `demo-03` reach each other both ways, drawn as one cluster, and `demo-01` also reaches `demo-05` in the office. Select a Host to light up what it can reach and what can reach it, every hop; its details (`i`) count what it reaches directly.",
+                "title": "Who reaches whom"
               }
             ],
-            "outro": "You've opened the map, shown one group, and gone from a node to its Host's details and a Session. Open the map once more: `demo-03` is in the accent now, live.\n\n- `f` filters the map by group, kind or state, and `t` lists every node and edge.\n- On your own Inventory, select a Host to light up what it can reach and what can reach it.\n- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
-            "summary": "Learn the Topology view: open the map, show one group, go from a node to its Host",
+            "outro": "You've opened the map, shown one group, gone from a node to its Host's details and a Session, and read who reaches whom. `demo-03` is in the accent on the map now, live.\n\n- `f` filters the map by group, kind or state, and `t` lists every node and edge.\n- On your own Inventory, the map draws your Mesh the same way, and a pending Host is finished by the next `roster mesh`.\n- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
+            "summary": "Learn the Topology view: open the map, show one group, go from a node to its Host, read its reach",
             "title": "Topology tutor"
           }
         },
@@ -1457,7 +1481,7 @@
           "id": "topology",
           "op": "help",
           "spec": {
-            "markdown": "# Topology\n\nA map of this Box and every Host, grouped as the Inventory groups them, with the Mesh's reach and Links. `:topology` opens it (`:topology GROUP` shows one group), and so does `␣ T`; Esc goes back.\n\n- **Nodes:** this Box is the square; a filled node takes a key, a ring a password, a dashed ring isn't reviewed, a hollow one's Session ended. A live Session is in the accent, with its edge from this Box; a Host that's down (its Session couldn't connect, or a check of it failed) is crossed out.\n- **Edges:** grey from this Box to each group; solid for a Mesh key, dashed for a password peer, an arrow one way. A cluster drawn as a mesh reaches itself both ways. A broken, dotted edge is a cut not finished.\n- **Marks:** warn for a Host that didn't answer the last apply or has no Link to its hop, error for a cut not finished. The text above the map says when the Mesh is out of date.\n- **A group the Mesh touches** shows as up to three clusters: its Hosts that reach each other, its password peers (reached, never reaching), and the ones not in the Mesh.\n\nSelect a Host to light up what it can reach and what can reach it, every hop: what its key reaches, and what those Hosts' own keys reach, which is what someone on it could reach. Its details (`i`) say how many directly.\n\nKeys: `h` `j` `k` `l` move, `/` searches, `f` filters by group, kind or state (hiding the rest), `o` collapses a group, `+` `-` `0` zoom, `t` lists every node and edge. On a Host: Enter opens a Session, `i` its details, `c` Check, `x` Cut from the Mesh (after you type its name).\n\n`:tutor topology` teaches the map by using it, on the tutorial's demo Inventory.\n\nIt needs **inventory.read** for the Hosts, **serve:mesh.status** for the Mesh, **serve:host.check** for Check, **serve:host.check_job** to show a Host down when a check of it fails, and **serve:mesh.cut** with **serve:mesh.job** for Cut. Without one it says so above the map.",
+            "markdown": "# Topology\n\nA map of this Box and every Host, grouped as the Inventory groups them, with the Mesh's reach and Links. `:topology` opens it (`:topology GROUP` shows one group), and so does `␣ T`; Esc goes back.\n\n- **Nodes:** this Box is the square; a filled node takes a key, a ring a password, a dashed ring isn't reviewed, a hollow one's Session ended. A live Session is in the accent, with its edge from this Box; a Host that's down (its Session couldn't connect, or a check of it failed) is crossed out.\n- **Edges:** grey from this Box to each group; solid for a Mesh key, dashed for a password peer, an arrow one way. A cluster drawn as a mesh reaches itself both ways. A broken, dotted edge is a cut not finished.\n- **Marks:** warn for a Host that didn't answer the last apply or has no Link to its hop, error for a cut not finished. The text above the map says when the Mesh is out of date.\n- **A group the Mesh touches** shows as up to three clusters: its Hosts that reach each other, its password peers (reached, never reaching), and the ones not in the Mesh.\n\nSelect a Host to light up what it can reach and what can reach it, every hop: what its key reaches, and what those Hosts' own keys reach, which is what someone on it could reach. Its details (`i`) say how many directly.\n\nKeys: `h` `j` `k` `l` move, `/` searches (it opens empty each time), `f` filters by group, kind or state (hiding the rest), `o` collapses a group, `+` `-` `0` zoom, `t` lists every node and edge. On a Host: Enter opens a Session, `i` its details, `c` Check, `x` Cut from the Mesh (after you type its name).\n\n`:tutor topology` teaches the map by using it, on the tutorial's demo Inventory.\n\nIt needs **inventory.read** for the Hosts, **serve:mesh.status** for the Mesh, **serve:host.check** for Check, **serve:host.check_job** to show a Host down when a check of it fails, and **serve:mesh.cut** with **serve:mesh.job** for Cut. Without one it says so above the map.",
             "summary": "The map: this Box, your Hosts by group, the Mesh, and who can reach whom",
             "title": "Topology"
           }
@@ -1466,7 +1490,7 @@
           "id": "topology",
           "op": "tutor",
           "spec": {
-            "intro": "The Topology view draws this Box and every Host as a map, grouped as the Inventory groups them. This tutorial runs on the demo's six Hosts, in two groups.\n\nThe demo has no Mesh, so the line above its map says the Mesh isn't shown. On your own Inventory, the map also draws the Mesh: who can reach whom, and how.",
+            "intro": "The Topology view draws this Box and every Host as a map, grouped as the Inventory groups them. This tutorial runs on the demo's six Hosts, in two groups.\n\nThe map also draws the Mesh: who can reach whom, and how. The demo has a small, made-up one, so you can read it there; nothing on it connects anywhere.",
             "lessons": [
               {
                 "steps": [
@@ -1514,10 +1538,34 @@
                 ],
                 "text": "`h` `j` `k` `l` move between nodes, and `/` finds one by name. On a Host, `i` opens its details and Enter opens a Session to it. A live Session's node is in the accent, with its edge from this Box.",
                 "title": "From a node to its Host"
+              },
+              {
+                "steps": [
+                  {
+                    "id": "reach",
+                    "on": {
+                      "arg": "demo-01",
+                      "event": "command",
+                      "id": "info"
+                    },
+                    "text": "On the map (`:topology`), find `demo-01`: the lab and `demo-05` light up. Press `i`: its Reach says 3 Hosts directly."
+                  },
+                  {
+                    "id": "pending",
+                    "on": {
+                      "arg": "demo-05",
+                      "event": "command",
+                      "id": "info"
+                    },
+                    "text": "Find `demo-05`, marked Mesh pending: it didn't answer the last apply, so its key may not be there yet. Press `i`: its Reach says why."
+                  }
+                ],
+                "text": "In the demo's Mesh, the lab's `demo-01`, `demo-02` and `demo-03` reach each other both ways, drawn as one cluster, and `demo-01` also reaches `demo-05` in the office. Select a Host to light up what it can reach and what can reach it, every hop; its details (`i`) count what it reaches directly.",
+                "title": "Who reaches whom"
               }
             ],
-            "outro": "You've opened the map, shown one group, and gone from a node to its Host's details and a Session. Open the map once more: `demo-03` is in the accent now, live.\n\n- `f` filters the map by group, kind or state, and `t` lists every node and edge.\n- On your own Inventory, select a Host to light up what it can reach and what can reach it.\n- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
-            "summary": "Learn the Topology view: open the map, show one group, go from a node to its Host",
+            "outro": "You've opened the map, shown one group, gone from a node to its Host's details and a Session, and read who reaches whom. `demo-03` is in the accent on the map now, live.\n\n- `f` filters the map by group, kind or state, and `t` lists every node and edge.\n- On your own Inventory, the map draws your Mesh the same way, and a pending Host is finished by the next `roster mesh`.\n- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
+            "summary": "Learn the Topology view: open the map, show one group, go from a node to its Host, read its reach",
             "title": "Topology tutor"
           }
         },

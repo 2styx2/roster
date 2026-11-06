@@ -107,21 +107,44 @@ describe("the Topology view", () => {
     await notice(new RegExp(`topology: Cut ${meshed} from \\d+ Hosts\\.`));
   }, TEST);
 
-  it(":tutor topology teaches the map on the demo's Hosts, with no Mesh there, and each step ticks as you do it (#233)", async () => {
+  it("after Enter opens a Session beside the map, :topology hands the keys back to the map, so / searches it (#475)", async () => {
+    const user = await ready();
+    await open(user);
+    await user.keyboard(`/${meshed}{Enter}{Enter}`);
+    // The Session has the keys now; the map stays open beside it.
+    await waitFor(() => expect(graph()).not.toHaveFocus(), WAIT);
+    await user.keyboard(`${LEADER}:topology{Enter}`);
+    await waitFor(() => expect(graph()).toHaveFocus(), WAIT);
+    await user.keyboard("/");
+    expect(screen.getByRole("searchbox", { name: "Search Topology" })).toHaveFocus();
+  }, TEST);
+
+  it("/ opens the map's search empty, as the Picker opens, so a new name doesn't add to the last (#475)", async () => {
+    const user = await ready();
+    await open(user);
+    await user.keyboard(`/${meshed}{Enter}`);
+    expect(foot()).toMatch(new RegExp(`^${meshed}`));
+    await user.keyboard(`/${loose}{Enter}`);
+    expect(screen.getByRole("searchbox", { name: "Search Topology" })).toHaveValue(loose);
+    expect(foot()).toMatch(new RegExp(`^${loose}`));
+  }, TEST);
+
+  it(":tutor topology teaches the map on the demo's Hosts and its made-up Mesh, and each step ticks as you do it (#233)", async () => {
     const user = await ready();
     await user.keyboard(`${LEADER}:tutor topology{Enter}`);
     await waitFor(() => expect(screen.queryByRole("region", { name: "Demo Inventory" })).not.toBeNull(), WAIT);
     const help = await screen.findByRole("complementary", { name: "Help" }, WAIT);
     expect(within(help).getAllByRole("heading", { level: 1 })[0]).toHaveTextContent("Topology tutor");
     const step = (n: number) => help.querySelectorAll(".help-step")[n] as HTMLElement;
-    const ticked = (n: number) => waitFor(() => expect(step(n)).toHaveAttribute("data-done"), WAIT);
-    expect(help.querySelectorAll(".help-step")).toHaveLength(4);
+    const ticked = (n: number) => waitFor(() => expect(step(n), `step ${n}`).toHaveAttribute("data-done"), WAIT);
+    expect(help.querySelectorAll(".help-step")).toHaveLength(6);
 
-    // Lesson 1: the demo's map, honest that the demo has no Mesh.
+    // Lesson 1: the demo's map, with the demo's Mesh drawn (the demo's mesh.status, no real serve).
     await open(user);
     const region = () => screen.getByRole("region", { name: "Topology (from topology)" });
     await waitFor(() => expect(region()).toHaveTextContent("6 Hosts in 2 groups."), WAIT);
-    expect(region()).toHaveTextContent("The Mesh isn't shown: mesh.status isn't on the demo Inventory");
+    await waitFor(() => expect(region()).toHaveTextContent("The Mesh: 4 Hosts, 7 Links."), WAIT);
+    expect(region()).toHaveTextContent("1 Host didn't answer the last apply (Mesh pending).");
     await ticked(0);
     expect(step(1)).not.toHaveAttribute("data-done");
     await user.keyboard(`${LEADER}:topology demo-lab{Enter}`);
@@ -135,5 +158,16 @@ describe("the Topology view", () => {
     await open(user);
     await user.keyboard("/demo-03{Enter}{Enter}");
     await ticked(3);
+
+    // Lesson 3: reach. demo-01's details count what it reaches; demo-05's say why it's pending.
+    // The map is still open beside the Session: :topology hands it the keys back (#475).
+    await open(user);
+    await user.keyboard("/demo-01{Enter}i");
+    await ticked(4);
+    expect(await screen.findByText("3 Hosts directly", undefined, WAIT)).toBeInTheDocument();
+    await open(user);
+    await user.keyboard("/demo-05{Enter}i");
+    await ticked(5);
+    expect(await screen.findByText(/no answer: ssh: connect to host 10\.0\.0\.15 port 22/, undefined, WAIT)).toBeInTheDocument();
   }, TEST);
 });

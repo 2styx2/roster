@@ -3,6 +3,8 @@
 // with `colors` from the Config over them. Decision Q37: the user's terminal config wins, so the 16 ANSI
 // colours are a neutral, standard palette (Windows Terminal's default, Campbell), never tinted
 // with the app's accent; remote prompts, LS_COLORS and vim schemes look as they do there.
+import { optionRanges } from "../config/ranges";
+import { terminalFontStack } from "./fonts";
 
 export interface AnsiPalette {
   black: string;
@@ -56,7 +58,6 @@ export interface TerminalOptions {
   /** Bold text in the bright ANSI colours too (Windows Terminal's intenseTextStyle "bright"). */
   boldIsBright: boolean;
   scrollback: number;
-  /** Selecting text copies it. */
   copyOnSelect: boolean;
   /** Right-click copies the selection, or pastes when nothing is selected (as Windows Terminal). */
   rightClickCopyPaste: boolean;
@@ -96,8 +97,8 @@ export const defaultTerminalOptions: TerminalOptions = {
   fontSize: (13 * 96) / 72,
   fontWeight: 500,
   fontWeightBold: 700,
-  minFontSize: 6,
-  maxFontSize: 72,
+  minFontSize: optionRanges["terminal.size"].min,
+  maxFontSize: optionRanges["terminal.size"].max,
   lineHeight: 1,
   cellHeight: null,
   renderer: "webgl",
@@ -108,8 +109,6 @@ export const defaultTerminalOptions: TerminalOptions = {
   rightClickCopyPaste: true,
   osc52: true,
 };
-
-import { terminalFontStack } from "./fonts";
 
 export type ZoomAction = "terminal.zoomIn" | "terminal.zoomOut" | "terminal.zoomReset";
 

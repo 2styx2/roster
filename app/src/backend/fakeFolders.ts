@@ -5,6 +5,7 @@
 // tests/folders_plugin.rs drives that, and this mirrors it for the UI tests and the browser.
 import { addToFolder, createFolder, deleteFolder, parseFolders, quote, removeFromFolder, renameFolder, splitName, type Folder, type Outcome } from "../folders/folders";
 import type { FakePlugin, FakeRoster } from "./fakePlugins";
+import { errorText } from "../ui/format";
 
 const FILE = "folders.json";
 const SECTION = "folders";
@@ -53,7 +54,7 @@ export const fakeFoldersPlugin: FakePlugin = {
         problem = null;
         return true;
       } catch (e) {
-        problem = `can't save the Folders: ${e instanceof Error ? e.message : String(e)}`;
+        problem = `can't save the Folders: ${errorText(e)}`;
         return false;
       }
     };
@@ -68,15 +69,15 @@ export const fakeFoldersPlugin: FakePlugin = {
         if (save()) {
           moved = { from, n: folders.length };
           if (folders.length > 0) {
-            // A result that needs attention: it shows whatever ui.messages says (ticket 117).
-            roster.notify(`Moved ${count(folders.length, "Folder")} from ${from} into roster's own data${from === "folders.yml" ? ": folders.yml isn't read any more (:check)" : ""}`, "info", {
-              quiet: false,
+            // From the State there's nothing to do, so it's quiet (Q306); from folders.yml it needs attention.
+            roster.notify(from === "folders.yml" ? `Moved ${count(folders.length, "Folder")} from folders.yml to roster's data folder: folders.yml isn't read any more (:check)` : `Moved ${count(folders.length, "Folder")} to roster's data folder. Nothing to do.`, "info", {
+              quiet: from !== "folders.yml",
             });
           }
         }
       }
     } catch (e) {
-      problem = blocked = e instanceof Error ? e.message : String(e);
+      problem = blocked = errorText(e);
     }
 
     let names: string[] | null = null;
@@ -102,8 +103,8 @@ export const fakeFoldersPlugin: FakePlugin = {
             if (typeof e.dropped === "string") roster.cmd(`folder add ${e.dropped} ${f.name}`);
           };
           head.actions = [
-            { label: `Rename ${f.name}`, icon: "edit", run: `folder rename ${quote(f.name)}` },
-            { label: `Delete Folder ${f.name}`, icon: "close", run: `folder delete ${f.name}` },
+            { label: `Rename ${f.name}`, short: "Rename…", icon: "edit", run: `folder rename ${quote(f.name)}` },
+            { label: `Delete Folder ${f.name}`, short: "Delete Folder", icon: "close", run: `folder delete ${f.name}` },
           ];
         } else {
           head.detail = String(f.hosts.length);
@@ -118,7 +119,7 @@ export const fakeFoldersPlugin: FakePlugin = {
           if (own) {
             row.drop = head.drop;
             row.drag_out = `folder remove ${h} ${f.name}`;
-            row.actions = [{ label: `Remove ${h} from ${f.name}`, icon: "close", run: `folder remove ${h} ${f.name}` }];
+            row.actions = [{ label: `Remove ${h} from ${f.name}`, short: "Remove from Folder", icon: "close", run: `folder remove ${h} ${f.name}` }];
           }
           rows.push(row);
         }
@@ -129,7 +130,7 @@ export const fakeFoldersPlugin: FakePlugin = {
         title: "Folders",
         order: 200,
         count: shown,
-        empty: problem ? `Folders can't be read: ${problem}` : "No Folders yet. Drag a Host here or press `␣ a`.",
+        empty: problem ? `Folders can't be read: ${problem}` : "Drag a Host here, or `␣ a`.",
         actions: [{ label: "New Folder", icon: "add", run: "folder new" }],
         drop: (e: Ctx) => {
           if (typeof e.dropped === "string") roster.cmdline(`folder add ${e.dropped} `);

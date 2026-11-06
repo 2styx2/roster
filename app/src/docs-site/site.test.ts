@@ -5,8 +5,8 @@ import { link, p, h } from "../help/doc";
 import { topics } from "../help/pages";
 import { BUILTIN } from "../registry";
 import { contrast } from "../theme/contrast";
-import { searchDocs, type SearchIndex } from "./search";
-import { buildSite, PRINT_SYNTAX, siteContext, type SiteOptions } from "./site";
+import { joinIndex, searchDocs, type SearchIndex, type SearchTopics } from "./search";
+import { buildSite, PRINT_SYNTAX, SHARD_TEXT, siteContext, type SiteOptions } from "./site";
 
 const OPTS: SiteOptions = { sha: "0123456789abcdef0123456789abcdef01234567", repo: "example/roster", version: "9.8.7", fileExists: () => true };
 
@@ -105,11 +105,15 @@ describe("the docs website", () => {
     expect(file(site.files, "config.html")).toMatch(/<pre data-lang="lua"><code>.*<span class="hl-key">/s);
   });
 
+  /** The index as search.js loads it: search-topics.js, then each text shard it names, run as scripts. */
   const searchIndex = (): SearchIndex => {
-    const js = file(site.files, "search-index.js");
-    const m = /^window\.rosterSearchIndex = (.*);\n$/s.exec(js);
-    expect(m, "search-index.js sets window.rosterSearchIndex").not.toBeNull();
-    return JSON.parse((m as RegExpExecArray)[1] as string) as SearchIndex;
+    const win: { rosterSearchTopics?: SearchTopics; rosterSearchText?: SearchIndex["texts"][] } = {};
+    new Function("window", file(site.files, "search-topics.js"))(win);
+    expect(win.rosterSearchTopics, "search-topics.js sets window.rosterSearchTopics").toBeDefined();
+    const topics = win.rosterSearchTopics as SearchTopics;
+    for (const shard of topics.shards) new Function("window", file(site.files, shard))(win);
+    expect(win.rosterSearchText?.length, "each shard sets its slot of window.rosterSearchText").toBe(topics.shards.length);
+    return joinIndex(topics, win.rosterSearchText);
   };
 
   it("writes a search index of every topic, at the address tags.json gives it (ticket 65)", () => {
@@ -137,12 +141,41 @@ describe("the docs website", () => {
     }
   });
 
-  it("keeps the search index inside its budget (docs/app/performance.md)", async () => {
-    const js = file(site.files, "search-index.js");
-    const gzip = new Response(new Response(js).body?.pipeThrough(new CompressionStream("gzip")));
-    // 330 -> 450 KB on 2026-11-04 (T197, #377, decision Q181, owner's call): budgets follow the docs. It loads
-    // lazily, as Ghostty's 174 KB does; WezTerm's 382 KB and Zed's 875 KB load on every page. performance.md has the history.
-    expect((await gzip.arrayBuffer()).byteLength).toBeLessThan(450_000);
+  const gzipped = async (body: string) => (await new Response(new Response(body).body?.pipeThrough(new CompressionStream("gzip"))).arrayBuffer()).byteLength;
+
+  it("shards the text by whole pages, in order, so the shards together are every text once (T260)", () => {
+    const shards = (JSON.parse(/= (.*);\n$/s.exec(file(site.files, "search-topics.js"))?.[1] ?? "{}") as SearchTopics).shards;
+    expect(shards.length).toBeGreaterThan(1);
+    expect(shards).toEqual(shards.map((_, i) => `search-text-${i}.js`));
+    expect(site.files.some((f) => f.path === "search-index.js")).toBe(false);
+    const index = searchIndex();
+    const pageOf = (place: number) => (index.places[place]?.[0] ?? "").split(/[#?]/)[0];
+    const win: { rosterSearchText?: SearchIndex["texts"][] } = {};
+    for (const shard of shards) new Function("window", file(site.files, shard))(win);
+    const pagesIn = (win.rosterSearchText ?? []).map((texts) => new Set(texts.map(([place]) => pageOf(place))));
+    // No page is in two shards.
+    for (const [i, a] of pagesIn.entries()) for (const b of pagesIn.slice(i + 1)) expect([...a].filter((pg) => b.has(pg))).toEqual([]);
+    // A shard over SHARD_TEXT is one page that big on its own.
+    for (const [i, texts] of (win.rosterSearchText ?? []).entries()) {
+      if (JSON.stringify(texts).length > SHARD_TEXT) expect(pagesIn[i]?.size, shards[i]).toBe(1);
+    }
+  });
+
+  it("keeps the search index inside its budgets (docs/app/performance.md)", async () => {
+    const topics = await gzipped(file(site.files, "search-topics.js"));
+    const shards = await Promise.all(site.files.filter((f) => /^search-text-\d+\.js$/.test(f.path)).map(async (f) => [f.path, await gzipped(f.body)] as const));
+    // 330 -> 450 KB on 2026-11-04 (T197, #377, decision Q181, owner's call): budgets follow the docs. The first
+    // text search still loads every shard, so the whole stays inside it. performance.md has the history.
+    expect(topics + shards.reduce((n, [, size]) => n + size, 0)).toBeLessThan(450_000);
+    // Sharded on 2026-11-06 at 360 KB (T260, #528, amending Q209): the box loads search-topics.js first, the
+    // shards when a query needs the text. Each file has a budget, and each fails at 80 % of it first, so the
+    // docs pull request that takes one there splits it (or raises its budget with its reason) before it's reached.
+    expect(topics).toBeLessThan(60_000);
+    expect(topics, "search-topics.js is past 80 % of its 60 KB budget (docs/app/performance.md)").toBeLessThan(48_000);
+    for (const [path, size] of shards) {
+      expect(size, path).toBeLessThan(100_000);
+      expect(size, `${path} is past 80 % of a shard's 100 KB budget: its page is too big for one shard; split the page, or shard by heading`).toBeLessThan(80_000);
+    }
   });
 
   it("puts the search box on every page, and loads the index only when it's used", () => {
@@ -150,7 +183,8 @@ describe("the docs website", () => {
       const html = file(site.files, path);
       expect(html, path).toContain('<script src="search.js" defer></script>');
       expect(html, path).toContain('id="site-topic"');
-      expect(html, path).not.toContain("search-index.js");
+      expect(html, path).not.toContain("search-topics.js");
+      expect(html, path).not.toContain("search-text-");
     }
   });
 

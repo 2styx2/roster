@@ -11,9 +11,12 @@ No scan needed when you know the box: save its Login in the vault (named and fil
 ```bash
 roster add nas-01 --ip 10.0.0.50 --auth "bw:nas-01 ssh" --group lab --no-enroll # everything said
 roster add nas-01 --auth "bw:nas-01 ssh" --from-vault --setup                   # address and user from the item, then set up
+roster add new-01 --ip 10.0.0.21 --user ops --save-to-vault                      # its password into the vault as "new-01 ssh"
 ```
 
 It goes in reviewed, under the group you name (a new one is made), and only its lines are added. A name or address another Host has is refused, naming that Host. `--from-vault` reads the item's URI and username only, never its password (Bitwarden and 1Password; give `--ip` and `--user` for other vaults). This Box syncs right after, so `ssh nas-01` works. `--setup` runs `roster setup --host nas-01` and `roster check nas-01` straight away; without it, roster add prints them. `--dry-run` shows the lines first. In a terminal it asks for what you left out; with `-y` it never asks. All the options: [Adding one Host](cli-reference.md#adding-one-host-roster-add). The app's add-Host form does the same, with the same checks, but for one: an address and port another Host has is a warning there, naming that Host, not a refusal (a second Login to one machine). Its **Fill from this item** (with "An existing vault item") is `--from-vault`: the item's address, SSH port and user, never its password.
+
+**A Host whose login isn't in the vault yet:** `--save-to-vault` makes the item and the Host in one command, as the form's **Save to vault** does. roster asks for the password on the terminal, twice and hidden (never from an argument or the environment), saves it as `new-01 ssh` with `ssh://10.0.0.21` in its URI and `ops` as its username (the naming below), in the place `save_to:` names (or `--save-to personal`, `--save-to "My Team/Infra logins"`, `--save-to Hosts` for a KeePassXC group), then writes `new-01` with `auth: "bw:new-01 ssh"` and syncs the vault so other Boxes see it. Bitwarden and KeePassXC can save; for 1Password make the item in the app and use `--auth`. An item of that name already there is refused: point at it with `--auth "bw:new-01 ssh"` instead. If `roster.yml` can't be written after the item is saved, roster names the item for you to delete. Details: [Adding one Host](cli-reference.md#adding-one-host-roster-add).
 
 ### After you put a login in the vault
 
@@ -134,6 +137,7 @@ For each host you're bringing in, set its login and mark it reviewed:
 
 - **`enroll: true`** for Linux servers you want key logins on. `roster setup` installs this box's key using the vault password once.
 - **`enroll: false`** for gear that only takes passwords: switches, routers, ESXi (it keeps root keys outside `~/.ssh`), and appliances. Logins then go through `roster run`.
+- **`key_type: ecdsa`** for a Host in FIPS mode, which refuses Ed25519 keys. See [FIPS Hosts](#fips-hosts).
 - **`os: windows`** for a Windows Host with OpenSSH Server (Windows 10/11, Server 2019 and later): `setup`, `revoke`, `check` and `run` then run PowerShell there instead of `sh`, and the Mesh leaves it out. See [Windows Hosts](#windows-hosts).
 - A different login for the web UI or API goes in a service entry:
 
@@ -170,7 +174,8 @@ What the errors mean:
 | `no answer on SSH port` | SSH is off or filtered. ESXi often switches SSH off: enable it under Host → Actions → Services. |
 | `login refused (wrong user or password?)` | Wrong item, wrong user, or a different box from the one you think. Check the host key (step 3). |
 | `warning: HOST service 'NAME': ... - left out` | That service entry has a mistake roster can't work around, so the rest of the Host loads without it. The `fix:` line under it says what to change. |
-| bw "locked" / session expired | Run `(umask 077; bw unlock --raw > ~/.config/roster/bw-session)` again |
+| bw "locked" / session expired | Run `roster vault unlock` again (the roster app's lock, `bw lock` or another `bw unlock` expires the saved session: bw keeps one unlock at a time) |
+| The master password is asked on every run | A terminal unlock lasts for that run only: `roster vault unlock` keeps it for every run on this Box (or answer `y` when roster offers); `roster vault status` shows the saved session (`none`, `saved, working`, `saved, expired`) |
 | `KeePassXC database is locked and there's no terminal to ask` | Run roster in a terminal (it asks for the master password once per run), or unlock in the app |
 | `KeePassXC database … isn't there` | Fix `providers: kp: database:` in `roster.yml`, or create the database in KeePassXC |
 | `[155] HOST looks like a Windows Host` | Its shell said `'sh' is not recognized`: set `os: windows` for it (see [Windows Hosts](#windows-hosts)), `roster sync`, then run it again |
@@ -210,6 +215,32 @@ roster adds its key to a Windows Host that runs Microsoft's OpenSSH Server (Wind
   - **stdin** carries the script (its length first: Win32-OpenSSH never ends stdin past 4096 bytes); CMD's own stdin is empty and closed, so a program that reads it gets an end at once. A command can be up to 781,104 bytes (about 760 KB; the script with it is at most 1 MB).
   - **`--sudo` is refused** (error 159) before the vault is asked: Windows has no sudo over ssh. Log in as an account in Administrators, whose ssh session is already elevated.
 - **The Mesh leaves Windows Hosts out** (code 160): its scripts are sh. A meshed group or a Link that names one isn't an error: the rest of the Mesh is set up, and `roster mesh --dry-run`, `mesh status` and `check` list it under "left out" with the reason. See [The Mesh](mesh.md#windows-hosts).
+
+## FIPS Hosts
+
+A Host with FIPS mode on (an enterprise Linux 8 or 9 with FIPS enabled, as most hardened builds are) never takes an Ed25519 key: FIPS 140 doesn't allow it. Its sshd skips Ed25519 and logs `key type ssh-ed25519 not in PubkeyAcceptedAlgorithms`, so `roster setup` puts this Box's Ed25519 key there and the key login still fails. Give such a Host another key type:
+
+```yaml
+key_type: ed25519            # this Box's own key (the default; the top level)
+groups:
+  fips-lab:
+    key_type: ecdsa          # every Host in the group
+    hosts:
+      fips-01: 10.0.0.5
+      fips-02: { ip: 10.0.0.6, key_type: rsa }    # or one Host
+```
+
+- **`key_type:`** is `ed25519` (the default: nothing changes for a `roster.yml` without it), `ecdsa` (P-384; `ecdsa-256`, `ecdsa-384` and `ecdsa-521` pick the curve) or `rsa` (3072 bits; `rsa-4096` and any `rsa-BITS` from 3072 to 16384, never fewer). Any case. It cascades like `os:`: top level → `defaults` → group → Host, the most specific winning, so one FIPS Host doesn't take the rest off Ed25519. A value roster doesn't know stops the load, naming the allowed ones. A Host is in one group, so its group's type is never in doubt (one listed in two groups is a load error naming both).
+- **One key per type.** This Box keeps one key for each type its Hosts use, all tagged `roster-managed:BOX`: the top level's at `key_path:` (`~/.ssh/roster_ed25519` unless set, as before), every other one beside it as `roster_<type>` (`~/.ssh/roster_ecdsa`, `~/.ssh/roster_rsa`, `~/.ssh/roster_ecdsa-521`). `roster setup` makes each on first need. A key that's already at an ECDSA or RSA key's path but is another type, an RSA key with fewer bits than its type, or a `.pub` that isn't its private key's is refused (201), never replaced.
+- **The ssh config** gives each key Host the `IdentityFile` of its own type, with `IdentitiesOnly yes`, so a FIPS Host is offered only a key it takes.
+- **`roster setup`** installs each Host's own type; re-running adds no second line. Changing a Host's `key_type:` and running `setup` adds the new key's line, tests a key login with it, and only then takes this Box's line of the old type off. A Host that refuses the new type keeps the line that worked (setup fails there and says so). `roster setup --host fips-01 --key-type ecdsa` tries a type on one Host for one run without editing `roster.yml` (it needs `--host`): its line goes in beside the one of `roster.yml`'s type, which stays, so the next `roster sync` still logs in; another try takes the one before off, so tries never pile up. Set `key_type:` once it works. roster records the types of this Box's lines on each Host (`~/.config/roster/key-types`, T245): `roster check` and `roster sync` warn (219) while a Host holds a line of another type than `roster.yml`'s (`fips-01 still holds this Box's rsa key line besides its ecdsa one`), or none of it (the type changed since its last setup), and the next plain `roster setup` takes the extra line off over the key login (`--dry-run` says `would take this Box's rsa key line off fips-01`).
+- **`roster revoke`** removes this Box's lines of every type, found by the tag (and, on a renamed Box, by each of its public keys), so a type change leaves no key behind. It names every key file to delete once every Host has lost the key.
+- **`roster hosts fips-01`** shows the key type and file it uses (`key  ecdsa ~/.ssh/roster_ecdsa`); `--json` and serve's Host carry `key_type` and `key_file` (API 30), and the app's Host details show them on an `ssh key` row.
+- **`roster check fips-01`**: when the Host refuses an Ed25519 key and its key exchange and host keys are all NIST ones (no curve25519, no Ed25519 host key), the auth step fails with 199 and suggests `key_type: ecdsa` instead of `roster setup` again. The signs come from the check's own key exchange: it connects nowhere else.
+- **The Mesh follows `key_type:`** (T245): a source's Mesh key is made on it of its own type, so a FIPS Host is meshed like any other, and changing its type replaces its Mesh key at the next `roster mesh` ([The Mesh](mesh.md#hosts-with-another-key-type)). A source on Ed25519 linked to a peer of another type gets a warning (220): a FIPS-mode peer refuses that key.
+- **ECDSA or RSA?** Both pass FIPS. ECDSA P-384 is short and fast, and every FIPS-mode OpenSSH takes it; pick `rsa` only for a Host that takes nothing else.
+
+**Changing a type for good, cleanly:** set `key_type:`, then run `roster setup --rotate`: the new type's key goes on and every other line of this Box's goes ([Rotating the Box key](cli-reference.md#rotating-the-box-key-roster-setup---rotate)).
 
 ## Limits to know about
 

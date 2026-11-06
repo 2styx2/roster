@@ -6,9 +6,8 @@ from pathlib import Path
 import pytest
 from conftest import posix_shell
 
-import roster.cli as cli
 from roster.cli import main
-from roster.common import user_config_dir
+from roster.context import user_config_dir
 from roster.sshops import sudo_wrap
 
 
@@ -94,7 +93,7 @@ SAME_NAME_YML = ("groups:\n  nas:\n    user: u\n    enroll: false\n    auth: env
 
 def test_setup_host_sets_up_exactly_that_host_never_its_group_or_type(capsys, write_config, monkeypatch):
     scanned = []                                                 # #437 (1): --only nas would take backup-01 too
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: scanned.extend(h["name"] for h in hosts) or set())
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: scanned.extend(h["name"] for h in hosts) or set())
     write_config(SAME_NAME_YML)
     rc, out = run(capsys, "setup", "--host", "nas", "--dry-run")
     assert rc == 0 and scanned == ["nas"] and "1 hosts from" in out
@@ -169,7 +168,7 @@ def test_run_sudo_password_host(capsys, write_config, monkeypatch):
     def fake_exec(h, command, password, timeout=15, stdin=None):
         seen.update(command=command, password=password, stdin=stdin)
         return 0, "uid=0(root) s3cret\n", ""
-    monkeypatch.setattr(cli, "password_exec", fake_exec)
+    monkeypatch.setattr("roster.run.password_exec", fake_exec)
     rc = main(["run", "--sudo", "pw-host", "--", "id"])
     out = capsys.readouterr().out
     assert rc == 0 and seen["command"].startswith("sudo -S -p '' -- sh -c ")
@@ -179,13 +178,15 @@ def test_run_sudo_password_host(capsys, write_config, monkeypatch):
 
 def test_run_sudo_key_host(capsys, write_config, monkeypatch):
     write_config(SUDO_CFG)
+    assert main(["sync", "--no-vault"]) == 0               # T243: `roster run` needs the Host in the ssh config
+    capsys.readouterr()
     monkeypatch.setenv("ROSTER_TEST_PW", "s3cret")
     seen = {}
 
     def fake_run(argv, input=None, **kw):
         seen.update(argv=argv, input=input)
         return subprocess.CompletedProcess(argv, 0, b"root\n", b"")
-    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     assert main(["run", "--sudo", "key-host", "--", "whoami"]) == 0
     assert Path(seen["argv"][0]).stem == "ssh"          # found on PATH: C:\\Windows\\...\\ssh.exe on Windows
     assert seen["argv"][1:4] == ["-o", "BatchMode=yes", "key-host"] and seen["input"] == b"s3cret\n"
@@ -207,7 +208,7 @@ def test_run_refuses_unreviewed_hosts(write_config):
 def test_run_hints_at_sudo_flag(capsys, write_config, monkeypatch):
     write_config(SUDO_CFG)
     monkeypatch.setenv("ROSTER_TEST_PW", "s3cret")
-    monkeypatch.setattr(cli, "password_exec", lambda *a, **k: (1, "", "sudo: a password is required\n"))
+    monkeypatch.setattr("roster.run.password_exec", lambda *a, **k: (1, "", "sudo: a password is required\n"))
     assert main(["run", "pw-host", "--", "sudo", "id"]) == 1
     assert "roster run --sudo pw-host -- id" in capsys.readouterr().err
 

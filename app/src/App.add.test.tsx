@@ -4,7 +4,7 @@
 // and an unreviewed Host can be marked reviewed from the Sidebar, the Picker, `:review` and the
 // edit form.
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_FINGERPRINT, FAKE_HOST_PASSWORD, FAKE_PASSWORD, fakeBackend, fixtures, type FakeScenario } from "./backend/fake";
@@ -12,6 +12,8 @@ import type { Backend } from "./backend/types";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
 import { chooseInMenu, inventoryRow, menuLabels } from "./test-menu";
+import { onMessageLine } from "./test-messageLine";
+import { advanceTimers, fakeTimeouts, pass } from "./test-timers";
 
 const LEADER = "{Control>} {/Control}";
 const UNREVIEWED = "switch-4-003";
@@ -34,7 +36,7 @@ function recording(scenario: FakeScenario) {
 }
 
 async function ready(scenario: FakeScenario = fixtures.add as FakeScenario) {
-  const user = userEvent.setup();
+  const user = userEvent.setup({ advanceTimers });
   const { backend, calls } = recording(scenario);
   const platform = memoryPlatform();
   render(<App backend={backend} terminalView={StubTerminal} platform={platform} />);
@@ -78,12 +80,18 @@ describe("The Inventory heading's + (iteration 3 feedback: add-Host was hard to 
     expect(plus()).toHaveAttribute("title", "Add a Host");
   });
 
-  it("stays on a roster too old to add Hosts, and says so instead of opening a form", async () => {
+  it("isn't offered on a roster too old to add Hosts, here or in the title bar (round 19)", async () => {
     const { user } = await ready({ ...(fixtures.add as FakeScenario), apiVersion: 5 });
-    const why = "Adding a Host needs a newer roster (API version 6; this one speaks 5)";
-    expect(plus()).toHaveAttribute("title", why);
-    await user.click(plus());
-    expect(screen.getByRole("status")).toHaveTextContent(why);
+    // A live + that only refused contradicted the screen: neither + is there.
+    expect(within(heading()).queryByRole("button", { name: "Add a Host" })).toBeNull();
+    expect(document.querySelector('[data-control="add"]')).toBeNull();
+    // Its keys still answer, in plain words and the text colour (a slip, not a warning).
+    await user.keyboard(`${LEADER}+`);
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Adding Hosts here needs a newer roster. Update roster on this Box, or add them to roster.yml.");
+    expect(status).not.toHaveTextContent(/API/);
+    expect(status).toHaveClass("slip");
+    expect(within(status).getByText("roster.yml", { selector: "code" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Add a Host" })).toBeNull();
   });
 });
@@ -143,6 +151,18 @@ describe("the add form", () => {
     await screen.findByRole("main", { name: /workspace/i });
     expect(within(await form()).getByLabelText("Password")).toHaveValue("");
     expect(JSON.stringify(calls)).not.toContain(FAKE_HOST_PASSWORD);
+  });
+
+  it("keeps what you typed when only the tutor's demo locks: each workspace empties its own", async () => {
+    const { user } = await ready();
+    const panel = await openForm(user);
+    await user.type(within(panel).getByLabelText("Password"), FAKE_HOST_PASSWORD);
+    await user.keyboard(`${LEADER}:tutor{Enter}`);
+    await screen.findByRole("region", { name: "Demo Inventory" });
+    await screen.findByRole("complementary", { name: "Help" });
+    await user.keyboard(`${LEADER}:tutor quit{Enter}`);
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Demo Inventory" })).toBeNull());
+    expect(within(await form()).getByLabelText("Password")).toHaveValue(FAKE_HOST_PASSWORD);
   });
 
   it("a lock while the host key waits to be confirmed goes back to the form, so nothing is sent without a password", async () => {
@@ -274,7 +294,7 @@ describe("the add form", () => {
   it("needs a roster that can add Hosts", async () => {
     const { user } = await ready({ ...(fixtures.edit as FakeScenario), apiVersion: 5 });
     await user.keyboard(`${LEADER}:host add{Enter}`);
-    expect(await screen.findByText(/Adding a Host needs a newer roster \(API version 6; this one speaks 5\)/)).toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent("Adding Hosts here needs a newer roster.");
   });
 });
 
@@ -284,7 +304,7 @@ describe("marking a Host reviewed", () => {
     // The confirmation's whole text shows with every message on (ticket 111).
     await user.keyboard(`${LEADER}:messages all{Enter}`);
     await user.keyboard(`${LEADER}:connect ${UNREVIEWED}{Enter}`);
-    expect(await screen.findByText(`${UNREVIEWED} isn't reviewed yet, so it can't be opened. :review ${UNREVIEWED} marks it reviewed.`)).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine(`${UNREVIEWED} isn't reviewed yet, so it can't be opened. :review ${UNREVIEWED} marks it reviewed.`))).toBeInTheDocument();
     const before = await backend.getHost(UNREVIEWED);
     await user.keyboard(`${LEADER}:review ${UNREVIEWED}{Enter}`);
     expect(await screen.findByText(`Marked ${UNREVIEWED} reviewed, as a Pending change. It can be opened now.`)).toBeInTheDocument();
@@ -367,7 +387,7 @@ describe("un-reviewing a Host (issue #78, item 5)", () => {
   it("says when roster is too old to un-review (API 9)", async () => {
     const { user, backend } = await ready({ ...current, apiVersion: 8 });
     await user.keyboard(`${LEADER}:host unreview ${REVIEWED}{Enter}`);
-    expect(await screen.findByText(/:host unreview needs a newer roster \(API version 9; this one speaks 8\)/)).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine(/:host unreview needs a newer roster\. Update roster on this Box\./))).toBeInTheDocument();
     expect((await backend.getHost(REVIEWED)).reviewed).toBe(true);
   });
 });
@@ -431,13 +451,15 @@ describe("Fill from this item (#437, vault.item_fields, API 29)", () => {
   });
 
   it("drops a reply that comes after the item changed (M2)", async () => {
+    fakeTimeouts();
     const { user } = await ready({ ...vault(), delay: 300 });
     const panel = await openForm(user);
     await fill(user, panel, { Name: "nas-01", Address: "10.19.9.9" });
     await user.click(within(panel).getByLabelText("An existing vault item"));
     await user.click(within(panel).getByRole("button", { name: "Fill from this item" }));
     await user.type(within(panel).getByLabelText("Vault item"), "bw:nas-01 web");
-    await new Promise((r) => setTimeout(r, 500));
+    // Long past every reply the fake Backend holds back (300 ms each, one after another).
+    await pass(5_000);
     expect(within(panel).getByLabelText("Address")).toHaveValue("10.19.9.9");
     expect(within(panel).queryByText(/^Filled/)).toBeNull();
   });
@@ -500,5 +522,25 @@ describe("Fill from this item (#437, vault.item_fields, API 29)", () => {
     const panel = await openForm(user);
     await user.click(within(panel).getByLabelText("An existing vault item"));
     expect(within(panel).queryByRole("button", { name: "Fill from this item" })).toBeNull();
+  });
+});
+
+describe("the Picker with nothing matching (round 19)", () => {
+  it("offers Add a Host with its keys, and those keys open the form from there", async () => {
+    const { user } = await ready();
+    await user.keyboard(`${LEADER}f`);
+    await user.keyboard("zzzz");
+    const next = document.querySelector(".picker-empty-next") as HTMLElement;
+    expect(next).toHaveTextContent(/Add a Host/);
+    expect(next.querySelector(".keycap")).not.toBeNull();
+    await user.keyboard(`${LEADER}+`);
+    expect(await form()).toBeInTheDocument();
+  });
+
+  it("isn't offered on a roster too old to add Hosts", async () => {
+    const { user } = await ready({ ...(fixtures.add as FakeScenario), apiVersion: 5 });
+    await user.keyboard(`${LEADER}f`);
+    await user.keyboard("zzzz");
+    expect(screen.queryByRole("button", { name: "Add a Host" })).toBeNull();
   });
 });

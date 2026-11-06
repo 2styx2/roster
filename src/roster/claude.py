@@ -4,15 +4,18 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .common import CURRENT, current_inventory, roster_command, say
-from .config import access_label
-from .providers import NO_PASSWORD
+from .common import replace_file, roster_command, say
+from .config import access_label, load_config, shown_file
+from .context import Context, current
+from .errors import InventoryError
+from .hosts import vault_login
 from .resources import login, summary
 
 # ---------------------------------------------------------------- Claude files
 
-def stored_login(s):
-    return bool(s["auth"]) and s["auth"] not in ("prompt", *NO_PASSWORD)
+
+# The first line of the ROSTER.md `roster mesh` writes on a Host (mesh.roster_md), and its scripts look for
+MESH_MARK = "<!-- roster-mesh: written by roster for "
 
 
 def written_by_the_mesh(md: Path) -> bool:
@@ -21,29 +24,68 @@ def written_by_the_mesh(md: Path) -> bool:
     overwrites the other's."""
     try:
         with md.open(encoding="utf-8", errors="replace") as f:
-            return f.readline().startswith("<!-- roster-mesh:")
+            return f.readline().startswith(MESH_MARK)
     except OSError:
         return False
 
 
-def write_claude_files(cfg):
-    proj = cfg["path"].parent
-    md = proj / "ROSTER.md"
-    if written_by_the_mesh(md):
-        say(f"warning      {md} is the Mesh's (another Box's `roster mesh` lists this Host's peers in it), so roster "
-            "left it alone: keep roster.yml in a folder of its own, not the home folder, for this Box's ROSTER.md")
-    else:
-        md.write_text(roster_md(cfg))
+def shared(path: Path, text: str) -> None:
+    """Write PATH whole or not at all (common.replace_file), keeping its mode; a new one is readable by others, as
+    the team's files beside roster.yml are."""
+    replace_file(path, text, 0o644, like=path if path.exists() else None)
+
+
+def write_roster_md(cfg: dict[str, Any], ctx: Context | None = None, only_if_there: bool = False) -> bool:
+    """ROSTER.md next to the Inventory CFG's roster.yml (CTX: its context, default this run's), unless it's the Mesh's;
+    ONLY_IF_THERE: only a file that's there, and only when its text changes. True when it's this Inventory's (written,
+    or as it should be)."""
+    md = cfg["path"].parent / "ROSTER.md"
+    if (only_if_there and not md.is_file()) or written_by_the_mesh(md):
+        return False
+    text = roster_md(cfg, ctx)
+    if not (only_if_there and md.read_text() == text):
+        shared(md, text)
+    return True
+
+
+def write_claude_files(cfg: dict[str, Any]) -> None:
+    """This Inventory's ROSTER.md, its import in CLAUDE.md and Claude Code's settings beside roster.yml, then every
+    other Inventory's ROSTER.md that what it says changed for (refresh_roster_md)."""
+    from . import named  # Pydantic: only once it's used, never at roster's start
+    if not write_roster_md(cfg):
+        md = cfg["path"].parent / "ROSTER.md"
+        say(f"warning      {shown_file(cfg, md, 'ROSTER.md')} is the Mesh's (another Box's `roster mesh` lists this "
+            "Host's peers in it), so roster left it alone: keep roster.yml in a folder of its own, not the home folder, for this Box's ROSTER.md")
     write_claude_settings(cfg)
+    if named.list_file().exists():
+        refresh_roster_md(skip=current())
 
 
-def roster_md(cfg: dict[str, Any], name: Any = CURRENT) -> str:
-    """ROSTER.md's text for the Inventory CFG, whose name among the named Inventories is NAME (None: unnamed; default:
-    this run's). A Host whose name reaches another Inventory's Host from this Box (left out of its ssh config, ticket
-    115) is marked so: Claude must not `ssh` to it by name."""
-    from .inventories import left_out_hosts
-    this = current_inventory() if name is CURRENT else name
-    left = left_out_hosts(this)
+def refresh_roster_md(inv: Any = None, skip: Context | None = None) -> None:
+    """Each Inventory's ROSTER.md (where one was written) again, when what it should say changed: which of its Hosts
+    are left out of this Box's ssh config depends on the active Inventory and the others' Hosts. That's every named
+    Inventory's and the unnamed one roster's ssh config was last written from (named.every_inventory). A file
+    whose text stays the same isn't touched. SKIP: the Inventory a sync writes it for already. Each is built for its
+    own Inventory: this process's (which serve's other threads read) is never switched. Never fails the command: one
+    that doesn't load is left as it is."""
+    from . import named  # Pydantic: only once it's used, never at roster's start
+    for name, path in named.every_inventory(inv):
+        if skip is not None and name == skip.name:
+            continue
+        try:
+            write_roster_md(load_config(path), Context(name, path), only_if_there=True)
+        except (InventoryError, OSError):  # a file that doesn't load keeps the ROSTER.md it has
+            continue
+
+
+def roster_md(cfg: dict[str, Any], ctx: Context | None = None) -> str:
+    """ROSTER.md's text for the Inventory CFG (CTX: its context, default this run's). A Host whose name reaches another
+    Inventory's Host from this Box (left out of its ssh config, ticket 115) is marked so: Claude must not `ssh` to it
+    by name."""
+    from . import named  # Pydantic: only once it's used, never at roster's start
+    ctx = ctx or current()
+    this = ctx.name
+    left = named.left_out_hosts(ctx)
     run = roster_command()
     first = f"`{run} inv use {this}` first" if this else f"name this roster.yml (`{run} inv add`) and use it first"
 
@@ -96,8 +138,8 @@ def roster_md(cfg: dict[str, Any], name: Any = CURRENT) -> str:
           f"(don't run `bw`, `{run} vault bw` (or `{run} bw`), `op`, `{run} vault op` or any other password-manager command "
           "yourself).",
           "- If `run` says a password manager is locked or signed out, tell the user what it said; they "
-          "unlock it in the shell they start Claude from (e.g. `export BW_SESSION=$(bw unlock --raw)` "
-          "or `eval $(op signin)`). Don't try to unlock it yourself.",
+          f"unlock it in their own terminal (`{run} vault unlock` for Bitwarden, `eval $(op signin)` for "
+          "1Password). Don't try to unlock it yourself.",
           "- Ask before changing state on a host: restarts, installs, deletes, config edits, writes to databases.",
           f"- If a host doesn't respond, run `{run} check <name> --json` to see which step fails and its fix, "
           "and report what you find.", "",
@@ -112,7 +154,7 @@ def roster_md(cfg: dict[str, Any], name: Any = CURRENT) -> str:
         md += ["## Hosts", "| name | title | type | product | address | access | web UI | services | description |",
                "|---|---|---|---|---|---|---|---|---|"]
         for h in hosts:
-            svc = ", ".join(f"{k}:{s['port']}" + (" (login)" if stored_login(s) else "")
+            svc = ", ".join(f"{k}:{s['port']}" + (" (login)" if vault_login(s["auth"]) else "")
                             for k, s in h["services"].items() if k != "web" or s["override"])
             md.append(f"| {h['name']} | {cell(h['title'])} | {cell(h['type'])} | {cell(h['product'])} | "
                       f"{h['user']}@{h['ip']}:{h['port']} | {access(h)} | "
@@ -140,7 +182,7 @@ def write_claude_settings(cfg):
     claude_md = proj / "CLAUDE.md"
     text = claude_md.read_text() if claude_md.exists() else ""
     if "@ROSTER.md" not in text:
-        claude_md.write_text((text.rstrip() + "\n\n" if text.strip() else "") + "@ROSTER.md\n")
+        shared(claude_md, (text.rstrip() + "\n\n" if text.strip() else "") + "@ROSTER.md\n")
 
     # Guardrail for Claude Code: keep Claude out of the key directory.
     settings = proj / ".claude" / "settings.json"
@@ -149,7 +191,7 @@ def write_claude_settings(cfg):
         try:
             data = json.loads(settings.read_text())
         except json.JSONDecodeError:
-            say(f"warning      {settings} isn't valid JSON - left it alone")
+            say(f"warning      {shown_file(cfg, settings, '.claude/settings.json')} isn't valid JSON - left it alone")
             data = None
     if data is not None:
         deny = data.setdefault("permissions", {}).setdefault("deny", [])
@@ -157,5 +199,5 @@ def write_claude_settings(cfg):
             if rule not in deny:
                 deny.append(rule)
         settings.parent.mkdir(exist_ok=True)
-        settings.write_text(json.dumps(data, indent=2) + "\n")
-    say(f"claude       {proj / 'ROSTER.md'} (imported from CLAUDE.md), .claude/settings.json")
+        shared(settings, json.dumps(data, indent=2) + "\n")
+    say(f"claude       {shown_file(cfg, proj / 'ROSTER.md', 'ROSTER.md')} (imported from CLAUDE.md), .claude/settings.json")

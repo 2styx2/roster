@@ -8,6 +8,8 @@
 mod common;
 
 use common::unhurried;
+use roster_core::plugin::By;
+use roster_core::rpc::CallError;
 
 use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Value, json};
@@ -24,13 +26,16 @@ struct Recorded {
 }
 
 impl Serve for Recorded {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
         self.calls.lock().unwrap().push(method.to_string());
         if let Some(d) = self.slow {
             std::thread::sleep(d);
         }
         match method {
-            "host.get" => Err("no Login for esx-02: cmd:pass show esx-02/root failed (code 5)".into()),
+            "host.get" => Err(CallError::rpc(
+                5,
+                "no Login for esx-02: cmd:pass show esx-02/root failed",
+            )),
             _ => Ok(json!({ "ok": true, "job": "job-1" })),
         }
     }
@@ -182,7 +187,7 @@ roster.commands.add("go", {{ run = function() all("user") end }})
     let mut said = notices(&loaded.ops);
     settled(&host, "guarded");
     let timer = handler(&op(&loaded.ops, "timer")["run"]);
-    let fired = host.call("guarded", timer, json!({}));
+    let fired = host.call("guarded", timer, json!({}), By::User);
     ok(&fired);
     said.extend(notices(&fired.ops));
     settled(&host, "guarded");
@@ -192,7 +197,7 @@ roster.commands.add("go", {{ run = function() all("user") end }})
     });
     said.extend(heard.iter().flat_map(|r| notices(&r.ops)));
     settled(&host, "guarded");
-    let user = host.call("guarded", command(&loaded.ops, "go"), ARGS());
+    let user = host.call("guarded", command(&loaded.ops, "go"), ARGS(), By::User);
     ok(&user);
     said.extend(notices(&user.ops));
     let mut want = Vec::new();
@@ -236,7 +241,7 @@ end })
         ["roster.inventory.update: only while the user runs one of your actions, commands or finder items"]
     );
     assert!(serve.methods().is_empty(), "{:?}", serve.methods());
-    let user = host.call("guarded", command(&loaded.ops, "go"), ARGS());
+    let user = host.call("guarded", command(&loaded.ops, "go"), ARGS(), By::User);
     ok(&user);
     assert_eq!(notices(&user.ops), ["user wrote"]);
     assert_eq!(serve.methods(), ["host.review"]);
@@ -275,7 +280,7 @@ roster.commands.add("go", {{ run = function() roster.notify("command: " .. tried
     );
     let (loaded, _folder) = load(&host, "app-calls", &["serve:discover.start"], &init);
     let finder = op(&loaded.ops, "finder");
-    let items = host.call("guarded", handler(&finder["spec"]["items"]), json!({}));
+    let items = host.call("guarded", handler(&finder["spec"]["items"]), json!({}), By::User);
     ok(&items);
     let refused = "copy refused, confirm refused, cmd refused, scan refused";
     let allowed = "copy ok, confirm ok, cmd ok, scan ok";
@@ -283,7 +288,12 @@ roster.commands.add("go", {{ run = function() roster.notify("command: " .. tried
     assert_eq!(items.result[0]["label"], refused);
     assert!(items.ops.is_empty(), "{:?}", items.ops);
     let check = op(&loaded.ops, "health");
-    let lines = host.call("guarded", handler(&check["spec"]["check"]), json!({ "health": "lab" }));
+    let lines = host.call(
+        "guarded",
+        handler(&check["spec"]["check"]),
+        json!({ "health": "lab" }),
+        By::User,
+    );
     ok(&lines);
     assert_eq!(lines.result[0]["message"], refused);
     // Choosing an item is the user's call, as a command is.
@@ -291,14 +301,15 @@ roster.commands.add("go", {{ run = function() roster.notify("command: " .. tried
         "guarded",
         handler(&items.result[0]["run"]),
         json!({ "finder": "picks", "item": "a" }),
+        By::User,
     );
     ok(&item);
     assert_eq!(notices(&item.ops), [format!("item: {allowed}")]);
-    let go = host.call("guarded", command(&loaded.ops, "go"), ARGS());
+    let go = host.call("guarded", command(&loaded.ops, "go"), ARGS(), By::User);
     assert_eq!(notices(&go.ops), [format!("command: {allowed}")]);
     // The app calling a handler on its own (another Plugin's question took this one's place, so
     // its `cancel` runs) isn't the user's call either, whatever handler it is.
-    let unasked = host.call_by_app("guarded", command(&loaded.ops, "go"), ARGS());
+    let unasked = host.call("guarded", command(&loaded.ops, "go"), ARGS(), By::App);
     ok(&unasked);
     assert_eq!(notices(&unasked.ops), [format!("command: {refused}")]);
 }
@@ -322,7 +333,7 @@ roster.commands.add("go", { run = function()
 end })
 "#,
     );
-    let go = host.call("guarded", command(&loaded.ops, "go"), ARGS());
+    let go = host.call("guarded", command(&loaded.ops, "go"), ARGS(), By::User);
     ok(&go);
     let mut said = notices(&go.ops);
     said.extend(later(&rx, 1));
@@ -372,15 +383,15 @@ end })
     let clear = handler(&section["spec"]["actions"][0]["run"]);
     let redo = command(&loaded.ops, "redo");
     for _ in 0..100 {
-        let r = host.call("guarded", redo, ARGS());
+        let r = host.call("guarded", redo, ARGS(), By::User);
         assert!(r.error.is_some() && r.ops.is_empty(), "{r:?}");
     }
     // The section the app still shows is the one before: its button still runs.
-    let cleared = host.call("guarded", clear, json!({ "section": "alerts", "action": 1 }));
+    let cleared = host.call("guarded", clear, json!({ "section": "alerts", "action": 1 }), By::User);
     ok(&cleared);
     assert_eq!(notices(&cleared.ops), ["cleared"]);
     // The 100 timers the failed calls asked for never reached the app, so they don't count.
-    let next = host.call("guarded", command(&loaded.ops, "later"), ARGS());
+    let next = host.call("guarded", command(&loaded.ops, "later"), ARGS(), By::User);
     ok(&next);
     assert_eq!(op(&next.ops, "timer")["ms"], 1000);
     // Nor is a command a failed call added the Plugin's own.
@@ -417,7 +428,7 @@ roster.commands.add("go", { run = function()
 end })
 "#,
     );
-    let go = host.call("guarded", command(&loaded.ops, "go"), ARGS());
+    let go = host.call("guarded", command(&loaded.ops, "go"), ARGS(), By::User);
     ok(&go);
     let said = notices(&go.ops);
     assert_eq!(
@@ -462,7 +473,7 @@ roster.commands.add("once", { run = function() return roster.serve.call("mesh.st
         let host = Arc::clone(&host);
         let poll = command(&loaded.ops, "poll");
         std::thread::spawn(move || {
-            let _ = tx.send(host.call("guarded", poll, ARGS()));
+            let _ = tx.send(host.call("guarded", poll, ARGS(), By::User));
         });
     }
     let r = rx
@@ -476,7 +487,7 @@ roster.commands.add("once", { run = function() return roster.serve.call("mesh.st
     assert!(r.disabled.is_none());
     assert!(serve.methods().len() <= 100, "{}", serve.methods().len());
     // The next call starts again from none.
-    let once = host.call("guarded", command(&loaded.ops, "once"), ARGS());
+    let once = host.call("guarded", command(&loaded.ops, "once"), ARGS(), By::User);
     ok(&once);
     assert_eq!(once.result, true);
 }
@@ -509,9 +520,9 @@ fn follow(host: &PluginHost, loaded: &[Value], ops: &[Value], own: &[&str]) -> O
         .find(|o| o["op"] == "cmd" && own.contains(&o["line"].as_str().unwrap_or("")))?;
     let run = command(loaded, cmd["line"].as_str().unwrap());
     Some(if cmd["user"] == false {
-        host.call_by_app("guarded", run, ARGS())
+        host.call("guarded", run, ARGS(), By::App)
     } else {
-        host.call_carried("guarded", run, ARGS())
+        host.call("guarded", run, ARGS(), By::Carried)
     })
 }
 
@@ -538,7 +549,7 @@ link("c", "a")
     );
     let (loaded, _folder) = load(&host, "chain", &["serve:discover.start", "serve:mesh.cut"], &init);
     let mut said = Vec::new();
-    let mut r = host.call("guarded", command(&loaded.ops, "a"), ARGS());
+    let mut r = host.call("guarded", command(&loaded.ops, "a"), ARGS(), By::User);
     for _ in 0..5 {
         ok(&r);
         said.extend(notices(&r.ops));
@@ -596,7 +607,7 @@ roster.commands.add("next", {{ run = function() roster.notify("next: " .. tried(
         &["serve:mesh.status", "serve:discover.start", "serve:mesh.cut"],
         &init,
     );
-    let asked = host.call("guarded", command(&loaded.ops, "ask"), ARGS());
+    let asked = host.call("guarded", command(&loaded.ops, "ask"), ARGS(), By::User);
     ok(&asked);
     let answered = replies(&rx, 1);
     assert_eq!(notices(&answered[0].ops), [format!("answer: {ALLOWED}")]);
@@ -608,10 +619,10 @@ roster.commands.add("next", {{ run = function() roster.notify("next: " .. tried(
     ok(&next);
     assert_eq!(notices(&next.ops), [format!("next: {REFUSED}")]);
     // Made in the user's own call, the line carries no mark: its command is the call carried.
-    let direct = host.call("guarded", command(&loaded.ops, "next"), ARGS());
+    let direct = host.call("guarded", command(&loaded.ops, "next"), ARGS(), By::User);
     assert_eq!(notices(&direct.ops), [format!("next: {ALLOWED}")]);
     // A command roster.cmd ran is the hop: its request's answer isn't the user's call.
-    let carried = host.call_carried("guarded", command(&loaded.ops, "ask"), ARGS());
+    let carried = host.call("guarded", command(&loaded.ops, "ask"), ARGS(), By::Carried);
     ok(&carried);
     let answered = replies(&rx, 1);
     assert_eq!(notices(&answered[0].ops), [format!("answer: {REFUSED}")]);

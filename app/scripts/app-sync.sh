@@ -12,9 +12,11 @@ dest="$(wslpath "$win_local")/$WIN_DIR/src/"
 mkdir -p "$dest"
 rsync -a --delete \
   --include /Cargo.toml --include /Cargo.lock --include /rustfmt.toml --include /.gitattributes \
+  --include /LICENSE --include /THIRD-PARTY-NOTICES \
   --include /app/ --include /crates/ --include /examples/ \
   --include /docs/ --include /docs/app/ --include '/docs/*.md' --exclude '/docs/*' \
   --include /tests/ --include /tests/vectors/ --exclude '/tests/*' \
+  --include /plugins/ --include '/plugins/*/' --include '/plugins/*/roster-plugin.lua' --exclude '/plugins/*/*' --exclude '/plugins/*' \
   --exclude '/*' \
   --exclude .git --exclude node_modules --exclude /target --exclude dist \
   --exclude app/src-tauri/gen --exclude app/src-tauri/tauri.dev-port.json \

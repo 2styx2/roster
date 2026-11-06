@@ -8,8 +8,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { Logo } from "../chrome/Logo";
 import logoCss from "../chrome/logo.css?raw";
-import { defaultConfig } from "../config/fixture";
-import { registerHelp, HelpView } from "../help/command";
+import { defaultConfig } from "../config/defaults";
+import { docsBuiltins, registerBuiltins } from "../commands/builtins";
 import { blockLinks, type Block } from "../help/doc";
 import helpDocCss from "../help/doc.css?raw";
 import { guides, PARTS } from "../help/guides";
@@ -22,7 +22,7 @@ import { builtinRegistries } from "../registries";
 import { rosterDark, rosterLight } from "../theme/themes";
 import { themeVariables } from "../theme/theme";
 import keysCss from "../ui/keys.css?raw";
-import type { SearchIndex } from "./search";
+import type { SearchIndex, SearchTopics } from "./search";
 
 export interface SiteOptions {
   /** The commit it's built from: the footer's "Generated from". */
@@ -46,6 +46,8 @@ export interface Site {
   files: SiteFile[];
   /** Dead links and repeated ids; the build fails on any. */
   problems: string[];
+  /** The search index the search files were written from, whole (not for print). */
+  searchIndex?: SearchIndex;
 }
 
 /** The font files the pages ask for, copied from @fontsource by the script: Inter for prose,
@@ -68,7 +70,7 @@ export function siteContext(): HelpContext {
   // app's lazy chunk (T213).
   helpText.use(guideTexts);
   const r = builtinRegistries();
-  registerHelp(r, new HelpView());
+  registerBuiltins(r, docsBuiltins(r));
   return helpContext(r, {
     keymap: keymapOf(r.keymap.list()),
     options: defaultOptions,
@@ -81,7 +83,7 @@ export function siteContext(): HelpContext {
 }
 
 /** The pages in the index's order: the index, then each part's pages by their order. */
-export function indexOrder(ctx: HelpContext): HelpPage[] {
+function indexOrder(ctx: HelpContext): HelpPage[] {
   const parts: string[] = [...PARTS];
   const rank = (pg: HelpPage) => (pg.id === "index" ? -1 : parts.indexOf(pg.part ?? "") < 0 ? parts.length : parts.indexOf(pg.part ?? ""));
   return [...ctx.pages].sort((a, b) => rank(a) - rank(b) || a.order - b.order);
@@ -116,10 +118,6 @@ function pageIds(page: string, blocks: readonly Block[], print: boolean): Map<st
 }
 
 const short = (title: string) => title.split(":")[0] as string;
-
-/** Pages made from the app's code rather than a Markdown file: on the website they show the
- * defaults, and say so. */
-const GENERATED_NOTE = new Set(["quickref", "commands", "keys", "options", "themes", "finders", "errors", "health"]);
 
 export function buildSite(ctx: HelpContext, opts: SiteOptions): Site {
   const print = opts.print ?? false;
@@ -172,6 +170,7 @@ export function buildSite(ctx: HelpContext, opts: SiteOptions): Site {
   });
 
   const files: SiteFile[] = [];
+  let searchIndex: SearchIndex | undefined;
   if (print) {
     files.push({ path: "print.html", body: printDocument(rendered, opts) });
   } else {
@@ -179,15 +178,53 @@ export function buildSite(ctx: HelpContext, opts: SiteOptions): Site {
     files.push({ path: "tags.json", body: `${JSON.stringify(tagUrls, null, 1)}\n` });
     files.push({ path: "tag.html", body: tagPage(tagUrls) });
     files.push({ path: "search.html", body: searchPage(pages, opts, gh) });
-    files.push({ path: "search-index.js", body: `window.rosterSearchIndex = ${json(searchIndexOf(ctx, topics, urlOf))};\n` });
+    searchIndex = searchIndexOf(ctx, topics, urlOf);
+    files.push(...searchFiles(searchIndex));
     files.push({ path: "site.css", body: siteCss() });
   }
   problems.push(...linkProblems(files));
-  return { files, problems };
+  return { files, problems, ...(searchIndex ? { searchIndex } : {}) };
 }
 
-/** JSON safe inside a <script> (tag.html) or as a script of its own (search-index.js). */
+/** JSON safe inside a <script> (tag.html) or as a script of its own (the search index's files). */
 const json = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c");
+
+/** How much text a shard takes before the next page starts a new one, in characters of its JSON
+ * (about 50 KB gzipped). A page is never split, so a page bigger than this is a shard of its own. */
+export const SHARD_TEXT = 160_000;
+
+/** The search index as files (T260, #528; the docs-budget research's item 4): search-topics.js,
+ * the topics and places the box loads first, and the texts in shards of whole pages, in order,
+ * that it loads when a query needs the text. Scripts rather than JSON, so file:// works too. */
+export function searchFiles(index: SearchIndex): SiteFile[] {
+  // The texts by page, in order (a page's texts are together, as pageTexts lists them).
+  const pages: { texts: SearchIndex["texts"]; size: number }[] = [];
+  let page: string | null = null;
+  for (const text of index.texts) {
+    const at = (index.places[text[0]]?.[0] ?? "").split(/[#?]/)[0] as string;
+    if (at !== page) pages.push({ texts: [], size: 0 });
+    page = at;
+    const last = pages[pages.length - 1] as (typeof pages)[number];
+    last.texts.push(text);
+    last.size += JSON.stringify(text).length + 1;
+  }
+  const shards: SearchIndex["texts"][] = [];
+  let size = 0;
+  for (const pg of pages) {
+    if (shards.length === 0 || size + pg.size > SHARD_TEXT) {
+      shards.push([]);
+      size = 0;
+    }
+    (shards[shards.length - 1] as SearchIndex["texts"]).push(...pg.texts);
+    size += pg.size;
+  }
+  const names = shards.map((_, i) => `search-text-${i}.js`);
+  const topics: SearchTopics = { topics: index.topics, places: index.places, shards: names };
+  return [
+    { path: "search-topics.js", body: `window.rosterSearchTopics = ${json(topics)};\n` },
+    ...shards.map((texts, i) => ({ path: names[i] as string, body: `(window.rosterSearchText = window.rosterSearchText || [])[${i}] = ${json(texts)};\n` })),
+  ];
+}
 
 /** What the search box searches (search.ts): every topic, as `:help`'s topic finder lists them,
  * and every page's text, as `:helpgrep` searches it, each with the address of where it is. */
@@ -209,7 +246,7 @@ function searchIndexOf(ctx: HelpContext, topics: readonly Topic[], urlOf: (tag: 
     }
     texts.push([place, hit.text]);
   }
-  return { topics: topics.map((t) => [t.tag, t.label, t.path ?? "", urlOf(t.tag)]), places, texts };
+  return { topics: topics.map((t) => [t.tag, t.label, t.note ?? t.path ?? "", urlOf(t.tag)]), places, texts };
 }
 
 /** The build's own check of what it wrote: every `x.html#id` link goes to a page that has that
@@ -291,7 +328,7 @@ ${css}
 
 function sitePage(pg: HelpPage, article: string, pages: HelpPage[], opts: SiteOptions, gh: string): string {
   const start = pg.id === "index";
-  const note = GENERATED_NOTE.has(pg.id)
+  const note = pg.inEffect
     ? `<p class="site-note">On the website this page shows roster's defaults: no <code>init.lua</code>, no Plugins, nothing checked. In the app, <code>:help ${esc(pg.id)}</code> shows what's in effect on your Box.</p>`
     : "";
   const intro = start
@@ -477,7 +514,7 @@ const SCREEN = `.site-skip { position: absolute; left: 8px; top: -40px; padding:
 .site-pop-msg { margin: 0; padding: 8px 10px; color: var(--muted); }
 .site-hits-head { padding: 8px 10px 4px; font-size: var(--text-xs); font-weight: 600; color: var(--muted); }
 .site-hits-head:empty { display: none; }
-.site-hits-group + .site-hits-group:last-child { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
+.site-hits > * + .site-hits-group:last-child { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
 .site-hit { display: grid; gap: 1px; padding: 6px 10px; border-radius: var(--radius-sm); cursor: pointer; }
 .site-hit[aria-selected="true"] { background: var(--raised); box-shadow: inset 0 0 0 1px var(--raised-line); }
 .site-hit-name, .site-hit-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -59,10 +59,18 @@ function cutWithoutTooltip(): string[] {
   const bad: string[] = [];
   for (const selector of cutSelectors()) {
     for (const el of document.querySelectorAll(selector)) {
-      const text = el.textContent?.trim() ?? "";
-      if (!text) continue;
+      // What's drawn: a form given way (`data-off`, e.g. a Host path's front cuts) isn't.
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let drawn = "";
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) if (!n.parentElement?.closest("[data-off]")) drawn += n.textContent;
+      const text = drawn.trim();
+      // Never shown: the Picker's sizer row only measures its columns.
+      if (!text || el.closest('[aria-hidden="true"]')) continue;
       const title = el.closest("[title]")?.getAttribute("title") ?? "";
-      if (!title.includes(text)) bad.push(`${selector}: "${text}"`);
+      // A middle cut ("server-10…7-203") keeps the name's start and end; the tooltip has it whole.
+      const [head = "", tail] = text.split("…");
+      const middleCut = tail !== undefined && title.startsWith(head) && title.endsWith(tail);
+      if (!title.includes(text) && !middleCut) bad.push(`${selector}: "${text}"`);
     }
   }
   return bad;
@@ -112,7 +120,7 @@ describe("the worst case", () => {
     const row = document.querySelector(`[data-row="inventory:${LONG_NAME}"]`) as HTMLElement;
     expect(row.querySelector(".sb-text")).toHaveAttribute("title", `${LONG_NAME}\nNot reviewed yet: can't be opened`);
     // The count of a long-named group is its own element, never cut with the name.
-    const group = document.querySelector('[data-row^="group:contoso"]') as HTMLElement;
+    const group = document.querySelector('[data-row^="group:fieldwork"]') as HTMLElement;
     expect(group.querySelector(".sb-num")).toHaveTextContent("13");
   }, 30_000);
 
@@ -120,7 +128,8 @@ describe("the worst case", () => {
     const user = await open("worst-case");
     await user.keyboard(`${LEADER}f`);
     const picker = screen.getByRole("dialog", { name: "Find a Host" });
-    expect(within(picker).getByText("200 of 1,284 Hosts")).toBeInTheDocument();
+    // Before a query, the count is the Inventory's, not "200 of": nothing is filtered yet.
+    expect(within(picker).getByText("1,284 Hosts")).toBeInTheDocument();
     // An unreviewed Host's long notice in the footer. Long names are pasted: each typed key
     // filters 1,284 Hosts again, and only where it ends up matters here (#62).
     await user.paste(LONG_NAME);
@@ -163,7 +172,11 @@ describe("the worst case", () => {
     await user.keyboard("{Escape}");
     await user.keyboard(`${LEADER}t`);
     const tree = screen.getByRole("dialog", { name: "Find in the tree" });
-    expect(within(tree).getByText(/^200 of 1,3\d\d$/)).toBeInTheDocument();
+    expect(within(tree).getByText(/^1,3\d\d Hosts$/)).toBeInTheDocument();
+    // A Host's row reads as the Picker's: name, address, group, type (round 21).
+    const host = tree.querySelector(".finder-row.host-row")!;
+    const order = [...host.children].map((c) => c.getAttribute("class") ?? "");
+    expect(order.findIndex((c) => c.includes("finder-addr"))).toBeLessThan(order.findIndex((c) => c.includes("finder-path")));
     expect(cutWithoutTooltip()).toEqual([]);
     expect(bareLeaders()).toEqual([]);
   }, 30_000);
@@ -189,9 +202,10 @@ describe("one, and none", () => {
   it("has an empty state everywhere, and keeps a key hint's word on its line", async () => {
     const user = await open("worst-case-empty");
     expect(document.querySelector(".statusbar")).toHaveTextContent("0 Hosts");
-    expect(screen.getByText("No Hosts yet. Add them in roster.yml.")).toBeInTheDocument();
+    expect([...document.querySelectorAll(".sb-empty")].some((e) => e.textContent === "None yet: add them in roster.yml.")).toBe(true);
     const hint = document.querySelector(".sb-empty .keys-with-word");
-    expect(hint).toHaveTextContent(/^press/);
+    // "Drag a Host here, or ␣ a.": the word before the keys stays on their line.
+    expect(hint).toHaveTextContent(/^or/);
     expect(hint?.querySelector(".keycap-leader")).not.toBeNull();
     await user.keyboard(`${LEADER}f`);
     expect(screen.getByText(/The Inventory has no Hosts yet/)).toBeInTheDocument();

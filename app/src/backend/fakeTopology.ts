@@ -4,14 +4,16 @@
 // crates/roster-core/tests/plugin_topology.rs recorded from the Lua and checks this does the same.
 // Change the Lua, record the transcript again, and change this to match.
 import type { FakePlugin, FakeRoster } from "./fakePlugins";
-import type { Host, HostList } from "./types";
+import { BackendCallError, type Host, type HostList } from "./types";
+import { errorText } from "../ui/format";
+import { FIRST_PARTY } from "./fakeManifests";
 
 type Obj = Record<string, unknown>;
 type Edge = { id: string; from: string; to: string; dir?: string; style?: string; tone?: string; cut?: boolean; label?: string };
 type Cluster = { id: string; title: string; mesh?: boolean; members: string[] };
 type Link = { from: string; to: string; kind?: string; via?: string; skip?: string };
 
-export const TOPOLOGY_PERMISSIONS = ["inventory.read", "serve:mesh.status", "serve:host.check", "serve:mesh.cut", "serve:mesh.job", "serve:host.check_job"];
+export const TOPOLOGY_PERMISSIONS = FIRST_PARTY.topology.permissions;
 
 const BOX = ":box";
 const MAX_HOSTS = 4999;
@@ -24,7 +26,7 @@ const keys = (o: unknown) => Object.keys((o ?? {}) as Obj).sort();
 /** Leaves out what's nil, as a Lua table does. */
 const plain = <T extends Obj>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null)) as T;
 
-export function settingsOf(config: Obj): { settings: { leader: string; refresh: number }; problems: string[] } {
+function settingsOf(config: Obj): { settings: { leader: string; refresh: number }; problems: string[] } {
   const settings = { leader: "T", refresh: 60 };
   const problems: string[] = [];
   if (config.leader !== undefined) {
@@ -64,7 +66,7 @@ interface Structure {
 
 const bump = (m: Map<string, number>, k: string, by = 1) => m.set(k, (m.get(k) ?? 0) + by);
 
-export function structure(hosts: readonly Host[], groups: Record<string, { title?: string }>, mesh: Obj | null): Structure {
+function structure(hosts: readonly Host[], groups: Record<string, { title?: string }>, mesh: Obj | null): Structure {
   const s: Structure = {
     hosts: new Map(),
     order: [],
@@ -291,7 +293,7 @@ export function structure(hosts: readonly Host[], groups: Record<string, { title
   return s;
 }
 
-export function graphOf(s: Structure, live: Map<string, Set<number>>, down: Map<string, string>, ended: Set<string>) {
+function graphOf(s: Structure, live: Map<string, Set<number>>, down: Map<string, string>, ended: Set<string>) {
   const mesh = s.mesh ?? {};
   const cutPending = (mesh.cut_pending ?? {}) as Record<string, string[]>;
   const pending = (mesh.pending ?? {}) as Record<string, string>;
@@ -360,7 +362,7 @@ export function textOf(s: Structure, why: { reads: boolean; mesh: boolean; error
   return lines.join("\n\n");
 }
 
-export function detailsOf(s: Structure, name: string): Obj | null {
+function detailsOf(s: Structure, name: string): Obj | null {
   const m = s.mesh;
   if (!m) return null;
   const excluded = (m.excluded as Record<string, string> | undefined)?.[name];
@@ -396,7 +398,7 @@ function diff(before: Map<string, string> | null, items: Obj[]): [Obj[], string[
   return [changed, gone, now];
 }
 
-export function groupClusters(s: Structure, word: string): string[] {
+function groupClusters(s: Structure, word: string): string[] {
   const w = word.toLowerCase();
   let base: string | undefined;
   for (const c of s.clusters) {
@@ -411,19 +413,11 @@ export function groupClusters(s: Structure, word: string): string[] {
   return s.clusters.filter((c) => c.id === base || c.id === `${base}/peers` || c.id === `${base}/out`).map((c) => c.id);
 }
 
-const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** plugins/topology, as its Lua. */
 export function topologyPlugin(): FakePlugin {
   return {
-    manifest: {
-      name: "topology",
-      version: "1.2.0",
-      description: "The Topology view: this Box, your Hosts by group, the Mesh and its Links as a map",
-      author: "roster",
-      api: 6,
-      permissions: TOPOLOGY_PERMISSIONS,
-    },
+    manifest: FIRST_PARTY.topology,
     load(roster: FakeRoster) {
       const { settings, problems } = settingsOf(roster.plugin.config);
       for (const p of problems) roster.notify(`${p}; using the default`, "warn");
@@ -450,7 +444,7 @@ export function topologyPlugin(): FakePlugin {
       let hosts: Host[] | null = null;
       let groups: Record<string, { title?: string }> = {};
 
-      const ask = (method: string, params: Obj, done: (r: unknown, why?: string) => void) => {
+      const ask = (method: string, params: Obj, done: (r: unknown, why?: unknown) => void) => {
         try {
           if (!roster.serve) throw new Error("roster.serve: no serve permission");
           roster.serve.request(method, params, (r, why) => done(r, why));
@@ -562,7 +556,7 @@ export function topologyPlugin(): FakePlugin {
             roster.notify(`Cut ${cutting.host}: roster serve lost track of it; :topology shows where the Mesh is now.`, "warn");
             return cutOver();
           }
-          if (j.state === "running") {
+          if (j.state === "running" || j.state === "stopping") {
             roster.progress.set("topology-cut", { title: `Cutting ${cutting.host} from the Mesh`, done: j.done ?? 0, total: j.total ?? 0 });
             if (cutting.again) cutPoll();
             return;
@@ -795,15 +789,15 @@ export function topologyPlugin(): FakePlugin {
   };
 }
 
-/** `:tutor topology` (#233), on the demo's Hosts and groups; the demo answers no Mesh. */
+/** `:tutor topology` (#233), on the demo's Hosts and groups and its made-up Mesh (the demo's mesh.status). */
 function tutorial(leader: string) {
   return {
     title: "Topology tutor",
-    summary: "Learn the Topology view: open the map, show one group, go from a node to its Host",
+    summary: "Learn the Topology view: open the map, show one group, go from a node to its Host, read its reach",
     intro: [
       "The Topology view draws this Box and every Host as a map, grouped as the Inventory groups them. This tutorial runs on the demo's six Hosts, in two groups.",
       "",
-      "The demo has no Mesh, so the line above its map says the Mesh isn't shown. On your own Inventory, the map also draws the Mesh: who can reach whom, and how.",
+      "The map also draws the Mesh: who can reach whom, and how. The demo has a small, made-up one, so you can read it there; nothing on it connects anywhere.",
     ].join("\n"),
     lessons: [
       {
@@ -822,12 +816,20 @@ function tutorial(leader: string) {
           { id: "session", text: "Open the map again, find `demo-03` and press Enter: a Session to it opens.", on: { event: "session_open", host: "demo-03" } },
         ],
       },
+      {
+        title: "Who reaches whom",
+        text: "In the demo's Mesh, the lab's `demo-01`, `demo-02` and `demo-03` reach each other both ways, drawn as one cluster, and `demo-01` also reaches `demo-05` in the office. Select a Host to light up what it can reach and what can reach it, every hop; its details (`i`) count what it reaches directly.",
+        steps: [
+          { id: "reach", text: "On the map (`:topology`), find `demo-01`: the lab and `demo-05` light up. Press `i`: its Reach says 3 Hosts directly.", on: { event: "command", id: "info", arg: "demo-01" } },
+          { id: "pending", text: "Find `demo-05`, marked Mesh pending: it didn't answer the last apply, so its key may not be there yet. Press `i`: its Reach says why.", on: { event: "command", id: "info", arg: "demo-05" } },
+        ],
+      },
     ],
     outro: [
-      "You've opened the map, shown one group, and gone from a node to its Host's details and a Session. Open the map once more: `demo-03` is in the accent now, live.",
+      "You've opened the map, shown one group, gone from a node to its Host's details and a Session, and read who reaches whom. `demo-03` is in the accent on the map now, live.",
       "",
       "- `f` filters the map by group, kind or state, and `t` lists every node and edge.",
-      "- On your own Inventory, select a Host to light up what it can reach and what can reach it.",
+      "- On your own Inventory, the map draws your Mesh the same way, and a pending Host is finished by the next `roster mesh`.",
       "- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
     ].join("\n"),
   };
@@ -846,7 +848,7 @@ function helpPage(leader: string): string {
     "",
     "Select a Host to light up what it can reach and what can reach it, every hop: what its key reaches, and what those Hosts' own keys reach, which is what someone on it could reach. Its details (`i`) say how many directly.",
     "",
-    "Keys: `h` `j` `k` `l` move, `/` searches, `f` filters by group, kind or state (hiding the rest), `o` collapses a group, `+` `-` `0` zoom, `t` lists every node and edge. On a Host: Enter opens a Session, `i` its details, `c` Check, `x` Cut from the Mesh (after you type its name).",
+    "Keys: `h` `j` `k` `l` move, `/` searches (it opens empty each time), `f` filters by group, kind or state (hiding the rest), `o` collapses a group, `+` `-` `0` zoom, `t` lists every node and edge. On a Host: Enter opens a Session, `i` its details, `c` Check, `x` Cut from the Mesh (after you type its name).",
     "",
     "`:tutor topology` teaches the map by using it, on the tutorial's demo Inventory.",
     "",
@@ -933,7 +935,7 @@ export function topologyServe(world: TopologyWorld): (method: string, params: Ob
         };
       }
       default:
-        throw new Error(`unknown method '${method}' (code -32601)`);
+        throw new BackendCallError(`unknown method '${method}'`, -32601);
     }
   };
 }

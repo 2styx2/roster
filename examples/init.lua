@@ -153,7 +153,7 @@ roster.o.sessions = "sidebar" -- open Sessions in the Sidebar, or "tabs" for a t
 --              (sections picks and orders them; leave it out for all). Leader e shows or hides it.
 --   sessionbar false, "bottom" or "top": the thin tmux-style bar of open Sessions
 --   statusbar  false, true (all), or a list of segments in order: "backend", "box",
---              "inventory", "hosts", "path", "changes", "hints", "mode" (the last two sit
+--              "session", "inventory", "hosts", "path", "changes", "hints", "mode" (the last two sit
 --              on the right).
 --              Leader s shows or hides it (in Focus, the session bar).
 --   toolbar    the title bar's controls: false, true (the default set), or a list in order from

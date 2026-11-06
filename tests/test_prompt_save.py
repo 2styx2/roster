@@ -15,8 +15,8 @@ import pytest
 from conftest import SECRET
 from test_changes import INVENTORY, app, box, git, infra, result, sshd  # noqa: F401 (fixtures)
 
-from roster import edit
 from roster import serve as rpc
+from roster import store
 from roster.config import load_config
 from roster.sshops import write_ssh_config
 
@@ -138,7 +138,7 @@ def test_a_failure_updating_the_host_takes_the_new_item_back_out(prompted, sshd,
     with __import__("roster").askpass.Channel(rpc.askpass_lookup) as state.askpass:
         spec = call("session.prepare", {"host": "pve", "password": SECRET, "save": True})["result"]
         log_in(spec)
-        monkeypatch.setattr(edit, "replace_file", lambda *a, **k: (_ for _ in ()).throw(OSError(28, "No space left")))
+        monkeypatch.setattr(store, "replace_file", lambda *a, **k: (_ for _ in ()).throw(OSError(28, "No space left")))
         r = call("host.save_login", {"held": spec["held"]})
     err = r["error"]
     assert err["message"].startswith("pve's Login wasn't changed: couldn't write ")

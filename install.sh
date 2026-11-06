@@ -59,7 +59,16 @@ while (( $# )); do
         --allow-downgrade) ALLOW_DOWNGRADE=1 ;;
         --finish) FINISH=1 ;;
         -h|--help) sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
+        # never the whole word: a mistyped flag can carry a URL with a token, and so can a word with no flag (#484 M2);
+        # the name ends at its first character that is not a letter, digit or - (=, :, a glued -iURL: #484 L4);
+        # longer than any real option (20), it's a glued token, not a name (#489 L1); and it's printed only when it
+        # looks like one (--[a-z][a-z-]* or -[a-zA-Z]), so a glued token's start never is (#489 N5)
+        -*) opt=${1%%[^A-Za-z0-9-]*}
+            if [ ${#opt} -le 20 ] && [[ $opt =~ ^(--[a-z][a-z-]*|-[a-zA-Z])$ ]]; then
+                echo "unknown option: $opt (try --help)" >&2
+            else echo "unknown option (not repeated) (try --help)" >&2; fi
+            exit 2 ;;
+        *) echo "unexpected argument (not repeated) (try --help)" >&2; exit 2 ;;
     esac
     shift
 done
@@ -67,7 +76,8 @@ PREFIX=${PREFIX/#\~/$HOME}
 [[ -n $INFRA_REPO && -z $INVENTORY ]] && INVENTORY="repo:$INFRA_REPO"
 case "$INVENTORY" in
     ""|blank|file:?*|repo:[!-]*|ssh-config|ssh-config:?*) ;;
-    *) echo "--inventory $INVENTORY: use blank, file:PATH, repo:URL or ssh-config[:PATH]" >&2; exit 2 ;;
+    # the value isn't repeated: a git URL typed without repo: (or as repo:-...) can carry a token (#479)
+    *) echo "--inventory: not one of its forms (not repeated): use blank, file:PATH, repo:URL or ssh-config[:PATH]" >&2; exit 2 ;;
 esac
 
 # ---- what install.sh and update.sh share: the look, the questions, find_map and friends (install-lib.sh, beside this

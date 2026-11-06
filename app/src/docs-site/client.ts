@@ -2,11 +2,15 @@
 // ARIA pattern: the focus stays in the box, the arrow keys choose, Enter opens), the results page
 // (search.html?q=…), and marking the word on the page a text result opens (`:helpgrep`'s `/WORD`).
 // No framework: the site's pages are static HTML, and this is the only script they load. The
-// index is a second script, loaded the first time the box is used (it's the biggest file).
+// index is more scripts (T260): search-topics.js the first time the box is used, then the text
+// shards (search-text-N.js, the biggest files) the first time a query needs the text. The topics
+// are listed while the text loads, and the text joins them when every shard is in, so the results
+// are the same as from one file, and never reorder under the reader.
 //
 // Nothing moves: the list is opened and walked from the keyboard, many times a visit, and motion
 // there would only slow it (taste.md, "motion confirms"; emil-design-eng).
-import { searchDocs, type SearchIndex, type SearchResults } from "./search";
+import { joinIndex, searchDocs, type SearchIndex, type SearchResults, type SearchTopics } from "./search";
+import { isTyping } from "../ui/typing";
 
 /** How many of each the box lists; its last row goes to every result. */
 const BOX_TOPICS = 6;
@@ -15,8 +19,10 @@ const BOX_TEXTS = 8;
 const PAGE_TEXTS = 200;
 
 export interface BoxDeps {
-  /** The index, loaded the first time it's asked for. */
-  load(): Promise<SearchIndex>;
+  /** search-topics.js, loaded the first time it's asked for. */
+  topics(): Promise<SearchTopics>;
+  /** Every text shard, in order, loaded the first time it's asked for. */
+  texts(): Promise<SearchIndex["texts"][]>;
   /** Opens an address on the site. */
   go(href: string): void;
 }
@@ -100,20 +106,40 @@ export function mountSearchBox(input: HTMLInputElement, deps: BoxDeps): void {
   input.setAttribute("aria-expanded", "false");
   input.setAttribute("aria-controls", listId);
 
+  let topics: SearchIndex | null = null;
   let index: SearchIndex | null = null;
   let loading: Promise<void> | null = null;
+  let loadingText: Promise<void> | null = null;
   let failed = false;
+  let textFailed = false;
   let hrefs: string[] = [];
   let active = 0;
 
   const ensure = () => {
-    loading ??= deps.load().then(
-      (i) => {
-        index = i;
+    loading ??= deps.topics().then(
+      (t) => {
+        topics = joinIndex(t);
+        if (input.value.trim()) ensureText();
         update();
       },
       () => {
         failed = true;
+        update();
+      },
+    );
+  };
+
+  /** The text, once a query needs it (the topics are in by then). */
+  const ensureText = () => {
+    const t = topics;
+    if (!t) return;
+    loadingText ??= deps.texts().then(
+      (shards) => {
+        index = { ...t, texts: shards.flat() };
+        update();
+      },
+      () => {
+        textFailed = true;
         update();
       },
     );
@@ -148,7 +174,7 @@ export function mountSearchBox(input: HTMLInputElement, deps: BoxDeps): void {
       status.textContent = "";
       return close();
     }
-    if (!index) {
+    if (!topics) {
       const text = failed ? "The search index didn't load. Reload the page to try again." : "Loading the search index…";
       say(text);
       status.textContent = text;
@@ -156,9 +182,10 @@ export function mountSearchBox(input: HTMLInputElement, deps: BoxDeps): void {
       input.setAttribute("aria-expanded", "false");
       return;
     }
-    const r = searchDocs(index, query);
+    ensureText();
+    const r = searchDocs(index ?? topics, query);
     const terms = r.terms ?? [];
-    if (r.topics.length + r.texts.length === 0) {
+    if (index && r.topics.length + r.texts.length === 0) {
       const text = `No topic or text has ${query}.`;
       say(text);
       status.textContent = text;
@@ -199,9 +226,19 @@ export function mountSearchBox(input: HTMLInputElement, deps: BoxDeps): void {
       "In the text",
       r.texts.slice(0, BOX_TEXTS).map((t) => ({ href: t.href, cells: textRow(doc, t, terms), kind: "text" })),
     );
+    if (!index) {
+      // The topics without the text: a line where the text will be, no option (aria-hidden: the
+      // status line says it to a screen reader). The text then takes its place, below the topics
+      // already there, so nothing the reader is looking at moves.
+      const line = el(doc, "div", "site-pop-msg", textFailed ? "The text didn't load. Reload the page to try again." : "Loading the text…");
+      line.setAttribute("role", "none");
+      line.setAttribute("aria-hidden", "true");
+      list.append(line);
+    }
     const total = r.topics.length + r.texts.length;
-    group("", [{ href: `search.html?q=${encodeURIComponent(query)}`, cells: [el(doc, "span", "site-hit-name", `All ${total} results`)], kind: "all" }]);
-    status.textContent = countText(r);
+    const all = index ? `All ${total} results` : "All results";
+    group("", [{ href: `search.html?q=${encodeURIComponent(query)}`, cells: [el(doc, "span", "site-hit-name", all)], kind: "all" }]);
+    status.textContent = index ? countText(r) : `${plural(r.topics.length, "topic", "topics")}; ${textFailed ? "the text didn't load" : "loading the text"}`;
     pop.hidden = false;
     input.setAttribute("aria-expanded", "true");
     choose(0);
@@ -260,8 +297,7 @@ export function mountSearchBox(input: HTMLInputElement, deps: BoxDeps): void {
   // `/` from anywhere but a field, as in Neovim (and most docs sites).
   doc.addEventListener("keydown", (e) => {
     if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented || !input.isConnected) return;
-    const t = e.target as HTMLElement | null;
-    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    if (isTyping(e.target)) return;
     e.preventDefault();
     input.focus();
     input.select();
@@ -342,17 +378,35 @@ export function markPage(doc: Document, search: string, hash: string): HTMLEleme
   return current;
 }
 
-/** Loads search-index.js as a script (works from file:// too, where fetch doesn't). */
-function loadIndex(doc: Document): Promise<SearchIndex> {
+type IndexWindow = Window & { rosterSearchTopics?: SearchTopics; rosterSearchText?: SearchIndex["texts"][] };
+
+/** Runs `src` as a script (works from file:// too, where fetch doesn't); `got` reads what it set. */
+function script<T>(doc: Document, src: string, got: () => T | undefined): Promise<T> {
   return new Promise((resolve, reject) => {
-    const win = doc.defaultView as (Window & { rosterSearchIndex?: SearchIndex }) | null;
-    if (win?.rosterSearchIndex) return resolve(win.rosterSearchIndex);
+    const have = got();
+    if (have !== undefined) return resolve(have);
     const s = doc.createElement("script");
-    s.src = "search-index.js";
-    s.onload = () => (win?.rosterSearchIndex ? resolve(win.rosterSearchIndex) : reject(new Error("no index")));
-    s.onerror = () => reject(new Error("search-index.js didn't load"));
+    s.src = src;
+    s.onload = () => {
+      const v = got();
+      if (v === undefined) reject(new Error(`${src} set nothing`));
+      else resolve(v);
+    };
+    s.onerror = () => reject(new Error(`${src} didn't load`));
     doc.head.append(s);
   });
+}
+
+/** search-topics.js. */
+function loadTopics(doc: Document): Promise<SearchTopics> {
+  const win = doc.defaultView as IndexWindow | null;
+  return script(doc, "search-topics.js", () => win?.rosterSearchTopics);
+}
+
+/** Every shard search-topics.js names, at once, in its order. */
+function loadTexts(doc: Document, topics: SearchTopics): Promise<SearchIndex["texts"][]> {
+  const win = doc.defaultView as IndexWindow | null;
+  return Promise.all(topics.shards.map((src, i) => script(doc, src, () => win?.rosterSearchText?.[i])));
 }
 
 /** A code block wider than the page scrolls sideways, so it takes the focus (tabindex 0) for the
@@ -369,11 +423,14 @@ export function focusableCode(doc: Document): void {
 export function start(doc: Document): void {
   const win = doc.defaultView;
   if (!win) return;
-  let pending: Promise<SearchIndex> | null = null;
-  const load = () => (pending ??= loadIndex(doc));
+  let pendingTopics: Promise<SearchTopics> | null = null;
+  let pendingTexts: Promise<SearchIndex["texts"][]> | null = null;
+  const topics = () => (pendingTopics ??= loadTopics(doc));
+  const texts = () => (pendingTexts ??= topics().then((t) => loadTexts(doc, t)));
+  const load = () => Promise.all([topics(), texts()]).then(([t, shards]) => joinIndex(t, shards));
   const go = (href: string) => win.location.assign(href);
   const box = doc.getElementById("site-topic");
-  if (box instanceof HTMLInputElement) mountSearchBox(box, { load, go });
+  if (box instanceof HTMLInputElement) mountSearchBox(box, { topics, texts, go });
 
   const out = doc.getElementById("site-results");
   const count = doc.getElementById("site-count");

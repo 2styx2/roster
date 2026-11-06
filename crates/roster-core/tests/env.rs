@@ -2,7 +2,7 @@
 //! still read as fallbacks.
 
 use roster_core::env::var_or_legacy;
-use roster_core::error::{DISTRO_VAR, LEGACY_DISTRO_VAR, LEGACY_OVERRIDE_VAR, OVERRIDE_VAR};
+use roster_core::env::{DISTRO_VAR, LEGACY_DISTRO_VAR, LEGACY_OVERRIDE_VAR, OVERRIDE_VAR};
 
 fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
     move |k| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())

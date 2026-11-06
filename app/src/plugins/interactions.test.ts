@@ -3,7 +3,7 @@
 // going to a Session, and a table's per-row conditions and updates of its columns and actions.
 import { describe, expect, it } from "vitest";
 import { lineRefused, PLUGIN_COMMANDS } from "./cmd";
-import { parseOp } from "./ops";
+import { parseOp } from "./opRegistry";
 import { BUILTIN } from "../registry";
 
 const invalid = (raw: unknown) => (parseOp(raw) as { invalid?: string }).invalid;

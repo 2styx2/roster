@@ -77,9 +77,11 @@ def _onepassword(spec, ctx):
     try:
         data = json.loads(r.stdout)
     except json.JSONDecodeError:
-        raise SecretError("couldn't read `op item get` output")
+        data = None
     if isinstance(data, list):
         data = data[0] if data else {}
+    if not isinstance(data, dict):                          # valid JSON of another shape too
+        raise SecretError("couldn't read `op item get` output")
     val = data.get("value")
     if not val:
         raise SecretError(f"1Password item '{item}' has no value in field '{field}'")
@@ -108,12 +110,12 @@ def _op_items(ctx, mapped):
         if not isinstance(i, dict) or not isinstance(i.get("id"), str):
             continue
         title = str(i.get("title") or "")
-        where = str((i.get("vault") or {}).get("name") or "")
+        vault = i.get("vault")
+        where = str(vault.get("name") or "") if isinstance(vault, dict) else ""
         item = {"id": i["id"], "name": title, "keys": [i["id"], title] + ([f"{where}/{title}"] if where else []),
                 "uris": [], "username": None}
         if not mapped(item):
-            item["uris"] = [no_userinfo(u["href"]) for u in i.get("urls") or []       # never a URL's user:password@
-                            if isinstance(u, dict) and isinstance(u.get("href"), str)]
+            item["uris"] = _op_urls(i)
             item["username"] = _op_username(ctx, i["id"])
         out.append(item)
     return out
@@ -140,7 +142,7 @@ def _op_ref_item(spec):
     return split_field(spec)[0]
 
 
-# ---- one item's address and user, never its password (T223, #432, Q197). op has no field-only read of an item's URL
+# ---- one item's address and user, never its password (Q197). op has no field-only read of an item's URL
 # (`--fields` reads fields; a Login's website is in its overview's `urls`), so: every item's overview from
 # `op item list` (id, title, vault, URLs and a subtitle roster ignores; no concealed value, as Q191's listing), the one ITEM names found there (by id, or
 # by title in any case; several fail closed, as bw's do), its URL with no user:password@ (no_userinfo), and then its
@@ -163,8 +165,11 @@ def _op_overviews(ctx, vault):
 
 
 def _op_urls(item):
-    urls = [u for u in item.get("urls") or [] if isinstance(u, dict) and isinstance(u.get("href"), str)]
-    urls.sort(key=lambda u: u.get("primary") is not True)               # the primary one first
+    """An overview's URLs, the primary one first (the listing and an item's fields agree, #500), never a URL's
+    user:password@ (no_userinfo); none when its urls isn't a list (#492)."""
+    urls = item.get("urls")
+    urls = [u for u in urls if isinstance(u, dict) and isinstance(u.get("href"), str)] if isinstance(urls, list) else []
+    urls.sort(key=lambda u: u.get("primary") is not True)
     return [no_userinfo(u["href"]) for u in urls]
 
 
@@ -184,7 +189,11 @@ def _op_login_fields(name, ctx):
     return {"uri": urls[0] if urls else None, "username": _op_username(ctx, found[0]["id"])}
 
 
-PROVIDERS["op"].update(items=_op_items, ref_item=_op_ref_item, login_fields=_op_login_fields)
+PROVIDERS["op"].update(items=_op_items, ref_item=_op_ref_item, login_fields=_op_login_fields,
+                       manual=lambda ctx: adopt_inherited_session(ctx.state),
+                       unlock_hint="sign in: turn on the 1Password app's CLI integration, or eval $(op signin)",
+                       no_session="roster vault unlock and lock are Bitwarden only for now: 1Password's `op signin` "
+                                  "keeps its own session (roster vault op --write -- signin)")
 
 PROVIDERS["op"]["login_help"] = (
     "1Password signs in through its desktop app, not here: turn on Settings > Developer > \"Integrate with "

@@ -171,7 +171,9 @@ def test_a_usage_error_is_json_with_exit_2(write_config, capsys):
     with pytest.raises(SystemExit) as e:
         main(["hosts", "--bogus", "--json"])
     out, err = capsys.readouterr()
-    assert e.value.code == 2 and out == "" and "--bogus" in json.loads(err)["error"]["message"]
+    message = json.loads(err)["error"]["message"]
+    assert e.value.code == 2 and out == "" and "unrecognized arguments (not repeated)" in message
+    assert "--bogus" not in message                     # a word typed is never repeated (T235)
 
 
 def test_reveal_has_no_json(write_config, capsys):
@@ -217,7 +219,7 @@ def test_check_json_is_each_hosts_results(local, capsys):
     rc, doc, err = run(capsys, "check")
     assert rc == 1 and err == ""
     by_name = {h["name"]: h for h in doc["hosts"]}
-    assert by_name["open"] == {"name": "open", "ok": True, "ssh": "port", "checks": {"ssh": True}}
+    assert by_name["open"] == {"name": "open", "ok": True, "ssh": "port", "checks": {"ssh": True}, "problem": None}
     assert by_name["closed"]["ok"] is False and by_name["closed"]["checks"] == {"ssh": False}
     assert by_name["keyed"]["ssh"] == "login" and by_name["keyed"]["ok"] is True
     assert doc["ok"] is False and doc["mesh"] is None

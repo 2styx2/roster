@@ -4,12 +4,12 @@ roster \- give this box (and Claude) access to the hosts in roster.yml
 .SH SYNOPSIS
 .nf
 roster init [\-\-blank | \-\-inventory HOW] [\-\-name NAME]
-roster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force]
-roster sync
-roster check [\-\-box] [\-\-auth] [\-\-only LIST] [\-\-json] [host]
+roster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force] [\-\-key\-type TYPE] [\-\-rotate]
+roster sync [\-\-no\-vault]
+roster check [\-\-box] [\-\-auth] [\-\-only LIST | \-\-host NAME] [\-\-json] [host]
 roster hosts [\-\-resources] [\-\-only LIST] [\-\-find TEXT] [\-\-all] [\-\-long] [\-\-json] [NAME ...]
 roster run [\-\-sudo] host ...
-roster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-json] [\-\-all] [\-\-mark\-seen] [\-\-no\-sync] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]
+roster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-save\-to\-vault] [\-\-save\-to TARGET] [\-\-provider PROVIDER] [\-\-json] [\-\-all] [\-\-mark\-seen] [\-\-no\-sync] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]
 roster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]
 roster web [\-d BODY] [\-H HEADER] [\-k] [\-\-timeout SECONDS] HOST [SERVICE] METHOD PATH [HOST [SERVICE] METHOD PATH ...]
 roster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-all] [\-\-remove] [\-\-json] [{cut,status,leftovers}] [HOST]
@@ -18,6 +18,8 @@ roster inv [\-\-json] {list,add,use,remove,which} [NAME] [PATH]
 roster vault ACTION ...
 roster vault status [\-\-json]
 roster vault sync
+roster vault unlock [PROVIDER]
+roster vault lock [PROVIDER]
 roster vault reveal [\-\-wifi] name
 roster vault bw [\-\-write] ...
 roster vault op [\-\-write] ...
@@ -63,9 +65,9 @@ blank, file:PATH (a copy of that roster.yml, once it loads), repo:URL (a git clo
 name the new Inventory too (`roster inv add NAME PATH`), e.g. beside one you keep
 .SS setup
 .PP
-\fBroster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force]\fR
+\fBroster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force] [\-\-key\-type TYPE] [\-\-rotate]\fR
 .PP
-One\-time per box: key, fingerprints, key install, SSH config, Claude files (\fB\-\-only\fR, \fB\-\-host NAME\fR, \fB\-\-dry\-run\fR). \fB\-\-host NAME\fR is exactly the Host by that name, never a group, type or product NAME that \fB\-\-only NAME\fR would take too; like \fB\-\-only\fR it leaves the Mesh to \fBroster mesh\fR\&. After a rename, it re\-tags this Box's key where it works; a Host where another key's line already has the new name fails with 190 and is left as it is, unless \fB\-\-force\fR
+One\-time per box: key, fingerprints, key install, SSH config, Claude files (\fB\-\-only\fR, \fB\-\-host NAME\fR, \fB\-\-dry\-run\fR, \fB\-\-key\-type TYPE\fR, \fB\-\-rotate\fR). \fB\-\-rotate\fR replaces the Box key on every Host, the new one proven on each before the old one's line goes (Rotating the Box key); plain \fBsetup\fR exits 1 while a rotation is pending. Each Host gets the key of its own \fBkey_type:\fR (one key per type on this Box, made on first need); a Host whose key type changed gets the new key, and loses the old one only once the new one logs in. \fB\-\-host NAME \-\-key\-type TYPE\fR tries TYPE on that Host for this run, over \fBroster.yml\fR (it needs \fB\-\-host\fR): its line goes in beside this Box's line of \fBroster.yml\fR\&'s type, which stays, so the next \fBroster sync\fR (which writes \fBroster.yml\fR\&'s type back) still logs in; another try takes the one before off; set \fBkey_type:\fR to keep it (FIPS Hosts). Where the key already works, a line of this Box's of another type that \fB~/.config/roster/key\-types\fR records there (a \fB\-\-key\-type\fR try's, a cleanup that failed) is taken off over the key login (T245). A type change puts the new key's line in, tests it, and only then takes the old type's line off; a Host that refuses the new type keeps the old line. \fB\-\-host NAME\fR is exactly the Host by that name, never a group, type or product NAME that \fB\-\-only NAME\fR would take too; like \fB\-\-only\fR it leaves the Mesh to \fBroster mesh\fR\&. After a rename, it re\-tags this Box's key where it works; a Host where another key's line already has the new name fails with 190 and is left as it is, unless \fB\-\-force\fR
 .TP
 \fB\-\-only LIST\fR
 only these hosts, groups, types or products (comma\-separated)
@@ -78,14 +80,23 @@ show what would happen, change nothing remote
 .TP
 \fB\-\-force\fR
 on a renamed Box, go ahead on a Host where another Box's key line has the new name (its line is then this Box's to replace or revoke)
+.TP
+\fB\-\-key\-type TYPE\fR
+with \-\-host: try this SSH key type there, over roster.yml's key_type: (ed25519, ecdsa, ecdsa\-256, ecdsa\-521, rsa, rsa\-BITS), for this run only; its line goes in beside the one of roster.yml's type, which stays. Set key_type: to keep it. With \-\-rotate: the type roster.yml gives the Hosts, checked
+.TP
+\fB\-\-rotate\fR
+replace the Box key (this Box's own key, not a Mesh key: `roster mesh \-\-rotate HOST` does those) on every Host: a new key, proven on each Host before the old key's line goes, then the old key deleted. \-\-host NAME (a Host or a group) narrows it; a Host not reached stays pending until setup \-\-rotate runs again
 .SS sync
 .PP
-\fBroster sync\fR
+\fBroster sync [\-\-no\-vault]\fR
 .PP
-Rewrite the SSH config and Claude files after editing \fBroster.yml\fR
+Rewrite the SSH config and Claude files after editing \fBroster.yml\fR, and sync the vault too, as \fBvault sync\fR does (\fB\-\-no\-vault\fR: the map only). It touches no Host, and ends with what changed and, when something is left, \fBnext:\fR and the command for it (When your vault changes). A vault it couldn't sync (locked, offline) is said, never a failure. A Host taken out of \fBroster.yml\fR gets a note that this Box's key may still be on it
+.TP
+\fB\-\-no\-vault\fR
+the map only: leave the vault as last synced
 .SS check
 .PP
-\fBroster check [\-\-box] [\-\-auth] [\-\-only LIST] [\-\-json] [host]\fR
+\fBroster check [\-\-box] [\-\-auth] [\-\-only LIST | \-\-host NAME] [\-\-json] [host]\fR
 .PP
 \-\-box \e
 .TP
@@ -101,13 +112,16 @@ test each Login's password source (SSH, services, resources) instead, connecting
 \fB\-\-only LIST\fR
 only these hosts, groups, types or products (comma\-separated)
 .TP
+\fB\-\-host NAME\fR
+check exactly this Host (never a group or type by the name); again for more, as setup's last line names them
+.TP
 \fB\-\-json\fR
 print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
 .SS hosts
 .PP
 \fBroster hosts [\-\-resources] [\-\-only LIST] [\-\-find TEXT] [\-\-all] [\-\-long] [\-\-json] [NAME ...]\fR
 .PP
-The Hosts and resources in \fBroster.yml\fR that you can use: name, IP, user, logins (\fBssh (key), web (admin), api\fR, \fBwifi\fR) and title. Unreviewed scanned hosts are hidden unless you pass \fB\-\-all\fR, \fB\-\-find\fR or \fB\-\-only\fR\&. \fB\-\-long\fR shows the full table (type, product, web URL, scan description). \fBhosts NAME\fR (was \fBinfo\fR): everything about one Host or resource; fuzzy names work (\fBroster hosts core switch\fR), and it takes none of the list's flags. \fBhosts \-\-resources\fR (was \fBresources\fR): only the Wi\-Fi networks, accounts and secrets that aren't Hosts, with \fB\-\-only\fR taking resource names, types or groups and \fB\-\-find\fR searching every field
+The Hosts and resources in \fBroster.yml\fR that you can use: name, IP, user, logins (\fBssh (key), web (admin), api\fR, \fBwifi\fR) and title. Unreviewed scanned hosts are hidden unless you pass \fB\-\-all\fR, \fB\-\-find\fR or \fB\-\-only\fR\&. \fB\-\-long\fR shows the full table (type, product, web URL, scan description). \fBhosts NAME\fR (was \fBinfo\fR): everything about one Host or resource (for a key Host, \fBkey\fR: its key type and this Box's key file for it); fuzzy names work (\fBroster hosts core switch\fR), and it takes none of the list's flags. \fBhosts \-\-resources\fR (was \fBresources\fR): only the Wi\-Fi networks, accounts and secrets that aren't Hosts, with \fB\-\-only\fR taking resource names, types or groups and \fB\-\-find\fR searching every field
 .TP
 \fBNAME\fR
 show everything about this one Host or resource; fuzzy words work
@@ -133,7 +147,7 @@ print JSON for scripts and tools, never a secret (see Machine\-readable output i
 .PP
 \fBroster run [\-\-sudo] host ...\fR
 .PP
-Run a command; password\-only hosts get their password from the provider. \fB\-\-sudo\fR runs it as root, handing sudo the login's password (never shown). On an \fBos: windows\fR Host CMD always runs under PowerShell, whatever its DefaultShell, with its exit code passed on; \fB\-\-sudo\fR there is refused (159). See Windows Hosts
+Run a command; password\-only hosts get their password from the provider. A Host not in this Box's ssh config yet names \fBroster sync\fR; on a Host setup hasn't put this Box's key on (by its record), a failed login in ssh's own words is followed by its cause and fix (\fBroster: [211] no key on new\-01 yet: roster setup \-\-host new\-01\fR); a Login whose vault item is gone, doubled or locked says so with its code and fix. \fB\-\-sudo\fR tells sudo's refusals apart: not in sudoers, sudo wanting a terminal (requiretty), or the Login's password refused (a sudo password that differs). \fB\-\-sudo\fR runs it as root, handing sudo the login's password (never shown). On an \fBos: windows\fR Host CMD always runs under PowerShell, whatever its DefaultShell, with its exit code passed on; \fB\-\-sudo\fR there is refused (159). See Windows Hosts
 .TP
 \fB\-\-sudo\fR
 run it as root with sudo; roster gives sudo the login's password (never shown)
@@ -145,7 +159,7 @@ the host to run it on
 the command, after \-\-
 .SS add
 .PP
-\fBroster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-json] [\-\-all] [\-\-mark\-seen] [\-\-no\-sync] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]\fR
+\fBroster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-save\-to\-vault] [\-\-save\-to TARGET] [\-\-provider PROVIDER] [\-\-json] [\-\-all] [\-\-mark\-seen] [\-\-no\-sync] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]\fR
 .PP
 The vault items no Login in \fBroster.yml\fR names, the new ones since the last run marked (synced first; \fB\-\-no\-sync\fR), and in a terminal a walk adding each [Y/n/edit/skip] the \fBroster add NAME\fR way; \fB\-\-all\fR every one, \fB\-\-json\fR the list, \fB\-\-mark\-seen\fR\&. Never reads a password. See Vault items not in roster.yml
 .TP
@@ -185,6 +199,15 @@ its SSH port (default: 22)
 \fB\-\-from\-vault\fR
 fill \-\-ip (and \-\-port) from the \-\-auth item's URI and \-\-user from its username, never reading its password (bw, op); flags given win. With no NAME: list the vault items no Login in roster.yml names (new ones since the last run), and in a terminal add each one [Y/n/edit/skip]
 .TP
+\fB\-\-save\-to\-vault\fR
+save its password as a new vault item `NAME ssh` (its address in the URI, \-\-user as the username), then point its auth: at it; the password is asked twice on the terminal, hidden, never taken from an argument or the environment
+.TP
+\fB\-\-save\-to TARGET\fR
+with \-\-save\-to\-vault: where the item goes for this run: personal, ORGANIZATION/COLLECTION (bw) or GROUP (kp) (default: save_to: in roster.yml or init.lua)
+.TP
+\fB\-\-provider PROVIDER\fR
+with \-\-save\-to\-vault: the vault to save in, bw or kp (default: the vault roster.yml's Logins use most)
+.TP
 \fB\-\-json\fR
 with \-\-from\-vault and no NAME: print the list as JSON, add nothing
 .TP
@@ -204,7 +227,7 @@ then run setup for it alone (its host key, and this Box's key on it when enrolle
 print the lines it would add; write nothing
 .TP
 \fB\-y, \-\-yes\fR
-never ask: a missing value it can't default is an error naming its flag
+never ask: a missing value it can't default is an error naming its flag (with \-\-save\-to\-vault the password is still asked, and a locked vault's master password in a terminal)
 .SS discover
 .PP
 \fBroster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]\fR
@@ -267,7 +290,7 @@ how long to wait for the answer (default: 30)
 .PP
 \fBroster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-all] [\-\-remove] [\-\-json] [{cut,status,leftovers}] [HOST]\fR
 .PP
-Set up Host\-to\-Host access as \fBmesh:\fR and \fBlinks:\fR say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's \fBvia: HOST\fR goes through a jump Host (\fBProxyJump\fR), tested through it. \fB\-\-dry\-run\fR shows the plan, \fB\-\-rotate\fR replaces a Host's Mesh key. \fBmesh status\fR shows who reaches whom without connecting; \fBmesh cut HOST [\-y]\fR takes a Host out everywhere at once and writes \fBmesh: false\fR for it as a Pending change, then syncs this Box as \fBroster sync\fR does; \fBmesh cut \-\-all [\-y]\fR takes this Box's Mesh entries (and an older roster's untagged ones) off every Host and leaves \fBroster.yml\fR as it is (before removing roster: Uninstalling roster); \fBmesh leftovers\fR (was \fB\-\-find\-leftovers\fR) lists the Mesh entries on every Host that this \fBroster.yml\fR doesn't ask for, changing nothing, and \fBmesh leftovers \-\-remove [\-y]\fR (was \fB\-\-remove\-leftovers\fR) removes them after a question (an older roster's may be another Box's: Whose Mesh it is); \fB\-\-json\fR with \fBstatus\fR or \fB\-\-dry\-run\fR\&. See The Mesh
+Set up Host\-to\-Host access as \fBmesh:\fR and \fBlinks:\fR say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's \fBvia: HOST\fR goes through a jump Host (\fBProxyJump\fR), tested through it. \fB\-\-dry\-run\fR shows the plan, \fB\-\-rotate\fR replaces a Host's Mesh key. \fBmesh status\fR shows who reaches whom without connecting; \fBmesh cut HOST [\-y]\fR takes a Host out everywhere at once and writes \fBmesh: false\fR for it as a Pending change, then syncs this Box as \fBroster sync\fR does; \fBmesh cut \-\-all [\-y]\fR takes this Box's Mesh entries (and an older roster's untagged ones) off every Host and leaves \fBroster.yml\fR as it is (before removing roster: Uninstalling roster); \fBmesh leftovers\fR (was \fB\-\-find\-leftovers\fR) lists the Mesh entries on every Host that this \fBroster.yml\fR doesn't ask for (and files by a Mesh key's name in the Mesh's folders that aren't a key roster made, which it never removes), changing nothing, and \fBmesh leftovers \-\-remove [\-y]\fR (was \fB\-\-remove\-leftovers\fR) removes them after a question (an older roster's may be another Box's: Whose Mesh it is); \fB\-\-json\fR with \fBstatus\fR or \fB\-\-dry\-run\fR\&. See The Mesh
 .TP
 \fBACTION\fR
 cut HOST: take it out of the Mesh now, everywhere; status: who reaches whom (no connections); leftovers: look on every Host, once, for Mesh entries this roster.yml doesn't ask for (this Box's, or an older roster's with no Box in the tag); changes nothing without \-\-remove
@@ -296,7 +319,7 @@ with status or \-\-dry\-run: print JSON for scripts and tools, never a secret (s
 .PP
 \fBroster revoke [\-\-only LIST] [\-\-all] [\-y]\fR
 .PP
-Remove this box's key from every host (its line under any name it had, found by its public key: the key is one per Box, so revoking one Inventory also takes it off a machine another Inventory lists, under any \fBbox_name:\fR, and says so: \fBroster setup\fR for that Inventory puts it back, or use \fB\-\-all\fR); it names this box's files to delete (with \fB~/.config/roster/key\-name*\fR, the name setup recorded for its key's lines) only once every Host of this \fBroster.yml\fR has lost the key (never with \fB\-\-only\fR, and never another \fBroster.yml\fR\&'s \fBconfig.d/roster\fR), and exits 1 when a Host was skipped or none was reached. \fB\-\-all\fR: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host \fBssh NAME\fR doesn't reach (left out, or its Inventory not synced here) is skipped and said. See Named Inventories. On an \fBos: windows\fR Host it cleans both files an administrator's key could be in. A Host it couldn't revoke is listed with why
+Remove this box's key from every host (its line under any name it had, found by its public key: the key is one per Box, so revoking one Inventory also takes it off a machine another Inventory lists, under any \fBbox_name:\fR, and says so: \fBroster setup\fR for that Inventory puts it back, or use \fB\-\-all\fR); it names this box's files to delete (with \fB~/.config/roster/key\-name*\fR, the name setup recorded for its key's lines) only once every Host of this \fBroster.yml\fR has lost the key (never with \fB\-\-only\fR, never another \fBroster.yml\fR\&'s \fBconfig.d/roster\fR, and never a key file another Inventory on this Box uses too: that one is kept, with a note naming the Inventory, 221), and exits 1 when a Host was skipped or none was reached. \fB\-\-all\fR: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host \fBssh NAME\fR doesn't reach (left out, or its Inventory not synced here) is skipped and said. See Named Inventories. An unnamed \fBroster.yml\fR in a folder that looks like a token, which the ssh config names only by the sha256 of its path, is revoked with the others when it's \fB$ROSTER_CONFIG\fR, \fB\&./roster.yml\fR or a named Inventory's file; otherwise it's skipped, never named, and \fBroster \-c PATH revoke \-\-yes\fR revokes it without renaming its folder. On an \fBos: windows\fR Host it cleans both files an administrator's key could be in. A Host it couldn't revoke is listed with why
 .TP
 \fB\-\-only LIST\fR
 only these hosts, groups, types or products (comma\-separated)
@@ -340,7 +363,23 @@ print JSON for scripts and tools, never a secret (see Machine\-readable output i
 .PP
 \fBroster vault sync\fR
 .PP
-Sync every vault \fBroster.yml\fR\&'s Logins use that keeps a local copy (Bitwarden: \fBbw sync\fR; 1Password and the others ask their server or file each time, so it says they need none), then say what changed since the last sync: the items added and changed by name, the removed ones by count. Never a password: see The vault isn't watched. Exits 1 if a sync failed
+Sync every vault \fBroster.yml\fR\&'s Logins use that keeps a local copy (Bitwarden: \fBbw sync\fR; 1Password and the others ask their server or file each time, so it says they need none), then say what changed since the last sync: the items added and changed by name, the removed ones by count. Never a password: see The vault isn't watched. Nothing changed: \fBup to date\fR\&. An item added that no Login in \fBroster.yml\fR names ends it with \fBnext: roster add \-\-from\-vault\fR, at every sync until \fBroster.yml\fR names it or \fBroster add \-\-from\-vault\fR has listed it. Exits 1 if a sync failed, saying when roster last synced it
+.SS vault unlock
+.PP
+\fBroster vault unlock [PROVIDER]\fR
+.PP
+Unlock Bitwarden and keep it unlocked for every roster run on this Box: asks the master password (it goes to \fBbw\fR in an environment variable, never on a command line), then saves the session key in \fB~/.config/roster/bw\-session\fR (a new file renamed into place, mode 0600; a file there that's a symlink or isn't yours is refused, 202). It lasts until \fBroster vault lock\fR, \fBbw lock\fR, or the roster app's lock. Already unlocked by a working saved session: says so, asks nothing; a working \fBBW_SESSION\fR in your shell is saved as it is, with no new unlock (which would lock it and the app). Bitwarden only for now (203 for \fBkp\fR, which keeps no session, and \fBop\fR). It ends with the \fBnext:\fR line \fBroster sync\fR would give, when something is left (a \fBroster setup\fR the locked vault held up). See Staying unlocked
+.TP
+\fBPROVIDER\fR
+bw (the default and, for now, the only one: KeePassXC keeps no session, and 1Password's op signin keeps its own)
+.SS vault lock
+.PP
+\fBroster vault lock [PROVIDER]\fR
+.PP
+\fBbw lock\fR, then remove \fB~/.config/roster/bw\-session\fR (even if bw failed or isn't installed; each is reported on its own). bw keeps one unlock at a time, so every bw session on this Box is locked, the roster app's too. Bitwarden only for now (203)
+.TP
+\fBPROVIDER\fR
+bw (the default and, for now, the only one)
 .SS vault reveal
 .PP
 \fBroster vault reveal [\-\-wifi] name\fR
@@ -417,7 +456,7 @@ The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBh
 .IP \(bu 2
 \fBA version.\fR \fBversion\fR is the first field of every document, errors included. It is \fB1\fR now.
 .IP \(bu 2
-\fBErrors\fR go to stderr as \fB{"version": 1, "error": {"code", "message", "fix"}}\fR, with nothing on stdout. The codes are \fBroster serve\fR\&'s: \fB1\fR \fBroster.yml\fR wasn't found or doesn't load (\fBfix\fR says where), \fB2\fR no Host or resource by that name, \fB3\fR any other refusal. Wrong arguments are code \fB3\fR too, with exit status 2. A refusal serve has its own code for keeps it: \fB121\fR too many addresses for \fBdiscover\fR, \fB110\fR a \fB\-\-rotate\fR Host that isn't a Mesh source.
+\fBErrors\fR go to stderr as \fB{"version": 1, "error": {"code", "message", "fix"}}\fR, with nothing on stdout. The codes are \fBroster serve\fR\&'s: \fB1\fR \fBroster.yml\fR wasn't found or doesn't load (\fBfix\fR says where), \fB2\fR no Host or resource by that name, \fB3\fR any other refusal. Wrong arguments are code \fB3\fR too, with exit status 2. A refusal serve has its own code for keeps it: \fB121\fR too many addresses for \fBdiscover\fR, \fB110\fR a \fB\-\-rotate\fR Host that isn't a Mesh source, \fB140\fR an \fB\-\-inv\fR that isn't a named Inventory, and one printed as \fBerror: [N] ...\fR without \fB\-\-json\fR is code \fBN\fR, its message without the \fB[N]\fR\&.
 .IP \(bu 2
 \fBWhat's a breaking change:\fR removing or renaming a field, changing its type or what it means, or changing an exit status. Those come with a new \fBversion\fR and a line under \fBBreaking\fR in What's new. A new field or a new command with \fB\-\-json\fR isn't one, so read the fields you need and ignore the rest.
 .TP
@@ -434,13 +473,13 @@ The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBh
 \fB{version, resources: [resource]}\fR\&. Exit 1 when \fB\-\-only\fR or \fB\-\-find\fR matches nothing
 .TP
 \fBcheck \-\-json\fR
-\fB{version, hosts: [{name, ok, ssh, checks}], mesh, ok}\fR: \fBchecks\fR is \fB{ssh: bool, SERVICE: bool, ...}\fR, \fBssh\fR says what was tested (\fBlogin\fR with this Box's key, \fBport\fR for a password\-only Host). \fBmesh\fR is the drift (the plan \fBroster mesh \-\-dry\-run\fR would show), or \fBnull\fR with no Mesh or with \fB\-\-only\fR\&. Exit 1 unless \fBok\fR
+\fB{version, hosts: [{name, ok, ssh, checks, problem}], mesh, ok}\fR: \fBchecks\fR is \fB{ssh: bool, SERVICE: bool, ...}\fR, \fBssh\fR says what was tested (\fBlogin\fR with this Box's key, \fBport\fR for a password\-only Host). \fBproblem\fR is a failed key login's cause, \fB{code, message, fix}\fR (codes 209\-215, or the \fBcheck HOST\fR step codes; \fBnull\fR when it logged in): the same words as the plain output, never a value. \fBmesh\fR is the drift (the plan \fBroster mesh \-\-dry\-run\fR would show), or \fBnull\fR with no Mesh or with \fB\-\-only\fR\&. \fBrotation_pending\fR, \fBrotation_problems\fR (T240) and \fBkey_type_drift\fR (\fB{host: why}\fR, 219: a Host holding this Box's line of another type than \fBroster.yml\fR\&'s, T245) fail it too. Exit 1 unless \fBok\fR
 .TP
 \fBcheck HOST \-\-json\fR
 \fB{version, host, ok, steps: [{step, status, message, code?, fix?, details?, data?}]}\fR, as \fBhost.check\fR: \fBstatus\fR is \fBok\fR, \fBfail\fR or \fBskipped\fR\&. An unknown Host is a failed \fBinventory\fR step (code 2), not an error. Exit 1 unless \fBok\fR
 .TP
 \fBcheck \-\-box \-\-json\fR
-\fB{version, checks: [{section, level, message, fix?, topic?}], ok}\fR, as \fBbox.check\fR: \fBlevel\fR is \fBok\fR, \fBwarn\fR or \fBerror\fR\&. Exit 1 if one is an \fBerror\fR
+\fB{version, checks: [{section, level, message, fix?, topic?, saved_session?}], ok}\fR, as \fBbox.check\fR: \fBlevel\fR is \fBok\fR, \fBwarn\fR or \fBerror\fR; \fBsaved_session\fR on a Bitwarden Vault check is \fBnone\fR, \fBworking\fR, \fBexpired\fR, \fBignored\fR or \fBunknown\fR (Staying unlocked; never in \fBbox.check\fR). Exit 1 if one is an \fBerror\fR
 .TP
 \fBdiscover CIDR... \-\-json\fR
 \fB{version, targets, addresses, ports, scanner, count, quiet, found: [Found], group}\fR: the preview, after the scan. \fBtargets\fR, \fBaddresses\fR (how many it visits), \fBports\fR (how many) and \fBscanner\fR (\fBnmap\fR or \fBbuilt\-in\fR) as \fBdiscover.plan\fR; \fBcount\fR, \fBquiet\fR and \fBfound\fR as \fBdiscover.status\fR (a Found is \fB{address, name, type, hostname, title, web, known, added, vendor, os, mac, ports}\fR: \fBname\fR the name \fB\-\-write\fR would give it, \fBnull\fR when \fBknown\fR names the Host already at that address; \fBadded\fR is always \fBnull\fR here). \fBgroup\fR is the group \fB\-\-write\fR would add the new ones to. Not with \fB\-\-write\fR (exit 2). Over 4,096 addresses without \fB\-\-force\fR: error \fB121\fR\&. A \fBroster.yml\fR that's there but doesn't load (named by \fB\-c\fR, \fBROSTER_CONFIG\fR or found in the usual places): error \fB1\fR with its fix; with none at all (or \fBROSTER_CONFIG\fR naming no file) it scans anyway
@@ -452,13 +491,13 @@ The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBh
 \fB{version, path, name, exists}\fR: the \fBroster.yml\fR roster uses and its name among the named Inventories (\fBnull\fR if it isn't one). Exit 1 if it isn't there
 .TP
 \fBmesh status \-\-json\fR
-\fB{version, links, excluded, reach, members, pending, cut_pending, out_of_date}\fR, as \fBmesh.status\fR
+\fB{version, links, excluded, reach, members, pending, cut_pending, out_of_date, warnings}\fR, as \fBmesh.status\fR
 .TP
 \fBmesh \-\-dry\-run \-\-json\fR
 \fB{version, applied: false, links, hosts: [{host, changes, status, error?}], excluded, reach, pending, already, warnings}\fR, as \fBmesh.plan\fR: it connects to the Hosts, one at a time, and changes nothing. Exit 1 if a Host is \fBpending\fR (didn't answer). \fB\-\-json\fR goes with \fBstatus\fR and \fB\-\-dry\-run\fR only, never with an apply or \fBcut\fR
 .TP
 \fBvault status \-\-json\fR
-\fB{version, providers: [{name, kind, help, tool, installed, used_by}], unknown, ok, vault: [{section, level, message, fix?, topic?}], last_sync: {provider: time}}\fR: \fBvault\fR is the Vault section of \fBcheck \-\-box \-\-json\fR, \fBlast_sync\fR when \fBroster vault sync\fR last synced each provider that syncs (\fBnull\fR: never); \fBtool\fR is the CLI it runs (\fBnull\fR for none, and \fBinstalled\fR \fBnull\fR with it), \fBused_by\fR the groups whose Logins use it, \fBunknown\fR the providers \fBroster.yml\fR names that aren't set up. Exit 1 if there's one
+\fB{version, providers: [{name, kind, help, tool, installed, used_by}], unknown, ok, vault: [{section, level, message, fix?, topic?, saved_session?}], last_sync: {provider: time}}\fR: \fBvault\fR is the Vault section of \fBcheck \-\-box \-\-json\fR, \fBlast_sync\fR when \fBroster vault sync\fR last synced each provider that syncs (\fBnull\fR: never); \fBtool\fR is the CLI it runs (\fBnull\fR for none, and \fBinstalled\fR \fBnull\fR with it), \fBused_by\fR the groups whose Logins use it, \fBunknown\fR the providers \fBroster.yml\fR names that aren't set up. Exit 1 if there's one
 .TP
 \fBcheck \-\-auth \-\-json\fR
 \fB{version, logins: [{group, auth, users, used_for: [{service, hosts}], status, error?}], ok}\fR: one row per Login reference and group; \fBstatus\fR is \fBok\fR (a value was found; it isn't tested against a Host), \fBfail\fR (with \fBerror\fR) or \fBask\fR (\fBprompt\fR). Exit 1 if one failed
@@ -493,11 +532,32 @@ A saved Bitwarden session (\fBbw unlock \-\-raw\fR), used only if it's yours alo
 \fB~/.ssh/roster_ed25519\fR
 This box's SSH key (\fBkey_path:\fR in \fBroster.yml\fR moves it), made by \fBroster setup\fR
 .TP
+\fB~/.ssh/roster_ecdsa\fR, \fBroster_rsa\fR, \fBroster_<type>\fR
+This box's key of another key type, for the Hosts whose \fBkey_type:\fR asks for it, beside \fBkey_path:\fR (one per type, the same \fBroster\-managed:<box>\fR tag), made by \fBroster setup\fR on first need (FIPS Hosts)
+.TP
+\fB~/.ssh/roster_ed25519.new\fR, \fB\&.old\fR
+During a Box key rotation: the new key before it takes \fBkey_path:\fR\&'s place, and the old one, kept only while a Host is pending, then deleted (Rotating the Box key)
+.TP
+\fB~/.config/roster/key\-rotation\fR
+The Hosts a Box key rotation is pending on (a named Inventory's: \fBkey\-rotation\-NAME\fR); gone once it's done
+.TP
+\fB~/.config/roster/key\-types\fR
+The key types of this Box's lines on each Host, as \fBroster setup\fR (and a rotation) last left them (a named Inventory's: \fBkey\-types\-NAME\fR; T245): \fBcheck\fR and \fBsync\fR warn (219) when a Host holds another type than \fBroster.yml\fR\&'s, and \fBrevoke\fR takes its Hosts off
+.TP
+\fB~/.config/roster/setup\-left\fR
+The Hosts the last \fBroster setup\fR that reached them didn't finish, by name (a named Inventory's: \fBsetup\-left\-NAME\fR), so \fBsync\fR and \fBvault unlock\fR name \fBroster setup \-\-host\fR for them; gone once none is left
+.TP
+\fB~/.config/roster/key\-created\fR
+When roster made or rotated each of this Box's keys, for \fBkey_max_age:\fR
+.TP
+\fB~/.config/roster/run.lock\fR
+The lock one run that changes Hosts at a time holds (a named Inventory's: \fBrun\-NAME.lock\fR): its pid and command, nothing secret
+.TP
 \fB~/.ssh/roster_known_hosts\fR
 Host keys recorded on first contact (a named Inventory's: \fB~/.ssh/roster_known_hosts\-NAME\fR)
 .TP
 \fB~/.ssh/config.d/roster\fR
-The SSH config entries \fBroster setup\fR and \fBroster sync\fR write (a named Inventory's: \fB~/.ssh/roster\-inventories/NAME\fR)
+The SSH config entries \fBroster setup\fR and \fBroster sync\fR write (a named Inventory's: \fB~/.ssh/roster\-inventories/NAME\fR). Its first line names the \fBroster.yml\fR it was written from; one in a folder that looks like a token as \fBthe roster.yml at that path (not repeated), sha256 of its path DIGEST\fR: a digest of the path, so roster knows the file again, neither a secret nor a checksum of the file's content
 .TP
 \fB~/.ssh/config.d/roster.inventories\fR
 With named Inventories: what \fB~/.ssh/config\fR includes, every Inventory's Hosts with the active one's first (a name an earlier one has is left out)
@@ -507,6 +567,12 @@ What \fBroster vault sync\fR compares against (0600): each login item's id and r
 .TP
 \fB~/.config/roster/inventories.json\fR
 The named Inventories and which one is active (\fBroster inv\fR)
+.TP
+\fB~/.config/roster/vault\-seen/\fR
+Per \fBroster.yml\fR, the vault items \fBroster add \-\-from\-vault\fR has seen (0600): ids and names, never a value
+.TP
+\fB~/.config/roster/inventory.create.lock\fR
+Held while the app's first run makes an Inventory, so two windows can't both make one
 .TP
 \fBROSTER.md\fR, \fBCLAUDE.md\fR, \fB\&.claude/settings.json\fR
 What Claude reads, written next to \fBroster.yml\fR by \fBsetup\fR and \fBsync\fR

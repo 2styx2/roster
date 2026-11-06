@@ -52,7 +52,7 @@ def test_hosts_name_takes_a_host_or_a_resource(capsys, config):
 
 
 def test_vault_reveal_takes_only_resources(capsys, config):
-    assert complete(capsys, "vault", "") == ["bw", "op", "reveal", "status", "sync"]
+    assert complete(capsys, "vault", "") == ["bw", "lock", "op", "reveal", "status", "sync", "unlock"]
     assert complete(capsys, "vault", "reveal", "") == ["lab-guest"]
 
 
@@ -78,6 +78,13 @@ def test_mesh_completes_its_actions_then_a_host(capsys, config):
     assert complete(capsys, "mesh", "") == ["cut", "leftovers", "status"]
     assert complete(capsys, "mesh", "cut", "d") == ["db-01"]
     assert complete(capsys, "mesh", "--rotate", "d") == ["db-01"]
+
+
+def test_setup_rotate_completes_hosts_only_after_host(capsys, config):
+    """T240 (#469, 6): setup --rotate is a bare flag (the Box key); --host names what it covers."""
+    assert complete(capsys, "setup", "--rotate", "") == []
+    assert complete(capsys, "setup", "--rotate", "--host", "w") == ["web-01", "web-02"]
+    assert "--rotate" in complete(capsys, "setup", "--r")
 
 
 def test_options_complete_after_a_dash(capsys):
@@ -140,9 +147,9 @@ def test_a_broken_roster_yml_completes_no_names_and_prints_no_error(capsys, writ
 
 
 def test_a_broken_inventory_list_completes_nothing(capsys, isolated):
-    from roster import inventories
-    inventories.list_file().parent.mkdir(parents=True, exist_ok=True)
-    inventories.list_file().write_text("{not json")
+    from roster import named
+    named.list_file().parent.mkdir(parents=True, exist_ok=True)
+    named.list_file().write_text("{not json")
     assert complete(capsys, "--inv", "") == []
 
 

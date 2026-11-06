@@ -10,7 +10,7 @@ import { makeHosts } from "../backend/fake";
 import { discoverPlugin, fakeDiscoverServe, smallNet } from "../backend/fakeDiscover";
 import { fakePluginHost } from "../backend/fakePlugins";
 import { BackendCallError, type PluginReply } from "../backend/types";
-import { parseOp } from "./ops";
+import { parseOp } from "./opRegistry";
 import transcript from "./discover.transcript.json";
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
@@ -43,9 +43,10 @@ describe("the discover stand-in", () => {
     const serve = (method: string, params: Record<string, unknown>) => {
       const [m, p, result, error] = recorded[next++] ?? [];
       expect([method, normal(params)], `serve call ${next}`).toEqual([m, normal(p)]);
-      if (error !== undefined) {
-        const code = /\(code (-?\d+)\)$/.exec(String(error));
-        throw new BackendCallError(String(error).replace(/ \(code -?\d+\)$/, ""), code ? Number(code[1]) : null);
+      // An error as the core's CallError serializes: `kind`, `code`, `message`.
+      if (error !== undefined && error !== null) {
+        const e = error as { code?: number | null; message?: string };
+        throw new BackendCallError(e.message ?? "", e.code ?? null);
       }
       return result;
     };

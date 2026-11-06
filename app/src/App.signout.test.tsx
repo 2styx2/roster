@@ -8,7 +8,8 @@ import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_EMAIL, FAKE_PASSWORD, fakeBackend, fixtures, type FakeScenario } from "./backend/fake";
 import { BackendCallError, VaultError } from "./backend/types";
-import { manualClock } from "./lock/manualClock";
+import { onMessageLine } from "./test-messageLine";
+import { manualClock } from "./ui/manualClock";
 
 async function start(scenario: FakeScenario = fixtures["sign-out"]!) {
   const backend = fakeBackend(scenario);
@@ -16,7 +17,7 @@ async function start(scenario: FakeScenario = fixtures["sign-out"]!) {
   const clock = manualClock();
   render(<App backend={backend} clock={clock} />);
   await screen.findByRole("dialog", { name: /locked/i });
-  await screen.findByLabelText(/master password/i);
+  await screen.findByLabelText(/^\S+ master password$/i);
   return { user, backend, clock };
 }
 
@@ -70,13 +71,13 @@ describe("signing out from the lock screen", () => {
     await user.type(screen.getByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
     await screen.findByRole("main", { name: /workspace/i });
     await user.keyboard("{Control>} {/Control}:lock{Enter}");
-    await screen.findByLabelText(/master password/i);
+    await screen.findByLabelText(/^\S+ master password$/i);
     expect(differentAccount()).toBeInTheDocument();
     expect(lockScreen()).toHaveTextContent(`Signed in as ${FAKE_EMAIL} on bitwarden.com`);
     await user.type(screen.getByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
     await screen.findByRole("main", { name: /workspace/i });
     act(() => clock.advance(60 * 60_000));
-    await screen.findByLabelText(/master password/i);
+    await screen.findByLabelText(/^\S+ master password$/i);
     expect(differentAccount()).toBeInTheDocument();
   });
 
@@ -90,7 +91,7 @@ describe("signing out from the lock screen", () => {
     await user.type(within(dialog).getByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
     await screen.findByRole("main", { name: /workspace/i });
     await user.keyboard("{Control>} {/Control}:lock{Enter}");
-    await screen.findByLabelText(/master password/i);
+    await screen.findByLabelText(/^\S+ master password$/i);
     expect(await within(lockScreen()).findByRole("button", { name: /use a different account/i })).toBeInTheDocument();
   });
 
@@ -158,7 +159,7 @@ describe(":vault signout", () => {
   it("needs API 14", async () => {
     const { user } = await unlocked({ ...fixtures["sign-out"]!, apiVersion: 13 });
     await command(user, "vault signout");
-    expect(await screen.findByText(/needs a newer roster \(API version 14; this one speaks 13\)/)).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine(/:vault signout needs a newer roster\. Update roster on this Box\./))).toBeInTheDocument();
   });
 
   it("says what its subcommand is", async () => {

@@ -10,10 +10,29 @@
 //   plugins call NAME N CONTEXT  what a Plugin's row, action or finder item runs, and what it was (not for typing)
 //   plugins run NAME LINE        a command line a Plugin handed over, if it may run it (ticket 78)
 import type { CommandDef } from "../commands/table";
-import { matching } from "../commands/table";
+import { matching } from "../ui/completion";
 import { BUILTIN } from "../registry";
 import { quiet } from "../ui/messages";
 import type { HandlerContext, PluginManager } from "./manager";
+
+/** What `:plugins`, `:packages` and `:cancel` ask of the PluginManager. */
+export type PluginCommands = Pick<
+  PluginManager,
+  | "names"
+  | "snapshot"
+  | "install"
+  | "remove"
+  | "reload"
+  | "setGrant"
+  | "writeTypes"
+  | "callWith"
+  | "runLine"
+  | "checkPackages"
+  | "installPackage"
+  | "cleanPackages"
+  | "cancellable"
+  | "cancelProgress"
+>;
 
 const SUBCOMMANDS = ["install", "remove", "reload", "revoke", "grant", "types"] as const;
 
@@ -32,7 +51,15 @@ function callContext(text: string): HandlerContext {
   }
 }
 
-export function pluginsCommand(manager: PluginManager, openPanel: () => void): CommandDef {
+/** What `:plugins ARG` is titled. A command line a Plugin handed over (`run NAME LINE`, its keys
+ * and buttons) reads as the Plugin's and its line ("folders: folder add"), not as the plumbing
+ * that runs it (round 20: "Plugins: run folders folder add" was cut in Key bindings at 800). */
+export function pluginsLabel(arg: string): string {
+  const run = /^run\s+(\S+)\s+(.+)$/.exec(arg.trim());
+  return run ? `${run[1]}: ${run[2]}` : `Plugins: ${arg}`;
+}
+
+export function pluginsCommand(manager: PluginCommands, openPanel: () => void): CommandDef {
   return {
     id: "plugins",
     source: BUILTIN,
@@ -40,7 +67,7 @@ export function pluginsCommand(manager: PluginManager, openPanel: () => void): C
     arg: "text",
     optionalArg: true,
     seldom: true,
-    label: (a) => (a ? `Plugins: ${a}` : "Show the Plugins, what each may do, and revoke it"),
+    label: (a) => (a ? pluginsLabel(a) : "Show the Plugins, what each may do, and revoke it"),
     complete: (arg) => {
       const words = arg.split(" ");
       if (words.length <= 1) return matching(SUBCOMMANDS, arg);
@@ -104,7 +131,7 @@ export function pluginsCommand(manager: PluginManager, openPanel: () => void): C
 //   packages clean         removes the Packages init.lua no longer names
 const PACKAGE_SUBCOMMANDS = ["update", "install", "clean"] as const;
 
-export function packagesCommand(manager: PluginManager, openPanel: () => void): CommandDef {
+export function packagesCommand(manager: PluginCommands, openPanel: () => void): CommandDef {
   return {
     id: "packages",
     source: BUILTIN,
@@ -145,7 +172,7 @@ export function packagesCommand(manager: PluginManager, openPanel: () => void): 
 
 // `:cancel [ID]` (ticket 78): stops something long a Plugin is doing (`roster.progress`), through
 // its `cancel`; with no ID, the latest that can be stopped.
-export function cancelCommand(manager: PluginManager): CommandDef {
+export function cancelCommand(manager: PluginCommands): CommandDef {
   return {
     id: "cancel",
     source: BUILTIN,

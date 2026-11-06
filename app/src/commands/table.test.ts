@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ViewMode } from "../view/layout";
 import { builtinCommandRegistry, complete as completeIn, describeLine as describeIn, parseLine as parseIn, runLine as runIn, type CommandContext } from "./table";
+import { textOf } from "../ui/messages";
 
 const registry = builtinCommandRegistry();
 const commands = registry.list();
@@ -16,8 +17,11 @@ function recorder(mode: ViewMode = "standard") {
     openPicker: () => calls.push("picker"),
     connect: (h, here) => calls.push(`connect ${h}${here ? " here" : ""}`),
     quickConnect: (t) => calls.push(`quick ${t ?? "picker"}`),
-    reconnect: () => calls.push("reconnect"),
-    check: (h) => calls.push(`check ${h ?? "current"}`),
+    reconnect: (n) => calls.push(n == null ? "reconnect" : `reconnect ${n}`),
+    checkHost: (h) => calls.push(`check ${h}`),
+    checkBox: () => calls.push("check current"),
+    stopCheck: () => calls.push("check stop"),
+    sessionOnScreen: () => null,
     selectRelative: (d) => calls.push(`relative ${d}`),
     selectNth: (n) => calls.push(`nth ${n}`),
     close: (n) => calls.push(`close ${n ?? "current"}`),
@@ -36,7 +40,7 @@ function recorder(mode: ViewMode = "standard") {
     rowMenu: () => calls.push("rowMenu"),
     selectedHost: () => null,
     hostNames: () => hosts,
-    say: (m) => calls.push(`say ${m}`),
+    say: (m) => calls.push(`say ${textOf(m)}${typeof m !== "string" && m.kind === "slip" ? " (slip)" : ""}`),
     viewMode: () => mode,
     setViewMode: (m) => calls.push(`mode ${m ?? "other"}`),
     openFinder: (id) => calls.push(`finder ${id}`),
@@ -186,6 +190,7 @@ describe("runLine", () => {
     runLine(ctx, "lock");
     runLine(ctx, "here hub2");
     runLine(ctx, "reconnect");
+    runLine(ctx, "reconnect 9");
     expect(calls).toEqual([
       "connect esxi-02",
       "nth 3",
@@ -196,6 +201,7 @@ describe("runLine", () => {
       "lock",
       "connect hub2 here",
       "reconnect",
+      "reconnect 9",
     ]);
   });
 
@@ -221,10 +227,11 @@ describe("runLine", () => {
     runLine(ctx, "session x");
     runLine(ctx, "  ");
     expect(calls).toEqual([
-      "say Not a command: conect",
-      "say connect needs a Host name",
-      "say lock takes no argument",
-      "say session needs a number",
+      // A slip in the typing, said plainly (round 18), not as a warning.
+      "say Not a command: conect. :help commands lists them. (slip)",
+      "say connect needs a Host name (slip)",
+      "say lock takes no argument (slip)",
+      "say session needs a number (slip)",
     ]);
   });
 

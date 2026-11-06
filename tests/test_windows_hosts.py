@@ -13,6 +13,7 @@ from conftest import FAKES, WINDOWS, stand_in_hosts
 from roster import sshops
 from roster.cli import main
 from roster.config import load_config
+from roster.errors import InventoryError
 
 CASCADE = """\
 defaults: { user: admin }
@@ -39,7 +40,7 @@ def test_os_cascades_from_defaults_to_group_to_host(write_config):
 
 @pytest.mark.parametrize("value", ["linux", "win", "true", "''"])
 def test_os_takes_only_windows_or_posix(write_config, value):
-    with pytest.raises(SystemExit, match="os: must be windows or posix"):
+    with pytest.raises(InventoryError, match="os: must be windows or posix"):
         load_config(write_config(f"defaults: {{ user: admin }}\ngroups:\n  a:\n    hosts:\n"
                                  f"      h1: {{ ip: 10.0.0.5, os: {value} }}\n"))
 
@@ -69,7 +70,7 @@ def test_type_windows_without_os_warns_and_suggests_os_windows(write_config, cap
 def test_a_windows_hosts_ssh_config_never_shares_a_connection(isolated, write_config):
     """A Windows Host's sshd refuses a second session on a shared connection ("No existing session"): its block says
     ControlMaster no, with no ControlPath or ControlPersist to reuse one."""
-    from roster.common import WINDOWS
+    from roster.context import WINDOWS
     from roster.sshops import write_ssh_config
     write_ssh_config(load_config(write_config(CASCADE)))
     text = (isolated["home"] / ".ssh" / "config.d" / "roster").read_text()
@@ -440,6 +441,27 @@ def test_setup_gives_a_new_user_file_this_account_system_and_administrators(win,
 
 
 @needs_powershell
+def test_a_plain_users_install_warns_when_the_admin_file_may_hold_this_boxs_key(win, capsys):
+    """#522 item 2: a plain account can't read the admin key file, so its install can't tell whether this Box's line
+    is there from when the account was an administrator: it says so, as revoke does, and installs as before."""
+    win.admin_file("ws-01").write_bytes(OTHER)
+    assert main(["setup", "--only", "ws-01"]) == 0
+    captured = capsys.readouterr()
+    said = captured.out + captured.err
+    assert win.user_file("ws-01").read_bytes() == key_line(win)
+    assert "warning: [157] this account isn't in Administrators now, so roster can't look in" in said
+    assert "administrators_authorized_keys" in said
+    assert win.admin_file("ws-01").read_bytes() == OTHER
+
+
+@needs_powershell
+def test_a_plain_users_install_says_nothing_of_an_admin_file_that_isnt_there(win, capsys):
+    assert main(["setup", "--only", "ws-01"]) == 0
+    captured = capsys.readouterr()
+    assert "Administrators" not in captured.out + captured.err
+
+
+@needs_powershell
 def test_a_new_user_files_acl_is_read_back(win, capsys):
     """Review F3: icacls saying it worked isn't enough: the ACL is read back by SID before any key goes in."""
     (win.root / "ws-01" / "icacls-noop").touch()            # this stand-in's icacls exits 0 and changes nothing
@@ -731,9 +753,8 @@ def test_a_command_past_4096_bytes_runs_though_the_hosts_sshd_never_sends_eof(wi
 
 
 def test_a_command_too_long_for_the_script_is_refused_before_anything_is_sent(win, capsys, monkeypatch):
-    from roster import cli
     main(["sync"])
-    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: pytest.fail("something was sent"))
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("something was sent"))
     from roster import winhost
     monkeypatch.setattr(winhost.subprocess, "Popen", lambda *a, **k: pytest.fail("something was sent"))
     with pytest.raises(SystemExit) as e:
@@ -767,10 +788,9 @@ def test_run_on_a_posix_host_marked_windows_says_to_fix_os(win, capfd, monkeypat
 
 @pytest.mark.parametrize("enroll", [True, False])
 def test_run_sudo_on_a_windows_host_is_refused_before_the_vault(write_config, monkeypatch, capsys, enroll):
-    from roster import cli
     write_config(WIN.replace("      dc-01: 10.0.0.5\n", f"      dc-01: {{ ip: 10.0.0.5, enroll: {str(enroll).lower()} }}\n"))
-    monkeypatch.setattr(cli, "get_secret", lambda *a: pytest.fail("the vault was asked"))
-    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: pytest.fail("something ran"))
+    monkeypatch.setattr("roster.run.get_secret", lambda *a: pytest.fail("the vault was asked"))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("something ran"))
     with pytest.raises(SystemExit) as e:
         main(["run", "--sudo", "dc-01", "--", "whoami"])
     assert "[159]" in str(e.value) and "sudo" in str(e.value) and "Administrators" in str(e.value)
@@ -804,7 +824,7 @@ def test_setup_on_a_renamed_box_says_when_a_windows_host_has_no_line_to_retag(wi
     assert main(["setup", "--only", "dc-01"]) == 0
     win.admin_file("dc-01").write_bytes(OTHER)              # the key works some other way: no roster line here
     write_config(WIN.replace("box_name: box\n", "box_name: box2\n"))
-    monkeypatch.setattr("roster.cli.ssh_ok", lambda name: True)
+    monkeypatch.setattr("roster.boxsetup.ssh_ok", lambda name: True)     # sshd takes the key some other way
     capsys.readouterr()
     main(["setup", "--only", "dc-01"])
     out = capsys.readouterr().out
@@ -829,3 +849,66 @@ def test_renaming_onto_a_name_another_box_uses_on_a_windows_host_needs_force(win
     assert win.admin_file("dc-01").read_bytes() == OTHER + mine + mine + theirs
     assert main(["setup", "--only", "dc-01", "--force"]) == 0
     assert win.admin_file("dc-01").read_bytes() == OTHER + mine.replace(b":box", b":box2") + theirs
+
+
+@needs_powershell
+def test_setup_rotate_replaces_the_box_key_on_windows_hosts(win, capsys):
+    """T240 (#469): a Box key rotation on Windows Hosts goes through the same key script (add, then remove over the new
+    key), in the file sshd reads for each account; every other line is kept, byte for byte."""
+    win.admin_file("dc-01").write_bytes(OTHER)
+    assert main(["setup", "--only", "dcs"]) == 0, capsys.readouterr().out
+    before = key_line(win)
+    capsys.readouterr()
+    assert main(["setup", "--rotate", "--host", "dcs"]) == 1            # the lab group stays pending (not in --host)
+    out = capsys.readouterr().out
+    assert "dc-09: not in this run (--host)" in out
+    assert key_line(win) != before
+    assert win.admin_file("dc-01").read_bytes() == OTHER + key_line(win)
+    assert win.user_file("ws-01").read_bytes() == key_line(win)
+    assert all("hunter2" not in c + s for c, s in win.sent) and "hunter2" not in win.ssh_log()
+
+
+@needs_powershell
+def test_a_windows_install_cleans_up_over_the_key_only_when_another_line_of_this_box_is_there(win, capsys):
+    """T245 (#471's NIT-1): as on POSIX, the second connection (this Box's other lines off, over the new key) is made
+    only when the install said there are any (test_setup_puts_an_admins_key_in_the_admin_file_with_microsofts_acl:
+    when there is one, it goes)."""
+    def over_key(host):          # the script run over the key login (the install's own goes with the password)
+        return sum(f" {host} powershell" in ln and "BatchMode=yes" in ln for ln in win.ssh_log().splitlines())
+    assert main(["setup", "--only", "dc-01"]) == 0
+    assert over_key("dc-01") == 0
+    assert win.admin_file("dc-01").read_bytes() == key_line(win)
+
+
+# ---------------------------------------------------------------- T257 (#509 items 4, 7)
+
+def over_key_runs(win, host):
+    """How many scripts went to HOST over the key login (the install's own goes with the password)."""
+    return sum(f" {host} powershell" in ln and "BatchMode=yes" in ln for ln in win.ssh_log().splitlines())
+
+
+@needs_powershell
+def test_a_fresh_windows_install_that_finds_another_line_of_this_box_takes_it_off_over_the_new_key(win, capsys):
+    """#509 item 7: with `keys`, the stand-in's sshd takes only a key the ssh config offers, so a line of this Box's
+    another key (OLD) no longer passes for a working key login: setup installs with the password, the install says
+    OTHERS, and the second connection, over the new key, takes OLD off."""
+    win.user_file("ws-01").parent.mkdir(parents=True)
+    win.user_file("ws-01").write_bytes(OTHER + OLD)
+    (win.root / "ws-01" / "keys").touch()
+    assert main(["setup", "--only", "ws-01"]) == 0, capsys.readouterr().out
+    assert "0 already work, 1 need the key installed" in capsys.readouterr().out
+    assert over_key_runs(win, "ws-01") == 1
+    assert win.user_file("ws-01").read_bytes() == OTHER + key_line(win)
+
+
+@needs_powershell
+def test_an_administrators_install_takes_this_boxs_line_off_its_user_file_too(win, capsys):
+    """#509 item 4: an account that joined Administrators keeps this Box's line in its user file, which sshd no longer
+    reads for it; the install looks there too (OTHERS), and the cleanup takes it from both files, every other line
+    kept byte for byte."""
+    win.user_file("dc-01").parent.mkdir(parents=True)
+    win.user_file("dc-01").write_bytes(OTHER + OLD)
+    assert main(["setup", "--only", "dc-01"]) == 0, capsys.readouterr().out
+    assert over_key_runs(win, "dc-01") == 1
+    assert win.admin_file("dc-01").read_bytes() == key_line(win)
+    assert win.user_file("dc-01").read_bytes() == OTHER

@@ -3,6 +3,7 @@
 import pytest
 
 from roster.config import load_config
+from roster.errors import InventoryError
 
 HOSTS = """\
 groups:
@@ -37,7 +38,7 @@ def test_a_file_without_the_name_still_loads_with_the_service_marked_broken(writ
     ("[appliance]", "web_login_names: must be a mapping"),
 ])
 def test_bad_names_fail_the_load_naming_the_key(write_config, names, err):
-    with pytest.raises(SystemExit, match=err):
+    with pytest.raises(InventoryError, match=err):
         load_config(write_config(f"web_login_names: {names}\n" + HOSTS))
 
 
@@ -75,7 +76,7 @@ def test_hosts_check_auth_check_and_info_report_the_problem(write_config, capsys
     from roster import cli
     write_config(HOSTS)
     monkeypatch.setattr(cli, "tcp_ok", lambda *a, **k: True)       # no network
-    monkeypatch.setattr(cli, "ssh_ok", lambda *a, **k: True)
+    monkeypatch.setattr("roster.sshops.login_probe", lambda *a, **k: (True, ""))
     for argv in (["hosts"], ["check"], ["check", "--auth"]):
         cli.main(argv)
         err = capsys.readouterr().err

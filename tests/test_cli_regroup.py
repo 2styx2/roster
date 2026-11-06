@@ -172,7 +172,8 @@ def test_help_of_an_unknown_topic_is_a_usage_error(capsys):
     with pytest.raises(SystemExit) as e:
         main(["help", "nope"])
     assert e.value.code == 2
-    assert "nope" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "no help for that (not repeated): `roster help` lists the commands" in err and "nope" not in err   # T235
 
 
 def test_help_man_without_man_says_where_the_page_is(capsys, monkeypatch):
@@ -230,7 +231,7 @@ def bw(fakes, monkeypatch, tmp_path, write_config):
 
 
 def snapshot_files():
-    from roster.common import user_config_dir
+    from roster.context import user_config_dir
     return sorted((user_config_dir() / "vault-sync").glob("*"))
 
 

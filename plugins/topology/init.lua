@@ -38,9 +38,9 @@ local filtered = false -- the view's filter is one :topology GROUP set
 -- Asks roster serve without waiting (roster.serve.request): `done(result)` or `done(nil, why)`
 -- comes later, as a call of its own, so a busy serve (a Publish, a long Mesh run) never holds up
 -- this Plugin or the app.
----@param done fun(result: any, why: string?)
+---@param done fun(result: any, why: roster.ServeError|string?)
 local function ask(method, params, done)
-  local sent_ok, err = pcall(roster.serve.request, method, params or {}, function(r, why) done(r, why) end)
+  local sent_ok, err = pcall(roster.serve.request, method, params or {}, done)
   if not sent_ok then done(nil, tostring(err)) end
 end
 
@@ -281,7 +281,7 @@ local function cut_poll()
       roster.notify("Cut " .. cutting.host .. ": roster serve lost track of it; :topology shows where the Mesh is now.", "warn")
       return cut_over()
     end
-    if j.state == "running" then
+    if j.state == "running" or j.state == "stopping" then
       roster.progress.set("topology-cut", { title = "Cutting " .. cutting.host .. " from the Mesh", done = j.done or 0, total = j.total or 0 })
       if cutting.again then cut_poll() end
       return
@@ -381,7 +381,7 @@ roster.help.set("topology", {
     "",
     "Select a Host to light up what it can reach and what can reach it, every hop: what its key reaches, and what those Hosts' own keys reach, which is what someone on it could reach. Its details (`i`) say how many directly.",
     "",
-    "Keys: `h` `j` `k` `l` move, `/` searches, `f` filters by group, kind or state (hiding the rest), `o` collapses a group, `+` `-` `0` zoom, `t` lists every node and edge. On a Host: Enter opens a Session, `i` its details, `c` Check, `x` Cut from the Mesh (after you type its name).",
+    "Keys: `h` `j` `k` `l` move, `/` searches (it opens empty each time), `f` filters by group, kind or state (hiding the rest), `o` collapses a group, `+` `-` `0` zoom, `t` lists every node and edge. On a Host: Enter opens a Session, `i` its details, `c` Check, `x` Cut from the Mesh (after you type its name).",
     "",
     "`:tutor topology` teaches the map by using it, on the tutorial's demo Inventory.",
     "",
@@ -390,15 +390,16 @@ roster.help.set("topology", {
 })
 
 -- `:tutor topology` (#233): the map, learned by using it on the tutorial's demo Inventory. Its
--- steps name the demo's Hosts and groups (demo-01 to demo-06, demo-lab and demo-office). The demo
--- answers no Mesh, so the tutorial teaches what the map shows without one and says so.
+-- steps name the demo's Hosts and groups (demo-01 to demo-06, demo-lab and demo-office), and its
+-- made-up Mesh (the demo's mesh.status, #233): demo-01 to demo-03 meshed, demo-01 reaching demo-05,
+-- which didn't answer the last apply.
 roster.tutor.set("topology", {
   title = "Topology tutor",
-  summary = "Learn the Topology view: open the map, show one group, go from a node to its Host",
+  summary = "Learn the Topology view: open the map, show one group, go from a node to its Host, read its reach",
   intro = table.concat({
     "The Topology view draws this Box and every Host as a map, grouped as the Inventory groups them. This tutorial runs on the demo's six Hosts, in two groups.",
     "",
-    "The demo has no Mesh, so the line above its map says the Mesh isn't shown. On your own Inventory, the map also draws the Mesh: who can reach whom, and how.",
+    "The map also draws the Mesh: who can reach whom, and how. The demo has a small, made-up one, so you can read it there; nothing on it connects anywhere.",
   }, "\n"),
   lessons = {
     {
@@ -423,12 +424,28 @@ roster.tutor.set("topology", {
         { id = "session", text = "Open the map again, find `demo-03` and press Enter: a Session to it opens.", on = { event = "session_open", host = "demo-03" } },
       },
     },
+    {
+      title = "Who reaches whom",
+      text = "In the demo's Mesh, the lab's `demo-01`, `demo-02` and `demo-03` reach each other both ways, drawn as one cluster, and `demo-01` also reaches `demo-05` in the office. Select a Host to light up what it can reach and what can reach it, every hop; its details (`i`) count what it reaches directly.",
+      steps = {
+        {
+          id = "reach",
+          text = "On the map (`:topology`), find `demo-01`: the lab and `demo-05` light up. Press `i`: its Reach says 3 Hosts directly.",
+          on = { event = "command", id = "info", arg = "demo-01" },
+        },
+        {
+          id = "pending",
+          text = "Find `demo-05`, marked Mesh pending: it didn't answer the last apply, so its key may not be there yet. Press `i`: its Reach says why.",
+          on = { event = "command", id = "info", arg = "demo-05" },
+        },
+      },
+    },
   },
   outro = table.concat({
-    "You've opened the map, shown one group, and gone from a node to its Host's details and a Session. Open the map once more: `demo-03` is in the accent now, live.",
+    "You've opened the map, shown one group, gone from a node to its Host's details and a Session, and read who reaches whom. `demo-03` is in the accent on the map now, live.",
     "",
     "- `f` filters the map by group, kind or state, and `t` lists every node and edge.",
-    "- On your own Inventory, select a Host to light up what it can reach and what can reach it.",
+    "- On your own Inventory, the map draws your Mesh the same way, and a pending Host is finished by the next `roster mesh`.",
     "- `:help topology` has every key and mark; `:tutor quit` goes back to your own Inventory.",
   }, "\n"),
 })

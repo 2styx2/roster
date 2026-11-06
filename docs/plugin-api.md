@@ -1,8 +1,8 @@
 # The Plugin API
 
-<!-- Generated from crates/roster-core/src/plugin/api.rs by `cargo run -p roster-core --example gen_plugin_api`: edit that, then run it. -->
+<!-- Generated from crates/roster-core/src/plugin/api/ by `cargo run -p roster-core --example gen_plugin_api`: edit that, then run it. -->
 
-Every function, value, event and data type of the `roster` Lua module a Plugin gets, `roster.api_version` 6. How to write, install and trust a Plugin is the guide, [Writing a Plugin](plugins.md); this is the reference. Each entry is a help topic: `:help roster.inventory.host()` for a function, `:help roster-Host` for a type.
+Every function, value, event and data type of the `roster` Lua module a Plugin gets, `roster.api_version` 7. How to write, install and trust a Plugin is the guide, [Writing a Plugin](plugins.md); this is the reference. Each entry is a help topic: `:help roster.inventory.host()` for a function, `:help roster-Host` for a type.
 
 Types are written as [LuaCATS](https://luals.github.io/wiki/annotations/) annotations write them: `string?` may be `nil`, `Host[]` is a list of Hosts, `table<string, Group>` a table of Groups by name, `"info"|"warn"` one of those strings. The same declarations are [`roster.lua`](../examples/plugins/types/roster.lua), for [your editor](#editor-support).
 
@@ -208,6 +208,7 @@ roster embeds **Lua 5.4** (built into the app, nothing to install), not LuaJIT a
 | [`NodeRun`](#noderun) | What a graph's node or action runs |
 | [`NodeEvent`](#nodeevent) | What a graph's function gets |
 | [`Host`](#host) | A Host, as roster serve's `hosts.list` and `host.get` give it |
+| [`ServeError`](#serveerror) | roster serve's error, as a Plugin gets it (since api 7) |
 | [`LoginRef`](#loginref) | A Login reference: where a password is, never the password |
 | [`SshLogin`](#sshlogin) | A Host's ssh login |
 | [`Login`](#login) | A Host's default Login for its services (`login:` in roster.yml) |
@@ -238,7 +239,7 @@ roster embeds **Lua 5.4** (built into the app, nothing to install), not LuaJIT a
 | [`MeshCutChange`](#meshcutchange) | The `mesh: false` a `mesh.cut` writes into `roster.yml` |
 | [`MeshStatus`](#meshstatus) | `mesh.status`'s result: the Mesh as `roster.yml` asks for it |
 | [`MeshJob`](#meshjob) | `mesh.job`'s result: how far a Mesh run has got |
-| [`ServeError`](#serveerror) | An error roster serve answered with |
+| [`JobError`](#joberror) | Why a job in roster serve failed, as plain data in its status |
 | [`MeshStop`](#meshstop) | `mesh.stop`'s result |
 | [`DiscoverPlan`](#discoverplan) | `discover.plan`'s result: what a scan would visit |
 | [`DiscoverStatus`](#discoverstatus) | `discover.status`'s and `discover.start`'s result: how far a scan has got |
@@ -259,7 +260,7 @@ roster embeds **Lua 5.4** (built into the app, nothing to install), not LuaJIT a
 
 ## Errors
 
-A function that fails raises a Lua error: `pcall` catches it, with the message as a string. The message starts with the function (`roster.inventory.host: unknown host 'web-9' (code 2)`); a roster serve error ends with its code, from [serve-api.md's tables](serve-api.md). An error you don't catch stops the call: a notice names the Plugin, file and line (`pinned: init.lua:12: …`), the UI changes that call made are dropped, and the third such error after loading stops the Plugin.
+A function that fails raises a Lua error: `pcall` catches it, with the message as a string that starts with the function (`roster.storage.write: …`). **roster serve's own error** (from `roster.serve.call`, `roster.serve.request`'s `done` and `roster.inventory`) is a [`ServeError`](#serveerror) instead (since api 7, decision Q211): an error object with `code`, serve's number from [serve-api.md's tables](serve-api.md), and `message`, serve's words. Tell errors apart by `e.code`, never by the text. `tostring(e)` is the text it was before api 7 (`roster.inventory.update: unknown host 'web-9' (code 2)`), and so are `..` and string methods (`e:find(…)`), so code written for the string keeps working. An error you don't catch stops the call: a notice names the Plugin, file and line (`pinned: init.lua:12: …`), the UI changes that call made are dropped, and the third such error after loading stops the Plugin.
 
 Any function can also raise:
 
@@ -444,7 +445,7 @@ Nothing.
 - `roster.cmd: only while the user runs one of your actions, commands or finder items`: at load or in an event listener.
 - `roster.cmd: which command? …`: an empty line.
 - `roster.cmd: :NAME isn't one a Plugin may run (its own commands, and …)`: a command not in the list, another Plugin's, or one of yours named after one of roster's.
-- `roster.cmd: :NAME can't run yet: the app hasn't told roster its own commands`: one of your commands, when the app couldn't tell roster which commands are its own (a call the user makes waits up to 5 s for that first).
+- `roster.cmd: :NAME can't run yet: the app hasn't told roster its own commands`: one of your commands, when the app hasn't told roster which commands are its own (the app tells it with every load, call and event, so only a host it never told says this).
 - `roster.cmd: :NAME needs the P permission`: `:open` or `:connect` without `sessions.open`.
 - And [those of every function](#errors).
 
@@ -1819,7 +1820,7 @@ Tutorials (`:tutor ID`).
 
 ### `roster.tutor.set(id, tutorial)`
 
-Adds a tutorial, or replaces it. `:tutor ID` runs it on the demo Inventory, where the Plugin is loaded too, with the permissions the user granted it, so a step can wait for the Plugin's own command and the command works there. On the demo, `roster.inventory` sees the demo's Hosts, roster serve answers only `hosts.list` and `host.get`, `roster.http` requests are never sent (their function hears why), and `roster.storage` is a throwaway folder that starts empty.
+Adds a tutorial, or replaces it. `:tutor ID` runs it on the demo Inventory, where the Plugin is loaded too, with the permissions the user granted it, so a step can wait for the Plugin's own command and the command works there. On the demo, `roster.inventory` sees the demo's Hosts, roster serve answers only `hosts.list`, `host.get` and `mesh.status` (a small, made-up Mesh), `roster.http` requests are never sent (their function hears why), and `roster.storage` is a throwaway folder that starts empty.
 
 **Parameters**
 
@@ -3088,7 +3089,7 @@ Reads every Host and group without waiting: `done` gets them. Serve's [`hosts.li
 
 **Parameters**
 
-- `done` (`fun(list: `[`HostList`](#hostlist)`?, err: string?)`): Runs once with the answer: every Host and group (`list.hosts`, `list.groups`), or `nil` and why (`roster.inventory.request: MESSAGE (code N)`). Its return value is ignored; an error in it counts like an action's.
+- `done` (`fun(list: `[`HostList`](#hostlist)`?, err: `[`ServeError`](#serveerror)`|string?)`): Runs once with the answer: every Host and group (`list.hosts`, `list.groups`), or `nil` and why: roster serve's error as a [`ServeError`](#serveerror) (`tostring(err)` is `roster.inventory.request: MESSAGE (code N)`), or a string when serve gave no answer. Its return value is ignored; an error in it counts like an action's.
 
 **Returns**
 
@@ -3367,7 +3368,7 @@ Calls a roster serve method the Plugin was granted. Waits for the answer, howeve
 - `roster.serve.call: not granted (serve:METHOD)`: the Plugin wasn't granted that method.
 - `roster.serve.call METHOD: only while the user runs one of your actions, commands or finder items`: a flagged method (`mesh.apply`, `host.check`, `discover.start`, …) at load, in an event listener, a timer, a finder's `items` or a `:check`.
 - `roster.serve.call METHOD: more than 100 calls into roster serve in one go (roster.serve.request doesn't wait)`: the call asked roster serve 100 times already (or waited 300 s in all: `waited 300 s or more for roster serve in one go`).
-- `roster.serve.call METHOD: MESSAGE (code N)`: the method failed (its codes are in [serve-api.md](serve-api.md)).
+- `roster.serve.call METHOD: MESSAGE (code N)`: the method failed: a [`ServeError`](#serveerror) with its `code` (in [serve-api.md](serve-api.md)) and `message`, this text as its `tostring`.
 - And [those of every function](#errors).
 
 **Permission:** `serve:<method>` (that method) · **Since:** api 2
@@ -3387,7 +3388,7 @@ Asks roster serve without waiting: `done` gets the answer. Returns at once; `don
 
 - `method` (`string`): A roster serve method the Plugin was granted, as [`roster.serve.call`](#rosterservecallmethod-params)'s.
 - `params` (`table?`, optional): The method's params; `nil` or `{}` for none. Data only: no functions.
-- `done` (`fun(result: any, err: string?)`): Runs once with the answer: the method's `result` (as `roster.serve.call` returns it), or `nil` and why (`roster.serve.request METHOD: MESSAGE (code N)`). Its return value is ignored; an error in it counts like an action's.
+- `done` (`fun(result: any, err: `[`ServeError`](#serveerror)`|string?)`): Runs once with the answer: the method's `result` (as `roster.serve.call` returns it), or `nil` and why: roster serve's error as a [`ServeError`](#serveerror) (`err.code`, `err.message`; `tostring(err)` is `roster.serve.request METHOD: MESSAGE (code N)`), or a string when serve gave no answer. Its return value is ignored; an error in it counts like an action's.
 
 **Returns**
 
@@ -3755,6 +3756,7 @@ A button on a row.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `label` | `string` | yes | What it does, for its tooltip and screen readers (`"Unpin esx-02"`). |
+| `short` | `string` | no | What it says in the row's menu (a right-click, or the Menu key on the row), which is named after the row: a few words without the row's own names (`"Unpin"`, `"Remove from Folder"`), at most 40 characters; `label` is then its tooltip there. `label` if left out. |
 | `icon` | [`RowIcon`](#rowicon) | no | Its icon; `info` if left out. |
 | `run` | [`Run`](#run) | yes | What pressing it runs. |
 
@@ -4167,7 +4169,7 @@ What a site answered.
 
 A graph: nodes, edges and clusters as plain data, and what a node can do.
 
-The app lays it out (each cluster's nodes on a spiral, the clusters in rows, loose nodes first), keeps every position in the State so it opens the same way each time, and draws only what's on screen, so 2,000 nodes stay smooth. Clusters collapse to one node with their count: the user's `o`, or by themselves when the graph has more than 300 nodes and the cluster doesn't say. Keys, once it has focus: `h` `j` `k` `l` or the arrows go to the nearest node that way, `/` searches (name, id, kind, note, detail, cluster) and `n`/`N` go through the matches, `Enter` runs `open` (or opens a collapsed cluster), `o` collapses or opens the selected node's cluster and `O` all of them, `+` `-` zoom and `0` shows it all, `H` `J` `K` `L` pan, `t` switches to a table of every node, then of every edge, `f` goes to the filter (the clusters, kinds and states to show, as many of each as the user ticks, hiding the rest; `Esc` clears a search, then the filter, then closes the view), `m` moves the selected node with `h` `j` `k` `l` or the arrows (`Shift` for a bigger step) until `Enter` keeps its place or `Esc` puts it back (on a collapsed cluster it says to open it first), and an action's `key` runs it on the selected node (only where its `when` matches). Selecting a node lights up what it can reach and what can reach it, with the counts: however many hops away, or only one with `reach = "direct"`. Hiding nodes doesn't change what they reach: the counts are the whole graph's. A click selects, a double click opens, a drag moves a node (kept) or pans, the wheel zooms. An edge whose end names nothing is left out until it does.
+The app lays it out (each cluster's nodes on a spiral, the clusters in rows, loose nodes first), keeps every position in the State so it opens the same way each time, and draws only what's on screen, so 2,000 nodes stay smooth. Clusters collapse to one node with their count: the user's `o`, or by themselves when the graph has more than 300 nodes and the cluster doesn't say. Keys, once it has focus: `h` `j` `k` `l` or the arrows go to the nearest node that way, `/` searches (name, id, kind, note, detail, cluster; it opens empty each time) and `n`/`N` go through the matches, `Enter` runs `open` (or opens a collapsed cluster), `o` collapses or opens the selected node's cluster and `O` all of them, `+` `-` zoom and `0` shows it all, `H` `J` `K` `L` pan, `t` switches to a table of every node, then of every edge, `f` goes to the filter (the clusters, kinds and states to show, as many of each as the user ticks, hiding the rest; `Esc` clears a search, then the filter, then closes the view), `m` moves the selected node with `h` `j` `k` `l` or the arrows (`Shift` for a bigger step) until `Enter` keeps its place or `Esc` puts it back (on a collapsed cluster it says to open it first), and an action's `key` runs it on the selected node (only where its `when` matches). Selecting a node lights up what it can reach and what can reach it, with the counts: however many hops away, or only one with `reach = "direct"`. Hiding nodes doesn't change what they reach: the counts are the whole graph's. A click selects, a double click opens, a drag moves a node (kept) or pans, the wheel zooms. An edge whose end names nothing is left out until it does.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -4350,6 +4352,8 @@ Every value is resolved: what the Host doesn't set comes from its group, then `d
 | `reviewed` | `boolean` | yes | `false` for a Host `discover` added and no one has reviewed: it can't be opened until it is. |
 | `mesh` | `boolean` | no | `mesh:` as roster.yml sets it; `nil` if nothing does. |
 | `os` | `string` | no | `os:` as roster.yml sets it: `"windows"` (setup, revoke and check run PowerShell there) or `"posix"`; `nil` if nothing does, which is posix. |
+| `key_type` | `string` | yes | The SSH key type its key Login uses (`key_type:`, resolved): `"ed25519"` (the default), `"ecdsa"` (P-384), `"ecdsa-256"`, `"ecdsa-521"`, `"rsa"` (3072 bits) or `"rsa-BITS"`. Only an `enroll` Host uses it. |
+| `key_file` | `string` | yes | This Box's private key file for `key_type` (a path, never the key itself). |
 | `title` | `string` | yes | One line; `""` if unset. |
 | `description` | `string` | yes | One line; `""` if unset. |
 | `type` | `string` | yes | What it is (`esxi`, `linux`); `""` if unset. |
@@ -4359,6 +4363,17 @@ Every value is resolved: what the Host doesn't set comes from its group, then `d
 | `user` | `string` | yes | The same as `ssh.user` (kept for older code). |
 | `port` | `integer` | yes | The same as `ssh.port`. |
 | `auth` | [`LoginRef`](#loginref) | yes | The same as `ssh.auth`. |
+
+### `ServeError`
+
+roster serve's error, as a Plugin gets it (since api 7).
+
+What `pcall` catches from [`roster.serve.call`](#rosterservecallmethod-params) and `roster.inventory`, and the second value [`roster.serve.request`](#rosterserverequestmethod-params-done)'s and [`roster.inventory.request`](#rosterinventoryrequestdone)'s `done` get, when roster serve answered with an error (decision Q211). Switch on `code`, never on the words. It's still the text it was before api 7: `tostring(e)`, `"…" .. e` and string methods (`e:find("busy", 1, true)`, `e:match(…)`) see `roster.serve.call METHOD: MESSAGE (code N)`, and an uncaught one stops the call with that text. When serve gave no answer at all (it exited, or didn't answer in time) or roster refused before asking (`not granted`), the error is a plain string, whose `.code` is `nil` too.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `code` | `integer` | yes | serve's code: roster's own (`2` unknown Host, `4` busy, …) or JSON-RPC's (`-32601` no such method, `-32602` bad params), as [serve-api.md](serve-api.md) lists them. |
+| `message` | `string` | yes | serve's words, without the function's name or the code; a `cmd:` or `env:` Login reference in them is cut to its kind ([`LoginRef`](#loginref)). |
 
 ### `LoginRef`
 
@@ -4541,7 +4556,7 @@ Since serve API 21 a check is a job: the `job_progress` event (with `serve:host.
 | `at` | `string` | no | The step under way (`"dns"`, `"auth"`, ...). |
 | `host` | `string` | yes | The Host it checks. |
 | `result` | [`HostCheck`](#hostcheck) | no | Once `done` or `stopped`: `host.check`'s result. `ok` is false for a stopped check, its later steps `skipped`. |
-| `error` | [`ServeError`](#serveerror) | no | Once `failed`: why. |
+| `error` | [`JobError`](#joberror) | no | Once `failed`: why. |
 
 ### `CheckStep`
 
@@ -4716,6 +4731,7 @@ It never connects. `brief = true` keeps it small as in a brief [`MeshResult`](#m
 | `pending` | `table<string, string>` | yes | Hosts the last run didn't finish, and why. |
 | `cut_pending` | `table<string, string[]>` | yes | Earlier cuts not finished yet. |
 | `out_of_date` | `boolean` | yes | `roster.yml` changed the Mesh since the last complete apply on this Box. |
+| `warnings` | `string[]` | no | What `roster.yml` alone shows (220: an Ed25519 source's peer of another `key_type`); absent from a roster before #509. |
 | `meshed` | `table<string, string[]>` | no | Grouped: each meshed group's Hosts that reach each other both ways. |
 | `link_count` | `integer` | no | Brief: how many Links there are in all. |
 | `link_statuses` | `table<string, integer>` | no | Brief: how many Links have each status (`asked` for untested ones). |
@@ -4739,11 +4755,11 @@ It never connects. `brief = true` keeps it small as in a brief [`MeshResult`](#m
 | `at` | `string` | no | The Host it's on. |
 | `stopped` | `boolean` | yes | `mesh.stop` asked it to stop; the Hosts it hadn't got to are pending. |
 | `result` | [`MeshResult`](#meshresult)`\|`[`MeshCut`](#meshcut) | no | Once `done`: what the method itself returns. |
-| `error` | [`ServeError`](#serveerror) | no | Once `failed`: why. |
+| `error` | [`JobError`](#joberror) | no | Once `failed`: why. |
 
-### `ServeError`
+### `JobError`
 
-An error roster serve answered with.
+Why a job in roster serve failed, as plain data in its status.
 
 | Field | Type | Required | Description |
 |---|---|---|---|

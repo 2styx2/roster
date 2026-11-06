@@ -1,19 +1,20 @@
 // The Lock (ticket 04): the app opens locked, unlocks with the master password, and locks again on
 // <leader> L or after the idle timeout. All through the fake Backend.
 import { describe, expect, it } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_PASSWORD, fakeBackend, fixtures, makeHosts, type FakeScenario } from "./backend/fake";
 import { defaultOptions } from "./keymap";
-import { manualClock } from "./lock/manualClock";
+import { manualClock } from "./ui/manualClock";
+import { advanceTimers, fakeTimeouts, pass, realTimeouts } from "./test-timers";
 
 const MIN = 60_000;
 
 async function start(scenario: FakeScenario = { hosts: makeHosts(12) }) {
   const backend = fakeBackend(scenario);
   const clock = manualClock();
-  const user = userEvent.setup();
+  const user = userEvent.setup({ advanceTimers });
   render(<App backend={backend} clock={clock} />);
   await screen.findByText(/12 hosts|0 hosts/i);
   return { user, backend, clock };
@@ -31,7 +32,7 @@ describe("the Lock", () => {
   it("opens locked, with the Sessions hidden", async () => {
     await start();
     expect(await screen.findByRole("dialog", { name: /locked/i })).toBeInTheDocument();
-    expect(await screen.findByText(/unlock bitwarden/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText("Bitwarden master password")).toBeInTheDocument();
     expect(sessions()).toBeNull();
     expect(passwordField()).toHaveFocus();
   });
@@ -46,6 +47,64 @@ describe("the Lock", () => {
     expect((await backend.vaultStatus()).status).toBe("unlocked");
   });
 
+  it("sends a password entered while roster still checks the vault once the check ends", async () => {
+    const backend = fakeBackend({ hosts: makeHosts(12) });
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const status = backend.vaultStatus.bind(backend);
+    backend.vaultStatus = async () => {
+      await gate;
+      return status();
+    };
+    const user = userEvent.setup();
+    render(<App backend={backend} clock={manualClock()} />);
+    const field = await screen.findByLabelText<HTMLInputElement>(/master password/i);
+    expect(screen.getByRole("button", { name: "Checking…" })).toHaveAttribute("aria-disabled", "true");
+    await user.type(field, `${FAKE_PASSWORD}{Enter}`);
+    expect(lockScreen()).not.toBeNull();
+    await act(async () => release());
+    await screen.findByRole("main", { name: /workspace/i });
+    expect(lockScreen()).toBeNull();
+  });
+
+  it("unlocks with a password sent the moment the form shows (an autofill and Enter)", async () => {
+    const backend = fakeBackend({ hosts: makeHosts(12) });
+    // Fills the field and submits as soon as it's in the page, before anything else runs.
+    const sent = new Promise<void>((done) => {
+      const watch = new MutationObserver(() => {
+        const field = document.getElementById("lock-password") as HTMLInputElement | null;
+        if (!field) return;
+        watch.disconnect();
+        field.value = FAKE_PASSWORD;
+        field.form?.requestSubmit();
+        done();
+      });
+      watch.observe(document.body, { childList: true, subtree: true });
+    });
+    render(<App backend={backend} clock={manualClock()} />);
+    await sent;
+    await screen.findByRole("main", { name: /workspace/i });
+    expect(lockScreen()).toBeNull();
+  });
+
+  it("takes the keys from the moment the workspace shows (the Leader typed right after Enter)", async () => {
+    const { user } = await start();
+    // Presses Leader f as soon as the lock screen is gone, before anything else runs.
+    const pressed = new Promise<void>((done) => {
+      const watch = new MutationObserver(() => {
+        if (lockScreen()) return;
+        watch.disconnect();
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", ctrlKey: true, bubbles: true }));
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", code: "KeyF", bubbles: true }));
+        done();
+      });
+      watch.observe(document.body, { childList: true, subtree: true });
+    });
+    await unlock(user);
+    await pressed;
+    expect(await screen.findByRole("dialog", { name: /find a host/i })).toBeInTheDocument();
+  });
+
   it("says when the password is wrong, clears the field and stays locked", async () => {
     const { user, backend } = await start();
     await unlock(user, "hunter2");
@@ -54,6 +113,29 @@ describe("the Lock", () => {
     expect(passwordField()).toHaveFocus();
     expect(lockScreen()).not.toBeNull();
     expect((await backend.vaultStatus()).status).toBe("locked");
+    await unlock(user);
+    await screen.findByRole("main", { name: /workspace/i });
+  });
+
+  it("after a wrong password says what to do if it's forgotten; Tab stays on the lock's controls (round 18)", async () => {
+    const { user } = await start();
+    await screen.findByLabelText(/master password/i);
+    expect(screen.queryByText(/forgot it\?/i)).toBeNull();
+    await unlock(user, "hunter2");
+    await screen.findByRole("alert");
+    expect(screen.getByText(/forgot it\?/i)).toHaveTextContent("roster never keeps it");
+    // field -> Unlock -> field, both ways: never an invisible stop on <body>.
+    expect(passwordField()).toHaveFocus();
+    const submit = screen.getByRole("button", { name: /^Unlock/ });
+    await user.tab();
+    expect(submit).toHaveFocus();
+    await user.tab();
+    expect(passwordField()).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(submit).toHaveFocus();
+    // Enter on Unlock with the field empty unlocks nothing; the right password still does.
+    await user.keyboard("{Enter}");
+    expect(lockScreen()).not.toBeNull();
     await unlock(user);
     await screen.findByRole("main", { name: /workspace/i });
   });
@@ -69,17 +151,36 @@ describe("the Lock", () => {
     // roster-core gives up on a call after 60 s, but serve carries on: the UI stays locked, so serve
     // must not be left holding an unlocked vault.
     const scenario: FakeScenario = { hosts: makeHosts(12), slowUnlock: { failAfterMs: 20, completesAfterMs: 80 } };
+    fakeTimeouts();
     const { user, backend } = await start(scenario);
     await unlock(user);
     expect(await screen.findByRole("alert")).toHaveTextContent(/didn't answer in time/i);
     expect(lockScreen()).not.toBeNull();
-    await new Promise((r) => setTimeout(r, 150));
-    await waitFor(async () => expect((await backend.vaultStatus()).status).toBe("locked"));
+    // Past the unlock serve finished anyway (80 ms), and the lock the app sent after it.
+    await pass(1_000);
+    realTimeouts();
+    expect((await backend.vaultStatus()).status).toBe("locked");
     expect(lockScreen()).not.toBeNull();
     delete scenario.slowUnlock;
     await unlock(user);
     await screen.findByRole("main", { name: /workspace/i });
     expect((await backend.vaultStatus()).status).toBe("unlocked");
+  });
+
+  it("says so when that lock fails, rather than leaving serve unlocked unsaid", async () => {
+    const scenario: FakeScenario = { hosts: makeHosts(12), slowUnlock: { failAfterMs: 20, completesAfterMs: 80 } };
+    fakeTimeouts();
+    const real = fakeBackend(scenario);
+    const backend = { ...real, lockVault: () => Promise.reject(new Error("serve didn't answer")) };
+    const user = userEvent.setup({ advanceTimers });
+    render(<App backend={backend} clock={manualClock()} />);
+    await screen.findByText(/12 hosts/i);
+    await unlock(user);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/didn't answer in time/i);
+    await pass(1_000);
+    realTimeouts();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Locking the vault failed: serve didn't answer");
+    expect(lockScreen()).not.toBeNull();
   });
 
   it("explains a vault CLI that isn't logged in, with the command to run", async () => {

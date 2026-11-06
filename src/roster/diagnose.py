@@ -12,25 +12,21 @@ import subprocess
 import time
 from contextlib import nullcontext
 
-from . import askpass, errors, providers
-from .common import find_program, known_hosts_label, not_reviewed, time_left
-from .config import is_windows
+from . import askpass, errors, hosts, providers, rotation, sshconfig
+from .common import end_group, find_program, not_reviewed, time_left
+from .context import current
 from .errors import Problem, login_problem, no_user, unknown_provider, vault_problem
+from .hosts import ip_of, is_windows, placeholder_user, prompted, provider_of
 from .providers import PROVIDERS
 from .sshops import (
     fingerprint,
+    handshake,
     host_block,
-    in_ssh_config,
-    left_out,
-    not_reached,
-    offered_host_key,
+    not_in_ssh_config,
     recorded_host_keys,
     start_transport,
-    sync_fix,
-    written_host_block,
 )
 
-PLACEHOLDER_USERS = ("", "CHANGE-ME")         # discover's placeholder: no SSH user set yet
 STEPS = ("inventory", "ssh-config", "provider", "vault-item", "dns", "tcp", "host-key", "auth")
 CONNECT_TIMEOUT = 5         # seconds for the TCP step and for the key exchange
 LOGIN_TIMEOUT = 10          # ssh's ConnectTimeout for the one login attempt
@@ -40,8 +36,7 @@ LOGIN_TIMEOUT = 10          # ssh's ConnectTimeout for the one login attempt
 
 def password_login(h):
     """The Host's ssh Login, if it's a password one (a vault reference, not agent/key/none)."""
-    auth = h["ssh"].get("auth")
-    return None if auth in (None, "") or auth in providers.NO_PASSWORD else h["ssh"]
+    return h["ssh"] if hosts.password_login(h["ssh"].get("auth")) else None
 
 
 def uses_password(h):
@@ -49,7 +44,7 @@ def uses_password(h):
 
 
 def check_user(h):
-    if h["ssh"]["user"] in PLACEHOLDER_USERS:
+    if placeholder_user(h):
         raise no_user(h)
 
 
@@ -58,7 +53,7 @@ def check_provider(h, auth=None, what="ssh"):
     14 locked). Providers without a status (env, prompt, cmd) are left to try. AUTH: another of the Host's
     references than its ssh Login (its sudo: one), named WHAT in errors."""
     auth = str((password_login(h) or h["ssh"])["auth"] if auth is None else auth)
-    name = auth.partition(":")[0].strip()
+    name = provider_of(auth)
     if name not in PROVIDERS:
         raise unknown_provider(h, auth, what)
     try:
@@ -78,7 +73,7 @@ def resolve_password(h, auth=None, what="ssh"):
     """The Login's password, looked up now (into this process's memory only; never returned to the app).
     Raises a Problem: item not found, several match, no password/field, or the provider's own failure."""
     auth = (password_login(h) or h["ssh"])["auth"] if auth is None else auth
-    if str(auth).partition(":")[0].strip() not in PROVIDERS:
+    if provider_of(auth) not in PROVIDERS:
         raise unknown_provider(h, auth, what)
     try:
         return providers.get_secret(auth, h["group"])
@@ -187,16 +182,12 @@ def step_ssh_config(ctx):
         raise Problem(errors.NOT_SET_UP, "no ssh client on this box's PATH",
                       fix="install OpenSSH (openssh-client)")
     sync = "run `roster sync` (or `roster setup` if this box isn't set up yet)"
-    if not in_ssh_config(h["name"]):
-        why = left_out(h["name"])
-        if why:
-            raise Problem(errors.NOT_SET_UP, why, fix="rename one of the two in its roster.yml, or make this "
-                                                       "Inventory the active one (`roster inv use`)")
-        why = not_reached(h["name"])
-        if why:                         # another roster.yml's, or this Inventory isn't synced here
-            raise Problem(errors.NOT_SET_UP, why, fix=sync_fix())
-        raise Problem(errors.NOT_SET_UP, f"{h['name']} isn't in this box's ssh config yet", fix=sync)
-    want, have = host_block(ctx["cfg"], h["name"], h), written_host_block(h["name"]) or []
+    problem = not_in_ssh_config(h["name"], f"{h['name']} isn't in this box's ssh config yet", fix=sync)
+    if problem:
+        raise problem
+    # mid-rotation, the block offers the old key too
+    want = host_block(ctx["cfg"], h["name"], h, rotation.config_waiting(ctx["cfg"]))
+    have = sshconfig.written_block(current().ssh_config, h["name"]) or []
     if have != want:
         stale = f"{h['name']}'s entry in this box's ssh config is out of date"
         if "    IdentitiesOnly yes" in want and "    IdentitiesOnly yes" not in have:
@@ -230,18 +221,11 @@ def step_dns(ctx):
     except (socket.gaierror, UnicodeError) as e:
         raise Problem(errors.NO_DNS, f"can't resolve '{h['ip']}' ({h['name']})",
                       fix=f"fix ip: for {h['name']} in roster.yml", details=str(e)) from None
-    ctx["resolved"] = list(dict.fromkeys(str(a[4][0]) for a in found))     # for unreachable_fix (#420)
+    ctx["resolved"] = list(dict.fromkeys(str(a[4][0]) for a in found))     # for unreachable_fix
     return f"{h['ip']} resolves"
 
 
 UNREACHABLE = "retry later; is the Host up and the network path open?"
-
-
-def ip_of(text):
-    try:
-        return ipaddress.ip_address(str(text).partition("%")[0])
-    except ValueError:
-        return None
 
 
 def unreachable_fix(h, limited=(), resolved=None):
@@ -287,7 +271,9 @@ def step_host_key(ctx):
                           f"`roster setup --host {h['name']}` to record it")
     sock, ctx["sock"] = ctx["sock"], None
     try:
-        key = offered_host_key(sock, list(recorded), timeout=CONNECT_TIMEOUT)
+        key, kex = handshake(sock, list(recorded), timeout=CONNECT_TIMEOUT)
+        # no curve25519 kex and no Ed25519 host key (recorded or offered): what a FIPS-mode Host offers
+        ctx["nist_only"] = kex.startswith("ecdh-sha2-nistp") and "ssh-ed25519" not in {*recorded, key.get_name()}
     except (paramiko.SSHException, OSError, EOFError) as e:
         if not isinstance(e, paramiko.SSHException) or "Incompatible" not in str(e):
             raise Problem(errors.TIMEOUT, f"{h['name']} didn't complete the SSH handshake",
@@ -308,7 +294,7 @@ def changed_key(h, recorded, key):
     data = {"recorded": [fingerprint(k) for k in recorded.values()], "offered": fingerprint(key) if key else None}
     return Problem(errors.HOST_KEY_CHANGED, f"{h['name']}'s host key changed - not connecting", data,
                    fix="don't accept it blindly: compare the new fingerprint with the Host's console or owner. "
-                       f"If the change is expected (reinstall), delete its line in {known_hosts_label()} "
+                       f"If the change is expected (reinstall), delete its line in {current().known_hosts_label} "
                        f"and run `roster setup --host {h['name']}`",
                    details=f"recorded {', '.join(data['recorded'])}; offered {data['offered'] or 'none of those types'}")
 
@@ -341,7 +327,7 @@ def step_auth(ctx):
             secret = None
         if secret:
             details = details.replace(secret, "****")
-    raise login_failure(h, password, details, ctx.get("limited"), ctx.get("resolved"))
+    raise login_failure(h, password, details, ctx.get("limited"), ctx.get("resolved"), ctx.get("nist_only", False))
 
 
 STOP_POLL = 0.1            # s: how soon a stopped check notices it while its ssh logs in
@@ -373,57 +359,37 @@ def login_attempt(argv, env, limit, halted=None):
                     return None
     finally:
         if proc.returncode is None:         # stopped, out of time, or interrupted (Ctrl+C): it doesn't outlive us
-            end_process(proc)
+            end_group(proc, gentle=True)
 
 
-def end_process(proc):
-    """End PROC and everything in its process group on POSIX (SIGTERM first, so ssh closes its connection, then
-    SIGKILL), and always reap it; our ends of its pipes are closed, so a child of it that still holds them can't keep
-    us waiting."""
-    import signal
-
-    def send(sig):
-        try:
-            if os.name == "nt":
-                proc.kill() if sig == "kill" else proc.terminate()
-            else:
-                os.killpg(proc.pid, signal.SIGKILL if sig == "kill" else signal.SIGTERM)
-        except OSError:
-            pass
-    send("term")
-    try:
-        proc.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        pass
-    send("kill")                            # the group too, even once the leader has gone
-    for pipe in (proc.stdout, proc.stderr):
-        if pipe is not None:
-            try:
-                pipe.close()
-            except OSError:
-                pass
-    proc.wait()                             # SIGKILL can't be refused: this returns
-
-
-def login_failure(h, password, stderr, limited=(), resolved=None):
-    """ssh's stderr from the one login attempt as a Problem (the app's classifier does the same for Sessions)."""
+def login_failure(h, password, stderr, limited=(), resolved=None, nist_only=False):
+    """ssh's stderr from the one login attempt as a Problem (the app's classifier does the same for Sessions).
+    NIST_ONLY: the host-key step saw the Host offer only NIST key exchange and host keys (T239)."""
     name, user = h["name"], h["ssh"]["user"]
     for line in stderr.splitlines():
-        if line.startswith("roster askpass: ["):
-            code, _, message = line.removeprefix("roster askpass: [").partition("] ")
-            fix = "log in by hand once (Quick Connect) to deal with it" if code == str(errors.UNEXPECTED_PROMPT) else None
-            return Problem(int(code) if code.isdigit() else errors.AUTH_FAILED, message, fix=fix, details=stderr)
+        if said := askpass.complaint(line):
+            code, message = said
+            fix = "log in by hand once (Quick Connect) to deal with it" if code == errors.UNEXPECTED_PROMPT else None
+            return Problem(errors.AUTH_FAILED if code is None else code, message, fix=fix, details=stderr)
     low = stderr.lower()
     if "too many authentication failures" in low:
         return Problem(errors.TOO_MANY_AUTH, f"{name} cut the connection after too many key attempts",
                        fix="run `roster sync`: roster's ssh config offers one key, or none, per Host", details=stderr)
     if "host key verification failed" in low or "remote host identification has changed" in low:
-        return Problem(errors.HOST_KEY_CHANGED, f"{name}'s host key changed - not connecting",
-                       fix="compare the fingerprint with the Host's console or owner before trusting it", details=stderr)
+        return Problem(errors.HOST_KEY_CHANGED, f"{name}'s host key changed - not connecting (reinstalled, or another "
+                       "machine at its address?)", fix="compare the fingerprint with the Host's console or owner "
+                       f"before trusting it; if it was reinstalled, delete its line in {current().known_hosts_label} and run "
+                       f"`roster setup --host {name}` (its keys went with the reinstall)", details=stderr)
     if "permission denied" in low:
         if password:
             return Problem(errors.PASSWORD_REFUSED, f"{name} refused the password for user {user}",
                            fix="check the vault item: the password may have been changed on the Host, or the user is wrong",
+                           details=stderr)
+        if nist_only and h.get("key_type") == "ed25519":
+            return Problem(errors.KEY_TYPE_FIPS, f"{name} refused this Box's Ed25519 key and offers only NIST "
+                           "algorithms (no curve25519, no Ed25519 host key): a FIPS-mode Host, which never takes "
+                           "Ed25519", fix=f"set key_type: ecdsa for {name} (or its group) in roster.yml, then run "
+                           f"`roster setup --host {name}`: re-running setup with an Ed25519 key changes nothing",
                            details=stderr)
         fix = f"run `roster setup --host {name}`, or set enroll: false"
         if is_windows(h):               # sshd ignores a key file with the wrong permissions or encoding, silently
@@ -454,7 +420,7 @@ STEP_FNS = {"inventory": step_inventory, "ssh-config": step_ssh_config, "provide
             "auth": step_auth}
 
 
-# ---------------------------------------------------------------- host.verify_login (ticket 10, decision Q43)
+# ---------------------------------------------------------------- host.verify_login (decision Q43)
 
 VERIFY_STEPS = ("user", "provider", "vault-item", "dns", "tcp", "host-key", "auth")
 
@@ -462,7 +428,7 @@ VERIFY_STEPS = ("user", "provider", "vault-item", "dns", "tcp", "host-key", "aut
 def stored_password(h):
     """The Host's password Login, if roster can look it up without asking anyone (so not `prompt`)."""
     login = password_login(h)
-    return login if login and str(login["auth"]).partition(":")[0].strip() != "prompt" else None
+    return login if login and not prompted(login["auth"]) else None
 
 
 def verify_login(h, key_path, previous=None, typed=None, host_key=None, limited=()):
@@ -541,7 +507,7 @@ def check_save_to(h, typed):
     if name not in PROVIDERS:
         raise unknown_provider(h, f"{name}:")
     if not providers.can_write(name):
-        raise errors.write_problem(providers.CantWrite(
+        raise errors.vault_problem(providers.CantWrite(
             f"provider '{name}' can't save to the vault - roster only reads its Logins; create the item in the "
             "password manager itself, then pick it as the Login"))
     check_provider({**h, "ssh": {**h["ssh"], "auth": f"{name}:{typed['item']}"}})
@@ -633,7 +599,7 @@ def offered_key(h, limited=()):
     step_tcp(ctx)
     recorded = recorded_host_keys(h)
     try:
-        key = offered_host_key(ctx["sock"], list(recorded), timeout=CONNECT_TIMEOUT)
+        key = handshake(ctx["sock"], list(recorded), timeout=CONNECT_TIMEOUT)[0]
     except (paramiko.SSHException, OSError, EOFError) as e:
         raise Problem(errors.TIMEOUT, f"{h['ip']} didn't complete the SSH handshake",
                       fix=unreachable_fix(h, ctx.get("limited")), details=f"{type(e).__name__}: {e}") from None

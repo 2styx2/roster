@@ -12,12 +12,13 @@ import { fakeCommit } from "./backend/fakePackages";
 import type { FakePlugin } from "./backend/fakePlugins";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { advanceTimers, fakeTimeouts, pass } from "./test-timers";
 
 const LEADER = "{Control>} {/Control}";
 
 /** A Plugin with a tutorial about its own command, `:coach`. */
 const coach: FakePlugin = {
-  manifest: { name: "coach", version: "1.0.0", description: "", author: null, api: 3, permissions: ["inventory.read", "serve:mesh.status"] },
+  manifest: { name: "coach", version: "1.0.0", description: "", author: null, api: 3, permissions: ["inventory.read", "serve:mesh.job"] },
   load(roster) {
     roster.commands.add("coach", {
       desc: "Count the Hosts",
@@ -25,7 +26,7 @@ const coach: FakePlugin = {
         roster.notify(`${roster.inventory?.hosts().length ?? 0} Hosts, ${roster.storage.list().length} files`);
         roster.storage.write("seen.txt", "yes");
         try {
-          roster.serve?.call("mesh.status");
+          roster.serve?.call("mesh.job");
         } catch (e) {
           roster.notify(String(e instanceof Error ? e.message : e), "warn");
         }
@@ -55,7 +56,7 @@ async function ready() {
   const platform = memoryPlatform({
     state: {
       plugins: [
-        { path: "~/plugins/coach", name: "coach", granted: ["inventory.read", "serve:mesh.status"], asked: ["inventory.read", "serve:mesh.status"] },
+        { path: "~/plugins/coach", name: "coach", granted: ["inventory.read", "serve:mesh.job"], asked: ["inventory.read", "serve:mesh.job"] },
         { path: "~/plugins/broken", name: "broken", granted: [], asked: [] },
       ],
     },
@@ -86,7 +87,7 @@ describe(":tutor with your Plugins", () => {
     await user.keyboard(`${LEADER}:coach{Enter}`);
     // The demo's six Hosts, and a data folder of its own that starts empty.
     expect(await screen.findByText("coach: 6 Hosts, 0 files")).toBeInTheDocument();
-    expect(await screen.findByText(/coach: roster\.serve\.call mesh\.status: mesh\.status isn't on the demo Inventory/)).toBeInTheDocument();
+    expect(await screen.findByText(/coach: roster\.serve\.call mesh\.job: mesh\.job isn't on the demo Inventory/)).toBeInTheDocument();
     await waitFor(() => expect(step()).toHaveAttribute("data-done"));
 
     await user.keyboard(`${LEADER}:tutor quit{Enter}`);
@@ -163,7 +164,7 @@ describe(":tutor with your Plugins", () => {
         clones: { coach: commit },
       },
     });
-    const perms = ["inventory.read", "serve:mesh.status"];
+    const perms = ["inventory.read", "serve:mesh.job"];
     const platform = memoryPlatform({ state: { plugins: [{ path: "package:coach", name: "coach", granted: perms, asked: perms }] } });
     render(<App backend={backend} terminalView={StubTerminal} platform={platform} />);
     await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
@@ -182,7 +183,7 @@ describe(":tutor with your Plugins", () => {
     const user = userEvent.setup();
     const backend = fakeBackend({ hosts: makeHosts(12), plugins: { "~/plugins/coach": coach } });
     backend.demoPlugins = () => Promise.reject(new Error("no room in the temp folder"));
-    const perms = ["inventory.read", "serve:mesh.status"];
+    const perms = ["inventory.read", "serve:mesh.job"];
     const platform = memoryPlatform({ state: { plugins: [{ path: "~/plugins/coach", name: "coach", granted: perms, asked: perms }] } });
     render(<App backend={backend} terminalView={StubTerminal} platform={platform} />);
     await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
@@ -198,7 +199,8 @@ describe(":tutor with your Plugins", () => {
   });
 
   it("leaving stops the demo's Plugins: no timer of theirs reaches the demo's host after it closed", async () => {
-    const user = userEvent.setup();
+    fakeTimeouts();
+    const user = userEvent.setup({ advanceTimers });
     const ticker: FakePlugin = {
       manifest: { name: "ticker", version: "1", description: "", author: null, api: 3, permissions: [] },
       load(roster) {
@@ -238,7 +240,8 @@ describe(":tutor with your Plugins", () => {
     await user.keyboard(`${LEADER}:tutor quit{Enter}`);
     await waitFor(() => expect(banner()).toBeNull());
     expect(closed).toBe(true);
-    await new Promise((r) => setTimeout(r, 150));
+    // Twenty of the ticker's 50 ms.
+    await pass(1_000);
     expect(late).toBe(0);
   });
 });

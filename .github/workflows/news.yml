@@ -20,10 +20,10 @@ permissions:
 jobs:
   news:
     name: News entry
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           sparse-checkout: scripts/news_check.py
           sparse-checkout-cone-mode: false

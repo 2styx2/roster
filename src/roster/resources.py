@@ -7,6 +7,7 @@ allowed. Every view (`roster hosts --resources`, `roster hosts NAME`, ROSTER.md,
 """
 
 from .common import NAME_RE, die, oneline
+from .errors import InventoryError
 
 WIFI_SECURITY = ("wpa2", "wpa3", "wpa", "wep", "open", "wpa2-enterprise", "wpa3-enterprise")
 
@@ -17,27 +18,27 @@ def _text(where, v):
 
 def _required_text(where, v):
     if not oneline(v):
-        die(f"{where}: needs a value")
+        raise InventoryError(f"{where}: needs a value")
     return oneline(v)
 
 
 def _bool(where, v):
     if not isinstance(v, bool):
-        die(f"{where}: use true or false")
+        raise InventoryError(f"{where}: use true or false")
     return v
 
 
 def _security(where, v):
     v = str(v).strip().lower()
     if v not in WIFI_SECURITY:
-        die(f"{where}: {v!r} - use one of {', '.join(WIFI_SECURITY)}")
+        raise InventoryError(f"{where}: {v!r} - use one of {', '.join(WIFI_SECURITY)}")
     return v
 
 
 def _url(where, v):
     v = oneline(v)
     if not v.startswith(("http://", "https://")) or " " in v:
-        die(f"{where}: {v!r} - expected http(s)://...")
+        raise InventoryError(f"{where}: {v!r} - expected http(s)://...")
     return v
 
 
@@ -63,38 +64,36 @@ TYPES = {
 
 def load_resources(raw, groups, hosts):
     """The `resources:` section, validated and normalized: every resource has every field of its type."""
-    section = raw.get("resources") or {}
-    if not isinstance(section, dict):
-        die("resources: must be a mapping of name: { type, ... }")
+    section = raw.get("resources") or {}     # a mapping: config.check_shapes
     out = {}
     for name, r in section.items():
         name, where = str(name), f"resource {name!r}"
         if not NAME_RE.match(name):
-            die(f"bad resource name {name!r} (use letters, digits, . _ -)")
+            raise InventoryError(f"bad resource name {name!r} (use letters, digits, . _ -)")
         if name in hosts:
-            die(f"{where}: a host already has that name")
+            raise InventoryError(f"{where}: a host already has that name")
         if not isinstance(r, dict):
-            die(f"{where}: must be a mapping with a type")
+            raise InventoryError(f"{where}: must be a mapping with a type")
         kind = str(r.get("type", ""))
         if kind not in TYPES:
-            die(f"{where}: type {kind!r} - use one of {', '.join(TYPES)}")
+            raise InventoryError(f"{where}: type {kind!r} - use one of {', '.join(TYPES)}")
         spec = COMMON + TYPES[kind]["fields"]
         allowed = {"type"} | {k for k, *_ in spec}
         extra = sorted(set(map(str, r)) - allowed)
         if extra:
-            die(f"{where}: unknown field {', '.join(extra)} (a {kind} has: {', '.join(sorted(allowed))})")
+            raise InventoryError(f"{where}: unknown field {', '.join(extra)} (a {kind} has: {', '.join(sorted(allowed))})")
         m = {"name": name, "type": kind}
         for key, _, parse, default in spec:
             if key in r and r[key] is not None:
                 m[key] = parse(f"{where} {key}", r[key])
             elif default is None:
-                die(f"{where}: a {kind} needs {key}")
+                raise InventoryError(f"{where}: a {kind} needs {key}")
             else:
                 m[key] = default
         if m["group"] and m["group"] not in groups:
-            die(f"{where}: group {m['group']!r} isn't in roster.yml (groups: {', '.join(groups)})")
+            raise InventoryError(f"{where}: group {m['group']!r} isn't in roster.yml (groups: {', '.join(groups)})")
         if not m["auth"] and not (kind == "wifi" and m["security"] == "open"):
-            die(f"{where}: needs auth (where its secret comes from, e.g. bw:ITEM)")
+            raise InventoryError(f"{where}: needs auth (where its secret comes from, e.g. bw:ITEM)")
         out[name] = m
     return out
 

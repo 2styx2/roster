@@ -5,8 +5,8 @@
 import { useEffect, useState } from "react";
 import type { WindowControls } from "../platform/types";
 import { Logo } from "./Logo";
+import { keepFocus } from "../ui/keepFocus";
 
-const keepFocus = (e: React.MouseEvent) => e.preventDefault();
 
 const GLYPHS = {
   minimize: <path d="M0.5 5.5h9" />,
@@ -30,7 +30,7 @@ function Glyph({ name }: { name: keyof typeof GLYPHS }) {
 
 export function TitleBar({
   controls,
-  title = "Roster",
+  title = "roster",
   start,
   end,
 }: {

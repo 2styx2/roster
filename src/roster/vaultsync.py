@@ -9,14 +9,15 @@ come from providers.vault_items, the listing that never reads a password (Bitwar
 `roster vault status` reads the snapshot's time for "last synced", with no vault call."""
 
 import json
-from datetime import datetime, timezone
+import os
 
-from . import providers
-from .common import NotPrivate, read_private, replace_file, say, user_config_dir
+from . import fromvault, providers
+from .common import NotPrivate, find_program, plain, read_private, say, utc_now, write_private
+from .context import box_file
 
 
 def snapshot_path(provider):
-    return user_config_dir() / "vault-sync" / f"{provider}.json"
+    return box_file("vault_sync") / f"{provider}.json"
 
 
 def load(provider, quiet=False):
@@ -38,7 +39,7 @@ def load(provider, quiet=False):
     return data
 
 
-def last_synced(provider):
+def last_synced(provider: str) -> str | None:
     """When `roster vault sync` last synced PROVIDER (an ISO time), or None. Never says anything: a snapshot that isn't
     the user's alone counts as none, and the next `roster vault sync` says so and replaces it."""
     data = load(provider, quiet=True)
@@ -54,50 +55,89 @@ def diff(before, items):
     return added, changed, len(set(before) - now)
 
 
-def sync(provider, interactive=False):
+def sync(provider, interactive=False, mapped=None, seen=()):
     """Sync PROVIDER and compare its items with the last snapshot: {provider, first, count, added: [name],
-    changed: [name], removed: n}, or None for a provider with nothing to sync. The snapshot is replaced only after a
-    sync and a listing that worked. Raises SecretError."""
+    changed: [name], removed: n, unmapped: [{name, missing}]}, or None for a provider with nothing to sync. UNMAPPED
+    (T243): the items added since a sync that no Login in roster.yml names yet (MAPPED(item) is False), each with
+    what `roster add --from-vault` would miss to make a Host of it (address, user), never their values; they stay
+    named at each sync until roster.yml names them or `roster add --from-vault` has listed them (SEEN: its ids, #503's
+    review LOW-4). The snapshot is replaced only after a sync and a listing that worked. Raises SecretError."""
     if providers.sync_vault(provider, interactive) is None:
         return None
     if not providers.can_list(provider):
         save(provider, {})
-        return {"provider": provider, "first": True, "count": None, "added": [], "changed": [], "removed": 0}
-    items = providers.vault_items(provider, interactive=interactive)
+        return {"provider": provider, "first": True, "count": None, "added": [], "changed": [], "removed": 0,
+                "unmapped": []}
+    mapped = mapped or (lambda item: False)
+    items = providers.vault_items(provider, mapped, interactive=interactive)
     before = load(provider)
     added, changed, removed = diff((before or {}).get("items") or {}, items)
-    save(provider, {i["id"]: i.get("revised") for i in items})
+    waiting = set((before or {}).get("unmapped") or ()) | ({i["id"] for i in added} if before is not None else set())
+    left = [i for i in items if i["id"] in waiting and i["id"] not in set(seen) and not mapped(i)]
+    save(provider, {i["id"]: i.get("revised") for i in items}, [i["id"] for i in left])
+    unmapped = [{"name": shown(i), "missing": missing(i)} for i in left]
     return {"provider": provider, "first": before is None, "count": len(items),
-            "added": [shown(i) for i in added], "changed": [shown(i) for i in changed], "removed": removed}
+            "added": [shown(i) for i in added], "changed": [shown(i) for i in changed], "removed": removed,
+            "unmapped": unmapped}
+
+
+def missing(item):
+    """What an item lacks for a Host: its address (a URI) and its user, by name."""
+    return [what for what, have in (("address", item.get("uris")), ("user", item.get("username"))) if not have]
 
 
 def shown(item):
     """An item as a line names it: its name, or its id when the name holds a control or format character (a vault
     item can't rewrite the terminal it's shown on)."""
-    name = item["name"]
-    return name if name and name.isprintable() else item["id"]
+    return item["name"] if plain(item["name"]) else item["id"]
 
 
-def save(provider, items):
-    f = snapshot_path(provider)
-    if f.is_symlink():
-        say(f"warning      {f} is a symlink (roster never writes through one here) - not updated")
-        return
-    data = {"synced": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "items": items}
-    replace_file(f, json.dumps(data, indent=1, sort_keys=True) + "\n", mode=0o600)
+def save(provider, items, unmapped=()):
+    """The snapshot: each item's id and revision date, and the ids of the new items roster.yml doesn't name yet."""
+    data = {"synced": utc_now(), "items": items, "unmapped": sorted(unmapped)}
+    write_private(snapshot_path(provider), json.dumps(data, indent=1, sort_keys=True) + "\n")
 
 
-def ago(when, now=None):
-    """'just now', '5 min ago', '3 h ago', '2 days ago' for an ISO time."""
+# ---------------------------------------------------------------- every vault roster.yml uses (roster sync, vault sync)
+
+# what an unlock in a terminal costs: Bitwarden keeps one unlock at a time
+UNLOCK_COST = "unlocking here locks the roster app and any other bw session on this Box (bw keeps one unlock at a time)"
+
+
+class NotAsked(providers.VaultLocked):
+    """The vault step was skipped at its prompt (Ctrl-D): left as last synced."""
+
+
+def sync_vaults(cfg, interactive=False):
+    """Each vault roster.yml uses that keeps a local copy, synced (sync), one at a time: [(provider, result, error)],
+    result None for a vault with nothing to sync, error what stopped it (a SecretError). Asks for a master password
+    only when INTERACTIVE, once a run (T241's offer to keep it unlocked with it), saying first what that costs."""
+    refs = fromvault.refs(cfg["path"])
+    out = []
+    for p in sorted(p for p in refs if p in providers.PROVIDERS and providers.holds_items(p)):
+        if interactive and p == "bw" and bw_would_ask():    # #503's review MED-1: say what an unlock here costs
+            # on the terminal, as the prompt is (its second review, LOW-5): `sync 2>file` can't hide it
+            providers.tell("note: this terminal has no Bitwarden session (no working saved session or BW_SESSION), "
+                           "so roster asks for the master password once to sync the vault (Ctrl-D skips it). As with "
+                           f"roster vault unlock, {UNLOCK_COST}")
+        try:
+            seen = fromvault.load_seen(cfg["path"])["items"].get(p) or {}     # add --from-vault listed them
+            out.append((p, sync(p, interactive=interactive, mapped=fromvault.named(p, refs[p]), seen=seen), None))
+        except EOFError:                   # Ctrl-D at the prompt: the vault is left as last synced
+            out.append((p, None, NotAsked("no master password given")))
+        except RuntimeError as e:          # a SecretError, or a provider's own failure: its words, never a value
+            out.append((p, None, e))
+    return out
+
+
+def bw_would_ask():
+    """Would a Bitwarden lookup now ask for the master password? Not with a working BW_SESSION or saved session, nor
+    BW_PASSWORD; not when bw isn't logged in or installed (its own error says so)."""
+    if os.environ.get("BW_PASSWORD") or not find_program("bw"):
+        return False
     try:
-        then = datetime.strptime(str(when)[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return str(when)
-    s = ((now or datetime.now(timezone.utc)) - then).total_seconds()
-    if s < 60:
-        return "just now"
-    if s < 3600:
-        return f"{int(s // 60)} min ago"
-    if s < 2 * 86400:
-        return f"{int(s // 3600)} h ago"
-    return f"{int(s // 86400)} days ago"
+        if providers.vault_status("bw") != "locked":    # unlocked by BW_SESSION, or not logged in
+            return False
+        return (providers.saved_session("bw") or ("none", None))[0] != "working"
+    except providers.SecretError:
+        return False

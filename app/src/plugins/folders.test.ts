@@ -10,7 +10,7 @@ import type { CommandContext } from "../commands/table";
 import { builtinRegistries } from "../registries";
 import type { SidebarContext } from "../sidebar/sections";
 import { quiet, type Message } from "../ui/messages";
-import { BUILTINS_HELD_MAX, BUILTINS_WAIT_MS, PluginManager, STATE_KEY, type PluginUi } from "./manager";
+import { PluginManager, STATE_KEY, type PluginUi } from "./manager";
 
 const hosts = makeHosts(3);
 const [h1, h2] = hosts.hosts.map((h) => h.name) as [string, string];
@@ -69,6 +69,9 @@ describe("the Folders Plugin in the app", () => {
     // Its Host's menu (T166, Q156) has the Host's commands; the row brings only the Folder's own.
     expect(host).toMatchObject({ menu: true });
     expect(host!.actions!.map((a) => a.label)).toEqual([`Remove ${h1} from Lab`]);
+    // Its words in the menu name neither the Host nor the Folder (round 22).
+    expect(host!.actions!.map((a) => a.short)).toEqual(["Remove from Folder"]);
+    expect(head!.actions!.map((a) => a.short)).toEqual(["Rename…", "Delete Folder"]);
     expect(gone).toMatchObject({ label: "gone-01", note: "not in the Inventory", dot: "off", menu: true });
     expect(host!.dragOut).toBe(`plugins run folders folder remove ${h1} Lab`);
   });
@@ -160,239 +163,16 @@ describe("a Plugin's data folder", () => {
   });
 });
 
-describe("a Folders drop before the core has roster's own commands (issue #241)", () => {
-  /** Folders with a Folder "Lab", and the core not taking the built-in command list until `up`
-   * (a send that never answers while `hang`). */
-  async function down(plugins: Record<string, FakePlugin> = {}, state: Record<string, unknown> = {}, onScreen?: PluginUi["onScreen"]) {
-    const { manager, registries, backend, said, ran } = setup({ import: [{ name: "Lab", hosts: [h1] }], import_from: "folders.yml" }, plugins, state, true, onScreen);
-    const real = backend.pluginBuiltins.bind(backend);
-    const link = { up: false, hang: false };
-    const sent = vi
-      .spyOn(backend, "pluginBuiltins")
-      .mockImplementation((names) => (link.hang ? new Promise<void>(() => undefined) : link.up ? real(names) : Promise.reject(new Error("no such command"))));
+describe("a Folders drop at the start (issue #241)", () => {
+  it("runs at once: roster's own commands go with the call", async () => {
+    const { manager, registries, backend, said, ran } = setup({ import: [{ name: "Lab", hosts: [h1] }], import_from: "folders.yml" }, {}, {}, true);
+    const calls = vi.spyOn(backend, "pluginCall");
     await manager.start();
-    const drop = section(registries).rows[0]!.drop!(h2)!;
-    const dropOf = (host: string) => section(registries).rows[0]!.drop!(host)!;
-    const errors = () => manager.snapshot().notices.filter((n) => n.level === "error").map((n) => n.text);
-    return { manager, registries, backend, said, ran, link, drop, dropOf, errors, sent };
-  }
-
-  it("waits for the list while a send is failing and retrying, then runs", async () => {
-    vi.useFakeTimers();
-    try {
-      const { manager, registries, said, ran, link, drop, errors } = await down();
-      let done = false;
-      const dropping = call(manager, drop).then(() => void (done = true));
-      await vi.advanceTimersByTimeAsync(500);
-      // Held, not refused: nothing ran yet and nothing went wrong.
-      expect(done).toBe(false);
-      expect(ran).toEqual([]);
-      expect(errors()).toEqual([]);
-      // The next try gets through, and the drop runs as the user's.
-      link.up = true;
-      await vi.advanceTimersByTimeAsync(1_000);
-      await dropping;
-      expect(errors()).toEqual([]);
-      expect(ran).toEqual([`folder add ${h2} Lab`]);
-      expect(said.at(-1)).toEqual(quiet(`Added ${h2} to Lab`));
-      expect(section(registries).rows.map((r) => r.label)).toEqual(["Lab", h1, h2]);
-      manager.stop();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("fails clearly, still refused, once the list hasn't come in the time allowed", async () => {
-    vi.useFakeTimers();
-    try {
-      const { manager, ran, drop, errors } = await down();
-      let done = false;
-      const dropping = call(manager, drop).then(() => void (done = true));
-      await vi.advanceTimersByTimeAsync(BUILTINS_WAIT_MS - 100);
-      expect(done).toBe(false);
-      await vi.advanceTimersByTimeAsync(200);
-      await dropping;
-      expect(ran).toEqual([]);
-      expect(errors()).toEqual([expect.stringContaining(":folder can't run yet: the app hasn't told roster its own commands")]);
-      manager.stop();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("holds only so many calls at once; the next is refused at once, and the held ones each run once", async () => {
-    vi.useFakeTimers();
-    try {
-      const { manager, ran, link, drop, errors } = await down();
-      const done = Array.from({ length: BUILTINS_HELD_MAX }, () => false);
-      const held = done.map((_, i) => call(manager, drop).then(() => void (done[i] = true)));
-      await vi.advanceTimersByTimeAsync(100);
-      // All held, none refused.
-      expect(done).toEqual(Array.from({ length: BUILTINS_HELD_MAX }, () => false));
-      expect(ran).toEqual([]);
-      expect(errors()).toEqual([]);
-      // One more doesn't wait: it's refused there and then.
-      await call(manager, drop);
-      expect(ran).toEqual([]);
-      expect(errors()).toEqual([expect.stringContaining(":folder can't run yet: the app hasn't told roster its own commands")]);
-      expect(done.every((d) => !d)).toBe(true);
-      // The list gets through: each held call runs, once.
-      link.up = true;
-      await vi.advanceTimersByTimeAsync(1_000);
-      await Promise.all(held);
-      expect(ran).toEqual(Array.from({ length: BUILTINS_HELD_MAX }, () => `folder add ${h2} Lab`));
-      manager.stop();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("runs the held calls in the order they were made, before one made after the list got through", async () => {
-    vi.useFakeTimers();
-    try {
-      const { manager, ran, link, dropOf } = await down();
-      const first = call(manager, dropOf(h2));
-      await vi.advanceTimersByTimeAsync(300);
-      const second = call(manager, dropOf(hosts.hosts[2]!.name));
-      await vi.advanceTimersByTimeAsync(300);
-      link.up = true;
-      const third = call(manager, dropOf(h1));
-      await vi.advanceTimersByTimeAsync(BUILTINS_WAIT_MS);
-      await Promise.all([first, second, third]);
-      expect(ran).toEqual([`folder add ${h2} Lab`, `folder add ${hosts.hosts[2]!.name} Lab`, `folder add ${h1} Lab`]);
-      manager.stop();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("a send that never answers holds a call no longer than the time allowed", async () => {
-    vi.useFakeTimers();
-    try {
-      const { manager, ran, link, drop, errors } = await down();
-      link.hang = true;
-      let done = false;
-      const dropping = call(manager, drop).then(() => void (done = true));
-      await vi.advanceTimersByTimeAsync(BUILTINS_WAIT_MS + 100);
-      expect(done).toBe(true);
-      await dropping;
-      expect(ran).toEqual([]);
-      expect(errors()).toEqual([expect.stringContaining(":folder can't run yet")]);
-      manager.stop();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("held calls share one send at a time, and their failures don't slow the app's own retries", async () => {
-    vi.useFakeTimers();
-    try {
-      /** Sends from 6 s to 120 s after the start, with three calls held at first or none. */
-      const later = async (hold: boolean) => {
-        const { manager, drop, sent } = await down();
-        const before = sent.mock.calls.length;
-        const held = hold ? [call(manager, drop), call(manager, drop), call(manager, drop)] : [];
-        await vi.advanceTimersByTimeAsync(BUILTINS_WAIT_MS + 100);
-        await Promise.all(held);
-        const during = sent.mock.calls.length - before;
-        const at6 = sent.mock.calls.length;
-        await vi.advanceTimersByTimeAsync(120_000 - BUILTINS_WAIT_MS - 100);
-        manager.stop();
-        return { during, after: sent.mock.calls.length - at6 };
-      };
-      const quiet = await later(false);
-      const busy = await later(true);
-      // About one try a second for all three, not three.
-      expect(busy.during).toBeLessThanOrEqual(quiet.during + Math.ceil(BUILTINS_WAIT_MS / 1000) + 1);
-      expect(busy.after).toBe(quiet.after);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("a call carried one hop doesn't wait (only the user's own call does)", async () => {
-    vi.useFakeTimers();
-    try {
-      const { manager, drop } = await down();
-      const [, , plugin, handler, ctx] = drop.split(" ");
-      let done = false;
-      const carried = manager.call(plugin!, Number(handler), JSON.parse(decodeURIComponent(ctx!)), "ran an action", "carried").then(() => void (done = true));
-      await vi.advanceTimersByTimeAsync(10);
-      expect(done).toBe(true);
-      await carried;
-      manager.stop();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("an empty list counts as sent: a call doesn't wait for it", async () => {
-    vi.useFakeTimers();
-    try {
-      const { manager, registries, backend, ran } = setup({ import: [{ name: "Lab", hosts: [h1] }], import_from: "folders.yml" }, {}, {}, true);
-      const all = registries.commands.list.bind(registries.commands);
-      vi.spyOn(registries.commands, "list").mockImplementation(() => all().filter((c) => c.source !== "builtin"));
-      const sent = vi.spyOn(backend, "pluginBuiltins");
-      await manager.start();
-      expect(sent.mock.calls[0]?.[0]).toEqual([]);
-      let done = false;
-      const dropping = call(manager, section(registries).rows[0]!.drop!(h2)!).then(() => void (done = true));
-      await vi.advanceTimersByTimeAsync(10);
-      expect(done).toBe(true);
-      await dropping;
-      expect(ran).toEqual([`folder add ${h2} Lab`]);
-      manager.stop();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("a core that lost the list (built anew) is sent it again, so the next drop runs", async () => {
-    const { manager, registries, backend, ran, errors } = (() => {
-      const r = setup({ import: [{ name: "Lab", hosts: [h1] }], import_from: "folders.yml" }, {}, {}, true);
-      return { ...r, errors: () => r.manager.snapshot().notices.filter((n) => n.level === "error").map((n) => n.text) };
-    })();
-    await manager.start();
-    const sent = vi.spyOn(backend, "pluginBuiltins");
-    backend.pluginForgetBuiltins();
-    await call(manager, section(registries).rows[0]!.drop!(h2)!);
-    expect(errors()).toEqual([expect.stringContaining(":folder can't run yet")]);
-    await vi.waitFor(() => expect(sent).toHaveBeenCalledTimes(1));
-    expect(sent.mock.calls[0]?.[0]).toContain("publish");
     await call(manager, section(registries).rows[0]!.drop!(h2)!);
     expect(ran).toEqual([`folder add ${h2} Lab`]);
+    expect(said.at(-1)).toEqual(quiet(`Added ${h2} to Lab`));
+    expect(calls.mock.calls[0]?.[4]).toContain("publish");
+    expect(manager.snapshot().notices.filter((n) => n.level === "error")).toEqual([]);
     manager.stop();
-  });
-
-  it("a held call keeps the Session the user acted on, not the one on screen when it runs", async () => {
-    vi.useFakeTimers();
-    try {
-      const heard: Record<string, unknown>[] = [];
-      const ctxPlugin: FakePlugin = {
-        manifest: { name: "ctx", version: "1", description: "", author: null, api: 3, permissions: ["terminal.read"] },
-        load(roster) {
-          roster.sidebar.set("pins", { rows: [{ id: "a", label: "a", run: (c: Record<string, unknown>) => void heard.push(c) }] });
-        },
-      };
-      let onScreen = { session: 7, host: "esx-02" };
-      const { manager, registries, link } = await down(
-        { "/p/ctx": ctxPlugin },
-        { [STATE_KEY]: [{ path: "/p/ctx", name: "ctx", granted: ["terminal.read"], asked: ["terminal.read"] }] },
-        () => onScreen,
-      );
-      const line = registries.sidebar.get("pins")!.build({} as never)!.rows[0]!.command!;
-      const [, , plugin, handler, ctx] = line.split(" ");
-      const running = manager.callWith(plugin!, Number(handler), JSON.parse(decodeURIComponent(ctx!)));
-      await vi.advanceTimersByTimeAsync(300);
-      expect(heard).toEqual([]);
-      onScreen = { session: 9, host: "esx-03" };
-      link.up = true;
-      await vi.advanceTimersByTimeAsync(BUILTINS_WAIT_MS);
-      await running;
-      expect(heard).toEqual([expect.objectContaining({ session: 7, session_host: "esx-02" })]);
-      manager.stop();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });

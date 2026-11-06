@@ -1,0 +1,132 @@
+{
+  "_note": "mesh.status on :tutor's demo Inventory (#233): what plugin/demo.rs's DemoServe and the fake Backend's demoServe answer. Made up: no Host here exists.",
+  "plain": {
+    "links": [
+      {
+        "from": "demo-01",
+        "to": "demo-02",
+        "kind": "key"
+      },
+      {
+        "from": "demo-01",
+        "to": "demo-03",
+        "kind": "key"
+      },
+      {
+        "from": "demo-02",
+        "to": "demo-01",
+        "kind": "key"
+      },
+      {
+        "from": "demo-02",
+        "to": "demo-03",
+        "kind": "key"
+      },
+      {
+        "from": "demo-03",
+        "to": "demo-01",
+        "kind": "key"
+      },
+      {
+        "from": "demo-03",
+        "to": "demo-02",
+        "kind": "key"
+      },
+      {
+        "from": "demo-01",
+        "to": "demo-05",
+        "kind": "key"
+      }
+    ],
+    "excluded": {
+      "demo-04": "mesh: false"
+    },
+    "reach": {
+      "demo-01": 3,
+      "demo-02": 2,
+      "demo-03": 2
+    },
+    "members": [
+      "demo-01",
+      "demo-02",
+      "demo-03",
+      "demo-05"
+    ],
+    "pending": {
+      "demo-05": "no answer: ssh: connect to host 10.0.0.15 port 22: Connection timed out"
+    },
+    "cut_pending": {},
+    "out_of_date": false,
+    "warnings": []
+  },
+  "grouped": {
+    "links": [
+      {
+        "from": "demo-01",
+        "to": "demo-05",
+        "kind": "key"
+      }
+    ],
+    "excluded": {
+      "demo-04": "mesh: false"
+    },
+    "reach": {
+      "demo-01": 3,
+      "demo-02": 2,
+      "demo-03": 2
+    },
+    "members": [
+      "demo-01",
+      "demo-02",
+      "demo-03",
+      "demo-05"
+    ],
+    "pending": {
+      "demo-05": "no answer: ssh: connect to host 10.0.0.15 port 22: Connection timed out"
+    },
+    "cut_pending": {},
+    "out_of_date": false,
+    "warnings": [],
+    "meshed": {
+      "demo-lab": [
+        "demo-01",
+        "demo-02",
+        "demo-03"
+      ]
+    }
+  },
+  "brief": {
+    "links": [],
+    "excluded": {
+      "demo-04": "mesh: false"
+    },
+    "reach": {
+      "demo-01": 3,
+      "demo-02": 2,
+      "demo-03": 2
+    },
+    "members": [
+      "demo-01",
+      "demo-02",
+      "demo-03",
+      "demo-05"
+    ],
+    "pending": {
+      "demo-05": "no answer: ssh: connect to host 10.0.0.15 port 22: Connection timed out"
+    },
+    "cut_pending": {},
+    "out_of_date": false,
+    "warnings": [],
+    "links_more": 0,
+    "link_count": 7,
+    "link_statuses": {
+      "asked": 7
+    },
+    "reached": {
+      "demo-01": 2,
+      "demo-02": 2,
+      "demo-03": 2,
+      "demo-05": 1
+    }
+  }
+}

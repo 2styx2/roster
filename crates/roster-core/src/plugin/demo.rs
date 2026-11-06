@@ -4,15 +4,17 @@
 //! serve, the network or their real files:
 //!
 //! - **roster serve** is [`DemoServe`]: the demo Inventory's Hosts the app hands over answer
-//!   `hosts.list` and `host.get` (so `roster.inventory` reads the demo's Hosts); every other method
-//!   is refused, saying it isn't on the demo Inventory.
+//!   `hosts.list` and `host.get` (so `roster.inventory` reads the demo's Hosts), and `mesh.status`
+//!   answers a made-up Mesh over them (#233, decision Q202); every other method is refused,
+//!   saying it isn't on the demo Inventory.
 //! - **The network** is never reached ([`PluginHost::offline`]): a request is checked against the
 //!   grants as ever, then answers "not sent".
 //! - **Files** are a throwaway folder: each demo gets a fresh, empty data folder under `scratch`
 //!   (the temp dir), the user's alone, removed with the demo; one a crash left behind is swept at
 //!   the next demo's start. A Plugin's real `plugin-data` is never read or written.
 
-use super::{Limits, PluginHost, Serve};
+use super::code::{INVALID_PARAMS, ROSTER_ERROR, UNKNOWN_HOST};
+use super::{CallError, Limits, PluginHost, Serve};
 use serde_json::Value as Json;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -20,7 +22,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-/// roster serve, as the demo has it: the demo Inventory's Hosts, and nothing else.
+/// roster serve, as the demo has it: the demo Inventory's Hosts and a made-up Mesh over them, and
+/// nothing else.
 pub struct DemoServe {
     /// `{hosts: [...], groups: {...}}`, as `hosts.list` answers.
     hosts: Json,
@@ -33,7 +36,7 @@ impl DemoServe {
 }
 
 impl Serve for DemoServe {
-    fn call(&self, method: &str, params: Json) -> Result<Json, String> {
+    fn call(&self, method: &str, params: Json) -> Result<Json, CallError> {
         match method {
             "hosts.list" => Ok(self.hosts.clone()),
             "host.get" => {
@@ -42,13 +45,59 @@ impl Serve for DemoServe {
                     .as_array()
                     .and_then(|hs| hs.iter().find(|h| h["name"] == name))
                     .cloned()
-                    .ok_or_else(|| format!("No Host named '{name}' on the demo Inventory (code 2)"))
+                    .ok_or_else(|| {
+                        CallError::rpc(UNKNOWN_HOST, format!("No Host named '{name}' on the demo Inventory"))
+                    })
             }
-            other => Err(format!(
-                "{other} isn't on the demo Inventory: the tutorial's demo answers only hosts.list and host.get (code 3)"
-            )),
+            "mesh.status" => mesh_status(&params),
+            other => {
+                let words = demo_mesh()?["refusal"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .replace("{method}", other);
+                Err(CallError::rpc(ROSTER_ERROR, words))
+            }
         }
     }
+}
+
+/// The demo's Mesh, fixed and made up (`tests/fixtures/demo-mesh.json`, which the app's fake
+/// Backend answers from too): `mesh.status`'s plain answer, and what `grouped` and `brief` change.
+const DEMO_MESH: &str = include_str!("../../tests/fixtures/demo-mesh.json");
+
+fn demo_mesh() -> Result<Json, CallError> {
+    serde_json::from_str(DEMO_MESH).map_err(|e| CallError::Io {
+        message: format!("the demo's Mesh: {e}"),
+    })
+}
+
+/// `mesh.status` as real serve answers it (`status` and `brief` in src/roster/mesh.py), for
+/// the demo's Mesh: plain, `grouped: true` (API 19) or `brief: true` (API 17).
+fn mesh_status(params: &Json) -> Result<Json, CallError> {
+    let flag = |name: &str| match params.get(name) {
+        None | Some(Json::Null) => Ok(false),
+        Some(Json::Bool(b)) => Ok(*b),
+        Some(_) => Err(CallError::rpc(
+            INVALID_PARAMS,
+            format!("params.{name} must be true or false"),
+        )),
+    };
+    let (grouped, brief) = (flag("grouped")?, flag("brief")?);
+    if grouped && brief {
+        return Err(CallError::rpc(
+            INVALID_PARAMS,
+            "params.grouped and params.brief don't go together",
+        ));
+    }
+    let mesh = demo_mesh()?;
+    let mut out = mesh["plain"].clone();
+    let overlay = [(grouped, "grouped"), (brief, "brief")];
+    for (_, part) in overlay.iter().filter(|(on, _)| *on) {
+        if let (Some(o), Some(changes)) = (out.as_object_mut(), mesh[*part].as_object()) {
+            o.extend(changes.clone());
+        }
+    }
+    Ok(out)
 }
 
 /// A Plugin host for `:tutor`'s demo: [`DemoServe`], offline, and a throwaway data folder that
@@ -239,5 +288,32 @@ impl DemoSlot {
     /// Takes whatever demo runs out (the app quits).
     pub fn stop_any(&self) -> Option<Arc<DemoHost>> {
         self.held.lock().ok()?.take().map(|(_, h)| h)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The made-up Mesh agrees with itself: each Host's reach is how many Links start there, each
+    /// one's `reached` how many end there, and `link_count` how many there are.
+    #[test]
+    fn the_demo_mesh_counts_its_own_links() {
+        let mesh: Json = serde_json::from_str(DEMO_MESH).unwrap();
+        let links = mesh["plain"]["links"].as_array().unwrap();
+        let count = |end: &str| {
+            let mut n = serde_json::Map::new();
+            for l in links {
+                let at = l[end].as_str().unwrap().to_string();
+                let was = n.get(&at).and_then(Json::as_u64).unwrap_or(0);
+                n.insert(at, json!(was + 1));
+            }
+            Json::Object(n)
+        };
+        assert_eq!(mesh["plain"]["reach"], count("from"));
+        assert_eq!(mesh["brief"]["reached"], count("to"));
+        assert_eq!(mesh["brief"]["link_count"], json!(links.len()));
+        assert_eq!(mesh["brief"]["link_statuses"]["asked"], json!(links.len()));
     }
 }

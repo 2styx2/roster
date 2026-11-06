@@ -4,7 +4,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { focusableCode, markPage, mountSearchBox, renderResults } from "./client";
-import type { SearchIndex } from "./search";
+import type { SearchIndex, SearchTopics } from "./search";
 
 const INDEX: SearchIndex = {
   topics: [
@@ -29,11 +29,15 @@ const HEADER = `<header><form class="site-go" action="search.html" role="search"
 <input id="site-topic" name="q" type="search">
 </form></header><main id="main"><p>Some page</p><button>Other</button></main>`;
 
-function setup(load: () => Promise<SearchIndex> = () => Promise.resolve(INDEX)) {
+/** search-topics.js and its two text shards, as the build writes INDEX. */
+const TOPICS: SearchTopics = { topics: INDEX.topics, places: INDEX.places, shards: ["search-text-0.js", "search-text-1.js"] };
+const SHARDS: SearchIndex["texts"][] = [INDEX.texts.slice(0, 1), INDEX.texts.slice(1)];
+
+function setup(topics: () => Promise<SearchTopics> = () => Promise.resolve(TOPICS), texts: () => Promise<SearchIndex["texts"][]> = () => Promise.resolve(SHARDS)) {
   document.body.innerHTML = HEADER;
   const go = vi.fn<(href: string) => void>();
   const input = document.getElementById("site-topic") as HTMLInputElement;
-  mountSearchBox(input, { load, go });
+  mountSearchBox(input, { topics, texts, go });
   return { input, go, user: userEvent.setup() };
 }
 
@@ -136,23 +140,56 @@ describe("the search box", () => {
     expect(input).toHaveValue("");
   });
 
-  it("loads the index once, when it's first used, and says so while it loads", async () => {
-    let resolve: (i: SearchIndex) => void = () => {};
-    const load = vi.fn(() => new Promise<SearchIndex>((r) => (resolve = r)));
-    const { input, user } = setup(load);
-    expect(load).not.toHaveBeenCalled();
+  it("loads the topics once, when it's first used, and says so while they load", async () => {
+    let resolve: (t: SearchTopics) => void = () => {};
+    const topics = vi.fn(() => new Promise<SearchTopics>((r) => (resolve = r)));
+    const { input, user } = setup(topics);
+    expect(topics).not.toHaveBeenCalled();
     await user.type(input, "sand");
     expect(screen.getByRole("status")).toHaveTextContent("Loading");
-    resolve(INDEX);
+    resolve(TOPICS);
     expect(await screen.findByRole("option", { name: /^The sandbox/ })).toBeInTheDocument();
     await user.type(input, "box");
-    expect(load).toHaveBeenCalledTimes(1);
+    expect(topics).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads the text only when a query needs it, once (T260)", async () => {
+    const texts = vi.fn(() => Promise.resolve(SHARDS));
+    const { input, user } = setup(undefined, texts);
+    await user.click(input);
+    expect(texts).not.toHaveBeenCalled();
+    await user.type(input, "sand");
+    await user.type(input, "box");
+    expect(await screen.findByRole("option", { name: /init\.lua runs in a/ })).toBeInTheDocument();
+    expect(texts).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists the topics while the text loads, then the text, with nothing moving (T260)", async () => {
+    let resolve: (t: SearchIndex["texts"][]) => void = () => {};
+    const { input, user } = setup(undefined, () => new Promise((r) => (resolve = r)));
+    await user.type(input, "sandbox");
+    const list = await screen.findByRole("listbox");
+    expect(within(list).getAllByRole("option").map((o) => o.textContent)).toEqual([expect.stringContaining("The sandbox"), "All results"]);
+    expect(screen.getByText("Loading the text…")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("1 topic; loading the text");
+    resolve(SHARDS);
+    expect(await within(list).findByRole("option", { name: /init\.lua runs in a/ })).toBeInTheDocument();
+    expect(screen.queryByText("Loading the text…")).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("1 topic and 1 place in the text");
   });
 
   it("says so when the index doesn't load", async () => {
     const { input, user } = setup(() => Promise.reject(new Error("gone")));
     await user.type(input, "sand");
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The search index didn't load"));
+  });
+
+  it("keeps the topics when the text doesn't load, and says so", async () => {
+    const { input, user } = setup(undefined, () => Promise.reject(new Error("gone")));
+    await user.type(input, "sandbox");
+    expect(await screen.findByText("The text didn't load. Reload the page to try again.")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /^The sandbox/ })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("1 topic; the text didn't load");
   });
 });
 

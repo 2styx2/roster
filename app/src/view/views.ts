@@ -7,13 +7,13 @@
 // One view is open at a time (`ViewHost`): `:view ID`, a key bound to it, the `views` finder, or
 // a Plugin's own action open it; Esc closes it and focus goes back where it was.
 import type { CommandDef } from "../commands/table";
-import { matching } from "../commands/table";
+import { matching } from "../ui/completion";
 import type { FinderSourceDef } from "../finder/sources";
 import type { Registries } from "../registries";
 import { BUILTIN, Registry, type Entry } from "../registry";
-import type { RowAction } from "../sidebar/Sidebar";
-import type { Sort, TableColumn, TableRow } from "../ui/table";
-import type { GraphData, GraphFilter, GraphNode, Reach } from "../graph/model";
+import type { ActionIcon } from "../ui/icons";
+import type { TableModel } from "../ui/table";
+import type { GraphModel } from "../graph/model";
 
 export interface Fact {
   label: string;
@@ -21,53 +21,10 @@ export interface Fact {
   data?: true;
 }
 
-/** Something the selected row can do. */
-export interface TableActionDef {
-  label: string;
-  key?: string;
-  icon?: RowAction["icon"];
-  /** Only on rows whose cells match: each key one of its values (table.ts actionApplies). */
-  when?: Readonly<Record<string, readonly (string | number)[]>>;
-  run(row: TableRow): void;
-}
-
-export interface TableModel {
-  columns: readonly TableColumn[];
-  rows: readonly TableRow[];
-  /** The sort it starts with (the given order when null). */
-  sort: Sort | null;
-  empty?: string;
-  /** Enter or a double click on a row. */
-  open?(row: TableRow): void;
-  actions: readonly TableActionDef[];
-}
-
-/** Something the selected node can do (ticket 77). */
-export interface NodeActionDef {
-  label: string;
-  key?: string;
-  icon?: RowAction["icon"];
-  /** Only on nodes whose fields match: each key one of its values (model.ts nodeActionApplies). */
-  when?: Readonly<Record<string, readonly (string | number)[]>>;
-  run(node: GraphNode): void;
-}
-
-/** A graph (ticket 77): nodes, edges and clusters as plain data, and what a node does. */
-export interface GraphModel {
-  data: GraphData;
-  /** How far "reaches" goes: every hop (the default) or one. */
-  reach?: Reach;
-  /** What it shows; the user changes it with `f` (a new one from the Plugin replaces theirs). */
-  filter?: GraphFilter;
-  /** Enter or a double click on a node. */
-  open?(node: GraphNode): void;
-  actions: readonly NodeActionDef[];
-}
-
 /** A button on a view's or section's heading (ticket 91): what the whole of it can do. */
 export interface HeadActionDef {
   label: string;
-  icon: RowAction["icon"];
+  icon: ActionIcon;
   /** Runs it from anywhere in its view or section (#176). */
   key?: string;
   run(): void;
@@ -117,12 +74,16 @@ export interface ViewSnapshot {
   /** The node or row it opened at (`roster.views.open(id, { select })`), and which opening that
    * was: each such opening counts, so asking again while it's open selects again. */
   select?: { id: string; n: number };
+  /** How many times a view was asked to open: asking again while it's open (`:topology` from a
+   * Session beside it) hands it the keys back (#475). */
+  asked?: number;
 }
 
 /** Which view is open. */
 export class ViewHost {
   private snap: ViewSnapshot = { at: null };
   private openings = 0;
+  private asks = 0;
   private readonly listeners = new Set<() => void>();
 
   snapshot = (): ViewSnapshot => this.snap;
@@ -132,9 +93,14 @@ export class ViewHost {
     return () => this.listeners.delete(listener);
   };
 
-  /** Opens view `id`; with `select`, at that node or row, even when it's already open. */
+  /** Opens view `id`; with `select`, at that node or row, even when it's already open. Asked again
+   * while it's open, it takes the focus back. */
   open(id: string, select?: string) {
-    if (select === undefined && this.snap.at === id) return;
+    if (select === undefined && this.snap.at === id) {
+      this.snap = { ...this.snap, asked: ++this.asks };
+      for (const l of this.listeners) l();
+      return;
+    }
     this.set(id, select);
   }
 
@@ -151,7 +117,7 @@ export class ViewHost {
 }
 
 /** `:view ID` opens a view; `:view` alone lists them (the `views` finder). */
-export function viewCommand(views: ViewRegistry, host: ViewHost): CommandDef {
+function viewCommand(views: ViewRegistry, host: ViewHost): CommandDef {
   return {
     id: "view",
     source: BUILTIN,
@@ -171,12 +137,12 @@ export function viewCommand(views: ViewRegistry, host: ViewHost): CommandDef {
 }
 
 /** The `views` finder: every view, with where it's from. */
-export function viewsFinder(views: ViewRegistry): FinderSourceDef {
+function viewsFinder(views: ViewRegistry): FinderSourceDef {
   return {
     id: "views",
     source: BUILTIN,
     title: "Open a view",
-    prompt: "Views ›",
+    prompt: "Views",
     empty: "No views yet: Plugins add them.",
     items: () =>
       views

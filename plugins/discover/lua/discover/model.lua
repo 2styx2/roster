@@ -101,19 +101,19 @@ function M.list(items)
   return table.concat(items, ", ", 1, #items - 1) .. " and " .. items[#items]
 end
 
--- The code at the end of a roster serve error (`… (code 121)`), or nil.
+-- roster serve's code for an error (its error object's `code`, Plugin API 7), or nil.
 ---@param err any
 ---@return integer?
 function M.code(err)
-  local c = tostring(err):match("%(code (%-?%d+)%)$")
-  return c and tonumber(c) --[[@as integer?]]
+  return type(err) == "table" and err.code or nil
 end
 
--- The message of a roster serve error, without the function's name and the code.
+-- What an error says: roster serve's message, or the text without the function's name.
 ---@param err any
+---@return string
 function M.message(err)
-  local m = tostring(err):gsub("^roster%.serve%.%a+ [%w%._]+: ", ""):gsub(" %(code %-?%d+%)$", "")
-  return m
+  if type(err) == "table" and err.message then return err.message end
+  return (tostring(err):gsub("^roster%.serve%.%a+ [%w%._]+: ", ""))
 end
 
 ---@class discover.Port

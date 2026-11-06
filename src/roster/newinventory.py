@@ -16,12 +16,22 @@ from pathlib import Path
 
 import yaml
 
-from .common import NAME_RE, find_program, git_program, program_argv
-from .config import load_config_text
-from .errors import CLONE_FAILED, FOLDER_NOT_WRITABLE, INVENTORY_THERE, NOT_AN_INVENTORY, SSH_CONFIG_UNREADABLE, Problem
+from .common import NAME_RE, end_group, find_program, git_program, program_argv
+from .config import HIDDEN_PATH, load_config_text, shown_path
+from .errors import (
+    CLONE_FAILED,
+    FOLDER_NOT_WRITABLE,
+    INVENTORY_THERE,
+    NOT_AN_INVENTORY,
+    PATH_NOT_REPEATED,
+    ROSTER_ERROR,
+    SSH_CONFIG_UNREADABLE,
+    InventoryError,
+    Problem,
+)
 
 HOWS = ("blank", "file", "repo", "ssh-config")
-ROSTER_YML_MAX = 10 * 1024 * 1024       # bytes: the largest roster.yml file: imports (#409 L3)
+ROSTER_YML_MAX = 10 * 1024 * 1024       # bytes: the largest roster.yml file: imports
 SSH_CONFIG_MAX = 1024 * 1024            # ... and ssh config
 GROUP = "servers"                       # the blank one's empty group
 IMPORTED = "imported"                   # the group Hosts from an ssh config go in
@@ -34,8 +44,6 @@ HEADER = """\
 """
 
 BLANK = HEADER + f"""
-key_path: ~/.ssh/roster_ed25519
-
 groups:
   {GROUP}:
     hosts:
@@ -56,7 +64,8 @@ def parse_how(text):
         if how == "repo" and value.startswith("-"):
             raise ValueError("repo: a git URL can't start with '-'")
         return how, value
-    raise ValueError(f"{text!r}: use blank, file:PATH, repo:URL or ssh-config[:PATH]")
+    # never the text itself: it may be a clone URL with a token in it
+    raise ValueError("not one of its forms (not repeated): use blank, file:PATH, repo:URL or ssh-config[:PATH]")
 
 
 @dataclass
@@ -66,6 +75,19 @@ class Made:
     how: str
     hosts: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+
+
+def name_new(path, name, use=False):
+    """The new roster.yml at PATH named NAME (`roster inv add`), and with USE made the active Inventory: `roster init
+    --name` and serve's inventory.create. Problem (3) when it can't be named, saying the file was made."""
+    from . import inventories
+    try:
+        inventories.add(name, path)
+        if use:
+            inventories.use(name)
+    except Problem as e:
+        raise Problem(ROSTER_ERROR, f"{path} was made, but couldn't be named {name}: {e.message}",
+                      {"path": str(path)}, fix=f"`roster inv add NAME {path}` in a terminal") from None
 
 
 def create(path, how, value=None, interactive=True, stop=None):
@@ -85,8 +107,8 @@ def create(path, how, value=None, interactive=True, stop=None):
         text, made = imported(path, value)
     else:
         raise ValueError(how)
-    # O_EXCL: never over a file (or a link) that appeared meanwhile; 0600: the Inventory is private (#409 S2);
-    # O_BINARY: no CRLF on Windows, so it's the same bytes on every OS (#409 N4)
+    # O_EXCL: never over a file (or a link) that appeared meanwhile; 0600: the Inventory is private;
+    # O_BINARY: no CRLF on Windows, so it's the same bytes on every OS
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,9 +123,11 @@ def create(path, how, value=None, interactive=True, stop=None):
 
 
 def there(path):
-    return Problem(INVENTORY_THERE, f"{path} already exists, so roster kept it as it is", {"path": str(path)},
-                   fix=f"use it; or make a new one beside it as a named Inventory: roster -c OTHER-FOLDER/"
-                       f"{path.name} init --inventory ... --name NAME")
+    shown = shown_path(path)                        # named the way every other message names it
+    return Problem(INVENTORY_THERE, f"{shown or HIDDEN_PATH} already exists, so roster kept it as it is",
+                   {"path": shown or "(not repeated)"},
+                   fix="use it; or make a new one beside it as a named Inventory: roster -c OTHER-FOLDER/"
+                       f"{Path(shown).name if shown else 'roster.yml'} init --inventory ... --name NAME")
 
 
 def cant_write(folder, e):
@@ -112,53 +136,65 @@ def cant_write(folder, e):
                    {"path": str(folder)}, fix="pick a folder you can write to (or make this one writable)")
 
 
+def source_named(src, what="the file"):
+    """SRC (file:'s or ssh-config:'s, as typed) as a message names it, and as data.path does (#529): through
+    config.shown_path, so a source in a token-named folder is `WHAT at that path (not repeated)`."""
+    shown = shown_path(src)
+    return shown or f"{what} at {HIDDEN_PATH}", shown or PATH_NOT_REPEATED
+
+
 def read_source(src, what, limit, code, fix):
     """SRC's text, if it's a regular file of at most LIMIT bytes (never a device, a folder or a huge file)."""
+    name, data = source_named(src)
     if not src.is_file():
-        raise Problem(code, f"no file at {src}", {"path": str(src)}, fix=fix)
+        raise Problem(code, f"no file at {shown_path(src) or HIDDEN_PATH}", {"path": data}, fix=fix)
     try:
         size = src.stat().st_size
         if size > limit:
-            raise Problem(code, f"{src} is too big for {what} ({size // 1024} KB; at most {limit // 1024} KB)",
-                          {"path": str(src)}, fix=fix)
+            raise Problem(code, f"{name} is too big for {what} ({size // 1024} KB; at most {limit // 1024} KB)",
+                          {"path": data}, fix=fix)
         return src.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
-        raise Problem(code, f"can't read {src}: {e.strerror or type(e).__name__}", {"path": str(src)},
+        raise Problem(code, f"can't read {name}: {e.strerror or type(e).__name__}", {"path": data},
                       fix=fix) from None
 
 
-def checked(path, text, what):
+def checked(path, text, what, data=None, check="PATH"):
+    """TEXT, as the roster.yml at PATH (as given: its errors name it through shown_path), loads; else NOT_AN_INVENTORY
+    about WHAT (DATA: its data.path, CHECK: what `roster -c` takes to say why)."""
     try:
         load_config_text(text, path)
-    except SystemExit as e:
+    except InventoryError as e:
         raise Problem(NOT_AN_INVENTORY, f"{what} doesn't load, so nothing was written: "
-                                        f"{str(e.code).removeprefix('error: ')}", {"path": str(path)},
-                      fix=f"fix {what} first (`roster -c {what} check --box` says why)") from None
+                                        f"{e.message}", {"path": data or str(path)},
+                      fix=f"fix {what} first (`roster -c {check} check --box` says why)") from None
 
 
 def copied(path, source):
     src = Path(source).expanduser()
+    name, data = source_named(src, "the roster.yml")
+    check = shown_path(src) or "PATH"               # PATH: the file, once its folder is renamed
     text = read_source(src, "a roster.yml", ROSTER_YML_MAX, NOT_AN_INVENTORY,
                        "give the path of an existing roster.yml (file:PATH)")
     try:
         raw = yaml.safe_load(text)
-    except yaml.YAMLError as e:                     # where, never PyYAML's snippet of the file: it may be secrets (#417 L2)
+    except yaml.YAMLError as e:                     # where, never PyYAML's snippet of the file: it may be secrets
         mark = getattr(e, "problem_mark", None)
         where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
-        raise Problem(NOT_AN_INVENTORY, f"{src} doesn't load (it isn't valid YAML: "
+        raise Problem(NOT_AN_INVENTORY, f"{name} doesn't load (it isn't valid YAML: "
                                         f"{getattr(e, 'problem', None) or 'a syntax error'}{where}), so nothing was "
-                                        "written", {"path": str(src)},
-                      fix=f"fix it first (`roster -c {src} check --box` shows the line)") from None
+                                        "written", {"path": data},
+                      fix=f"fix it first (`roster -c {check} check --box` shows the line)") from None
     if raw is not None and not isinstance(raw, dict):
-        raise Problem(NOT_AN_INVENTORY, f"{src} isn't a roster.yml (its top level isn't a mapping of settings and "
-                                        "groups:), so nothing was written", {"path": str(src)},
+        raise Problem(NOT_AN_INVENTORY, f"{name} isn't a roster.yml (its top level isn't a mapping of settings and "
+                                        "groups:), so nothing was written", {"path": data},
                       fix="give the path of a roster.yml (file:PATH); for an ssh config: ssh-config:PATH")
     groups = (raw or {}).get("groups")
-    if not isinstance(groups, dict) or not groups:   # empty, a typo'd groups:, another YAML file (#409 C2)
-        raise Problem(NOT_AN_INVENTORY, f"{src} has no groups: (no Hosts at all), so it isn't a roster.yml to "
-                                        "import; nothing was written", {"path": str(src)},
+    if not isinstance(groups, dict) or not groups:   # empty, a typo'd groups:, another YAML file
+        raise Problem(NOT_AN_INVENTORY, f"{name} has no groups: (no Hosts at all), so it isn't a roster.yml to "
+                                        "import; nothing was written", {"path": data},
                       fix="check the file, or start a new one: --inventory blank")
-    checked(src.resolve(), text, str(src))
+    checked(src, text, name, data, check)          # named from SRC as given (#529), never resolved
     return text
 
 
@@ -174,10 +210,10 @@ def clone(path, url, interactive, stop=None):
     if find_program("git") is None:
         raise Problem(CLONE_FAILED, "git isn't installed on this Box, so roster can't clone the repo",
                       fix="install git, or copy roster.yml over and use file:PATH")
-    from .changes import GIT_LOCATION
-    env = {k: v for k, v in os.environ.items() if k not in GIT_LOCATION}
+    from .changes import BATCH_SSH, NO_PROMPTS, git_env
+    env = git_env()
     if not interactive:                             # nobody to answer: a passphrase, a password or a new host key
-        env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": env.get("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")})
+        env.update({**NO_PROMPTS, "GIT_SSH_COMMAND": env.get("GIT_SSH_COMMAND", BATCH_SSH)})
     try:
         argv = program_argv([git_program(), "clone", "-q", "--", url, str(folder)])
     except ValueError as e:                         # a git.cmd and a URL or folder with what cmd.exe acts on
@@ -251,7 +287,7 @@ def ssh_hosts(text):
     return hosts, skipped
 
 
-# Credentials in a clone URL (#409 L4, N2; #417 M2). For http(s) and ssh the whole userinfo goes, up to the last @
+# Credentials in a clone URL. For http(s) and ssh the whole userinfo goes, up to the last @
 # before the host: a token as the user (https://ghp_TOKEN@github.com/...) and a password with an @ in it. Elsewhere
 # (file://) only a password. By pattern, not a URL parser: one that can't parse the rest (a Windows path after
 # file://) would show it all. scp-style git@host:path has no secret, and isn't touched.
@@ -264,14 +300,13 @@ def stoppable(argv, env, folder, made_folder, stop):
     killed, and the folder it was making is taken away (#417 L5). Never asks anything."""
     import time
 
-    from .changes import kill_group
     from .errors import CANCELLED
     p = subprocess.Popen(argv, env=env, text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE, start_new_session=True)
     end = time.monotonic() + CLONE_TIMEOUT
     while p.poll() is None:
         if stop.wait(0.1) or time.monotonic() > end:
-            kill_group(p)
+            end_group(p)
             tidy(folder, made_folder)
             if stop.is_set():
                 raise Problem(CANCELLED, "inventory.create was stopped while git cloned the repo: nothing was kept")
@@ -366,11 +401,11 @@ def host_line(name, h):
         fields["auth"] = "agent"
     line = f"      {scalar(name)}: {{" + ", ".join(f"{k}: {scalar(v)}" for k, v in fields.items()) + "}"
     if h.get("identityfile"):
-        line += f"     # IdentityFile {oneline(h['identityfile'])}: auth: agent logs in with it (ssh-agent)"
+        line += f"     # IdentityFile {no_controls(h['identityfile'])}: auth: agent logs in with it (ssh-agent)"
     return line
 
 
-def oneline(text):
+def no_controls(text):
     """TEXT with every control character (a newline above all) taken out, for a comment."""
     return re.sub(r"[\x00-\x1f\x7f]", "", text)
 
@@ -392,6 +427,8 @@ def imported(path, source):
         shown = "~/" + src.relative_to(Path.home()).as_posix()
     except ValueError:
         shown = str(src)
+    if shown_path(src) is None:                     # in a token-named folder: not in messages, nor the new file (#529)
+        shown = f"the ssh config at {HIDDEN_PATH}"
     text = read_source(src, "an ssh config", SSH_CONFIG_MAX, SSH_CONFIG_UNREADABLE,
                        "give the path of your ssh config (ssh-config:PATH)")
     hosts, skipped = ssh_hosts(text)
@@ -399,18 +436,18 @@ def imported(path, source):
     head = [HEADER.rstrip("\n"),
             f"# The Hosts below came from {shown} (each one's HostName, User, Port and IdentityFile; nothing else, and",
             f"# {shown} itself is unchanged). Check them, then:  roster setup", "",
-            "key_path: ~/.ssh/roster_ed25519", "", "groups:", f"  {IMPORTED}:", f"    title: {scalar('From ' + shown)}"]
+            "groups:", f"  {IMPORTED}:", f"    title: {scalar('From ' + shown)}"]
     if user:
         head.append(f"    user: {scalar(user)}                # ssh's own default for a Host with no User: your login name")
     head.append("    hosts:")
     lines, kept = [], []
-    for n, h in hosts.items():                      # each Host on its own: one roster can't take is skipped (L2)
+    for n, h in hosts.items():                      # each Host on its own: one roster can't take is skipped
         line = host_line(n, h)
         try:
             load_config_text("\n".join([*head, line]) + "\n", path)
-        except SystemExit as e:
-            why = str(e.code).removeprefix("error: ").replace(f"host {n!r}", "").strip(" :")
-            skipped.append(f"{n} ({why})")
+        except InventoryError as e:
+            skipped.append(f"{n} ({e.why if e.host == n else e.message})")
+
             continue
         lines.append(line)
         kept.append(n)

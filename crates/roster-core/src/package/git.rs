@@ -10,10 +10,9 @@
 //! - no submodules, and hooks pointed at nowhere;
 //! - a time limit, after which git is killed.
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 /// How to run git: which program, and for how long at most.
 #[derive(Debug, Clone)]
@@ -74,49 +73,15 @@ impl Git {
         }
         cmd.env("GIT_TERMINAL_PROMPT", "0")
             .env("GCM_INTERACTIVE", "never")
-            .env("LC_ALL", "C")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        let mut child = cmd.spawn().map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                "git isn't installed (or isn't on the PATH): Packages need it".to_string()
-            } else {
-                format!("can't run git: {e}")
-            }
+            .env("LC_ALL", "C");
+        let done = crate::process::run(cmd, Some(self.timeout)).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => "git isn't installed (or isn't on the PATH): Packages need it".to_string(),
+            std::io::ErrorKind::TimedOut => format!("git {} took longer than {} s", args[0], self.timeout.as_secs()),
+            _ => format!("can't run git: {e}"),
         })?;
-        let read = |pipe: Option<Box<dyn Read + Send>>| {
-            std::thread::spawn(move || {
-                let mut out = Vec::new();
-                if let Some(mut p) = pipe {
-                    let _ = p.read_to_end(&mut out);
-                }
-                out
-            })
-        };
-        let out = read(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-        let err = read(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-        let deadline = Instant::now() + self.timeout;
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-                Ok(None) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(format!("git {} took longer than {} s", args[0], self.timeout.as_secs()));
-                }
-                Err(e) => return Err(format!("can't wait for git: {e}")),
-            }
-        };
-        let out = String::from_utf8_lossy(&out.join().unwrap_or_default()).into_owned();
-        let err = String::from_utf8_lossy(&err.join().unwrap_or_default()).into_owned();
+        let status = done.status;
+        let out = String::from_utf8_lossy(&done.stdout).into_owned();
+        let err = String::from_utf8_lossy(&done.stderr).into_owned();
         if status.success() {
             Ok(out)
         } else {

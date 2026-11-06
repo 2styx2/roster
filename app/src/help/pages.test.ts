@@ -4,12 +4,13 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { configWith, defaultConfig } from "../config/fixture";
 import { defaultOptions, keymapOf, registerBindings } from "../keymap";
 import { builtinRegistries, type Registries } from "../registries";
-import { CONFIG } from "../registry";
+import { BUILTIN, CONFIG } from "../registry";
 import { plain, type Block, type Def } from "./doc";
 import { UPGRADE_TOPIC } from "../plugins/PluginsPanel";
-import { findTopic, helpContext, pageBody, topicIndex, topics, type HelpContext } from "./pages";
+import { findTopic, helpContext, pageBody, pageLabel, topicIndex, topics, type HelpContext } from "./pages";
 import { blockTags } from "./guideBlocks";
 import { guides } from "./guides";
+import { optionTag } from "./reference";
 import { helpText } from "./text";
 
 // The guides' text is a chunk the app loads on the first :help (T213); these read it.
@@ -42,6 +43,11 @@ describe("the tag table (T213)", () => {
 });
 
 describe("topics", () => {
+  it("quote an entry named like any built-in page or guide (reference.ts's RESERVED)", () => {
+    const ids = builtinRegistries().help.list().filter((p) => p.source === BUILTIN).map((p) => p.id);
+    expect(ids.filter((id) => !optionTag(id).startsWith("'"))).toEqual([]);
+  });
+
   it("are the pages, each command, option, error row and guide heading", () => {
     const tags = topics(ctxOf()).map((t) => t.tag);
     for (const tag of ["index", "commands", "keys", "options", "themes", "finders", "errors", "config", "keyboard"]) {
@@ -56,6 +62,15 @@ describe("topics", () => {
     expect(new Set(tags).size).toBe(tags.length);
   });
 
+  it("the topic finder titles an entry by what it says it is, never by a page's slug (round 19)", () => {
+    const ctx = ctxOf();
+    const all = topicIndex(ctx).topics;
+    for (const t of all.filter((t) => t.kind !== "page" && t.tag.includes("#"))) expect(t.label, t.tag).not.toBe(t.tag);
+    // An alias is titled as what it goes to; its own tag stays its tag.
+    const target = all.find((t) => t.tag === "errors-guide#checking-a-host-key");
+    expect(all.find((t) => t.tag === "host-keys")).toMatchObject({ label: target?.label, kind: "alias" });
+  });
+
   it(":help TOPIC finds a tag exactly, an alias, or the best fuzzy match", () => {
     const ctx = ctxOf();
     expect(findTopic(ctx, "terminal.size")).toMatchObject({ page: "options", anchor: "terminal.size" });
@@ -67,7 +82,7 @@ describe("topics", () => {
     expect(findTopic(ctx, "zzqxj")).toBeUndefined();
   });
 
-  it("an entry's path is its doc cut to 80 characters, with an ellipsis when it was cut", () => {
+  it("an entry's note is its doc cut to 80 characters, with an ellipsis when it was cut; its path is its page", () => {
     const ctx = ctxOf();
     const docs = new Map(ctx.pages.flatMap((pg) => defs(pageBody(ctx, pg.id)).map((d) => [d.anchor, plain(d.body)] as const)));
     const entries = topicIndex(ctx).topics.filter((t) => t.kind === "entry" && docs.get(t.tag));
@@ -76,11 +91,25 @@ describe("topics", () => {
     expect(long.length).toBeGreaterThan(0);
     expect(short.length).toBeGreaterThan(0);
     for (const t of long) {
-      expect(t.path!.length).toBeLessThanOrEqual(80);
-      expect(t.path).toMatch(/\S…$/);
-      expect(docs.get(t.tag)!.startsWith(t.path!.slice(0, -1))).toBe(true);
+      expect(t.note!.length).toBeLessThanOrEqual(80);
+      expect(t.note).toMatch(/\S…$/);
+      expect(docs.get(t.tag)!.startsWith(t.note!.slice(0, -1))).toBe(true);
     }
-    for (const t of short) expect(t.path).toBe(docs.get(t.tag));
+    for (const t of short) expect(t.note).toBe(docs.get(t.tag));
+    // The finder's middle column means one thing on every row: the page (round 20), by its short
+    // name (round 21).
+    const labels = new Set(ctx.pages.map(pageLabel));
+    for (const t of entries) expect(labels.has(t.path!), `${t.tag}: ${t.path}`).toBe(true);
+  });
+
+  it("names every built-in page in 24 characters or fewer, each its own (round 21)", () => {
+    const ctx = ctxOf();
+    const labels = ctx.pages.filter((pg) => pg.source === BUILTIN).map(pageLabel);
+    for (const l of labels) expect([...l].length, l).toBeLessThanOrEqual(24);
+    expect(new Set(labels).size).toBe(labels.length);
+    // The two error pages read apart; the guide keeps its long title.
+    expect(labels).toEqual(expect.arrayContaining(["When a Session fails", "Error catalog"]));
+    expect(ctx.pages.find((pg) => pg.id === "errors-guide")?.title).toBe("Connection errors: every way a Session can fail");
   });
 });
 

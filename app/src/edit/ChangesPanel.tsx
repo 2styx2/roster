@@ -7,6 +7,8 @@
 //
 // It opens from a key, so it doesn't animate. Esc closes it (or backs out of a step).
 import { useEffect, useRef, useState } from "react";
+import type { Capabilities } from "../backend/capabilities";
+import { isHidden, RENAME, shownPath } from "../backend/shown";
 import type { PendingChanges, PublishResult } from "../backend/types";
 import type { Problem } from "../errors/classify";
 import { problemFromCallError, type ErrorRow } from "../errors/catalog";
@@ -15,6 +17,7 @@ import { countOf } from "../ui/format";
 import { CloseGlyph } from "../ui/CloseGlyph";
 import { PanelButton } from "../panel/PanelFrame";
 import { Keys } from "../ui/Keys";
+import { kindOf, shortCommit, SIGN_WORD } from "./diff";
 
 export type ChangesState =
   | { state: "loading" }
@@ -32,6 +35,8 @@ export interface ChangesPanelProps {
   leader: string;
   /** roster speaks `changes.publish` (API 7). */
   canPublish: boolean;
+  /** What this roster can do: whether `changes.diff`'s path is one it won't name (#529). */
+  caps: Capabilities;
   rows: readonly ErrorRow[];
   actions: ProblemActions;
   onDiscard(): Promise<void>;
@@ -41,20 +46,6 @@ export interface ChangesPanelProps {
 }
 
 const FIELD_LABEL: Record<string, string> = { ip: "address", auth: "Login" };
-
-/** One diff line's kind, for its colour and its sign in words. */
-export function kindOf(line: string): "add" | "del" | "hunk" | "meta" | "same" {
-  if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff ") || line.startsWith("index ")) return "meta";
-  if (line.startsWith("@@")) return "hunk";
-  if (line.startsWith("+")) return "add";
-  if (line.startsWith("-")) return "del";
-  return "same";
-}
-
-export const SIGN_WORD = { add: "added: ", del: "removed: " } as const;
-
-/** The short hash git shows. */
-const short = (commit: string) => commit.slice(0, 7);
 
 export function ChangesPanel(props: ChangesPanelProps) {
   const { changes, editKeys, leader, canPublish, rows, actions, onDiscard, onPublish, onClose } = props;
@@ -145,9 +136,15 @@ export function ChangesPanel(props: ChangesPanelProps) {
       )}
       {changes.state === "done" && count > 0 && (
         <>
-          <p className="muted changes-where">
-            Edits on this Box that aren't Published yet, in <code>{changes.changes.path}</code>.
-          </p>
+          {isHidden(changes.changes.path, props.caps) ? (
+            <p className="muted changes-where">
+              Edits on this Box that aren't Published yet, in {shownPath(changes.changes.path, props.caps, "the roster.yml")}. {RENAME}
+            </p>
+          ) : (
+            <p className="muted changes-where">
+              Edits on this Box that aren't Published yet, in <code>{changes.changes.path}</code>.
+            </p>
+          )}
           <ul className="changes-hosts">
             {changes.changes.hosts.map((h) => (
               <li key={h.host}>
@@ -282,7 +279,7 @@ function Published({ result, copy }: { result: PublishResult; copy: ProblemActio
       <p>
         Published{" "}
         <code className="publish-hash" title={result.commit}>
-          {short(result.commit)}
+          {shortCommit(result.commit)}
         </code>{" "}
         to <span className="mono">{result.upstream}</span>
         {result.pulled > 0 && <span className="muted"> (after {countOf(result.pulled, "new commit")} there)</span>}.

@@ -31,7 +31,16 @@ while (( $# )); do
         --allow-downgrade) ALLOW_DOWNGRADE=1 ;;
         --no-completion) COMPLETION=0 ;;
         -h|--help) sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
+        # never the whole word: a mistyped flag can carry a URL with a token, and so can a word with no flag (#484 M2);
+        # the name ends at its first character that is not a letter, digit or - (=, :, a glued -iURL: #484 L4);
+        # longer than any real option (20), it's a glued token, not a name (#489 L1); and it's printed only when it
+        # looks like one (--[a-z][a-z-]* or -[a-zA-Z]), so a glued token's start never is (#489 N5)
+        -*) opt=${1%%[^A-Za-z0-9-]*}
+            if [ ${#opt} -le 20 ] && [[ $opt =~ ^(--[a-z][a-z-]*|-[a-zA-Z])$ ]]; then
+                echo "unknown option: $opt (try --help)" >&2
+            else echo "unknown option (not repeated) (try --help)" >&2; fi
+            exit 2 ;;
+        *) echo "unexpected argument (not repeated) (try --help)" >&2; exit 2 ;;
     esac
     shift
 done
@@ -67,6 +76,24 @@ step() {                        # step "what" cmd...  - output to the log, shown
 # installed 0.1.0 over 0.5.0 without a word)
 
 plural() { (( $1 == 1 )) && echo "$1 $2" || echo "$1 ${2}s"; }
+
+why_no_pull() {                 # why_no_pull DIR: why the map's `git pull --ff-only` failed, said once (T243, #476)
+    local d=$1 up                # read-only but for a fetch: never a reset, a stash or a switch
+    up=$(git -C "$d" rev-parse --abbrev-ref '@{u}' 2>/dev/null)
+    if ! git -C "$d" fetch --quiet --prune 2>/dev/null; then
+        echo "couldn't reach the map's server (offline?)"
+    elif ! git -C "$d" rev-parse --verify --quiet '@{u}' >/dev/null 2>&1; then
+        local main                # the remote's default branch, as changes.pull reads it (main when it doesn't say)
+        main=$(git -C "$d" rev-parse --abbrev-ref "${up%%/*}/HEAD" 2>/dev/null); main=${main#*/}
+        echo "${up:-its branch} is gone from the server (merged and deleted?): git -C $(home "$d") switch ${main:-main}"
+    elif [[ -n $(git -C "$d" -c core.fsmonitor=false status --porcelain --untracked-files=no 2>/dev/null) ]]; then
+        echo "uncommitted edits in $(home "$d") block the fast-forward (they're kept)"
+    elif [[ $(git -C "$d" rev-list --count '@{u}..HEAD' 2>/dev/null) != 0 ]]; then
+        echo "$(home "$d") and $up both have new commits (diverged): merge or rebase it yourself"
+    else
+        echo "couldn't fast-forward"
+    fi
+}
 
 check_source() {                # check_source DIR: fetch, offer a fast-forward, warn about an old version
     local src=$1 branch upstream remote behind ahead dirty newest version refs err tags
@@ -204,7 +231,7 @@ elif ! git -C "$(dirname "$cfg")" -c core.fsmonitor=false rev-parse --abbrev-ref
     skip "$(home "$(dirname "$cfg")") has no upstream to pull from: nothing to pull"
 elif ask "Pull the latest map into $(home "$(dirname "$cfg")")?" Y; then
     if step "git pull" git -C "$(dirname "$cfg")" pull --ff-only --quiet; then done_stage
-    else warn "couldn't fast-forward; using the map as it is"; fail_stage; fi
+    else warn "$(why_no_pull "$(dirname "$cfg")"); using the map as it is"; fail_stage; fi
 else
     skip "kept the map as it is"
 fi
@@ -216,8 +243,14 @@ if [[ -z $cfg ]]; then
 else
     export ROSTER_CONFIG="$cfg"
     cd "$(dirname "$cfg")" || exit 1
-    if step "roster sync (ssh config and ROSTER.md from the map)" roster sync; then done_stage; else fail_stage; fi
-    info "a host the map gained needs this box's key once: roster setup (roster check says which)"
+    # the map only, never reading the terminal (#503's review HIGH-1): a vault unlock mid-update would lock the
+    # roster app's session; `roster sync` or `roster vault sync` picks up the vault
+    if step "roster sync (ssh config and ROSTER.md from the map)" roster sync --no-vault </dev/null; then
+        done_stage
+        # T243: end as `roster sync` does: its next command (the last line it printed), only when something is left
+        last=$(tail -n 1 "$LOG")
+        (( DRY )) || [[ $last != *"next: "* ]] || info "next: ${last#*next: }"
+    else fail_stage; fi
 fi
 
 # 5. Tab completion: on, as install.sh turns it on, for a box installed before it did (unless you said no)

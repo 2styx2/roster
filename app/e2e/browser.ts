@@ -1,7 +1,8 @@
 // The suite's side of e2e/harness.tsx: one headless Chromium per test file, one page on the
 // harness, and typed calls into `window.e2e`. Every wait is for something the page does (a byte
 // sent, a write parsed, a clipboard write), never for a while (docs/app/dev/testing.md, T146).
-import { chromium, type Browser, type Page } from "playwright-core";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import { FAKE_PASSWORD } from "../src/backend/fakeVault";
 import { inject } from "vitest";
 import type { E2E, MountOptions } from "./harness";
 
@@ -146,6 +147,33 @@ export async function openHarness(browser: Browser, opts: { os?: "windows" | "ma
     },
   };
   return h;
+}
+
+/** Unlocks the whole app on the fake Backend: its master password on the lock screen. */
+export async function unlock(page: Page): Promise<void> {
+  await page.getByLabel(/master password/i).fill(FAKE_PASSWORD);
+  await page.keyboard.press("Enter");
+}
+
+/** The whole app (index.html) on the fake Backend's `fixture`, in a window of `size`, unlocked,
+ * its Inventory listed (shown, but for a narrow window's tucked Sidebar). No dev toggle over the
+ * window: it isn't in the shipped app. `init` runs in the page before the app does. */
+export async function openApp(
+  browser: Browser,
+  fixture: string,
+  size: { width: number; height: number },
+  init?: () => void,
+): Promise<{ context: BrowserContext; page: Page }> {
+  const context = await browser.newContext({ viewport: size });
+  if (init) await context.addInitScript(init);
+  const page = await context.newPage();
+  await page.goto(`${inject("appUrl")}?fixture=${fixture}&toggle=off`);
+  await unlock(page);
+  const listed = page.locator('[role="group"][aria-label="Inventory"] [role="treeitem"]').first();
+  // Shown; in a window under 720 px only listed: the floating Sidebar is tucked away over the idle
+  // pane until App mode (keyboard.md).
+  await listed.waitFor({ state: size.width <= 720 ? "attached" : "visible" });
+  return { context, page };
 }
 
 /** CDP modifier bits. */

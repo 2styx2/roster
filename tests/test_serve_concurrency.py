@@ -4,12 +4,15 @@ not free in time is code 4 with nothing done. The Publish pushes to a bare repo 
 holds the push until the test lets it go; nothing connects anywhere."""
 import json
 import subprocess
+import sys
 import threading
 import time
+import types
 
 import pytest
 
 from roster import serve as rpc
+from roster.context import current
 
 INVENTORY = """\
 defaults:
@@ -157,10 +160,15 @@ def test_a_write_that_cant_get_roster_yml_in_time_is_busy_and_does_nothing(state
 
 
 def test_vault_lock_waits_for_whoever_holds_a_secret(state, monkeypatch):
-    holding(state.vault, "session.prepare", 0.5, shared=True)
-    t = time.monotonic()
-    assert "result" in call(state, "vault.lock")
-    assert time.monotonic() - t >= 0.3                                  # it waited until the lookup was done
+    release = holder(state.vault, "session.prepare", shared=True)
+    answer = []
+    t = threading.Thread(target=lambda: answer.append(call(state, "vault.lock")), daemon=True)
+    t.start()
+    wait_until(lambda: state.vault.writers_waiting == 1)                # vault.lock waits for the lookup
+    assert answer == []
+    release.set()
+    t.join(5)
+    assert "result" in answer[0]
 
 
 def test_secret_lookups_share_the_vault(state, monkeypatch):
@@ -171,26 +179,34 @@ def test_secret_lookups_share_the_vault(state, monkeypatch):
 
 
 def test_host_get_settled_waits_for_a_write_under_way(state):
-    holding(state.lock, "host.add", 0.6)
-    t = time.monotonic()
-    assert call(state, "host.get", {"name": "nas-1"})["result"]["name"] == "nas-1"
-    assert time.monotonic() - t < 0.3                                   # a plain read doesn't wait
-    assert call(state, "host.get", {"name": "nas-1", "settled": True})["result"]["name"] == "nas-1"
-    assert time.monotonic() - t >= 0.5
+    release = holder(state.lock, "host.add")
+    assert call(state, "host.get", {"name": "nas-1"})["result"]["name"] == "nas-1"     # a plain read doesn't wait
+    answered = []
+
+    def settled():
+        r = call(state, "host.get", {"name": "nas-1", "settled": True})
+        answered.append((time.monotonic(), r))
+    t = threading.Thread(target=settled, daemon=True)
+    t.start()
+    t.join(0.2)                                         # time to answer, were it not waiting
+    released = time.monotonic()
+    release.set()
+    t.join(5)
+    [(at, r)] = answered
+    assert at >= released and r["result"]["name"] == "nas-1"
     assert call(state, "host.get", {"name": "nas-1", "settled": "yes"})["error"]["code"] == -32602
 
 
 def test_the_quick_reads_are_the_ones_that_take_no_lock():
-    assert not set(rpc.QUICK) & set(rpc.LOCKS)
-    assert set(rpc.QUICK) <= set(rpc.METHODS)
-    assert set(rpc.LOCKS) <= set(rpc.METHODS)
-    assert rpc.quick({"method": "host.get", "params": {"name": "x"}})
-    assert not rpc.quick({"method": "host.get", "params": {"name": "x", "settled": True}})
+    quick = [name for name, m in rpc.METHODS.items() if m.lane == "quick"]
+    assert "hosts.list" in quick and not any(rpc.METHODS[name].claims({}) for name in quick)
+    assert rpc.lane({"method": "host.get", "params": {"name": "x"}}) == "quick"
+    assert rpc.lane({"method": "host.get", "params": {"name": "x", "settled": True}}) == "general"
 
 
 def test_the_server_answers_a_quick_read_while_every_worker_is_busy(state, monkeypatch):
     gate = threading.Event()
-    monkeypatch.setitem(rpc.METHODS, "test.slow", lambda state, params: gate.wait(5) and {"slow": True})
+    monkeypatch.setitem(rpc.METHODS, "test.slow", rpc.Method(lambda state, params: gate.wait(5) and {"slow": True}))
     out = []
     server = rpc.Server(state, out.append, workers=2, quick_workers=1)
     for i in range(3):
@@ -222,7 +238,7 @@ def test_two_requests_recording_the_same_host_key_at_once_record_it_once(isolate
         t.start()
     for t in threads:
         t.join()
-    lines = sshops.known_hosts_file().read_text().splitlines()
+    lines = current().known_hosts.read_text().splitlines()
     assert lines.count("10.0.0.30 ssh-ed25519 AAAAC3Nza") == 1
 
 
@@ -254,7 +270,7 @@ def test_vault_lock_forgets_at_once_then_waits_for_the_holders_and_never_fails(s
     # in memory while the app showed its lock screen
     monkeypatch.setattr(rpc, "LOCK_WAIT", 0)                       # any wait at all would have been 4
     forgot = []
-    monkeypatch.setattr(rpc, "ON_VAULT_LOCK", [lambda st: forgot.append(time.monotonic())])
+    state.askpass = types.SimpleNamespace(forget=lambda: forgot.append(time.monotonic()))   # the askpass tokens
     release = holder(state.vault, "session.prepare", shared=True)   # a request holding a secret
     answer = []
     t = threading.Thread(target=lambda: answer.append(call(state, "vault.lock")), daemon=True)
@@ -269,7 +285,7 @@ def test_vault_lock_forgets_at_once_then_waits_for_the_holders_and_never_fails(s
 
 
 def test_vault_logout_never_waits_with_a_busy_answer_either(state):
-    assert "vault.logout" not in rpc.LOCKS and "vault.lock" not in rpc.LOCKS
+    assert not rpc.METHODS["vault.logout"].claims({}) and not rpc.METHODS["vault.lock"].claims({})
 
 
 def test_a_writer_that_gives_up_lets_the_readers_it_held_back_go(state):
@@ -311,7 +327,7 @@ def test_host_verify_login_reloads_before_it_shares_the_vault(state, monkeypatch
 
 def test_a_reload_for_a_read_waits_only_so_long_for_a_write(state, monkeypatch):
     # review 6: mesh.plan's and mesh.apply's reload waited for roster.yml with no limit, never answering 4
-    monkeypatch.setitem(rpc.DEADLINES, "mesh.plan", 0.1)          # what's left of its deadline is its wait
+    monkeypatch.setattr(rpc.METHODS["mesh.plan"], "deadline", 0.1)          # what's left of its deadline is its wait
     release = holder(state.lock, "changes.publish")
     answer = []
     t = threading.Thread(target=lambda: answer.append(call(state, "mesh.plan")), daemon=True)
@@ -395,8 +411,8 @@ def test_a_worker_outlives_a_request_that_raises(state):
 def test_closing_refuses_whats_queued_before_any_clean_up(state, monkeypatch):
     # review 5: a vault.login queued when stdin closed ran after end_sign_in, and its `bw login` outlived serve
     gate, started, ran, out = threading.Event(), threading.Event(), [], []
-    monkeypatch.setitem(rpc.METHODS, "test.slow", lambda st, params: started.set() or gate.wait(5) and {})
-    monkeypatch.setitem(rpc.METHODS, "vault.login", lambda st, params: ran.append(1) or {})
+    monkeypatch.setitem(rpc.METHODS, "test.slow", rpc.Method(lambda st, params: started.set() or gate.wait(5) and {}))
+    monkeypatch.setattr(rpc.METHODS["vault.login"], "fn", lambda st, params: ran.append(1) or {})
     server = rpc.Server(state, out.append, workers=1, quick_workers=1)
     server.submit(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "test.slow"}))
     started.wait(5)
@@ -406,6 +422,46 @@ def test_closing_refuses_whats_queued_before_any_clean_up(state, monkeypatch):
     assert server.drain(5)
     assert ran == []
     assert {r["id"]: r.get("error", {}).get("message") for r in out}[2] == "roster serve is closing"
+
+
+def test_a_request_waiting_for_a_job_serve_stops_as_it_closes_is_answered_before_serve_exits(
+        write_config, runtime_dir, monkeypatch):
+    # T268 (#540): serve stopped the jobs (Jobs.close) after its drain had given up on the requests waiting for them,
+    # then returned at once, so a waiting mesh.apply whose job had just ended could lose the race to write its
+    # answer: the process exited with that request never answered. The request here writes its answer only once
+    # serve waits for it again after the jobs are closed (events, no timing), so before the fix it's never written.
+    import io
+    write_config(INVENTORY)
+    started, answer = threading.Event(), threading.Event()
+
+    def waits_for_a_job(st, params):
+        job = st.jobs.start("mesh", "apply", lambda job: job.halted.wait() and {"stopped": True})
+        started.set()
+        job.wait()                                      # until serve's close stops it
+        answer.wait()                                   # and serve is waiting for this answer
+        return {"job": job.view()["state"]}
+    monkeypatch.setitem(rpc.METHODS, "test.waits_for_a_job", rpc.Method(waits_for_a_job))
+    drain = rpc.Server.drain
+
+    def waiting(server, wait):
+        if server.state.jobs.closing:                   # serve waits for its requests once the jobs are closed
+            answer.set()
+        return drain(server, wait)
+    monkeypatch.setattr(rpc.Server, "drain", waiting)
+    monkeypatch.setattr(rpc, "DRAIN_WAIT", 0)          # the first drain gives up at once: the job still runs then
+
+    class Stdin(io.StringIO):                           # the app's pipe: one request, then closed mid-job
+        def __iter__(self):
+            yield json.dumps({"jsonrpc": "2.0", "id": 1, "method": "test.waits_for_a_job"}) + "\n"
+            assert started.wait(5)
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdin", Stdin())
+    monkeypatch.setattr(sys, "stdout", out)
+    assert rpc.serve(None) == 0
+    written = out.getvalue()                            # what serve wrote before it returned (the process exits)
+    answer.set()                                        # a request left behind ends either way
+    answers = [m for m in map(json.loads, written.splitlines()) if m.get("id") == 1]
+    assert answers == [{"jsonrpc": "2.0", "id": 1, "result": {"job": "stopped"}}]
 
 
 def test_a_sign_in_that_starts_while_serve_closes_ends_its_cli(state, monkeypatch):
@@ -456,7 +512,7 @@ def test_two_item_creations_at_once_go_to_the_vault_one_after_the_other(state, m
     entered.wait(5)
     second = threading.Thread(target=create, args=("b ssh",), daemon=True)
     second.start()
-    wait_until(lambda: rpc.item_lock("bw").writers_waiting == 1)    # the second waits for the first
+    wait_until(lambda: state.item_lock("bw").writers_waiting == 1)    # the second waits for the first
     assert made == []
     go.set()
     first.join(5)
@@ -489,10 +545,9 @@ def test_reloading_while_a_box_setting_locks_a_provider_leaves_both_whole(state,
     def lock(ctx):
         in_lock.set()
         go.wait(5)
-    monkeypatch.setitem(providers.PROVIDERS, "aaa-test", {"get": lambda spec, ctx: "x", "lock": lock,
-                                                          "box_paths": ("db",), "help": "", "tool": "", "kind": "plugin"})
-    monkeypatch.setitem(providers.PROVIDER_STATE, "aaa-test", {"ready": True})
-    monkeypatch.setattr(providers, "BOX_SETTINGS", {})
+    providers.register("aaa-test", box_paths=("db",), lock=lock,
+                       unlock=lambda password, ctx: ctx.state.update(ready=True))(lambda spec, ctx: "x")
+    providers.unlock("aaa-test", "pw")
     errors = []
 
     def configure():
@@ -509,5 +564,28 @@ def test_reloading_while_a_box_setting_locks_a_provider_leaves_both_whole(state,
         go.set()
         t.join(5)
     finally:
-        providers.PROVIDERS.pop(added, None)
+        for name in (added, "aaa-test"):
+            providers.PROVIDERS.pop(name, None)
     assert errors == []
+
+
+# ---------------------------------------------------------------- how a method's failure is answered
+
+def test_a_die_inside_a_method_answers_with_its_own_code(state, monkeypatch):
+    # a die() with a code of its own (`error: [201] ...` on the command line) was answered as 3, the code in its text
+    from roster.common import die
+
+    def dies(st, params):
+        die("the key is of another type", code=201, fix="make a new one")
+    monkeypatch.setitem(rpc.METHODS, "test.dies", rpc.Method(dies))
+    assert call(state, "test.dies")["error"] == {"code": 201, "message": "the key is of another type",
+                                                 "data": {"fix": "make a new one"}}
+
+
+def test_a_method_holding_a_password_never_answers_or_logs_its_failure_in_its_own_words(state, monkeypatch, capsys):
+    def fails(st, params):
+        raise ValueError(params["password"])
+    monkeypatch.setitem(rpc.METHODS, "test.fails", rpc.Method(fails, sensitive="saving it"))
+    assert call(state, "test.fails", {"password": "pw-1"})["error"] == {"code": -32603,
+                                                                       "message": "saving it failed: ValueError"}
+    assert "pw-1" not in capsys.readouterr().err

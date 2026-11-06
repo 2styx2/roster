@@ -3,11 +3,13 @@
 // ticket 17 registers the Inventory the same way, and Folders (folders/) from outside, as a Plugin
 // will. Sections only say what rows they have; buildSections folds them by State, finds each
 // row's parent, and raises the on-screen Host's first row (the others are "also").
+import { addressCut } from "../ui/format";
 import type { Host, HostList } from "../backend/types";
-import { connectPhase, linkOf, statusText } from "../session/Sessions";
+import { connectPhase, isLive, linkOf, statusText } from "../session/status";
 import { tabFacts, type Tab, type TabsSnapshot } from "../session/tabs";
 import { BUILTIN, Registry, type Entry } from "../registry";
-import { headingId, type Dot, type SidebarRow, type SidebarSection } from "./Sidebar";
+import { headingId, type Dot, type SidebarRow, type SidebarSection } from "./model";
+import type { Light } from "../ui/dot";
 import type { HostBadge } from "../view/status";
 
 /** What a section can build from. */
@@ -91,7 +93,8 @@ export function sectionBuilder(): SectionBuild {
       })
       .filter((s): s is SidebarSection => s !== null);
     const active = ctx.sessions.tabs.find((t) => t.id === ctx.sessions.active);
-    return active ? markOnScreen(sections, active.host, isLive(active)) : sections;
+    const lit = markLit(sections, ctx.sessions);
+    return active ? markOnScreen(lit, active.host, isLive(active.status)) : lit;
   };
 }
 
@@ -115,8 +118,50 @@ function foldSection(section: SidebarSection, folded: ReadonlySet<string>): Side
   return { ...section, rows, folded: folded.has(heading) };
 }
 
-/** A Session that's connected or connecting: not ended, not refused. */
-const isLive = (tab: Tab) => tab.status.state !== "ended" && tab.status.state !== "failed";
+/** Rows whose Host has a live or connecting Session: their node takes the accent (`lit`); every
+ * other node stays muted (taste.md: the accent means live, decision Q301). An ended or unreviewed
+ * node keeps its own colour. Only the rows that change are new objects, so the memoized rows of a
+ * big Inventory don't re-render (#62). */
+function markLit(sections: SidebarSection[], sessions: TabsSnapshot): SidebarSection[] {
+  const hosts = hostLights(sessions);
+  if (hosts.size === 0) return sections;
+  const byTab = new Map(sessions.tabs.map((t) => [`session-${t.id}`, t]));
+  const change = (r: SidebarRow): SidebarRow | null => {
+    if (r.dot === undefined || r.dot === "ended" || r.dot === "off" || r.host === undefined) return null;
+    // A Session's own row: its own state (the dot already says connecting).
+    const tab = byTab.get(r.id);
+    if (tab) return r.dot === "connecting" ? null : { ...r, lit: tab.id === sessions.active ? "current" : "live" };
+    // A Host's row anywhere else: how its Sessions stand, connecting first.
+    const how = hosts.get(r.host);
+    if (how === undefined) return null;
+    return how === "connecting" ? { ...r, dot: "connecting" } : { ...r, lit: how };
+  };
+  return sections.map((s) => {
+    if (s.folded) return s;
+    let changed = false;
+    const rows = s.rows.map((r) => {
+      const next = change(r);
+      if (next) changed = true;
+      return next ?? r;
+    });
+    return changed ? { ...s, rows } : s;
+  });
+}
+
+/** How each Host with a Session stands, for its node wherever it's listed: `connecting` while any
+ * of its Sessions is, else `current` when the Session on screen is one of its, else `live`. Ended
+ * and refused Sessions don't count (decisions Q300, Q301). */
+export function hostLights(sessions: TabsSnapshot): Map<string, Light | "connecting"> {
+  const out = new Map<string, Light | "connecting">();
+  for (const t of sessions.tabs) {
+    if (!isLive(t.status)) continue;
+    const how = connectPhase(t) ? "connecting" : t.id === sessions.active ? "current" : "live";
+    const had = out.get(t.host);
+    if (had === "connecting" || (had === "current" && how === "live")) continue;
+    out.set(t.host, how);
+  }
+  return out;
+}
 
 /** The on-screen Host is raised where it first shows (a section may have raised its own row
  * already: Sessions raises the tab on screen) and brighter ("also") everywhere else. The raised
@@ -139,7 +184,7 @@ function markOnScreen(sections: SidebarSection[], host: string, live: boolean): 
 }
 
 function dotOf(tab: Tab, host: Host | undefined): Dot {
-  if (tab.status.state === "ended" || tab.status.state === "failed") return "ended";
+  if (!isLive(tab.status)) return "ended";
   // Until the shell answers it's connecting: the node fills (or rings) once it's live (issue #78).
   if (connectPhase(tab)) return "connecting";
   // How the Session logged in, once it has; until then an enrolled Host will use this Box's key
@@ -165,9 +210,12 @@ export const sessionsSection: SidebarSectionDef = {
           id: "sessions",
           title: "Sessions",
           count: sessions.tabs.length,
-          empty: "No Sessions open.",
+          // One quiet row when empty: the section keeps a row of room, so the first Session takes
+          // that slot and nothing under it moves (Q315).
+          empty: "None open",
           rows: sessions.tabs.map((tab, i) => {
-            const facts = tabFacts(tab);
+            const done = !isLive(tab.status);
+            const facts = done ? endedFacts(tab) : tabFacts(tab);
             return {
               id: `session-${tab.id}`,
               label: tab.label,
@@ -175,18 +223,55 @@ export const sessionsSection: SidebarSectionDef = {
               host: tab.host,
               dot: dotOf(tab, hostByName.get(tab.host)),
               link: linkOf(tab),
-              ...(statusText(tab) ? { note: statusText(tab) } : {}),
+              ...(done ? { note: endedNote(tab) } : statusText(tab) ? { note: statusText(tab) } : {}),
               ...(tab.hop ? { hop: tab.hop } : {}),
               ...(tab.cwd ? { detail: folderName(tab.cwd) } : {}),
               ...(facts ? { title: facts } : {}),
               raised: tab.id === sessions.active,
-              ...(tab.id === sessions.active && isLive(tab) ? { live: true } : {}),
+              ...(tab.id === sessions.active && isLive(tab.status) ? { live: true } : {}),
+              ...(i < 9 ? { index: i + 1 } : {}),
               command: `session ${i + 1}`,
-              actions: [{ label: `Close ${tab.label}`, icon: "close", command: `close ${i + 1}` }],
+              actions: [
+                { label: `Close ${tab.label}`, short: "Close", icon: "close", command: `close ${i + 1}` },
+                // Ended or refused: the one next step, on the row and always there (round 20), last so
+                // the selected row's Close appears beside it without moving it.
+                ...(done
+                  ? [{ label: `Reconnect ${tab.label}`, short: "Reconnect", icon: "reconnect" as const, command: `reconnect ${i + 1}`, pinned: true }]
+                  : []),
+              ],
             };
           }),
         },
 };
+
+/** An ended or refused Session's note: one short word that is never cut ("ended (code 255)" was
+ * cut to "end…" beside a long name, round 20). The code and the reason are in its tooltip. */
+export function endedNote(tab: Tab): string {
+  const s = tab.status;
+  if (s.state === "failed") return "failed";
+  if (s.state !== "ended") return "";
+  if (s.exit.closed) return "closed";
+  return s.problem ? "failed" : "ended";
+}
+
+/** What happened to an ended or refused Session, and the one next step: its tooltip, and the
+ * details foot under the tree in App mode. */
+export function endedFacts(tab: Tab): string {
+  const s = tab.status;
+  const what =
+    s.state === "failed"
+      ? `Couldn't open: ${s.problem.message}`
+      : s.state !== "ended"
+        ? ""
+        : s.problem
+          ? `Ended: ${s.problem.message}`
+          : s.exit.closed
+            ? "Closed."
+            : s.exit.code === null
+              ? "Ended by a signal."
+              : `Ended (exit code ${s.exit.code}).`;
+  return `${what}\n↻ reconnects it; its pane says what to fix.`;
+}
 
 /** A Host's dot in the tree: how it would log in, or hollow and faint while it's unreviewed. */
 export function hostDot(host: Host): Dot {
@@ -202,7 +287,9 @@ export function hostRow(host: Host, id: string, level: number): SidebarRow {
     label: host.name,
     host: host.name,
     dot: hostDot(host),
-    detail: host.ip,
+    // A long address (IPv6) drops whole groups from its middle, so the name keeps room; the
+    // details footer and the tooltip have it whole.
+    detail: addressCut(host.ip, 17),
     // Its details, review, rename, remove… are in its menu, not buttons (T166, Q156: hostMenu.ts).
     menu: true,
     ...(host.reviewed ? {} : { badge: "unreviewed", title: "Not reviewed yet: can't be opened" }),
@@ -235,21 +322,31 @@ export const inventorySection: SidebarSectionDef = {
     id: "inventory",
     title: "Inventory",
     count: hosts.hosts.length,
-    empty: live ? "No Hosts yet. Press `␣ n` to add one." : "No Hosts yet. Add them in roster.yml.",
-    // "Add a Host" is always shown, last so hover's "New group" never moves it (iteration 3
-    // feedback: `␣ +` alone was too hard to find). On a roster too old for it, it stays and says why.
-    ...(live || addHost
+    // Where Hosts come from (S7): the key to add one, or the file.
+    // One line in the Sidebar's width (round 18), and the pane's offer: the app's own way when this
+    // roster can add Hosts, else the file.
+    empty:
+      addHost && !addHost.tooOld
+        ? addHost.keys
+          ? `None yet: \`${addHost.keys}\` adds one.`
+          : "None yet: + adds one."
+        : "None yet: add them in roster.yml.",
+    // "Add a Host" is always shown where this roster can add one, last so hover's "New group" never
+    // moves it (iteration 3 feedback: `␣ +` alone was too hard to find). On a roster too old for it,
+    // it isn't offered, as the title bar's isn't (round 19: a + that only refused contradicted the
+    // empty line and the pane); the empty line says where Hosts come from instead.
+    ...(live || (addHost && !addHost.tooOld)
       ? {
           actions: [
             ...(live ? [{ label: "New group", icon: "addGroup" as const, command: "group new" }] : []),
-            ...(addHost
+            ...(addHost && !addHost.tooOld
               ? [
                   {
                     label: "Add a Host",
                     icon: "add" as const,
                     command: "host add",
                     pinned: true,
-                    ...(addHost.tooOld ? { title: addHost.tooOld } : addHost.keys ? { keys: addHost.keys } : {}),
+                    ...(addHost.keys ? { keys: addHost.keys } : {}),
                   },
                 ]
               : []),
@@ -265,7 +362,6 @@ export const inventorySection: SidebarSectionDef = {
           id: `group:${group}`,
           label: group,
           count: members.length,
-          icon: "group" as const,
           ...(hosts.groups[group]?.title ? { title: hosts.groups[group].title } : {}),
           level: 0,
           foldable: true,
@@ -276,9 +372,10 @@ export const inventorySection: SidebarSectionDef = {
             ? {
                 drop,
                 actions: [
-                  { label: `Add a Host to ${group}`, icon: "add" as const, command: `host add ${group}` },
-                  { label: `Rename group ${group}`, icon: "edit" as const, command: `group rename ${group}` },
-                  { label: `Delete group ${group}`, icon: "close" as const, command: `group delete ${group}` },
+                  { label: `Add a Host to ${group}`, short: "Add a Host…", icon: "add" as const, command: `host add ${group}` },
+                  { label: `Rename group ${group}`, short: "Rename…", icon: "edit" as const, command: `group rename ${group}` },
+                  // It asks where the group's Hosts go.
+                  { label: `Delete group ${group}`, short: "Delete…", icon: "close" as const, command: `group delete ${group}` },
                 ],
               }
             : {}),

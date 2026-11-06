@@ -13,7 +13,9 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::plugin::By;
+use roster_core::plugin::{Event, Limits, Load, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Map, Value, json};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -114,7 +116,7 @@ fn status(scan: &str, state: &str, done: u64, found: &[Value], count: usize) -> 
 }
 
 impl Serve for FakeServe {
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
         // serve answers one request at a time.
         let _turn = self.busy.lock().unwrap();
         self.calls.lock().unwrap().push((method.to_string(), params.clone()));
@@ -128,13 +130,14 @@ impl Serve for FakeServe {
 }
 
 impl FakeServe {
-    fn answer(&self, method: &str, params: &Value) -> Result<Value, String> {
+    fn answer(&self, method: &str, params: &Value) -> Result<Value, CallError> {
         let targets: Vec<String> = serde_json::from_value(params["targets"].clone()).unwrap_or_default();
         let force = params["force"] == json!(true);
         match method {
-            "discover.plan" if targets == ["10.0.0.0/19"] && !force => {
-                Err("that's 8,190 addresses; a scan visits at most 4,096 without force (code 121)".into())
-            }
+            "discover.plan" if targets == ["10.0.0.0/19"] && !force => Err(CallError::rpc(
+                121,
+                "that's 8,190 addresses; a scan visits at most 4,096 without force",
+            )),
             "discover.plan" if targets == ["10.0.0.0/19"] => Ok(
                 json!({ "targets": targets, "addresses": 8190, "ports": 47, "scanner": "nmap", "limit": 4096, "max": 65536 }),
             ),
@@ -168,7 +171,7 @@ impl FakeServe {
                     json!({ "group": "discovered-20261031", "added": added, "backup": "/team-inventory/.git/roster/roster.yml.bak" }),
                 )
             }
-            other => Err(format!("unknown method '{other}' (code -32601)")),
+            other => Err(CallError::rpc(-32601, format!("unknown method '{other}'"))),
         }
     }
 }
@@ -250,13 +253,16 @@ impl World {
     fn load(&self, grants: &[&str]) -> Reply {
         let (_, reply) = self
             .host
-            .load_with(&Source::Dir(self.dir.clone()), &perms(grants), &self.config)
+            .load(
+                &Source::Dir(self.dir.clone()),
+                Load::new(&perms(grants)).config(self.config.clone()),
+            )
             .unwrap();
         self.settled(reply)
     }
 
     fn call(&self, handler: u64, args: Value) -> Reply {
-        let r = self.host.call(NAME, handler, args);
+        let r = self.host.call(NAME, handler, args, By::User);
         self.settled(r)
     }
 
@@ -392,7 +398,7 @@ fn it_installs_from_its_folder_asks_for_the_discover_methods_and_flags_the_scan(
     let w = World::new("install", json!({}));
     let manifest = common::read_manifest(&w.dir).unwrap();
     assert_eq!(manifest.name, NAME);
-    assert_eq!(manifest.api, 6);
+    assert_eq!(manifest.api, 7);
     let asked: Vec<String> = manifest.permissions.iter().map(Permission::to_string).collect();
     assert_eq!(asked, ALL);
     // The install prompt flags the two that act: the scan, and adding to the Inventory.
@@ -479,10 +485,12 @@ fn behind_a_busy_roster_serve_the_question_comes_when_it_answers() {
     // It answers while serve is still busy (`publish` is held until below): a call that waited
     // for serve wouldn't come back at all, and fails at the ceiling instead of hanging.
     let (host, run, args) = (Arc::clone(&w.host), command(&loaded.ops), words.clone());
-    let asked = common::within_ceiling("the scan command's answer", move || host.call(NAME, run, args));
+    let asked = common::within_ceiling("the scan command's answer", move || {
+        host.call(NAME, run, args, By::User)
+    });
     ok(&asked);
     assert!(!has(&asked.ops, "confirm"));
-    let again = w.host.call(NAME, command(&loaded.ops), words);
+    let again = w.host.call(NAME, command(&loaded.ops), words, By::User);
     ok(&again);
     assert!(
         op(&again.ops, "notify")["text"]
@@ -746,10 +754,10 @@ roster.commands.add("go", { run = function() roster.serve.call("discover.start",
     ok(&loaded);
     assert_eq!(serve.methods(), ["discover.status"]);
     let timer = handler(&op(&loaded.ops, "timer")["run"]);
-    let fired = host.call("sneaky", timer, json!({}));
+    let fired = host.call("sneaky", timer, json!({}), By::User);
     assert_eq!(op(&fired.ops, "notify")["text"], "refused");
     let go = handler(&loaded.ops.iter().find(|o| o["op"] == "command").unwrap()["run"]);
-    ok(&host.call("sneaky", go, json!({ "args": "", "words": [] })));
+    ok(&host.call("sneaky", go, json!({ "args": "", "words": [] }), By::User));
     assert_eq!(serve.methods(), ["discover.status", "discover.start"]);
 }
 

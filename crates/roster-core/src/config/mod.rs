@@ -13,12 +13,14 @@ pub(crate) mod editor;
 pub mod folders;
 mod locate;
 pub(crate) mod lua;
+pub mod package_spec;
 pub mod schema;
 pub mod shape;
 pub(crate) mod store;
 mod watch;
 
-pub use editor::{Ensured, OpenWith, WindowsOpen, ensure_file, open, open_with, starter, windows_open};
+pub use crate::platform::Os;
+pub use editor::{Ensured, OpenWith, Opened, WindowsOpen, edit, ensure_file, open, open_with, starter, windows_open};
 pub use schema::*;
 #[cfg(feature = "test-hooks")]
 pub use watch::{HeldClock, watch_held};
@@ -31,8 +33,6 @@ use std::time::Duration;
 
 /// The file the app runs.
 pub const FILE_NAME: &str = "init.lua";
-/// The Plugin API's version (`roster.api_version`), which init.lua's table shows too.
-pub const API_VERSION: u32 = 6;
 /// init.lua's own version (`roster.config_version`, decision Q165): 4 is v0.3.0's shape
 /// (`roster.o` and the collections' functions). Raised when a change to init.lua's `roster`
 /// table or an option can't be told by its name: a name removed or renamed, or one that keeps its
@@ -43,6 +43,7 @@ pub const CONFIG_VERSION: u32 = 4;
 
 /// What went wrong: where, and what. Shown as `init.lua:12: message`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ConfigError {
     /// Relative to the config dir: `init.lua`, `lua/keys.lua`.
     pub file: String,
@@ -74,34 +75,6 @@ impl std::fmt::Display for ConfigError {
 }
 
 impl std::error::Error for ConfigError {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Os {
-    Windows,
-    Linux,
-    Macos,
-}
-
-impl Os {
-    pub fn current() -> Self {
-        if cfg!(windows) {
-            Os::Windows
-        } else if cfg!(target_os = "macos") {
-            Os::Macos
-        } else {
-            Os::Linux
-        }
-    }
-
-    /// `roster.os` in Lua.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Os::Windows => "windows",
-            Os::Linux => "linux",
-            Os::Macos => "macos",
-        }
-    }
-}
 
 /// How long `init.lua` (with everything it requires) may run, and how much memory it may use.
 #[derive(Debug, Clone, Copy)]
@@ -270,7 +243,7 @@ pub fn load_source_renaming(dir: &Path, source: &str, env: &Env, renamed: &[Rena
         config.deprecated.push(DeprecatedUse {
             old: r.old.into(),
             new: r.new.into(),
-            topic: format!("deprecated#{}", anchor(r.old)),
+            topic: format!("deprecated#{}", crate::anchor::slug(r.old)),
         });
     }
     Ok(config)
@@ -297,15 +270,6 @@ fn rename_deprecated(value: &mut serde_json::Value, renamed: &[Renamed]) -> Vec<
         }
     }
     used
-}
-
-/// A docs/deprecated.md row's anchor for an old name, as the app's help makes it (doc.ts `slug`):
-/// lower case, only letters, digits, `_` and `-`.
-fn anchor(name: &str) -> String {
-    name.to_lowercase()
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
-        .collect()
 }
 
 /// Every value's path in what the file returned (with its `roster.*` calls), sorted: a table is
@@ -547,62 +511,70 @@ fn validate(c: &Config) -> Result<(), Invalid> {
             }
         }
     }
-    if !(11..=20).contains(&c.fonts.ui_size) {
-        return Err(at(
-            &["fonts", "ui_size"],
-            format!("{} is out of range (11 to 20)", c.fonts.ui_size),
-        ));
+    use shape::bounds::*;
+    let out_of_range = |path: &[&str], v: &dyn std::fmt::Display, b: shape::Bounds, unit: &str| {
+        at(path, format!("{v} is out of range ({}{unit})", b.text()))
+    };
+    if !UI_SIZE.holds(c.fonts.ui_size) {
+        return Err(out_of_range(&["fonts", "ui_size"], &c.fonts.ui_size, UI_SIZE, ""));
     }
     let t = &c.terminal;
-    let px = t.size.px();
-    if !(6.0..=72.0).contains(&px) {
+    if !TERMINAL_SIZE.holds(t.size.px()) {
         let shown = match t.size {
             FontSize::Px(v) => format!("{v}"),
             FontSize::Pt(v) => format!("{v}pt"),
         };
-        return Err(at(
+        let pt = shape::Bounds {
+            min: TERMINAL_SIZE.min * 72.0 / 96.0,
+            max: TERMINAL_SIZE.max * 72.0 / 96.0,
+        };
+        return Err(out_of_range(
             &["terminal", "size"],
-            format!("{shown} is out of range (6 to 72 px, 4.5 to 54 pt)"),
+            &shown,
+            TERMINAL_SIZE,
+            &format!(" px, {} pt", pt.text()),
         ));
     }
     if t.font.0.is_empty() || t.font.0.iter().any(|f| f.is_empty()) {
         return Err(at(&["terminal", "font"], "needs at least one font name"));
     }
     if let Some(h) = t.cell_height
-        && !(0.5..=3.0).contains(&h)
+        && !LINE_HEIGHT.holds(h)
     {
-        return Err(at(
-            &["terminal", "cell_height"],
-            format!("{h} is out of range (0.5 to 3)"),
-        ));
+        return Err(out_of_range(&["terminal", "cell_height"], &h, LINE_HEIGHT, ""));
     }
     for (name, w) in [("weight", t.weight), ("bold_weight", t.bold_weight)] {
-        if !(100..=900).contains(&w) {
-            return Err(at(&["terminal", name], format!("{w} is out of range (100 to 900)")));
+        if !FONT_WEIGHT.holds(w) {
+            return Err(out_of_range(&["terminal", name], &w, FONT_WEIGHT, ""));
         }
     }
-    if !(0.5..=3.0).contains(&t.line_height) {
-        return Err(at(
+    if !LINE_HEIGHT.holds(t.line_height) {
+        return Err(out_of_range(
             &["terminal", "line_height"],
-            format!("{} is out of range (0.5 to 3)", t.line_height),
+            &t.line_height,
+            LINE_HEIGHT,
+            "",
         ));
     }
-    if t.scrollback > 1_000_000 {
-        return Err(at(&["terminal", "scrollback"], "at most 1000000 lines"));
-    }
-    if !(1..=1440).contains(&c.idle_lock_minutes) {
+    if !SCROLLBACK.holds(t.scrollback) {
         return Err(at(
+            &["terminal", "scrollback"],
+            format!("at most {} lines", SCROLLBACK.max),
+        ));
+    }
+    if !IDLE_LOCK_MINUTES.holds(c.idle_lock_minutes) {
+        return Err(out_of_range(
             &["idle_lock_minutes"],
-            format!("{} is out of range (1 to 1440)", c.idle_lock_minutes),
+            &c.idle_lock_minutes,
+            IDLE_LOCK_MINUTES,
+            "",
         ));
     }
+    const PERCENT: &str = ", percent of the window";
     if let Some(w) = c.panel.width
-        && !(10..=95).contains(&w)
+        && !PANEL_WIDTH.holds(w)
     {
-        return Err(at(
-            &["panel", "width"],
-            format!("{w} is out of range (10 to 95, percent of the window)"),
-        ));
+        return Err(out_of_range(&["panel", "width"], &w, PANEL_WIDTH, PERCENT));
     }
     for (id, v) in &c.views {
         if id.is_empty() || id.len() > 64 || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || "-_".contains(ch)) {
@@ -612,21 +584,17 @@ fn validate(c: &Config) -> Result<(), Invalid> {
             ));
         }
         if let Some(w) = v.width
-            && !(10..=95).contains(&w)
+            && !PANEL_WIDTH.holds(w)
         {
-            return Err(at(
-                &["views", id, "width"],
-                format!("{w} is out of range (10 to 95, percent of the window)"),
-            ));
+            return Err(out_of_range(&["views", id, "width"], &w, PANEL_WIDTH, PERCENT));
         }
     }
-    if let Some(proxy) = &c.plugin_proxy {
-        crate::plugin::network::Proxy::parse(proxy).map_err(|e| at(&["plugin_proxy"], e))?;
-    }
-    if c.pull_fresh_minutes > 1440 {
-        return Err(at(
+    if !PULL_FRESH_MINUTES.holds(c.pull_fresh_minutes) {
+        return Err(out_of_range(
             &["pull_fresh_minutes"],
-            format!("{} is out of range (0 to 1440)", c.pull_fresh_minutes),
+            &c.pull_fresh_minutes,
+            PULL_FRESH_MINUTES,
+            "",
         ));
     }
     for (path, v) in [
@@ -649,7 +617,7 @@ fn validate(c: &Config) -> Result<(), Invalid> {
     if let Some(command) = &c.roster_command {
         command.check().map_err(|m| at(&["roster_command"], m))?;
     }
-    crate::package::check_specs(&c.packages)?;
+    package_spec::check_specs(&c.packages)?;
     let mut seen = std::collections::HashSet::new();
     for (i, f) in c.folders.iter().enumerate() {
         let n = (i + 1).to_string();
@@ -735,6 +703,7 @@ fn lines(
 
 /// What a load gave: the Config in effect, and the error if the file couldn't be used.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ConfigReport"))]
 pub struct Report {
     pub config: Config,
     pub error: Option<ConfigError>,
@@ -852,75 +821,4 @@ impl Loader {
 /// A poisoned lock still holds a usable value here (a Config or a report).
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-/// Which roster to start, from the Config and the development env vars.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BackendPlan {
-    pub command: Vec<String>,
-    /// Where to look for it (detect.rs): init.lua's `backend`, or the one WSL distro the env var names.
-    pub choice: crate::detect::Choice,
-}
-
-impl BackendPlan {
-    /// The one WSL distro to use, if the plan names one.
-    pub fn distro(&self) -> Option<&str> {
-        match &self.choice {
-            crate::detect::Choice::Wsl(Some(d)) => Some(d),
-            _ => None,
-        }
-    }
-}
-
-/// The roster command and where to look for it: `ROSTER_APP_ROSTER` and `ROSTER_APP_WSL_DISTRO`
-/// win (they're for development, and set by the user outside the Config), then `roster_command`
-/// and `backend` from init.lua, then detection. Blank env vars don't count. A `roster_command`
-/// that isn't roster itself is refused ([`RosterCommand::check`]); only the env var may wrap it.
-/// The plan is what the app compares after a `:source`: a different one restarts `roster serve`.
-pub fn backend_plan(
-    config: &Config,
-    _platform: crate::detect::Platform,
-    env_command: Option<&str>,
-    env_distro: Option<&str>,
-) -> Result<BackendPlan, String> {
-    use crate::detect::Choice;
-    let env_command = env_command.filter(|v| !v.trim().is_empty());
-    let command = match (env_command, &config.roster_command) {
-        (None, Some(command)) => {
-            command
-                .check()
-                .map_err(|m| format!("roster_command in init.lua: {m}."))?;
-            command.0.clone()
-        }
-        (given, _) => crate::detect::roster_command(given),
-    };
-    let choice = match env_distro.map(str::trim).filter(|d| !d.is_empty()) {
-        Some(d) => Choice::Wsl(Some(d.to_string())),
-        None => match &config.backend {
-            BackendChoice::Auto => Choice::Auto,
-            BackendChoice::Local => Choice::Local,
-            BackendChoice::Wsl(d) => Choice::Wsl(d.clone()),
-        },
-    };
-    Ok(BackendPlan { command, choice })
-}
-
-/// Replaces `path` with `text` all at once: a temporary file in the same folder, given the old
-/// file's permissions, then renamed over it. A reader (or the Config watcher) sees the old file
-/// or the new one, never half of it, and a failed write leaves the old one.
-pub fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
-    let dir = path.parent().unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir)?;
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
-    let written = std::fs::write(&tmp, text).and_then(|()| {
-        if let Ok(meta) = std::fs::metadata(path) {
-            std::fs::set_permissions(&tmp, meta.permissions())?;
-        }
-        std::fs::rename(&tmp, path)
-    });
-    if written.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    written
 }

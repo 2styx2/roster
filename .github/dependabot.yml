@@ -1,0 +1,18 @@
+# Dependabot (T244, decision Q196): the actions in .github/workflows, once a week, in one pull request into dev.
+# It bumps version tags (actions/checkout@v7, astral-sh/setup-uv@v10.3.3), not branch refs
+# (dtolnay/rust-toolchain@stable) and not the runner labels (runs-on), which move by hand. GitHub reads this file
+# from the default branch (main), so it starts once it reaches main.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+    labels: [skip-news]

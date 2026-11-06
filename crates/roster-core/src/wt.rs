@@ -44,6 +44,29 @@ pub fn settings_paths(local_app_data: &Path) -> Vec<PathBuf> {
     ]
 }
 
+/// Windows Terminal's settings.json on this machine: its path and text (ticket 33). Windows only.
+pub fn read_settings() -> Result<(String, String), String> {
+    read_settings_in(
+        cfg!(windows),
+        std::env::var_os("LOCALAPPDATA").as_deref().map(Path::new),
+    )
+}
+
+/// [`read_settings`] on Windows or not, with `local_app_data` as `%LOCALAPPDATA%` (testable).
+pub fn read_settings_in(windows: bool, local_app_data: Option<&Path>) -> Result<(String, String), String> {
+    if !windows {
+        return Err("import-terminal reads Windows Terminal's settings, so it works on Windows only".into());
+    }
+    let local = local_app_data.ok_or("LOCALAPPDATA isn't set, so Windows Terminal can't be found")?;
+    settings_paths(local)
+        .into_iter()
+        .find_map(|path| {
+            let text = std::fs::read_to_string(&path).ok()?;
+            Some((path.display().to_string(), text))
+        })
+        .ok_or_else(|| "no Windows Terminal settings.json found (Store, Preview or unpackaged)".into())
+}
+
 /// A colour scheme, with the profile's own colours over it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -281,7 +304,7 @@ pub fn parse(text: &str) -> Result<Profile, String> {
             .to_string(),
         _ => "Campbell".into(),
     };
-    let builtin: Vec<Value> = serde_json::from_str(BUILTIN_SCHEMES).unwrap_or_default();
+    let builtin: Vec<Value> = serde_json::from_str(BUILTIN_SCHEMES).expect("wt_schemes.json is a JSON list");
     let user = root
         .get("schemes")
         .and_then(Value::as_array)
@@ -518,6 +541,7 @@ fn with_block(init: &str, block: &str) -> String {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum DiffKind {
     Same,
     Add,
@@ -525,6 +549,7 @@ pub enum DiffKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct DiffLine {
     pub kind: DiffKind,
     pub text: String,
@@ -569,9 +594,9 @@ pub fn diff(old: &str, new: &str) -> Vec<DiffLine> {
 /// What `:config import-terminal` would do, before it does it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ImportPreview"))]
 pub struct Preview {
     pub settings_path: String,
-    pub profile: Profile,
     /// One line per thing it takes ("Font: Iosevka Nerd Font, 16 pt (21.3 px)").
     pub summary: Vec<String>,
     pub diff: Vec<DiffLine>,
@@ -596,6 +621,7 @@ pub struct Preview {
 /// What wins over the import for an option it sets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Wins {
     /// init.lua's returned table sets it: that wins over every `roster.*` line.
     Returned,
@@ -606,6 +632,7 @@ pub enum Wins {
 
 /// An option the import sets that init.lua sets again where it wins.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ImportOverridden"))]
 pub struct Overridden {
     pub option: String,
     pub by: Wins,
@@ -623,6 +650,7 @@ fn block_lines(text: &str) -> Option<(u32, u32)> {
 
 /// What the app hands back to [`apply`] from the [`Preview`] the user confirmed.
 #[derive(Debug, Clone, serde::Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Previewed {
     pub base: String,
     pub result: String,
@@ -744,7 +772,6 @@ pub fn preview(dir: &Path, settings_text: &str, settings_path: &str, date: &str)
     let theme = profile.scheme.as_ref().map(|s| theme_id(&s.name));
     Ok(Preview {
         settings_path: settings_path.into(),
-        profile,
         summary,
         diff: diff(&old, &new),
         theme,
@@ -778,7 +805,7 @@ pub fn apply(dir: &Path, settings_text: &str, settings_path: &str, previewed: &P
                 .into(),
         );
     }
-    config::write_atomic(&dir.join(config::FILE_NAME), &new).map_err(|e| format!("can't write init.lua: {e}"))
+    crate::files::write_atomic(&dir.join(config::FILE_NAME), &new).map_err(|e| format!("can't write init.lua: {e}"))
 }
 
 /// Today as YYYY-MM-DD (UTC), for the block's comment.

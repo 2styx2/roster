@@ -2,11 +2,13 @@
 The stand-in keepassxc-cli (tests/fakes) keeps its "database" as JSON at the .kdbx path."""
 
 import json
+import subprocess
 
 import pytest
 from conftest import WINDOWS
 
 from roster import providers
+from roster.common import kill_tree
 from roster.providers import get_secret, setup_providers
 
 MASTER = "c0rrect-h0rse"                # the database's master password: never in argv, output or an error
@@ -58,12 +60,11 @@ def test_a_wrong_master_password_says_so_without_echoing_it(kdbx, tmp_path):
 
 
 def test_a_locked_database_is_never_opened_with_a_guess(kdbx, tmp_path, monkeypatch):
-    monkeypatch.setattr(providers, "MANUAL_UNLOCK", True)              # as under `roster serve`
     assert providers.vault_status("kp") == "locked"
-    with pytest.raises(providers.VaultLocked, match="KeePassXC database is locked"):
+    with pytest.raises(providers.VaultLocked, match="no terminal"):   # the CLI with no terminal: 14, not 35 (#437)
         get_secret("kp:esx ssh", "g")
-    monkeypatch.setattr(providers, "MANUAL_UNLOCK", False)             # the CLI with no terminal to ask in
-    with pytest.raises(providers.VaultLocked, match="no terminal"):   # 14, not 35 (#437)
+    providers.only_unlock_unlocks()                                     # as under `roster serve`
+    with pytest.raises(providers.VaultLocked, match="KeePassXC database is locked"):
         get_secret("kp:esx ssh", "g")
     assert argv_log(tmp_path) == ""                                     # keepassxc-cli never ran
 
@@ -74,7 +75,7 @@ def test_lock_forgets_the_master_password_and_every_value(kdbx):
     assert providers.vault_status("kp") == "unlocked"
     providers.lock("kp")
     assert providers.vault_status("kp") == "locked"
-    providers.MANUAL_UNLOCK = True
+    providers.only_unlock_unlocks()
     with pytest.raises(providers.VaultLocked):
         get_secret("kp:esx ssh", "g")
 
@@ -102,12 +103,11 @@ def test_a_key_file_goes_with_the_password(fakes, isolated, tmp_path):
     setup_providers({"path": isolated["work"] / "roster.yml", "providers": {"kp": {"database": str(db)}}})
     with pytest.raises(providers.WrongPassword, match="wrong master password"):   # the key file is missing
         providers.unlock("kp", MASTER)
-    setup_providers({"path": isolated["work"] / "roster.yml",
+    setup_providers({"path": tmp_path / "roster.yml",                 # k.kdbx: relative to roster.yml's folder
                      "providers": {"kp": {"database": "k.kdbx", "key_file": str(tmp_path / "nope.key")}}})
-    providers.PROVIDER_SETTINGS["kp"]["_base"] = tmp_path            # relative to roster.yml's folder
     with pytest.raises(providers.NotLoggedIn, match="key file"):
         providers.unlock("kp", MASTER)
-    providers.PROVIDER_SETTINGS["kp"]["key_file"] = str(key)
+    setup_providers({"path": tmp_path / "roster.yml", "providers": {"kp": {"database": "k.kdbx", "key_file": str(key)}}})
     providers.unlock("kp", MASTER)
     assert get_secret("kp:esx ssh", "g") == "pw-esx"
 
@@ -143,8 +143,8 @@ def test_creates_a_login_entry_with_the_passwords_off_the_command_line(kdbx, tmp
     assert NEW_PW not in log and MASTER not in log
 
 
-def test_creates_in_the_group_set_for_it(kdbx):
-    providers.PROVIDER_SETTINGS["kp"]["group"] = "Lab"
+def test_creates_in_the_group_set_for_it(kdbx, isolated):
+    setup_providers({"path": isolated["work"] / "roster.yml", "providers": {"kp": {"database": str(kdbx), "group": "Lab"}}})
     providers.unlock("kp", MASTER)
     made = providers.create_item("kp", name="box ssh", password=NEW_PW)
     assert made == {"id": "Lab/box ssh", "name": "box ssh", "target": {"id": "group:Lab", "kind": "group", "label": "Lab"}}
@@ -176,20 +176,49 @@ def test_undo_moves_the_entry_to_the_recycle_bin(kdbx):
 def test_a_refused_create_or_delete_never_echoes_a_password(kdbx, monkeypatch):
     providers.unlock("kp", MASTER)
     monkeypatch.setenv("FAKE_KP_WRITE_FAIL", f"Writing the database failed: read-only file system {NEW_PW} {MASTER}")
-    with pytest.raises(providers.WriteFailed, match="KeePassXC didn't create 'box ssh': Writing the database") as e:
-        providers.create_item("kp", name="box ssh", password=NEW_PW)
+    with pytest.raises(providers.WriteFailed, match="KeePassXC didn't create 'box ssh': .*withheld") as e:
+        providers.create_item("kp", name="box ssh", password=NEW_PW)       # its words repeat one: withheld whole
     assert NEW_PW not in str(e.value) and MASTER not in str(e.value)
+    monkeypatch.setenv("FAKE_KP_WRITE_FAIL", "Writing the database failed: read-only file system")
+    with pytest.raises(providers.WriteFailed, match="KeePassXC didn't create 'box ssh': Writing the database"):
+        providers.create_item("kp", name="box ssh", password=NEW_PW)
     with pytest.raises(providers.WriteFailed, match="didn't delete"):
         providers.delete_item("kp", "esx ssh")
 
 
+def stops_answering_at_the_fake_s_word(monkeypatch):
+    """`keepassxc-cli add` times out exactly when the stand-in says it has got where it hangs (FAKE_KP_ADD_HANG:
+    saved; FAKE_KP_ADD_STALL: nothing saved), never on a clock: a 1 s limit timed out on Windows CI before the
+    stand-in had even started (#487 item 6). Every other call runs as roster runs it, with its usual time."""
+    real = providers.run
+
+    def run(args, timeout=None, input=None, **kw):
+        if "add" not in args:
+            return real(args, timeout=timeout, input=input, **kw)
+        kw = {k: v for k, v in kw.items() if k not in ("stdin", "stdout")}
+        with subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              **kw) as p:
+            assert p.stdin and p.stdout
+            p.stdin.write(input)
+            p.stdin.close()
+            said = p.stdout.readline()                  # blocks until the stand-in gets there (or exits)
+            kill_tree(p)
+            p.stdout.close()
+            p.wait()
+        assert "fake: hanging" in said, said
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    monkeypatch.setattr(providers, "run", run)
+
+
 def test_a_create_that_timed_out_counts_if_the_entry_is_there(kdbx, monkeypatch):
     providers.unlock("kp", MASTER)
-    monkeypatch.setattr(providers, "time_left", lambda timeout, floor=1: 1)     # keepassxc-cli gets 1 s
-    monkeypatch.setenv("FAKE_KP_ADD_HANG", "5")                                 # saved, then no answer
+    stops_answering_at_the_fake_s_word(monkeypatch)
+    monkeypatch.setenv("FAKE_KP_ADD_HANG", "1")                                 # saved, then no answer
     assert providers.create_item("kp", name="box ssh", password=NEW_PW)["id"] == "box ssh"
+    assert get_secret("kp:box ssh", "g") == NEW_PW
     monkeypatch.delenv("FAKE_KP_ADD_HANG")
-    monkeypatch.setenv("FAKE_KP_ADD_STALL", "5")                                # no answer, nothing saved
+    monkeypatch.setenv("FAKE_KP_ADD_STALL", "1")                                # no answer, nothing saved
     with pytest.raises(providers.WriteFailed, match="nothing was saved"):
         providers.create_item("kp", name="nas2 ssh", password=NEW_PW)
     assert "nas2 ssh" not in entries(kdbx)

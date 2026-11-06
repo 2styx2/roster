@@ -2,9 +2,11 @@
 changes.diff and changes.discard, against a scratch infra repo (a clone of a bare repo in the test's temp dir).
 The Host for test logins is a local paramiko server; the vault is the stand-in bw. No network."""
 
+import json
 import logging
 import socket
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -161,6 +163,22 @@ def app(serve, box):
 def result(r):
     assert "error" not in r, r
     return r["result"]
+
+
+SOMEONE_ADDS = """\
+import pathlib, subprocess, sys
+yml = pathlib.Path(sys.argv[1])
+with open(yml, "a", newline="") as f:                   # "\\n" on Windows too, as the file has it
+    f.write("  shelf:\\n    user: ops\\n    hosts:\\n      " + sys.argv[2] + ": 10.0.0.77\\n")
+for args in (["add", "-A"], ["commit", "-q", "-m", "someone else"], ["push", "-q"]):
+    subprocess.run(["git", "-C", str(yml.parent), *args], check=True)
+"""
+
+
+def someone_adds_while_the_item_is_made(monkeypatch, box, name):
+    """Once the stand-in bw saved an item, someone else publishes Host NAME in another group of BOX's roster.yml:
+    the Host roster is adding can't go in any more."""
+    monkeypatch.setenv("FAKE_BW_CREATE_RUNS", json.dumps([sys.executable, "-c", SOMEONE_ADDS, str(box.yml), name]))
 
 
 # ---------------------------------------------------------------- host.update, changes.diff, changes.discard
@@ -469,6 +487,17 @@ def test_pull_when_the_remote_is_gone(app, box):
     assert err["code"] == 73 and "couldn't fetch origin/main" in err["message"] and err["data"]["fix"]
 
 
+def test_pull_when_the_branch_was_merged_and_deleted_upstream_says_switch_to_main(app, box):
+    """T243 (#476, the owner's 2026-11-05 case): the infra repo's branch was merged and deleted on the server."""
+    git(box, "switch", "-q", "-c", "add-hosts")
+    git(box, "push", "-q", "-u", "origin", "add-hosts")
+    git(box.parent / "origin.git", "branch", "-D", "add-hosts")
+    err = app.call("inventory.pull")["error"]
+    assert err["code"] == 217 and "add-hosts" in err["message"] and "merged" in err["message"]
+    assert "git -C" in err["data"]["fix"] and "switch main" in err["data"]["fix"]
+    assert git(box, "branch", "--show-current") == "add-hosts"         # nothing switched or reset by roster
+
+
 # ---------------------------------------------------------------- changes.publish (ticket 12)
 
 def origin_log(box, fmt="%s"):
@@ -637,7 +666,7 @@ def test_publish_stays_within_its_deadline(box, monkeypatch):
 
     from roster import serve as rpc
     hanging_hook(box, "pre-receive", accept=False)
-    monkeypatch.setitem(rpc.DEADLINES, "changes.publish", 2)
+    monkeypatch.setattr(rpc.METHODS["changes.publish"], "deadline", 2)
     box.yml.write_text(box.yml.read_text().replace("title: ESX", "title: mine"))
     state = rpc.State(str(box.yml))
     start = time.monotonic()

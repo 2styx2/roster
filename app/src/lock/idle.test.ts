@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { idleTimer } from "./idle";
-import { manualClock } from "./manualClock";
+import { manualClock } from "../ui/manualClock";
 
 const MIN = 60_000;
 

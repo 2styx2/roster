@@ -25,10 +25,21 @@ What the script prints, one per line: `FILE <path>` (a file it wrote, or read fo
 import base64
 import re
 import subprocess
-from typing import IO, cast
+from collections.abc import Iterable, Sequence
+from typing import IO, Any, cast
 
-from .common import KEY_TRAIL, WINDOWS, program_argv
-from .errors import KEY_FILE, LOOKS_LIKE_WINDOWS, NOT_POWERSHELL, NOT_WINDOWS
+from . import context, keyline
+from .common import program_argv
+from .errors import (
+    KEY_FILE,
+    LOOKS_LIKE_WINDOWS,
+    NOT_POWERSHELL,
+    NOT_WINDOWS,
+    ROSTER_ERROR,
+    HostRefused,
+    Problem,
+    tagged,
+)
 
 # Reads the whole script from stdin, then runs it: a script given line by line (`-Command -`) runs as if typed, and
 # its multi-line blocks would need blank lines to end them.
@@ -256,6 +267,9 @@ function Write-Keys($p, $text, $secure) {
     }
 }
 
+function Say-AdminFileUnread($f) {
+    Say "WARN this account isn't in Administrators now, so roster can't look in $f. If it was an administrator when this Box's key was added, the key may still be there, and it logs in as every administrator: have an administrator remove the line ending in this Box's tag, or run roster revoke as one"
+}
 function Admin-KeyFile {
     # the file sshd_config's `Match Group administrators` gives Administrators, or $null when it gives none. Whatever
     # else would change where sshd looks is refused: roster never guesses which file sshd reads
@@ -342,7 +356,7 @@ function Main {
                 $body = $l.TrimEnd()
                 if ($body -cmatch $TagRe) {
                     $hit = $true
-                    $new = $body -creplace ' (roster-managed|fleet-managed):[A-Za-z0-9_-]+$', (' ' + $tag)
+                    $new = $body -creplace $TagEnd, (' ' + $tag)
                     if (-not $seen.ContainsKey($new)) { $seen[$new] = 1; $new + $l.Substring($body.Length) }
                 } else { $l }
             })
@@ -366,6 +380,31 @@ function Main {
         if ($mine -ne $adminFile -and -not $created) { User-AclWarnings $mine $me }
         if ($created -or $new -cne $old) { Write-Keys $mine $new $secure }
         if ($mine -eq $adminFile) { Set-AdminAcl $mine; Say 'SCOPE admins' }
+        # #522 item 2: a plain account can't read the admin file, which may still hold this Box's line from when it was
+        # an administrator: said, as remove says it (not again by setup's cleanup, $Sweep)
+        if ($adminFile -and -not $isAdmin -and -not $Sweep -and (Test-Path -LiteralPath $adminFile)) {
+            Say-AdminFileUnread $adminFile
+        }
+        # #509 item 4: this account's other key file, the user file sshd read before it joined Administrators (a
+        # plain user can't read the admin file, so that one isn't looked in, as remove warns): this Box's lines there
+        # count for OTHERS too (none of them logs in now), and the cleanup ($Sweep) takes TagRe's from it as well,
+        # after the file sshd reads is written. One it can't read is left alone, unsaid
+        $other = if ($mine -eq $adminFile) { $userFile } else { $null }
+        $otherText = $null
+        if ($other) { try { $otherText = Read-Keys $other } catch { $otherText = $null } }
+        if ($Sweep -and $null -ne $otherText) {
+            $swept = New-Text $otherText $null
+            if ($swept -cne $otherText) {
+                Assert-Folder (Split-Path -Parent $other) $me @($me, $Admins, $System)
+                Write-Keys $other $swept $null
+            }
+        }
+        # T245 (#471's NIT-1): this Box's other lines (another key type's) still there, which setup takes off once
+        # the new line has logged in, and only then
+        if ($Others -and (@($new -split '\n' | Where-Object { $_.TrimEnd() -cmatch $Others -and -not ($_.TrimEnd() -cmatch $TagRe) }).Count -or
+                          ($null -ne $otherText -and @($otherText -split '\n' | Where-Object { $_.TrimEnd() -cmatch $Others }).Count))) {
+            Say 'OTHERS'
+        }
         Say "FILE $mine"
     } elseif ($Mode -eq 'remove') {
         # both files sshd could have read this account's keys from (it may have joined or left Administrators since)
@@ -374,7 +413,7 @@ function Main {
             $old = Read-Keys $f
             if ($null -eq $old) { continue }
             foreach ($l in @($old -split '\n')) {     # each line it takes says its tag's name (revoke says another)
-                if ((Is-Mine $l) -and $l.TrimEnd() -cmatch ':([A-Za-z0-9_-]+)$') { Say "TAG $($Matches[1])" }
+                if ((Is-Mine $l) -and $l.TrimEnd() -cmatch $NameEnd) { Say "TAG $($Matches[1])" }
             }
             $new = New-Text $old $null
             if ($new -ceq $old) { continue }
@@ -390,7 +429,7 @@ function Main {
             Say "FILE $f"
         }
         if ($adminFile -and -not $isAdmin) {
-            Say "WARN this account isn't in Administrators now, so roster can't look in $adminFile. If it was an administrator when this Box's key was added, the key may still be there, and it logs in as every administrator: have an administrator remove the line ending in this Box's tag, or run roster revoke as one"
+            Say-AdminFileUnread $adminFile
         }
     } else {
         Say "FILE $mine"
@@ -419,21 +458,26 @@ try { Main } catch {
 MODES = ("add", "remove", "check", "retag")
 
 
-def script(mode, tag_re, pub="", taken="", own=""):
+def script(mode, tag_re, pub="", taken="", own="", others="", sweep=False):
     """The PowerShell script for MODE (add PUB, remove, or check this Box's key, matched by TAG_RE; retag: the lines
     TAG_RE matches, this Box's key under any roster name, get PUB's tag in place, NOLINE when there's none): sent on
     stdin. TAKEN and OWN (add and retag on a renamed Box, T226): a line TAKEN (the new name's tag) matches that OWN
-    (this Box's key) doesn't is another Box's, and the script says TAKEN and changes nothing."""
+    (this Box's key) doesn't is another Box's, and the script says TAKEN and changes nothing. OTHERS (add, T245): it
+    says OTHERS when a line OTHERS matches (this Box's, any key) and TAG_RE doesn't is still there after the add, or
+    any line OTHERS matches is in this account's other key file (an administrator's user file, #509 item 4). SWEEP
+    (add, setup's cleanup): TAG_RE's lines go from that other file too."""
     if mode not in MODES:
         raise ValueError(mode)
     # Is-Mine trims each line first, and .NET reads [[:space:]] as a set of its letters: the plain end of line
-    tag_re, taken, own = (x.replace(KEY_TRAIL, "$") for x in (tag_re, taken, own))
+    tag_re, taken, own, others = (keyline.powershell(x) for x in (tag_re, taken, own, others))
     header = (f"$Mode = {ps_literal(mode)}\n$Pub = {ps_literal(pub)}\n$TagRe = {ps_literal(tag_re)}\n"
-              f"$Taken = {ps_literal(taken)}\n$Own = {ps_literal(own)}\n")
+              f"$Taken = {ps_literal(taken)}\n$Own = {ps_literal(own)}\n$Others = {ps_literal(others)}\n"
+              f"$TagEnd = {ps_literal(keyline.PS_TAG_END)}\n$NameEnd = {ps_literal(keyline.PS_NAME_END)}\n"
+              f"$Sweep = {'$true' if sweep else '$false'}\n")
     return header + SCRIPT
 
 
-# `roster run HOST -- CMD` on an os: windows Host (T196, #376, decision Q176): CMD runs under PowerShell, whatever
+# `roster run HOST -- CMD` on an os: windows Host (decision Q176): CMD runs under PowerShell, whatever
 # sshd's DefaultShell, through the same launch line and bootstrap as setup's. Two scripts:
 #
 # RUN_LAUNCHER is what the Host is sent (framed on stdin). It checks the Host is Windows and that CMD parses as
@@ -590,18 +634,19 @@ def run_said(name, said, err):
     """What roster adds when `roster run` on Windows Host NAME didn't run CMD, or ran it with no exit code back, from
     its launcher's own lines (SAID, a RunOutcome) and, only when no launcher answered, the stderr ERR; or None."""
     if "NOT_POWERSHELL" in said.notes:
-        return (f"[{NOT_POWERSHELL}] the command isn't PowerShell, so nothing ran on {name}: roster run runs PowerShell "
-                f"on a Windows Host (for cmd.exe's syntax: cmd /c '...'). PowerShell said: {said.notes['NOT_POWERSHELL']}")
+        return Problem(NOT_POWERSHELL, f"the command isn't PowerShell, so nothing ran on {name}: roster run runs "
+                                       "PowerShell on a Windows Host (for cmd.exe's syntax: cmd /c '...'). PowerShell "
+                                       f"said: {said.notes['NOT_POWERSHELL']}")
     low = err.lower()
     if "NOT_WINDOWS" in said.notes or (said.code is None and "powershell" in low
                                        and ("not found" in low or "no such file" in low)):
-        return (f"[{NOT_WINDOWS}] {name} has os: windows, but it has no PowerShell or isn't Windows: nothing ran. "
-                "Fix os: for it in roster.yml")
+        return Problem(NOT_WINDOWS, f"{name} has os: windows, but it has no PowerShell or isn't Windows: nothing ran. "
+                                    "Fix os: for it in roster.yml")
     if "ERROR" in said.notes:
-        return f"roster's script on {name} couldn't run the command: {said.notes['ERROR']}"
+        return Problem(ROSTER_ERROR, f"roster's script on {name} couldn't run the command: {said.notes['ERROR']}")
     if said.code is None:
-        return (f"roster's script on {name} ended without the command's exit code (ssh's was {{rc}}), so it may not "
-                "have run")
+        return Problem(ROSTER_ERROR, f"roster's script on {name} ended without the command's exit code (ssh's was "
+                                     "{rc}), so it may not have run")
     return None
 
 
@@ -647,7 +692,7 @@ def run(h, command, password=None, key=True):
         sys.stderr.write(err)
     why = run_said(h["name"], said, err)
     if why:
-        print(f"error: {clean(why.replace('{rc}', str(rc)))}", file=sys.stderr, flush=True)
+        print(f"error: {clean(tagged(why).replace('{rc}', str(rc)))}", file=sys.stderr, flush=True)
         if said.code is None or "ERROR" in said.notes:
             return 255
     return exit_code(1 if said.code is None else said.code)
@@ -656,33 +701,36 @@ def run(h, command, password=None, key=True):
 def exit_code(code):
     """CODE as this Box can pass it on: one past 255 (Windows' are 32-bit) would wrap on a POSIX Box (9009 as 49, 256 as
     0), so it's 1 there, as is a negative one anywhere."""
-    return code if 0 <= code <= (0xFFFFFFFF if WINDOWS else 255) else 1
+    return code if 0 <= code <= (0xFFFFFFFF if context.WINDOWS else 255) else 1
 
 
-def looks_windows(text):
+def looks_windows(text: str) -> bool:
     """Is TEXT what a Windows Host says to a POSIX command (cmd.exe's or PowerShell's 'sh' is not recognized)?"""
     low = text.lower()
     return ("'sh' is not recognized" in low or "the term 'sh' is not recognized" in low
             or "sh : the term 'sh'" in low)
 
 
-def windows_hint(name):
+def windows_hint(name: str) -> HostRefused:
     """The error for a POSIX script a Windows Host couldn't run (code 155)."""
-    return (f"[{LOOKS_LIKE_WINDOWS}] {name} looks like a Windows Host (its shell says 'sh' is not recognized): set "
-            f"os: windows for it (or its group) in roster.yml, run `roster sync`, then try again")
+    return HostRefused(LOOKS_LIKE_WINDOWS, f"{name} looks like a Windows Host (its shell says 'sh' is not recognized): "
+                                           "set os: windows for it (or its group) in roster.yml, run `roster sync`, "
+                                           "then try again")
 
 
 class Result:
     """What the script said: the files it wrote or read, its warnings, and whether the file is the administrators'
     (a key there logs in as every administrator on the Host: Microsoft's design)."""
 
-    def __init__(self, files, warnings, admins=False, tags=(), noline=False, taken=False):
+    def __init__(self, files: list[str], warnings: list[str], admins: bool = False, tags: Iterable[str] = (),
+                 noline: bool = False, taken: bool = False, others: bool = False) -> None:
         self.files, self.warnings, self.admins = files, warnings, admins
         self.tags, self.noline = list(tags), noline       # remove: the names of the lines taken; retag: none found
-        self.taken = taken                                # add, retag: another key's line under the new name (T226)
+        self.taken = taken                                # add, retag: another key's line under the new name
+        self.others = others                              # add: this Box's lines of another key are still there
 
 
-def admins_note(name):
+def admins_note(name: str) -> str:
     return (f"a key in this file logs in as every administrator on {name}, not only this Login's user (Windows' "
             "administrators share one key file)")
 
@@ -696,46 +744,54 @@ def outcome(name, rc, out, err):
     warnings = [ln[5:] for ln in lines if ln.startswith("WARN ")]
     for ln in lines:
         if ln.startswith("REFUSED "):
-            raise RuntimeError(f"[{KEY_FILE}] {ln[8:]} - nothing was changed there")
+            raise HostRefused(KEY_FILE, f"{ln[8:]} - nothing was changed there")
         if ln.startswith("ERROR "):
             raise RuntimeError(ln[6:][:300])
         if ln == "NOT_WINDOWS":
-            raise RuntimeError(not_windows(name))
-    if "ROSTER_OK" in lines:
+            raise not_windows(name)
+    if keyline.OK in lines:
         return Result(files, warnings, "SCOPE admins" in lines, [ln[4:] for ln in lines if ln.startswith("TAG ")],
-                      "NOLINE" in lines, "TAKEN" in lines)
+                      "NOLINE" in lines, "TAKEN" in lines, "OTHERS" in lines)
     said = (err or out).strip()
     low = said.lower()
     if "powershell" in low and ("not found" in low or "no such file" in low):
-        raise RuntimeError(not_windows(name))
+        raise not_windows(name)
     raise RuntimeError(f"no answer from the script on {name} (exit {rc}): " + (said[:200] or "nothing printed"))
 
 
 def not_windows(name):
-    return (f"[{NOT_WINDOWS}] {name} has os: windows, but it has no PowerShell or isn't Windows: nothing was "
-            "changed. Fix os: for it in roster.yml")
+    return HostRefused(NOT_WINDOWS, f"{name} has os: windows, but it has no PowerShell or isn't Windows: nothing was "
+                                    "changed. Fix os: for it in roster.yml")
 
 
-def over_key(h, mode, tag_re, timeout=60, pub="", taken="", own=""):
+
+class SshFailed(RuntimeError):
+    """over_key: ssh itself failed (no login), so no script ran."""
+
+
+def over_key(h: dict[str, Any], mode: str, tag_re: str, timeout: float = 60, pub: str = "", taken: str = "",
+             own: str = "", ssh_opts: Sequence[str] = (), sweep: bool = False) -> Result:
     """Run MODE's script on key Host H with this Box's key (`ssh NAME`, never a shared connection): a Result, or
-    RuntimeError. PUB: the key line retag writes; TAKEN, OWN: script's."""
+    RuntimeError (SshFailed when ssh itself failed). PUB: the key line retag writes; TAKEN, OWN, SWEEP: script's.
+    SSH_OPTS: ssh's own options before the Host (the Box key rotation's `-F CONFIG`, one key: T240)."""
     try:
-        r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
+        r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", *ssh_opts, h["name"],
                                          remote_command()]),
-                           input=framed(script(mode, tag_re, pub, taken, own)).encode(), capture_output=True,
+                           input=framed(script(mode, tag_re, pub, taken, own, sweep=sweep)).encode(), capture_output=True,
                            timeout=timeout)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"{h['name']} didn't finish within {timeout} s") from None
     out, err = r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace")
-    if r.returncode == 255 and "ROSTER_OK" not in out:          # ssh's own failure: no login, no script
-        raise RuntimeError(f"ssh {h['name']} failed: " + (err.strip()[:200] or "no message"))
+    if r.returncode == 255 and keyline.OK not in out:          # ssh's own failure: no login, no script
+        raise SshFailed(f"ssh {h['name']} failed: " + (err.strip()[:200] or "no message"))
     return outcome(h["name"], r.returncode, out, err)
 
 
-def install(h, pub, tag_re, password, taken="", own=""):
+def install(h: dict[str, Any], pub: str, tag_re: str, password: str | None, taken: str = "", own: str = "",
+            others: str = "") -> Result:
     """Add this Box's key line PUB on Windows Host H, logging in with PASSWORD (paramiko; None: an agent's key).
-    TAKEN, OWN: script's."""
+    TAKEN, OWN, OTHERS: script's."""
     from .sshops import password_exec
     rc, out, err = password_exec(h, remote_command(), password, timeout=15,
-                                 stdin=framed(script("add", tag_re, pub, taken, own)))
+                                 stdin=framed(script("add", tag_re, pub, taken, own, others)))
     return outcome(h["name"], rc, out, err)

@@ -6,6 +6,7 @@
 #   items, [{"id", "title", "vault", "username", "urls": [...], "fields": {label: value}}] (default: the two below).
 #   `op item get ID --fields label=X` reads one of their fields (it prints concealed ones only with --reveal).
 #   FAKE_OP_CONCEALED=LABEL,...: those fields are CONCEALED (default: password), their value printed as a worst case.
+# FAKE_OP_RAW=JSON: {"item get": TEXT, "item list": TEXT}: that command prints TEXT instead (malformed output).
 # FAKE_ARGV_LOG=FILE: every call's full argv, one JSON list per line.
 # FAKE_OP_ENV_LOG=FILE: every call's environment variable names (never their values), one JSON list per line.
 import json, os, sys
@@ -20,6 +21,8 @@ if a[0] == "whoami":
 if a[0] == "signin":
     print('export OP_SESSION_test="tok"\n# This command is meant to be used with your shell\'s eval function.'); sys.exit()
 if not signed: print("[ERROR] 2026/10/07 account is not signed in", file=sys.stderr); sys.exit(1)
+raw = json.loads(os.environ.get("FAKE_OP_RAW") or "{}")
+if " ".join(a[:2]) in raw: print(raw[" ".join(a[:2])]); sys.exit()
 items = {("Infra", "Network gear"): {"password": "pw-netops", "enable": "en-secret"},
          ("Infra", "Orion servers"): {"password": "pw-deploy"}}
 if a[0] == "read":

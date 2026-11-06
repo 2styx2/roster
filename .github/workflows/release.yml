@@ -31,6 +31,8 @@ permissions:
   contents: read
 
 env:
+  # astral-sh/setup-uv publishes no moving major tag since v8 (only immutable full ones): its uses: lines name the
+  # full tag; Dependabot bumps it with the other actions, weekly (.github/dependabot.yml, decision Q196)
   UV_VERSION: "0.12.23"
   UV_PYTHON_DOWNLOADS: "never"
   CARGO_TERM_COLOR: always
@@ -38,11 +40,11 @@ env:
 jobs:
   version:
     name: Version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: v
         name: Every file has one version (and it's the tag's)
         run: |
@@ -61,15 +63,15 @@ jobs:
   cli:
     name: CLI (wheel, sdist, source tarball)
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
       # roster(1) is generated from the parser and docs/cli-reference.md and committed; never ship a stale one.
@@ -90,7 +92,7 @@ jobs:
       # The man page on its own, for packagers.
       - run: cp src/roster/roster.1 out/roster.1
       - run: ls -l out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-cli
           path: out/*
@@ -106,7 +108,7 @@ jobs:
       matrix:
         include:
           - name: windows-x64
-            os: windows-latest
+            os: windows-2025
             args: ""
             target_dir: target/release
           - name: linux-x64
@@ -116,7 +118,7 @@ jobs:
           # Both Mac architectures in one app. Ad-hoc signed (app/src-tauri/tauri.macos.conf.json), not
           # notarized: see docs/releasing.md.
           - name: macos-universal
-            os: macos-latest
+            os: macos-26
             args: "--target universal-apple-darwin"
             target_dir: target/universal-apple-darwin/release
     env:
@@ -125,7 +127,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the Tauri system packages
         if: runner.os == 'Linux'
         run: |
@@ -133,7 +135,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libgtk-3-dev libdbus-1-dev libayatana-appindicator3-dev \
             librsvg2-dev libssl-dev libxdo-dev patchelf file pkg-config build-essential
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -183,7 +185,7 @@ jobs:
           [ -f THIRD-PARTY-NOTICES ] && cp THIRD-PARTY-NOTICES pack/
           tar -czf "out/$p.tar.gz" -C pack .
       # The app binaries carry ported third-party code (THIRD-PARTY-NOTICES): its notice ships next to LICENSE.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Archives carry THIRD-PARTY-NOTICES
@@ -222,7 +224,7 @@ jobs:
           hdiutil detach unpacked/dmg > /dev/null
           exit $s
       - run: ls -l out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-app-${{ matrix.name }}
           path: out/*
@@ -234,12 +236,12 @@ jobs:
   docs:
     name: Docs PDF
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -250,7 +252,7 @@ jobs:
         working-directory: app
         run: npm run docs -- --out ../docs-site --pdf "../out/roster-docs-$VERSION.pdf"
       - run: ls -l out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-docs
           path: out/*
@@ -260,9 +262,9 @@ jobs:
   checksums:
     name: SHA256SUMS
     needs: [version, cli, app, docs]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-*
           merge-multiple: true
@@ -274,7 +276,7 @@ jobs:
           cat SHA256SUMS
           { echo '| File | Size |'; echo '|---|---|'
             for f in *; do echo "| \`$f\` | $(du -h -- "$f" | cut -f1) |"; done; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-all
           path: out/*
@@ -284,19 +286,19 @@ jobs:
     name: Draft Release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [version, checksums]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write   # only this job writes: it creates the draft Release and uploads its files
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           sparse-checkout: |
             docs/news.md
             scripts/news_section.py
           sparse-checkout-cone-mode: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-all
           path: out
@@ -322,7 +324,7 @@ jobs:
           These builds aren't code-signed yet: Windows SmartScreen asks "More info → Run anyway", and macOS needs
           right-click → Open the first time. Check downloads against \`SHA256SUMS\` (\`sha256sum -c SHA256SUMS --ignore-missing\`).
           EOF
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           draft: true
           name: roster ${{ github.ref_name }}

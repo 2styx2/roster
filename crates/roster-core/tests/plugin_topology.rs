@@ -14,10 +14,12 @@
 mod common;
 
 use common::unhurried;
+use roster_core::plugin::By;
+use roster_core::rpc::CallError;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
-use roster_core::plugin::{DemoHost, Event, Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::plugin::{DemoHost, Event, Limits, Load, Permission, PluginHost, Reply, Serve, Source};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -207,6 +209,8 @@ struct FakeServe {
     held_check: Mutex<Option<(String, Receiver<()>)>>,
     /// The `roster sync` after a cut wrote `mesh: false` (T150).
     cut_sync: Mutex<Value>,
+    /// What `mesh.job` answers before the cut's end, one state a call (none left: done).
+    cut_states: Mutex<Vec<&'static str>>,
 }
 
 impl FakeServe {
@@ -219,6 +223,7 @@ impl FakeServe {
             grouped: Value::Null,
             held_check: Mutex::new(None),
             cut_sync: Mutex::new(json!({ "ok": true })),
+            cut_states: Mutex::new(Vec::new()),
         }
     }
     fn grouped(mut self, grouped: Value) -> FakeServe {
@@ -237,7 +242,7 @@ impl FakeServe {
 }
 
 impl Serve for FakeServe {
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
         self.calls.lock().unwrap().push((method.to_string(), params.clone()));
         match method {
             "hosts.list" => {
@@ -276,11 +281,22 @@ impl Serve for FakeServe {
                 Ok(json!({ "job": 7, "action": "cut", "total": 3, "host": params["host"] }))
             }
             "mesh.cut" => Ok(mesh_cut(params["host"].as_str().unwrap_or(""))),
-            "mesh.job" => Ok(
-                json!({ "job": 7, "action": "cut", "host": "esx-01", "state": "done", "done": 3, "total": 3, "at": null, "stopped": false,
-                        "result": mesh_cut_synced("esx-01", self.cut_sync.lock().unwrap().clone()) }),
-            ),
-            _ => Err(format!("unknown method {method}")),
+            "mesh.job" => {
+                let mut states = self.cut_states.lock().unwrap();
+                if !states.is_empty() {
+                    let state = states.remove(0);
+                    return Ok(
+                        json!({ "job": 7, "action": "cut", "host": "esx-01", "state": state, "done": 2, "total": 3, "at": null, "stopped": false }),
+                    );
+                }
+                Ok(
+                    json!({ "job": 7, "action": "cut", "host": "esx-01", "state": "done", "done": 3, "total": 3, "at": null, "stopped": false,
+                            "result": mesh_cut_synced("esx-01", self.cut_sync.lock().unwrap().clone()) }),
+                )
+            }
+            _ => Err(CallError::Io {
+                message: format!("unknown method {method}"),
+            }),
         }
     }
 }
@@ -369,7 +385,10 @@ impl World {
         let before = self.serve.calls.lock().unwrap().len();
         let (_, mut reply) = self
             .host
-            .load_with(&Source::Dir(self.dir.clone()), &perms(grants), &config)
+            .load(
+                &Source::Dir(self.dir.clone()),
+                Load::new(&perms(grants)).config(config.clone()),
+            )
             .unwrap();
         ok(&reply);
         let first = reply
@@ -410,7 +429,7 @@ impl World {
     }
 
     fn call(&self, handler: u64, args: Value) -> Reply {
-        self.settle(self.host.call(NAME, handler, args))
+        self.settle(self.host.call(NAME, handler, args, By::User))
     }
 
     /// What the Plugin did with an event, its answers included: a reply of its own when it only
@@ -503,7 +522,7 @@ fn it_installs_from_its_folder_asking_for_what_its_readme_explains() {
     let w = World::new("manifest");
     let manifest = common::read_manifest(&w.dir).unwrap();
     assert_eq!(manifest.name, NAME);
-    assert_eq!(manifest.api, 6);
+    assert_eq!(manifest.api, 7);
     let asked: Vec<String> = manifest.permissions.iter().map(|p| p.to_string()).collect();
     assert_eq!(asked, ALL);
     let readme = std::fs::read_to_string(plugins_dir().join("topology/README.md")).unwrap();
@@ -831,6 +850,33 @@ fn a_cut_whose_sync_failed_says_this_boxs_ssh_config_didnt_follow() {
     );
 }
 
+/// A cut being stopped is still going (serve's job states: running and stopping): its progress
+/// stays and the timer asks again, rather than saying it failed.
+#[test]
+fn a_cut_that_is_stopping_is_still_going_not_failed() {
+    let w = World::new("cut-stopping");
+    *w.serve.cut_states.lock().unwrap() = vec!["running", "stopping"];
+    let reply = w.load(ALL);
+    let cut = action(view(&reply), "Cut");
+    let r = w.call(cut, on("esx-01"));
+    let r = w.call(
+        handler(&one(&r.ops, "confirm")["spec"]["run"]),
+        json!({ "confirm": "yes" }),
+    );
+    let timer = handler(&one(&r.ops, "timer")["run"]);
+    for _ in 0..2 {
+        let r = w.call(timer, json!({}));
+        ok(&r);
+        assert!(find(&r.ops, "notify").is_empty(), "{:?}", r.ops);
+        assert_eq!(one(&r.ops, "progress")["spec"]["done"], 2);
+    }
+    let r = w.call(timer, json!({}));
+    assert_eq!(
+        one(&r.ops, "notify")["text"],
+        "Cut esx-01: cut pending on 1 Host that didn't answer."
+    );
+}
+
 #[test]
 fn cut_asks_first_with_the_host_to_type_and_only_the_answer_cuts() {
     let w = World::new("cut");
@@ -967,7 +1013,7 @@ fn it_reads_the_inventory_without_holding_up_its_own_calls() {
     // the ceiling instead of hanging.
     let host = Arc::clone(&w.host);
     let r = common::within_ceiling(":topology's answer", move || {
-        host.call(NAME, run, json!({ "args": "", "words": [] }))
+        host.call(NAME, run, json!({ "args": "", "words": [] }), By::User)
     });
     ok(&r);
     // Once serve answers, the new Host is on the map.
@@ -1044,9 +1090,12 @@ fn its_check_section_says_whether_mesh_status_is_available() {
     *old.serve.mesh.lock().unwrap() = Value::Null;
     let reply = old.load(ALL);
     ok(&reply);
-    let r = old
-        .host
-        .call(NAME, handler(&one(&reply.ops, "health")["spec"]["check"]), json!({}));
+    let r = old.host.call(
+        NAME,
+        handler(&one(&reply.ops, "health")["spec"]["check"]),
+        json!({}),
+        By::User,
+    );
     assert_eq!(r.result[0]["level"], "warn");
     assert!(
         r.result[0]["message"]
@@ -1098,7 +1147,7 @@ fn demo_inventory() -> Value {
 }
 
 #[test]
-fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_done_there() {
+fn its_tutorial_runs_on_the_demo_inventory_and_its_mesh_and_every_step_can_be_done_there() {
     let w = World::new("tutor");
     let scratch = temp("tutor-scratch");
     let demo = DemoHost::new(demo_inventory(), unhurried(), &scratch).unwrap();
@@ -1115,7 +1164,7 @@ fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_do
     assert_eq!(tutor["id"], "topology");
     assert_eq!(tutor["spec"]["title"], "Topology tutor");
     let lessons = tutor["spec"]["lessons"].as_array().unwrap();
-    assert!(lessons.len() >= 2, "{lessons:#?}");
+    assert_eq!(lessons.len(), 3, "{lessons:#?}");
     let steps: Vec<&Value> = lessons.iter().flat_map(|l| l["steps"].as_array().unwrap()).collect();
     let demo_hosts = ["demo-01", "demo-02", "demo-03", "demo-04", "demo-05", "demo-06"];
     for step in &steps {
@@ -1136,6 +1185,16 @@ fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_do
         json!({ "event": "command", "id": "topology", "arg": "demo-lab" })
     ));
     assert!(steps.iter().any(|s| s["on"]["event"] == "session_open"));
+    // Reach, on the demo's Mesh (#233 item 1): a Host that reaches others, and the one that didn't answer.
+    let reach = lessons[2]["steps"].as_array().unwrap();
+    let reach_ons: Vec<&Value> = reach.iter().map(|s| &s["on"]).collect();
+    assert_eq!(
+        reach_ons,
+        [
+            &json!({ "event": "command", "id": "info", "arg": "demo-01" }),
+            &json!({ "event": "command", "id": "info", "arg": "demo-05" }),
+        ]
+    );
     // No two steps wait for the same thing: one event never ticks two at once.
     let ons: Vec<String> = steps.iter().map(|s| s["on"].to_string()).collect();
     let mut unique = ons.clone();
@@ -1143,14 +1202,14 @@ fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_do
     unique.dedup();
     assert_eq!(unique.len(), ons.len(), "{ons:?}");
 
-    // On the demo: its first look draws the demo's six Hosts and says, honestly, that there's no Mesh.
+    // On the demo: its first look draws the demo's six Hosts and the demo's made-up Mesh.
     let first = reply
         .ops
         .iter()
         .find(|o| o["op"] == "timer" && o["every"] == false)
         .map(|t| handler(&t["run"]))
         .unwrap();
-    let mut ops = demo.call(NAME, first, json!({})).ops;
+    let mut ops = demo.call(NAME, first, json!({}), By::User).ops;
     let started = Instant::now();
     while !ops.iter().any(|o| o["op"] == "view") {
         assert!(started.elapsed() < common::CEILING, "no map: {ops:#?}");
@@ -1159,10 +1218,43 @@ fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_do
             ops.extend(r.ops);
         }
     }
+    // The reach lesson's two Hosts, in their details (`i` on the map runs `:info HOST`).
+    let started = Instant::now();
+    while find(&ops, "details").len() < 4 {
+        assert!(started.elapsed() < common::CEILING, "no details: {ops:#?}");
+        if let Ok(r) = rx.recv_timeout(Duration::from_millis(50)) {
+            ok(&r);
+            ops.extend(r.ops);
+        }
+    }
+    let facts = |host: &str| {
+        let d = find(&ops, "details")
+            .into_iter()
+            .find(|d| d["host"] == host)
+            .unwrap_or_else(|| panic!("no details for {host}"));
+        d["spec"]["facts"].clone()
+    };
+    assert_eq!(
+        facts("demo-01"),
+        json!([
+            { "label": "In the Mesh", "value": "yes" },
+            { "label": "Reaches", "value": "3 Hosts directly" },
+            { "label": "Reached by", "value": "2 Hosts directly" },
+        ])
+    );
+    assert_eq!(
+        facts("demo-05"),
+        json!([
+            { "label": "In the Mesh", "value": "yes" },
+            { "label": "Reaches", "value": "0 Hosts directly" },
+            { "label": "Reached by", "value": "1 Host directly" },
+            { "label": "Pending", "value": "no answer: ssh: connect to host 10.0.0.15 port 22: Connection timed out" },
+        ])
+    );
     let text = view(&Reply {
         plugin: NAME.into(),
         result: Value::Null,
-        ops,
+        ops: ops.clone(),
         error: None,
         disabled: None,
         listens: None,
@@ -1171,18 +1263,26 @@ fn its_tutorial_runs_on_the_demo_inventory_with_no_mesh_and_every_step_can_be_do
         .unwrap()
         .to_string();
     assert!(text.starts_with("6 Hosts in 2 groups."), "{text}");
+    assert!(text.contains("The Mesh: 4 Hosts, 7 Links."), "{text}");
     assert!(
-        text.contains("The Mesh isn't shown: mesh.status isn't on the demo Inventory"),
+        text.contains("1 Host didn't answer the last apply (Mesh pending)."),
         "{text}"
     );
+    assert!(!text.contains("out of date"), "{text}");
 
-    // `:topology demo-lab`, as its step asks: the lab's cluster, not "There's no group".
+    // `:topology demo-lab`, as its step asks: the lab's clusters (its meshed Hosts, and the switch
+    // kept out of the Mesh), not "There's no group".
     let run = handler(&one(&reply.ops, "command")["run"]);
-    let r = demo.call(NAME, run, json!({ "args": "demo-lab", "words": ["demo-lab"] }));
+    let r = demo.call(
+        NAME,
+        run,
+        json!({ "args": "demo-lab", "words": ["demo-lab"] }),
+        By::User,
+    );
     ok(&r);
     assert_eq!(
         r.ops[0],
-        json!({ "op": "view_update", "id": "topology", "changes": { "filter": { "clusters": [":group:demo-lab"] } } })
+        json!({ "op": "view_update", "id": "topology", "changes": { "filter": { "clusters": [":group:demo-lab", ":group:demo-lab/out"] } } })
     );
 }
 

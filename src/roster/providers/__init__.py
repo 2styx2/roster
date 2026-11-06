@@ -1,5 +1,6 @@
 """Password providers: registry, plugin loading, and the built-ins."""
 
+import contextlib
 import getpass
 import os
 import re
@@ -8,9 +9,46 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Any
 
-from ..common import die, filter_env, program_argv, run, run_filtered, say, time_left, user_config_dir
+from ..common import filter_env, program_argv, run, run_filtered, say, time_left
+from ..context import user_config_dir
+from ..errors import InventoryError
+from ..hosts import NO_PASSWORD, prompted, provider_of
+from .problems import (  # noqa: F401 (what a provider or plugin raises: providers.ItemNotFound, ...)
+    AlreadyLoggedIn,
+    ApiKeyRejected,
+    BadServer,
+    BrowserLoginFailed,
+    CantWrite,
+    CliMissing,
+    CodeRejected,
+    ItemExists,
+    ItemNotFound,
+    LoginError,
+    MethodUnsupported,
+    NoField,
+    NoItemFields,
+    NoSession,
+    NotLoggedIn,
+    NotSignedIn,
+    RateLimited,
+    ReadOnlyTarget,
+    SecretError,
+    ServerUnreachable,
+    SessionFileFailed,
+    SessionFileRefused,
+    SeveralItems,
+    SignOutFailed,
+    TimedOut,
+    UnknownTarget,
+    Unsupported,
+    VaultLocked,
+    WriteFailed,
+    WrongLogin,
+    WrongPassword,
+    repeats_secret,
+    withheld,
+)
 
 # ---------------------------------------------------------------- password providers
 #
@@ -21,143 +59,6 @@ from ..common import die, filter_env, program_argv, run, run_filtered, say, time
 #     - a Python plugin in ~/.config/roster/providers/ or a providers/ folder next to roster.yml
 #       (see examples/providers/pass_store.py for a complete example).
 # Every provider runs lazily, only when a password is actually needed, and values stay in memory.
-
-class SecretError(RuntimeError):
-    """Raise this from a provider with a message that's safe to show (never the secret itself)."""
-
-
-# Kinds of SecretError a caller (`roster serve`) can tell apart. Providers and plugins raise these where they fit.
-class TimedOut(SecretError):
-    """A helper command didn't finish in time (it was stopped): what it was doing may or may not have happened."""
-
-
-class WrongPassword(SecretError):
-    """The master password didn't unlock the vault."""
-
-    step: dict[str, Any] | None = None  # vault.login: the step the sign-in carries on at (sign_in_problem), when it does
-
-
-class NotLoggedIn(SecretError):
-    """The vault CLI isn't logged in on this box; the message says what to run."""
-
-
-class CliMissing(SecretError):
-    """The provider's command isn't installed."""
-
-
-class Unsupported(SecretError):
-    """The provider has no master password to unlock with."""
-
-
-class NotSignedIn(SecretError):
-    """vault.logout: the CLI isn't signed in to an account, so there's none to sign out of."""
-
-
-class SignOutFailed(SecretError):
-    """vault.logout: the CLI refused to log out; the message has its words."""
-
-
-class VaultLocked(SecretError):
-    """The vault is locked and this process may not unlock it by itself (see MANUAL_UNLOCK), or has nothing to unlock
-    it with (no terminal to ask in, no password variable): 14, never 35 (#437)."""
-
-
-# What can go wrong signing in (`roster serve`'s vault.login). `step`: where the sign-in carries on (the provider
-# restarted it, e.g. after a wrong code), or None when it's over. Messages are roster's; never a secret.
-class LoginError(SecretError):
-    """A sign-in failed some other way; the message has the provider's own words."""
-
-    def __init__(self, message, step=None):
-        super().__init__(message)
-        self.step = step
-
-
-class CodeRejected(LoginError):
-    """The two-step or new-device code was wrong or expired."""
-
-
-class MethodUnsupported(LoginError):
-    """The account's only two-step methods (or its SSO decryption) are ones the provider's CLI can't do."""
-
-
-class RateLimited(LoginError):
-    """The server refused: too many attempts."""
-
-
-class ServerUnreachable(LoginError):
-    """The vault's server didn't answer (network, wrong address, TLS)."""
-
-
-class AlreadyLoggedIn(LoginError):
-    """The CLI is already logged in on this box: unlock instead."""
-
-
-class BrowserLoginFailed(LoginError):
-    """SSO in the browser failed or didn't finish in time."""
-
-
-class BadServer(LoginError):
-    """The server address given isn't one."""
-
-
-class ApiKeyRejected(LoginError):
-    """The API key (client id / secret) wasn't accepted, or is an organization key."""
-
-
-class WrongLogin(LoginError):
-    """The email or master password wasn't accepted (WrongPassword's sign-in twin)."""
-
-
-# What can be wrong with the item a Login names. They carry item NAMES (and dates, URIs), never a value.
-class ItemNotFound(SecretError):
-    """No item by that name. near: names of similar items, closest first."""
-
-    def __init__(self, message, item, near=()):
-        super().__init__(message)
-        self.item, self.near = item, list(near)
-
-
-class SeveralItems(SecretError):
-    """More than one item matches. matches: [{name, revised, uris}]; exact: they all have that exact name. total:
-    how many items match when that's more than MATCHES shows (Bitwarden: some of them aren't logins), else None."""
-
-    def __init__(self, message, item, matches, exact, total=None):
-        super().__init__(message)
-        self.item, self.matches, self.exact, self.total = item, matches, exact, total
-
-
-class NoField(SecretError):
-    """The item exists but has no value in the field the Login asks for ("password", or a #FIELD)."""
-
-    def __init__(self, message, item, field):
-        super().__init__(message)
-        self.item, self.field = item, field
-
-
-# Writing Vault items (ticket 13: "Save to vault", Q43's verified adds). Names only, never a value.
-class CantWrite(SecretError):
-    """The provider can only read Logins: it can't create or delete Vault items."""
-
-
-class ItemExists(SecretError):
-    """An item by exactly that name is already there. matches: [{name, revised, uris}]."""
-
-    def __init__(self, message, item, matches):
-        super().__init__(message)
-        self.item, self.matches = item, matches
-
-
-class WriteFailed(SecretError):
-    """The provider's CLI refused the create or delete; the message has its words (minus any value)."""
-
-
-# Where a Vault item goes (ticket 35): the personal vault, an organization's collection, a KeePassXC group.
-class UnknownTarget(SecretError):
-    """The place to save to isn't there (or isn't one this provider has); the message names the setting to fix."""
-
-
-class ReadOnlyTarget(SecretError):
-    """The account may only read the collection it was asked to save to."""
 
 
 def near_names(name, names, n=5):
@@ -182,6 +83,7 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
                           #                        and the account the CLI is signed in to, in one call
                           #             "logout": fn(ctx), sign the CLI out (vault.logout); NotSignedIn if it isn't
                           #             "forget": fn(ctx), the in-memory part of "lock" (drop a session key)
+                          #             "reset": fn(), forget what the provider keeps for this run (reset())
                           #             "logout_help": why this provider has no account to sign out of, and what to do
                           #             "create": fn(item, ctx) -> {"id", "name"}, item = {name, username,
                           #                       password, uri}; refuses a name that exists (ItemExists)
@@ -197,26 +99,55 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
 #                      out then (one more CLI call each, for op and kp)
 #             "sync": fn(ctx) -> {"previous": ISO time or None}: fetch what changed on the server (`bw sync`);
 #                     roster add --from-vault, and `roster vault sync` (vaultsync.py)
+#             "saved_session": fn(ctx) -> (state, why): a session saved for every run on this Box
+#                              (bw-session): "none", "working", "expired", "ignored" or "unknown" (why: the reason); never in serve
+#             "manual": fn(ctx), only_unlock_unlocks(): forget what this process inherited that would unlock
+#                       it by itself (bw's BW_PASSWORD and BW_SESSION; op's OP_SESSION_*, moved into its state)
+#             "save_to": the keys of a save_to that names a target of this provider ({organization, collection},
+#                        {group}); "old_save_to": an older setting of its own that means save_to: {it: value}
+#             "holds_items": False for a provider with no items to list or sync (prompt, env, cmd)
+#             "unlock_hint": what to run so a locked vault can answer: every fix line takes it from here
+#                            (unlock_fix: roster add --from-vault, vault sync, sync, setup)
+#             "session": a session saved for every run on this Box (`roster vault unlock`/`lock`): {"unlock":
+#                        fn(ctx) -> how, "lock": fn(ctx) -> (said, problem), "remove": fn() -> removed, "file": fn(),
+#                        "until": how long it lasts, "missing": the CLI isn't installed}; "no_session": why a
+#                        provider keeps none
 #             "box_paths": settings naming files on this Box (e.g. kp's database); a change to one
 #                          from vault.configure locks the provider (what it holds was for the old one)
 PROVIDER_SETTINGS = {}    # name -> settings dict from roster.yml `providers:`
 BOX_SETTINGS = {}         # name -> this Box's own settings, from the app's init.lua (`roster serve`'s vault.configure):
                           #   paths and choices only, never a secret. They win over roster.yml's.
 PROVIDER_STATE = {}       # name -> per-run scratch space (e.g. "already unlocked")
-NO_PASSWORD = ("agent", "key", "none")
 MANUAL_UNLOCK = False     # True (`roster serve`): only unlock() unlocks - no session file, no BW_PASSWORD, no prompt
+JSON_OUTPUT = False       # True: the command prints --json, so a provider adds no note or question on stderr
 _secrets = {}
 _secret_lock = threading.Lock()
 
 
-def register(name, help="", tool=""):
-    """Decorator for provider functions:  @register("vault", help="...", tool="vault")"""
+def unlock_fix(provider: str) -> str:
+    """How to unlock PROVIDER's vault (its unlock_hint), for a fix line."""
+    return (PROVIDERS.get(provider) or {}).get("unlock_hint") or f"unlock {provider}'s vault, then run it again"
+
+
+LOOKUP_FLOOR = 7            # s for each look-up after a create timed out (did it get there?), even past serve's deadline
+
+
+def bad_name(name):
+    """Why NAME can't be a provider's name, or None."""
     if not re.match(r"^[a-z0-9_-]+$", name):
-        raise ValueError(f"provider name {name!r} must be lowercase letters, digits, _ or -")
+        return f"provider name {name!r} must be lowercase letters, digits, _ or -"
+    return None
+
+
+def register(name, help="", tool="", **facts):
+    """Decorator for provider functions:  @register("vault", help="...", tool="vault"); FACTS: more of PROVIDERS'
+    optional keys."""
+    if why := bad_name(name):
+        raise ValueError(why)
 
     def deco(fn):
         PROVIDERS[name] = {"get": fn, "help": help, "tool": tool,
-                           "kind": "built-in" if fn.__module__.startswith("roster.") else "plugin"}
+                           "kind": "built-in" if fn.__module__.startswith("roster.") else "plugin", **facts}
         return fn
     return deco
 
@@ -233,6 +164,65 @@ def split_field(spec, default="password"):
     """'Item name#field' -> ('Item name', 'field');  'Item name' -> ('Item name', default)."""
     item, _, field = spec.partition("#")
     return item.strip(), field.strip() or default
+
+
+class _Tty:
+    """The controlling terminal, open on FD: write() shows text on it, readline() reads what's typed there (a line in
+    the terminal's canonical mode; "" at end of input)."""
+
+    def __init__(self, fd):
+        self.fd = fd
+
+    def write(self, text):
+        os.write(self.fd, text.encode("utf-8", "replace"))
+
+    def readline(self):
+        line = b""
+        while not line.endswith(b"\n") and (chunk := os.read(self.fd, 1024)):
+            line += chunk
+        return line.decode("utf-8", "replace")
+
+
+class _WinTty:
+    """Windows' console through stdin and stderr, used only when both are the console."""
+
+    def write(self, text):
+        sys.stderr.write(text)
+        sys.stderr.flush()
+
+    def readline(self):
+        return sys.stdin.readline()
+
+
+@contextlib.contextmanager
+def open_tty():
+    """The terminal a question goes to, as getpass's: /dev/tty on Linux and macOS; on Windows the console, when stdin
+    and stderr are both it. None when there's none (no controlling terminal, or a Windows stream redirected)."""
+    if os.name == "nt":
+        yield _WinTty() if sys.stdin.isatty() and sys.stderr.isatty() else None
+        return
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR | getattr(os, "O_NOCTTY", 0))
+    except OSError:
+        yield None
+        return
+    try:
+        yield _Tty(fd)
+    finally:
+        os.close(fd)
+
+
+def tell(text):
+    """TEXT on the controlling terminal (open_tty), as a question is asked there, so a redirected stderr never hides
+    what a prompt right after it is about (#503's second review, LOW-5); on stderr when there's no terminal."""
+    with open_tty() as tty:
+        if tty is not None:
+            try:
+                tty.write(text + "\n")
+                return
+            except OSError:
+                pass
+    print(text, file=sys.stderr, flush=True)
 
 
 class Ctx:
@@ -252,6 +242,23 @@ class Ctx:
         if not self.interactive:
             raise SecretError(f"needs input ({prompt.strip().rstrip(':')}) but there's no terminal to ask in")
         return getpass.getpass(f"  {prompt}")
+
+    def confirm(self, prompt):
+        """A yes/no question asked and answered on the controlling terminal (open_tty), as getpass asks the password,
+        so a redirected stderr never hides it (#480 review, LOW-1): True only for y or yes (Enter is No; so is a
+        terminal error, such as EIO when it hangs up while asking: #486). False, without asking, with no terminal
+        (stdin or controlling) or with --json."""
+        if not self.interactive or JSON_OUTPUT:
+            return False
+        with open_tty() as tty:
+            if tty is None:
+                return False
+            try:
+                tty.write(f"  {prompt}")
+                answer = tty.readline()
+            except OSError:
+                return False
+            return answer.strip().lower() in ("y", "yes")
 
     def run(self, args, env=None, shell=False, interactive=False, timeout=120, input=None, floor=1, discard=False):
         """Run a helper command, capturing output. A missing tool becomes a friendly error.
@@ -303,21 +310,25 @@ def errtext(r, limit=160, stdout=True):
     return " ".join(lines)[:limit]
 
 
+def json_output():
+    """For providers: does this command print --json (no note line on stderr, no question)?"""
+    return JSON_OUTPUT
+
+
 def manual_unlock():
     """For providers: is unlocking by themselves (session file, password env var, prompt) off in this process?"""
     return MANUAL_UNLOCK
 
 
-def get_secret(ref, group):
+def get_secret(ref: str | None, group: str | None) -> str | None:
     """Resolve an auth reference via its provider. Cached for this run, never written anywhere."""
     if ref in (None, "") or ref in NO_PASSWORD:
         return None
-    name, _, spec = str(ref).partition(":")
-    name = name.strip()
+    name, spec = provider_of(ref), str(ref).partition(":")[2]
     if name not in PROVIDERS:
         raise SecretError(f"unknown password source {name!r} in auth {ref!r} - available: "
                           f"{', '.join(sorted(PROVIDERS))} (see `roster vault status`)")
-    cache_key = (ref, group) if name == "prompt" else ref
+    cache_key = (ref, group) if prompted(ref) else ref
     with _secret_lock:
         if cache_key in _secrets:
             return _secrets[cache_key]
@@ -331,6 +342,15 @@ def get_secret(ref, group):
             raise SecretError(f"provider '{name}' returned no value for {ref!r}")
         _secrets[cache_key] = val
         return val
+
+
+def forget_secrets(provider=None):
+    """Forget the secrets get_secret cached (only PROVIDER's, if given): the next look-up asks the vault again. The
+    vault stays unlocked."""
+    with _secret_lock:
+        for ref in [r for r in _secrets if provider is None
+                    or str(r[0] if isinstance(r, tuple) else r).startswith(provider + ":")]:
+            del _secrets[ref]
 
 
 # ---- unlock / lock without a terminal (for `roster serve`, which gets the master password from a GUI)
@@ -381,6 +401,15 @@ def vault_account(name):
     return vault_status(name), None
 
 
+def saved_session(name):
+    """(state, why) of provider NAME's saved session (T241: "none", "working", "expired", or "ignored" and why), or
+    None when it keeps none or this is `roster serve`, which never reads the bw-session file (MANUAL_UNLOCK, Q203)."""
+    fn = _vault_op(name, "saved_session")
+    if not fn or MANUAL_UNLOCK:
+        return None
+    return fn(Ctx(name, None))
+
+
 ASK = object()              # status_result's server: not known yet, so login_info asks the CLI
 
 
@@ -427,7 +456,40 @@ def lock(name, cli=True):
             fn(Ctx(name, None))
 
 
-# ---- this Box's own settings (ticket 41): from the app's init.lua, through `roster serve`'s vault.configure
+def only_unlock_unlocks():
+    """`roster serve`: the app opens locked and only its lock screen unlocks (unlock()). Each provider forgets what
+    this process inherited that would unlock it by itself (its "manual"), and none unlocks on its own from now on (no
+    session file, no environment variable, no prompt)."""
+    global MANUAL_UNLOCK
+    MANUAL_UNLOCK = True
+    for name, p in list(PROVIDERS.items()):
+        if p.get("manual"):
+            p["manual"](Ctx(name, None))
+
+
+def set_json_output(on):
+    """ON: this command prints --json, so no provider adds a note or a question on stderr (it would break the JSON)."""
+    global JSON_OUTPUT
+    JSON_OUTPUT = bool(on)
+
+
+def reset():
+    """Forget everything this process holds for its vaults, as if a new run started: cached secrets, each provider's
+    state and settings, serve's and --json's modes, and what a provider keeps itself ("reset", e.g. bw's session key).
+    No provider's CLI runs."""
+    global MANUAL_UNLOCK, JSON_OUTPUT
+    with _secret_lock:
+        _secrets.clear()
+        PROVIDER_STATE.clear()
+        PROVIDER_SETTINGS.clear()
+        BOX_SETTINGS.clear()
+        MANUAL_UNLOCK = JSON_OUTPUT = False
+        for p in list(PROVIDERS.values()):
+            if p.get("reset"):
+                p["reset"]()
+
+
+# ---- this Box's own settings: from the app's init.lua, through `roster serve`'s vault.configure
 
 def setting_name(ctx, key):
     """Where a person changes setting KEY of CTX's provider: `vault.kp.database in init.lua`, or roster.yml's."""
@@ -460,20 +522,60 @@ def configure_box(settings):
     return locked
 
 
-# ---- where a Vault item goes (ticket 35): `save_to`, the same shape in roster.yml, init.lua and a save's choice
+# ---- where a Vault item goes: `save_to`, the same shape in roster.yml, init.lua and a save's choice
 
 PERSONAL = "personal"
 SAVE_TO_SHAPES = '"personal", {organization, collection} (Bitwarden, by name or id) or {group} (KeePassXC)'
+
+
+def save_to_fits(value):
+    """The providers a save_to VALUE (checked) can name a target of: every one with targets for PERSONAL."""
+    return [n for n, p in PROVIDERS.items() if p.get("save_to") and (value == PERSONAL or set(value) == p["save_to"])]
 
 
 def check_save_to(value):
     """VALUE as a save_to setting, or ValueError saying what it may be."""
     if value == PERSONAL:
         return value
-    if isinstance(value, dict) and set(value) in ({"organization", "collection"}, {"group"}) \
+    if isinstance(value, dict) and save_to_fits(value) \
             and all(isinstance(v, str) and v.strip() for v in value.values()):
         return {k: v.strip() for k, v in value.items()}
     raise ValueError(f"must be {SAVE_TO_SHAPES}, not {value!r}")
+
+
+def save_to_text(provider, text):
+    """A save_to as the command line writes it (`roster add --save-to`) for PROVIDER: `personal`, else the shape its
+    save_to keys take: Bitwarden's `ORGANIZATION/COLLECTION` (split at the first `/`: a collection may nest, an
+    organization's name or id has none), KeePassXC's `GROUP`. UnknownTarget when it can't be one of PROVIDER's."""
+    text = str(text).strip()
+    if text == PERSONAL:
+        return PERSONAL
+    keys = PROVIDERS.get(provider, {}).get("save_to") or frozenset()
+    if keys == {"group"} and text:
+        return check_save_to({"group": text})
+    org, _, collection = text.partition("/")
+    if keys == {"organization", "collection"} and org.strip() and collection.strip():
+        return check_save_to({"organization": org, "collection": collection})
+    shapes = {frozenset({"group"}): "personal or GROUP",
+              frozenset({"organization", "collection"}): "personal or ORGANIZATION/COLLECTION"}
+    raise UnknownTarget(f"--save-to {text!r} isn't a place {provider} saves to: give "
+                        f"{shapes.get(frozenset(keys), 'personal')}")
+
+
+def main_vault(names):
+    """The vault to unlock and save to among provider NAMES (most used first): the first that has a master password,
+    or None. serve's vault.status and "Save to vault", and `roster add --save-to-vault`."""
+    return next((n for n in names if PROVIDERS.get(n, {}).get("unlock")), None)
+
+
+def box_paths():
+    """{provider: its settings naming files on this Box}, the ones vault.configure takes from init.lua."""
+    return {n: p["box_paths"] for n, p in PROVIDERS.items() if p.get("box_paths")}
+
+
+def holds_items(name):
+    """Does provider NAME keep items of its own (a vault: something to list, sync or unlock), unlike prompt, env, cmd?"""
+    return PROVIDERS.get(name, {}).get("holds_items", True)
 
 
 def save_to_setting(ctx):
@@ -481,17 +583,21 @@ def save_to_setting(ctx):
     save_to:` (KeePassXC: its older `group:`), else the personal vault. source: "init.lua", "roster.yml" or None."""
     if ctx.settings.get("save_to") is not None:
         return ctx.settings["save_to"], "init.lua" if "save_to" in ctx.from_box else "roster.yml"
-    if ctx.provider == "kp" and ctx.settings.get("group"):         # kp's group: came before save_to
-        return {"group": str(ctx.settings["group"])}, "roster.yml"
+    old = PROVIDERS[ctx.provider].get("old_save_to")
+    if old and ctx.settings.get(old):
+        return {old: str(ctx.settings[old])}, "roster.yml"
     return PERSONAL, None
 
 
 def save_to_field(ctx, source, part=None):
-    """The name of the setting a save_to came from, for messages (PART: organization, collection, group)."""
+    """The name of the setting a save_to came from, for messages (PART: organization, collection, group). A SOURCE
+    that's a command-line flag (`--save-to`) is named as it."""
+    if source and source.startswith("--"):
+        return source + (f"'s {part}" if part else "")
     if source == "init.lua":
         return "vault.save_to" + (f".{part}" if part else "") + " in init.lua"
-    if source == "roster.yml" and ctx.settings.get("save_to") is None:       # kp's group:
-        return f"providers: {ctx.provider}: group: in roster.yml"
+    if source == "roster.yml" and ctx.settings.get("save_to") is None:       # its old_save_to
+        return f"providers: {ctx.provider}: {PROVIDERS[ctx.provider]['old_save_to']}: in roster.yml"
     if source == "roster.yml":
         return f"providers: {ctx.provider}: save_to: " + (f"{part}: " if part else "") + "in roster.yml"
     return "save_to" + (f".{part}" if part else "")                          # the choice at save time
@@ -525,13 +631,25 @@ def save_targets(name):
     return {"targets": targets, "default": default, "from": source, "problem": problem}
 
 
+def check_target(provider, save_to=None, flag=None):
+    """The target a save to PROVIDER would go to (SAVE_TO, from FLAG on the command line; None: the setting's),
+    resolved against the vault now, so a target that isn't there is refused before a password is asked (#539's
+    review). Unlocks the vault first when it must, as create_item would (the same one prompt), so a wrong master
+    password is said before a new one is typed. Returns it as shown();
+    UnknownTarget or ReadOnlyTarget naming FLAG or the setting."""
+    _writer(provider, "create")
+    ctx = Ctx(provider, None)
+    setting, source = save_to_setting(ctx) if save_to is None else (save_to, flag or "choice")
+    return shown(resolve_target(ctx, setting, source))
+
+
 def default_target(name):
     """The save_to provider NAME uses when a save doesn't choose, as set (not resolved: no vault call)."""
     setting, source = save_to_setting(Ctx(name, None))
     return {"setting": setting, "from": source or "default"}
 
 
-# ---- writing Vault items (ticket 13)
+# ---- writing Vault items
 
 def can_write(name):
     """Can provider NAME create Vault items (and undo a create)?"""
@@ -566,21 +684,19 @@ def delete_item(provider, item_id):
     """Delete the Vault item ITEM_ID from PROVIDER: the undo of create_item (Q43). Bitwarden moves it to the
     trash, where it can still be restored for 30 days."""
     fn = _writer(provider, "delete")
-    with _secret_lock:                                   # a value cached from that item must go too
-        for ref in [r for r in _secrets if str(r[0] if isinstance(r, tuple) else r).startswith(provider + ":")]:
-            del _secrets[ref]
+    forget_secrets(provider)                             # a value cached from that item must go too
     fn(item_id, Ctx(provider, None))
 
 
 def login_fields(provider, spec, interactive=True):
     """{uri, username} of the vault item SPEC in PROVIDER (`roster add --from-vault`, vault.item_fields, Q190), each
     None when the item has none. Only a provider that can read them without the password reaching roster has this
-    (bw's `bw get uri` / `bw get username`; op's overview and username field, Q197); any other is Unsupported. INTERACTIVE=False (`roster add -y`): never
-    asks, not even for a master password."""
+    (bw's `bw get uri` / `bw get username`; op's overview and username field, Q197); any other is NoItemFields.
+    INTERACTIVE=False (`roster add -y`): never asks, not even for a master password."""
     fn = _vault_op(provider, "login_fields")
     if not fn:
-        raise Unsupported(f"provider '{provider}' can't give an item's address and username without roster reading "
-                          "its password too, so roster doesn't ask it")
+        raise NoItemFields(f"provider '{provider}' can't give an item's address and username without roster reading "
+                           "its password too, so roster doesn't ask it", provider)
     name, _ = split_field(spec)
     if not name:
         raise SecretError(f"{provider}: needs an item name or id")
@@ -694,11 +810,11 @@ def setup_providers(cfg):
     for name, conf in ((cfg or {}).get("providers") or {}).items():
         conf = conf or {}
         if not isinstance(conf, dict):
-            die(f"providers.{name} in roster.yml must be a mapping")
+            raise InventoryError(f"providers.{name} in roster.yml must be a mapping")
         PROVIDER_SETTINGS[name] = {**conf, "_base": base}     # _base: where relative paths in it start
         if conf.get("command"):
-            if not re.match(r"^[a-z0-9_-]+$", name):
-                die(f"provider name {name!r} must be lowercase letters, digits, _ or -")
+            if why := bad_name(name):
+                raise InventoryError(why)
             add_template_provider(name, conf)
 
 

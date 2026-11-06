@@ -62,6 +62,16 @@ describe("hostFacts", () => {
     expect(value({ ...esx, reviewed: false })).toBe("not set up yet (reviewed: false)");
   });
 
+  it("says a key Host's key type and the key file it logs in with, right after ssh login (T245)", () => {
+    const fips: Host = { ...esx, enroll: true, key_type: "ecdsa", key_file: "/home/me/.ssh/roster_ecdsa" };
+    const labels = hostFacts(fips, {}).map((f) => f.label);
+    expect(labels.indexOf("ssh key")).toBe(labels.indexOf("ssh login") + 1);
+    expect(hostFacts(fips, {}).find((f) => f.label === "ssh key")).toEqual({ label: "ssh key", value: "ecdsa, /home/me/.ssh/roster_ecdsa", data: true });
+    // a password Host's key_type means nothing (Q200 (g)): no row; nor from a roster before API 30, which sent none
+    expect(hostFacts({ ...fips, enroll: false }, {}).some((f) => f.label === "ssh key")).toBe(false);
+    expect(hostFacts({ ...esx, enroll: true }, {}).some((f) => f.label === "ssh key")).toBe(false);
+  });
+
   it("copes with a Host from a roster that sent no services, login or mac", () => {
     const bare: Host = { ...esx, title: "", description: "", product: "", web: null };
     delete bare.services;

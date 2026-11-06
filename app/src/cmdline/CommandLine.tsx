@@ -59,7 +59,10 @@ export function CommandLine({ initial = "", caret, complete, describe, keys = de
   const [cycle, setCycle] = useState<Cycle | null>(null);
   const listId = useId();
   const candidates = useMemo(() => cycle?.candidates ?? complete(value), [cycle, complete, value]);
-  const current = cycle?.index ?? -1;
+  // The row the line holds: the one Tab moved to, or the candidate the typed line already is
+  // (round 18: no row was marked). Enter runs the line, so only a row equal to it is marked; the
+  // first row isn't, since Enter wouldn't run it.
+  const current = cycle?.index ?? candidates.findIndex((c) => c.trim() === value.trim() && value.trim() !== "");
 
   function step(by: 1 | -1) {
     if (cycle) {
@@ -114,7 +117,7 @@ export function CommandLine({ initial = "", caret, complete, describe, keys = de
   const optionId = (i: number) => `${listId}-${i}`;
 
   return (
-    <div className="cmdline">
+    <div className="cmdline" data-panel="cmdline">
       {candidates.length > 0 && (
         <div className="cmdline-candidates">
           <ul role="listbox" id={listId} aria-label="Completions">
@@ -135,13 +138,13 @@ export function CommandLine({ initial = "", caret, complete, describe, keys = de
                 >
                   <span className="cmd-id">{c}</span>
                   {about && (
-                    <>
+                    <span className="cmd-about">
                       <span className="visually-hidden">: </span>
                       <span className="cmd-label" title={about.label}>
                         {about.label}
                       </span>
                       {about.keys && <Keys keys={about.keys} leader={leader} className="cmd-keys" />}
-                    </>
+                    </span>
                   )}
                 </li>
               );

@@ -2,7 +2,7 @@
 // the user chose (a command, a row or button, a finder item, a toolbar control, a key, a
 // question's answer) is the user's call. A finder's items, a `:check` section's lines, and a
 // question's `cancel` run because another Plugin's question took its place are the app's doing.
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeBackend, makeHosts } from "../backend/fake";
 import type { FakePlugin, FakeRoster } from "../backend/fakePlugins";
 import { builtinRegistries } from "../registries";
@@ -56,7 +56,23 @@ function setup(plugins: Record<string, FakePlugin>, slowLoad = false) {
   return { manager, registries, ran };
 }
 
-const settle = () => new Promise((done) => setTimeout(done, 5));
+// On fake timeouts: the fake Backend's steps (0 ms timers, and a slow load's 5 ms) run when the
+// test moves time on, in the order they're due, however busy the machine is.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+});
+/** What's due in the next 5 ms has run. */
+const settle = () => vi.advanceTimersByTimeAsync(5);
+/** `p`, with time moved on until it's settled. */
+async function done<T>(p: Promise<T>): Promise<T> {
+  let over = false;
+  void p.then(
+    () => (over = true),
+    () => (over = true),
+  );
+  for (let ms = 0; !over && ms < 10_000; ms++) await vi.advanceTimersByTimeAsync(1);
+  return p;
+}
 
 describe("the user's call", () => {
   it("a finder's items and a :check section's lines are never it", async () => {
@@ -66,12 +82,12 @@ describe("the user's call", () => {
       roster.health.set("lab", { title: "Lab", check: () => [{ level: "ok", message: tried(roster) }] });
     });
     const { manager, registries } = setup({ lists });
-    await manager.start();
+    await done(manager.start());
     registries.finders.get("picks")?.open?.();
     await settle();
     const items = registries.finders.get("picks")?.items({} as never) ?? [];
     expect(items.map((i) => i.label)).toEqual(["copy refused"]);
-    const lines = await registries.health.get("lab")?.checks({} as never);
+    const lines = await done(Promise.resolve(registries.health.get("lab")?.checks({} as never)));
     expect(lines?.map((l) => l.message)).toEqual(["copy refused"]);
   });
 
@@ -84,7 +100,7 @@ describe("the user's call", () => {
         });
       });
     const { manager, registries } = setup({ a: asker("a"), b: asker("b") });
-    await manager.start();
+    await done(manager.start());
     registries.commands.get("ask-a")?.run({} as never, "");
     await settle();
     registries.commands.get("ask-b")?.run({} as never, "");
@@ -110,11 +126,11 @@ describe("loading", () => {
       ["serve:mesh.status"],
     );
     const { manager, registries } = setup({ asker }, true);
-    await manager.start();
+    await done(manager.start());
     await settle();
     expect(registries.status.get("state")?.text).toBe("answered 1: no Mesh");
     // A reload: the new load's answer is the new load's, not put on the old one and then lost.
-    await manager.reload("asker");
+    await done(manager.reload("asker"));
     await settle();
     expect(registries.status.get("state")?.text).toBe("answered 2: no Mesh");
   });
@@ -162,7 +178,7 @@ describe("a Plugin's command lines", () => {
       ["serve:discover.start", "serve:mesh.cut"],
     );
     const { manager, registries } = setup({ chain });
-    await manager.start();
+    await done(manager.start());
     registries.commands.get("a")?.run({} as never, "");
     for (let i = 0; i < 5; i++) await settle();
     const allowed = "copy ok, confirm ok, scan ok, cut ok";
@@ -186,7 +202,7 @@ describe("a Plugin's command lines", () => {
       ["serve:mesh.status", "serve:discover.start", "serve:mesh.cut"],
     );
     const { manager, registries } = setup({ hops });
-    await manager.start();
+    await done(manager.start());
     registries.commands.get("ask")?.run({} as never, "");
     for (let i = 0; i < 5; i++) await settle();
     expect(said).toEqual(["answer: copy ok, confirm ok, scan ok, cut ok", "then: copy refused, confirm refused, scan refused, cut refused"]);
@@ -201,7 +217,7 @@ describe("a Plugin's command lines", () => {
       roster.commands.add("pong-free", { run: () => undefined });
     });
     const { manager, registries, ran } = setup({ loops });
-    await manager.start();
+    await done(manager.start());
     registries.commands.get("again")?.run({} as never, "");
     expect(ran).toEqual([]);
     registries.commands.get("ping")?.run({} as never, "");

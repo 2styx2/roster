@@ -1,18 +1,22 @@
 // What a Plugin asks of the UI (ticket 23, docs/plugins.md "Ops"): plain data from roster-core's
-// Plugin host, one op per `roster.*` call. It comes from third-party code, so every op is checked
-// here before the app draws anything: a field of the wrong kind drops the op with a reason, and
+// Plugin host, one op per `roster.*` call: the ops' types, and the checks of their fields that
+// each kind's `parse` (opRegistry.ts) is made of. It comes from third-party code, so every op is
+// checked before the app draws anything: a field of the wrong kind drops the op with a reason, and
 // text is cut to what the UI can show. A Lua function arrives as `{ handler: N }`.
 import type { ThemeDef } from "../config/types";
-import type { RowAction } from "../sidebar/Sidebar";
-import { TUTOR_EVENTS, type StepMatch } from "../tutor/tutor";
+import type { RowAction } from "../sidebar/model";
+import type { StepMatch } from "../tutor/tutor";
 import type { ColumnKind, Sort, TableColumn, TableRow, Tone } from "../ui/table";
-import { GRAPH_KEYS, GraphInvalid, parseGraph, parseGraphUpdate, type PluginGraph, type PluginGraphUpdate } from "./graphOps";
+import { CORE } from "./core.gen";
+import type { PluginGraph, PluginGraphUpdate } from "./graphOps";
 
 /** What choosing something runs: a function the Plugin handed over, or a command line. */
 export type Run = { handler: number } | { command: string };
 
 export interface PluginRowAction {
   label: string;
+  /** Its words in the row's menu (round 22): short, without the row's names. */
+  short?: string;
   icon: RowAction["icon"];
   run: Run;
   /** A view's or Host-details section's heading button only (api 4, #176): its key. */
@@ -113,9 +117,8 @@ export interface PluginProgress {
   cancel?: Run;
 }
 
-/** The icons a Plugin's toolbar control may have. */
 export const PLUGIN_TOOLBAR_ICONS = ["find", "add", "details", "help", "map"] as const;
-export type PluginToolbarIcon = (typeof PLUGIN_TOOLBAR_ICONS)[number];
+type PluginToolbarIcon = (typeof PLUGIN_TOOLBAR_ICONS)[number];
 
 /** A toolbar control (`roster.toolbar.set`, ticket 78). */
 export interface PluginToolbarControl {
@@ -191,7 +194,7 @@ export interface PluginViewUpdate {
   actions?: PluginTableAction[];
 }
 
-export interface PluginDetails extends PluginContent {
+interface PluginDetails extends PluginContent {
   title: string;
   order: number;
 }
@@ -237,58 +240,58 @@ export type PluginOp =
   | { op: "timer"; id: string; ms: number; every: boolean; run: { handler: number } }
   | { op: "remove"; kind: RemovableKind; id: string };
 
-export const REMOVABLE = ["command", "theme", "section", "status", "finder", "help", "health", "tutor", "view", "details", "timer", "toolbar", "progress"] as const;
-export type RemovableKind = (typeof REMOVABLE)[number];
+export const REMOVABLE = CORE.removable;
+type RemovableKind = (typeof REMOVABLE)[number];
 
 const ICONS: readonly RowAction["icon"][] = ["close", "edit", "add", "addGroup", "review", "unreview", "info", "copy", "plan", "apply", "cut", "map"];
-const LEVELS = ["info", "warn", "error"] as const;
 const HEALTH_LEVELS = ["ok", "warn", "error"] as const;
 
 /** Most rows a section, items a finder, lines a float may have. */
 export const MAX_ROWS = 2000;
 /** Most rows a table may hold after updates (ticket 76). */
 export const MAX_TABLE_ROWS = 10_000;
-const MAX_TEXT = 500;
-const MAX_VIEW_TEXT = 4000;
+export const MAX_TEXT = 500;
+export const MAX_VIEW_TEXT = 4000;
 const MAX_COLUMNS = 20;
 const MAX_ACTIONS = 8;
 const KINDS: readonly ColumnKind[] = ["text", "data", "number"];
 const TONES: readonly Tone[] = ["muted", "warn", "error"];
 /** Keys a table uses itself (moving, sorting, and kept for a filter and its help). */
-export const TABLE_KEYS = ["j", "k", "g", "G", "s", "S", "/", "?", "q"] as const;
-const MAX_HELP = 200_000;
+const TABLE_KEYS = ["j", "k", "g", "G", "s", "S", "/", "?", "q"] as const;
+/** Keys the graph uses itself: moving, panning, zoom, search, its filter, clusters, the list,
+ * placing a node (`m`), and kept ones; and `s` `S`, which sort its node list (a table). */
+export const GRAPH_KEYS = ["h", "j", "k", "l", "H", "J", "K", "L", "g", "G", "n", "N", "o", "O", "t", "f", "m", "s", "S", "/", "?", "q", "+", "-", "=", "0"] as const;
+export const MAX_HELP = 200_000;
 /** Most buttons on a section's heading, and actions and links in a float. */
-const MAX_HEAD_ACTIONS = 4;
-/** Most buttons on a notice. */
-const MAX_NOTICE_ACTIONS = 2;
-/** Most cells an action's `when` may test. */
+export const MAX_HEAD_ACTIONS = 4;
+export const MAX_NOTICE_ACTIONS = 2;
 const MAX_WHEN = 8;
-const MAX_URL = 2000;
-const MAX_COPY = 64 * 1024;
+export const MAX_URL = 2000;
+export const MAX_COPY = CORE.limits.max_copy;
 
-class Invalid extends Error {}
+export class Invalid extends Error {}
 
-type Obj = Record<string, unknown>;
-const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+export type Obj = Record<string, unknown>;
+export const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 
-function str(o: Obj, key: string, what: string, max = MAX_TEXT): string {
+export function str(o: Obj, key: string, what: string, max = MAX_TEXT): string {
   const v = o[key];
   if (typeof v !== "string") throw new Invalid(`${what}: ${key} must be text`);
   return v.length > max ? `${v.slice(0, max - 1)}…` : v;
 }
 
-function optStr(o: Obj, key: string, what: string, max = MAX_TEXT): string | undefined {
+export function optStr(o: Obj, key: string, what: string, max = MAX_TEXT): string | undefined {
   return o[key] === undefined || o[key] === null ? undefined : str(o, key, what, max);
 }
 
-function num(o: Obj, key: string, what: string): number | undefined {
+export function num(o: Obj, key: string, what: string): number | undefined {
   const v = o[key];
   if (v === undefined || v === null) return undefined;
   if (typeof v !== "number" || !Number.isFinite(v)) throw new Invalid(`${what}: ${key} must be a number`);
   return v;
 }
 
-function list(o: Obj, key: string, what: string): unknown[] {
+export function list(o: Obj, key: string, what: string): unknown[] {
   const v = o[key];
   if (v === undefined || v === null || (isObj(v) && Object.keys(v).length === 0)) return [];
   if (!Array.isArray(v)) throw new Invalid(`${what}: ${key} must be a list`);
@@ -296,17 +299,17 @@ function list(o: Obj, key: string, what: string): unknown[] {
   return v;
 }
 
-function run(v: unknown, what: string): Run {
+export function run(v: unknown, what: string): Run {
   if (typeof v === "string") return { command: v.slice(0, MAX_TEXT) };
   if (isObj(v) && typeof v.handler === "number" && Number.isInteger(v.handler)) return { handler: v.handler };
   throw new Invalid(`${what}: run must be a function or a command line`);
 }
 
-const optRun = (o: Obj, what: string): { run?: Run } => (o.run === undefined || o.run === null ? {} : { run: run(o.run, what) });
+export const optRun = (o: Obj, what: string): { run?: Run } => (o.run === undefined || o.run === null ? {} : { run: run(o.run, what) });
 
 /** Buttons on a section's heading (ticket 78): row actions, at most 4. */
-function headActions(spec: Obj, what: string): PluginRowAction[] {
-  const actions = rowActions(spec, what);
+export function headActions(spec: Obj, what: string, menu = true): PluginRowAction[] {
+  const actions = rowActions(spec, what, menu);
   if (actions.length > MAX_HEAD_ACTIONS) throw new Invalid(`${what}: actions has more than ${MAX_HEAD_ACTIONS}`);
   return actions;
 }
@@ -317,7 +320,8 @@ function headActions(spec: Obj, what: string): PluginRowAction[] {
 function keyedHeadActions(spec: Obj, what: string, taken: readonly string[]): PluginRowAction[] {
   const raw = list(spec, "actions", what);
   const seen = new Set(taken);
-  return headActions(spec, what).map((a, j) => {
+  // A view's or details section's heading has no menu, so no `short` (HeadAction has none).
+  return headActions(spec, what, false).map((a, j) => {
     const where = `${what} action ${j + 1}`;
     const key = optStr(raw[j] as Obj, "key", where, 8);
     if (key === undefined) return a;
@@ -334,7 +338,7 @@ function keyedHeadActions(spec: Obj, what: string, taken: readonly string[]): Pl
 const headReserved = (): readonly string[] => [...new Set<string>([...TABLE_KEYS, ...GRAPH_KEYS])];
 
 /** An http or https address, or why it can't be one. */
-function webUrl(text: string, what: string): string {
+export function webUrl(text: string, what: string): string {
   if (text.length > MAX_URL) throw new Invalid(`${what}: url is over ${MAX_URL} characters`);
   let url: URL;
   try {
@@ -349,21 +353,23 @@ function webUrl(text: string, what: string): string {
 }
 
 /** Leaves out the keys whose value is undefined (exactOptionalPropertyTypes). */
-function defined<T>(o: { [K in keyof T]-?: T[K] | undefined }): T {
+export function defined<T>(o: { [K in keyof T]-?: T[K] | undefined }): T {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
 }
 
-function rowActions(v: Obj, at: string): PluginRowAction[] {
+/** `menu`: the actions can be in a row menu, so they may have `short` words for it (round 22). */
+function rowActions(v: Obj, at: string, menu = true): PluginRowAction[] {
   return list(v, "actions", at).map((a, j): PluginRowAction => {
     const where = `${at} action ${j + 1}`;
     if (!isObj(a)) throw new Invalid(`${where}: must be a table`);
     const icon = a.icon === undefined ? "info" : a.icon;
     if (!ICONS.includes(icon as RowAction["icon"])) throw new Invalid(`${where}: icon must be one of ${ICONS.join(", ")}`);
-    return { label: str(a, "label", where), icon: icon as RowAction["icon"], run: run(a.run, where) };
+    const short = menu ? optStr(a, "short", where, 40) : undefined;
+    return { label: str(a, "label", where), ...(short ? { short } : {}), icon: icon as RowAction["icon"], run: run(a.run, where) };
   });
 }
 
-function row(v: unknown, i: number, what: string): PluginRow {
+export function row(v: unknown, i: number, what: string): PluginRow {
   const at = `${what} row ${i + 1}`;
   if (!isObj(v)) throw new Invalid(`${at}: must be a table`);
   const label = str(v, "label", at);
@@ -407,7 +413,7 @@ function rowGlyph(o: Obj, what: string): "folder" | "group" | undefined {
   throw new Invalid(`${what}: icon must be "folder" or "group"`);
 }
 
-function healthChecks(v: unknown, what: string): PluginHealthCheck[] {
+export function healthChecks(v: unknown, what: string): PluginHealthCheck[] {
   return list({ checks: v }, "checks", what).map((c, i): PluginHealthCheck => {
     const at = `${what} check ${i + 1}`;
     if (!isObj(c)) throw new Invalid(`${at}: must be a table`);
@@ -427,7 +433,7 @@ export function parseHealthChecks(v: unknown, what: string): PluginHealthCheck[]
   }
 }
 
-function finderItems(o: Obj, what: string): PluginFinderItem[] {
+export function finderItems(o: Obj, what: string): PluginFinderItem[] {
   return list(o, "items", what).map((v, i): PluginFinderItem => {
     const at = `${what} item ${i + 1}`;
     if (!isObj(v)) throw new Invalid(`${at}: must be a table`);
@@ -454,7 +460,7 @@ export function parseFinderItems(result: unknown, what: string): PluginFinderIte
 /** A list that may come from Lua as `{}` (an empty table is an object in JSON). */
 const isList = (v: unknown): v is unknown[] => Array.isArray(v);
 
-function facts(o: Obj, what: string): PluginFact[] {
+export function facts(o: Obj, what: string): PluginFact[] {
   return list(o, "facts", what).map((v, i): PluginFact => {
     const at = `${what} fact ${i + 1}`;
     if (!isObj(v)) throw new Invalid(`${at}: must be a table`);
@@ -481,7 +487,7 @@ function tableRow(v: unknown, i: number, what: string): TableRow {
   return defined<TableRow>({ id: str(v, "id", at, 100), cells, host: optStr(v, "host", at, 200), tone });
 }
 
-function tableRows(o: Obj, key: string, what: string): TableRow[] {
+export function tableRows(o: Obj, key: string, what: string): TableRow[] {
   const rows = list(o, key, what).map((r, i) => tableRow(r, i, what));
   const seen = new Set<string>();
   for (const r of rows) {
@@ -492,7 +498,7 @@ function tableRows(o: Obj, key: string, what: string): TableRow[] {
 }
 
 /** A table's columns: 1 to 20, each id once. */
-function columnsOf(v: Obj, at: string): TableColumn[] {
+export function columnsOf(v: Obj, at: string): TableColumn[] {
   const ids = new Set<string>();
   const columns = list(v, "columns", at).map((c, i): TableColumn => {
     const where = `${at} column ${i + 1}`;
@@ -530,7 +536,7 @@ export function when(a: Obj, where: string): PluginTableAction["when"] {
 }
 
 /** A table's actions: at most 8, each key once and none the table's own. */
-function tableActions(v: Obj, at: string): PluginTableAction[] {
+export function tableActions(v: Obj, at: string): PluginTableAction[] {
   const keys = new Set<string>();
   const actions = list(v, "actions", at).map((a, j): PluginTableAction => {
     const where = `${at} action ${j + 1}`;
@@ -569,7 +575,7 @@ function table(v: unknown, what: string): PluginTable {
 
 /** The text, facts and table a view or a Host-details section holds; `taken`, keys a graph's
  * actions use. */
-function content(spec: Obj, what: string, taken: readonly string[] = []): PluginContent {
+export function content(spec: Obj, what: string, taken: readonly string[] = []): PluginContent {
   const t = spec.table === undefined || spec.table === null ? undefined : table(spec.table, what);
   const actionKeys = [...taken, ...(t?.actions ?? []).flatMap((a) => (a.key ? [a.key] : []))];
   return defined<PluginContent>({
@@ -581,320 +587,8 @@ function content(spec: Obj, what: string, taken: readonly string[] = []): Plugin
 }
 
 /** `clear = true` in a view update (ticket 91). */
-function clearOf(c: Obj, what: string): true | undefined {
+export function clearOf(c: Obj, what: string): true | undefined {
   if (c.clear === undefined || c.clear === null || c.clear === false) return undefined;
   if (c.clear !== true) throw new Invalid(`${what}: clear must be true or false`);
   return true;
-}
-
-/** The op, checked; or why it can't be used. */
-export function parseOp(raw: unknown): PluginOp | { invalid: string } {
-  try {
-    return parse(raw);
-  } catch (e) {
-    if (e instanceof Invalid || e instanceof GraphInvalid) return { invalid: e.message };
-    throw e;
-  }
-}
-
-function parse(raw: unknown): PluginOp {
-  if (!isObj(raw) || typeof raw.op !== "string") throw new Invalid("not an op");
-  const spec = isObj(raw.spec) ? raw.spec : {};
-  const id = typeof raw.id === "string" ? raw.id : "";
-  switch (raw.op) {
-    case "command": {
-      const c = raw.complete;
-      if (c !== undefined && c !== null && !(isObj(c) && typeof c.handler === "number" && Number.isInteger(c.handler))) {
-        throw new Invalid("roster.commands.add: complete must be a function");
-      }
-      return defined<Extract<PluginOp, { op: "command" }>>({
-        op: "command",
-        name: str(raw, "name", "roster.commands.add", 64),
-        desc: str(raw, "desc", "roster.commands.add"),
-        run: run(raw.run, "roster.commands.add"),
-        complete: isObj(c) ? { handler: c.handler as number } : undefined,
-      });
-    }
-    case "key": {
-      const action = raw.action === false ? false : str(raw, "action", "roster.keymap.set");
-      return { op: "key", context: str(raw, "context", "roster.keymap.set", 40), keys: str(raw, "keys", "roster.keymap.set", 60), action };
-    }
-    case "theme":
-      if (!isObj(raw.theme)) throw new Invalid("roster.themes.define: the Theme must be a table");
-      return { op: "theme", id, theme: raw.theme as unknown as ThemeDef };
-    case "section": {
-      const what = `roster.sidebar.set ${id}`;
-      return defined<Extract<PluginOp, { op: "section" }>>({
-        op: "section",
-        id,
-        title: optStr(spec, "title", what) ?? id,
-        order: num(spec, "order", what) ?? 400,
-        empty: optStr(spec, "empty", what),
-        rows: list(spec, "rows", what).map((r, i) => row(r, i, what)),
-        actions: headActions(spec, what),
-        count: num(spec, "count", what),
-        drop: optRun({ run: spec.drop }, `${what} drop`).run,
-      });
-    }
-    case "status": {
-      const what = `roster.status.set ${id}`;
-      return defined<Extract<PluginOp, { op: "status" }>>({
-        op: "status",
-        id,
-        text: str(spec, "text", what, 80),
-        title: optStr(spec, "title", what),
-        run: optRun(spec, what).run,
-      });
-    }
-    case "finder": {
-      const what = `roster.finders.set ${id}`;
-      const items = spec.items;
-      const section = optStr(spec, "section", what, 64);
-      const title = optStr(spec, "title", what) ?? id;
-      return {
-        op: "finder",
-        id,
-        title,
-        prompt: optStr(spec, "prompt", what, 64) ?? title,
-        items:
-          section !== undefined
-            ? { section }
-            : isObj(items) && typeof items.handler === "number" && Number.isInteger(items.handler)
-              ? { handler: items.handler }
-              : finderItems(spec, what),
-      };
-    }
-    case "timer": {
-      const ms = num(raw, "ms", "timer");
-      if (ms === undefined || ms < 0) throw new Invalid("timer: ms must be a number");
-      const r = run(raw.run, "timer");
-      if (!("handler" in r)) throw new Invalid("timer: run must be a function");
-      return { op: "timer", id, ms, every: raw.every === true, run: r };
-    }
-    case "help": {
-      const what = `roster.help.set ${id}`;
-      const title = optStr(spec, "title", what) ?? id;
-      return { op: "help", id, title, summary: optStr(spec, "summary", what) ?? title, markdown: str(spec, "markdown", what, MAX_HELP) };
-    }
-    case "health": {
-      const what = `roster.health.set ${id}`;
-      return defined<Extract<PluginOp, { op: "health" }>>({
-        op: "health",
-        id,
-        title: optStr(spec, "title", what) ?? id,
-        checks: healthChecks(spec.checks, what),
-        check: spec.check === undefined || spec.check === null ? undefined : run(spec.check, `${what}: check`),
-      });
-    }
-    case "tutor": {
-      const what = `roster.tutor.set ${id}`;
-      const title = optStr(spec, "title", what) ?? id;
-      const ids = new Set<string>();
-      const lessons = list(spec, "lessons", what).map((l, i): PluginTutorLesson => {
-        const at = `${what} lesson ${i + 1}`;
-        if (!isObj(l)) throw new Invalid(`${at}: must be a table`);
-        return {
-          title: str(l, "title", at, 100),
-          text: optStr(l, "text", at, MAX_HELP) ?? "",
-          steps: list(l, "steps", at).map((st, j): PluginTutorStep => {
-            const where = `${at} step ${j + 1}`;
-            if (!isObj(st)) throw new Invalid(`${where}: must be a table`);
-            const stepId = str(st, "id", where, 100);
-            if (ids.has(stepId)) throw new Invalid(`${where}: id ${stepId} is used twice`);
-            ids.add(stepId);
-            const raw = Array.isArray(st.on) ? st.on : [st.on];
-            if (raw.length === 0) throw new Invalid(`${where}: on must name an event`);
-            const on = raw.map((m): StepMatch => {
-              if (!isObj(m)) throw new Invalid(`${where}: on must be a table, { event = "…" }, or a list of them`);
-              const event = str(m, "event", where, 40);
-              if (!(TUTOR_EVENTS as readonly string[]).includes(event)) throw new Invalid(`${where}: event must be one of ${TUTOR_EVENTS.join(", ")}`);
-              const fields = Object.fromEntries(Object.keys(m).filter((k) => k !== "event").map((k) => [k.slice(0, 40), str(m, k, where, 200)]));
-              return { ...fields, event };
-            });
-            return { id: stepId, text: str(st, "text", where), on };
-          }),
-        };
-      });
-      if (lessons.length === 0) throw new Invalid(`${what}: lessons must have at least one lesson`);
-      return {
-        op: "tutor",
-        id,
-        title,
-        summary: optStr(spec, "summary", what) ?? title,
-        intro: optStr(spec, "intro", what, MAX_HELP) ?? "",
-        lessons,
-        outro: optStr(spec, "outro", what, MAX_HELP) ?? "",
-      };
-    }
-    case "health_answer": {
-      if (typeof raw.check !== "number" || !Number.isInteger(raw.check)) throw new Invalid("roster.health.answer: check must be the run's e.check");
-      return { op: "health_answer", check: raw.check, checks: raw.checks };
-    }
-    case "badge":
-      return { op: "badge", host: str(raw, "host", "roster.badges.set", 200), text: raw.text === null ? null : str(raw, "text", "roster.badges.set", 40) };
-    case "float": {
-      if (raw.spec === null) return { op: "float", spec: null };
-      const what = "roster.float.open";
-      const lines = list(spec, "lines", what).map((l) => (typeof l === "string" ? l.slice(0, MAX_TEXT) : String(l)));
-      const keys = new Set<string>();
-      const actions = list(spec, "actions", what).map((a, i): PluginFloatAction => {
-        const at = `${what} action ${i + 1}`;
-        if (!isObj(a)) throw new Invalid(`${at}: must be a table`);
-        const key = optStr(a, "key", at, 8);
-        if (key !== undefined) {
-          if ([...key].length !== 1 || key.trim() === "") throw new Invalid(`${at}: key must be one character`);
-          if (key === "q") throw new Invalid(`${at}: q closes the window`);
-          if (keys.has(key)) throw new Invalid(`${at}: key ${key} is used twice`);
-          keys.add(key);
-        }
-        return defined<PluginFloatAction>({ label: str(a, "label", at, 100), key, run: run(a.run, at) });
-      });
-      const links = list(spec, "links", what).map((l, i): PluginLink => {
-        const at = `${what} link ${i + 1}`;
-        if (!isObj(l)) throw new Invalid(`${at}: must be a table`);
-        return { label: str(l, "label", at, 100), url: webUrl(str(l, "url", at, MAX_URL + 1), at) };
-      });
-      if (actions.length > MAX_HEAD_ACTIONS) throw new Invalid(`${what}: actions has more than ${MAX_HEAD_ACTIONS}`);
-      if (links.length > MAX_HEAD_ACTIONS) throw new Invalid(`${what}: links has more than ${MAX_HEAD_ACTIONS}`);
-      return { op: "float", spec: { title: optStr(spec, "title", what) ?? "", lines, actions, links } };
-    }
-    case "view": {
-      const what = `roster.views.set ${id}`;
-      const place = spec.place === undefined || spec.place === null ? "panel" : spec.place;
-      if (place !== "panel" && place !== "full") throw new Invalid(`${what}: place must be "panel" or "full"`);
-      const graph = spec.graph === undefined || spec.graph === null ? undefined : parseGraph(spec.graph, what);
-      if (graph && spec.table !== undefined && spec.table !== null) throw new Invalid(`${what}: a view has a table or a graph, not both`);
-      const graphKeys = (graph?.actions ?? []).flatMap((a) => (a.key ? [a.key] : []));
-      return { op: "view", id, view: { title: optStr(spec, "title", what) ?? id, place, ...content(spec, what, graphKeys), ...(graph ? { graph } : {}) } };
-    }
-    case "view_update": {
-      const what = `roster.views.update ${id}`;
-      const c = isObj(raw.changes) ? raw.changes : {};
-      const columns = c.columns === undefined || c.columns === null ? undefined : columnsOf(c, what);
-      const by = optStr(c, "sort", what, 64);
-      if (by !== undefined && columns && !columns.some((col) => col.id === by)) throw new Invalid(`${what}: sort names no column (${by})`);
-      if (c.desc !== undefined && c.desc !== null && typeof c.desc !== "boolean") throw new Invalid(`${what}: desc must be true or false`);
-      return {
-        op: "view_update",
-        id,
-        update: defined<PluginViewUpdate>({
-          columns,
-          sort: by === undefined ? undefined : { by, desc: c.desc === true },
-          actions: c.actions === undefined || c.actions === null ? undefined : tableActions(c, what),
-          title: optStr(c, "title", what),
-          text: optStr(c, "text", what, MAX_VIEW_TEXT),
-          facts: c.facts === undefined || c.facts === null ? undefined : facts(c, what),
-          rows: tableRows(c, "rows", what),
-          remove: list(c, "remove", what).map((r, i) => {
-            if (typeof r !== "string") throw new Invalid(`${what}: remove ${i + 1} must be a row's id`);
-            return r;
-          }),
-          graph: parseGraphUpdate(c, what),
-          clear: clearOf(c, what),
-        }),
-      };
-    }
-    case "view_open": {
-      const select = optStr(raw, "select", "roster.views.open", 200);
-      return { op: "view_open", id, ...(select !== undefined ? { select } : {}) };
-    }
-    case "view_close":
-      return { op: raw.op, id };
-    case "details": {
-      const host = str(raw, "host", "roster.details.set", 200);
-      if (raw.spec === null || raw.spec === undefined) return { op: "details", id, host, section: null };
-      const what = `roster.details.set ${id} ${host}`;
-      return { op: "details", id, host, section: { title: optStr(spec, "title", what) ?? id, order: num(spec, "order", what) ?? 500, ...content(spec, what) } };
-    }
-    case "notify": {
-      const level = LEVELS.find((l) => l === raw.level) ?? "info";
-      const actions = list(raw, "actions", "roster.notify").map((a, i) => {
-        const at = `roster.notify action ${i + 1}`;
-        if (!isObj(a)) throw new Invalid(`${at}: must be a table`);
-        if (typeof a.run !== "string") throw new Invalid(`${at}: run must be a command line`);
-        return { label: str(a, "label", at, 100), command: str(a, "run", at) };
-      });
-      if (actions.length > MAX_NOTICE_ACTIONS) throw new Invalid(`roster.notify: actions has more than ${MAX_NOTICE_ACTIONS}`);
-      const quiet = typeof raw.quiet === "boolean" ? { quiet: raw.quiet } : {};
-      return { op: "notify", text: str(raw, "text", "roster.notify"), level, actions, ...quiet };
-    }
-    case "open":
-      return { op: "open", host: str(raw, "host", "roster.sessions.open", 200) };
-    case "send": {
-      const session = num(raw, "session", "roster.terminal.send");
-      if (session === undefined) throw new Invalid("roster.terminal.send: which Session?");
-      return { op: "send", session, text: str(raw, "text", "roster.terminal.send", 64 * 1024) };
-    }
-    case "copy":
-      return { op: "copy", text: str(raw, "text", "roster.clipboard.copy", MAX_COPY) };
-    case "confirm": {
-      const what = "roster.confirm";
-      const r = run(spec.run, what);
-      if (!("handler" in r)) throw new Invalid(`${what}: run must be a function`);
-      if (spec.danger !== undefined && spec.danger !== null && typeof spec.danger !== "boolean") throw new Invalid(`${what}: danger must be true or false`);
-      const danger = spec.danger === true;
-      const typed = optStr(spec, "typed", what, 101);
-      if (typed !== undefined && (typed.trim() === "" || typed.length > 100)) throw new Invalid(`${what}: typed must be a word of at most 100 characters`);
-      if (typed !== undefined && !danger) throw new Invalid(`${what}: typed goes with danger = true`);
-      return {
-        op: "confirm",
-        confirm: defined<PluginConfirm>({
-          title: str(spec, "title", what),
-          text: optStr(spec, "text", what, MAX_VIEW_TEXT),
-          facts: facts(spec, what),
-          action: optStr(spec, "action", what, 40) ?? "Confirm",
-          danger,
-          typed,
-          run: r,
-          cancel: optRun({ run: spec.cancel }, `${what} cancel`).run,
-        }),
-      };
-    }
-    case "progress": {
-      const what = `roster.progress.set ${id}`;
-      const done = num(spec, "done", what);
-      const total = num(spec, "total", what);
-      if ((done === undefined) !== (total === undefined)) throw new Invalid(`${what}: done and total go together`);
-      if (total !== undefined && total <= 0) throw new Invalid(`${what}: total must be more than 0`);
-      return {
-        op: "progress",
-        id,
-        progress: defined<PluginProgress>({
-          title: str(spec, "title", what, 80),
-          text: optStr(spec, "text", what),
-          done: done === undefined || total === undefined ? undefined : Math.max(0, Math.min(total, done)),
-          total,
-          cancel: optRun({ run: spec.cancel }, `${what} cancel`).run,
-        }),
-      };
-    }
-    case "toolbar": {
-      const what = `roster.toolbar.set ${id}`;
-      const icon = spec.icon === undefined || spec.icon === null ? undefined : PLUGIN_TOOLBAR_ICONS.find((i) => i === spec.icon);
-      if (spec.icon !== undefined && spec.icon !== null && !icon) throw new Invalid(`${what}: icon must be one of ${PLUGIN_TOOLBAR_ICONS.join(", ")}`);
-      return {
-        op: "toolbar",
-        id,
-        control: defined<PluginToolbarControl>({ label: str(spec, "label", what, 80), text: optStr(spec, "text", what, 20), icon, run: run(spec.run, what) }),
-      };
-    }
-    case "cmd":
-      return { op: "cmd", line: str(raw, "line", "roster.cmd", MAX_TEXT), ...(raw.user === false ? { user: false as const } : {}) };
-    case "echo":
-      return { op: "echo", text: str(raw, "text", "roster.echo"), ...(raw.quiet === true ? { quiet: true } : {}) };
-    case "cmdline":
-      return { op: "cmdline", text: str(raw, "text", "roster.cmdline", MAX_TEXT) };
-    case "session_show": {
-      const session = num(raw, "session", "roster.sessions.show");
-      if (session === undefined || !Number.isInteger(session)) throw new Invalid("roster.sessions.show: which Session?");
-      return { op: "session_show", session, line: raw.line === null || raw.line === undefined ? null : str(raw, "line", "roster.sessions.show") };
-    }
-    case "remove": {
-      const kind = REMOVABLE.find((k) => k === raw.kind);
-      if (!kind) throw new Invalid("remove: of what?");
-      return { op: "remove", kind, id };
-    }
-    default:
-      throw new Invalid(`there's no op ${raw.op}`);
-  }
 }

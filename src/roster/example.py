@@ -52,7 +52,12 @@ EXAMPLE_CONFIG = """\
 #   headless boxes, or `eval $(op signin)` first.
 
 box_name: ""                 # name tagged on this box's key; blank = this machine's hostname
-key_path: ~/.ssh/roster_ed25519
+# key_path: ~/.ssh/roster_ed25519  # this Box's key; default ~/.ssh/roster_<key_type>, so leave
+#                            # it out unless the key lives elsewhere
+# key_type: ecdsa           # the SSH key type (default ed25519); also per group or host, e.g.
+#                            # ecdsa for FIPS-mode hosts, which refuse ed25519
+# key_max_age: 365d         # check --box warns once this Box's key is older (default 365d; off);
+#                            # roster setup --rotate replaces it on every host
 workers: 32                  # how many hosts to work on in parallel
 claude_inline_limit: 60      # list hosts inside Claude's instructions up to this many
 # web_login_names:           # your team's own names for roster's login types: login: appliance

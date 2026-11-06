@@ -3,10 +3,12 @@
 // `inventories.list` and what the switch would affect; App does the switch on confirm (lock the
 // vault, `inventories.use`, start serve again, whose start asks roster again which file to use).
 // The app never reads roster.yml or inventories.json itself (ADR 0001): serve says it all.
-import type { CommandDef } from "../commands/table";
+import type { Capabilities } from "../backend/capabilities";
+import { renameAfter, shownPath, thenRename } from "../backend/shown";
 import type { Inventories } from "../backend/types";
 import { BUILTIN } from "../registry";
 import { countOf } from "../ui/format";
+import type { InventoryCommand } from "./commands";
 
 /** What `:inventory NAME` does now: say why not, or ask. */
 export type SwitchPlan =
@@ -28,13 +30,16 @@ const EARLIER = "$ROSTER_CONFIG, a roster.yml in the folder roster starts in, or
 /** No named Inventories yet: how to name one. */
 export const NONE_NAMED = "No named Inventories: roster inv add NAME PATH names one (:help :inventory)";
 
+/** Where serve runs, as a message names it: CAPS says whether its path is one serve won't name (#529). */
+const here = (list: Inventories, caps: Capabilities, what?: string) => (list.path === null ? null : shownPath(list.path, caps, what));
+
 /** `:inventory NAME` from serve's list, the open Sessions and the Pending changes. */
-export function switchPlan(list: Inventories, to: string, open: { sessions: number; pending: number }): SwitchPlan {
+export function switchPlan(list: Inventories, to: string, open: { sessions: number; pending: number }, caps: Capabilities): SwitchPlan {
   const names = list.inventories.map((i) => i.name);
   if (names.length === 0) return { kind: "say", message: NONE_NAMED };
   const target = list.inventories.find((i) => i.name === to);
   if (!target) return { kind: "say", message: `No Inventory named ${to} (there's ${names.join(", ")})` };
-  if (list.name === to) return { kind: "say", message: `Already on ${to} (${list.path ?? target.path})` };
+  if (list.name === to) return { kind: "say", message: `Already on ${to} (${here(list, caps) ?? target.path})${thenRename(list.path, caps)}` };
   if (!target.exists) return { kind: "say", message: `${to}'s roster.yml isn't there: ${target.path}. roster inv remove ${to} forgets it` };
   const from = list.name ?? "this roster.yml";
   const fromOwn = list.name ? `${list.name}'s` : "this";
@@ -45,9 +50,9 @@ export function switchPlan(list: Inventories, to: string, open: { sessions: numb
       kind: "confirm",
       to,
       body:
-        `roster runs on ${list.path ?? "another file"}, not on the active Inventory (${list.active}): ` +
+        `roster runs on ${here(list, caps, "the roster.yml") ?? "another file"}, not on the active Inventory (${list.active}): ` +
         `${EARLIER} comes first, so starting roster again ` +
-        `wouldn't move it to ${to}.`,
+        `wouldn't move it to ${to}.${renameAfter(list.path, caps)}`,
       more: [`Unset ROSTER_CONFIG (or move that roster.yml, or take the -c out of roster_command), then run roster inv use ${to} and start the app again.`],
       action: null,
     };
@@ -76,22 +81,22 @@ export function switchPlan(list: Inventories, to: string, open: { sessions: numb
 }
 
 /** What roster runs on after a switch to `to` and a restart, said plainly. */
-export function afterSwitch(list: Inventories, to: string): string {
-  if (list.name === to) return `Now on the ${to} Inventory (${list.path ?? ""}). Unlock its vault to open Sessions`;
+export function afterSwitch(list: Inventories, to: string, caps: Capabilities): string {
+  if (list.name === to) return `Now on the ${to} Inventory (${here(list, caps) ?? ""}). Unlock its vault to open Sessions${thenRename(list.path, caps)}`;
   return (
-    `roster started again but runs on ${list.path ?? "another file"}, not ${to}: ${EARLIER} comes first. ` +
-    `${to} is the active Inventory`
+    `roster started again but runs on ${here(list, caps, "the roster.yml") ?? "another file"}, not ${to}: ${EARLIER} comes first. ` +
+    `${to} is the active Inventory${thenRename(list.path, caps)}`
   );
 }
 
-export const inventoryCommand: CommandDef = {
+export const inventoryCommand: InventoryCommand = {
   id: "inventory",
   source: BUILTIN,
   area: "Inventory",
   arg: "text",
   optionalArg: true,
   seldom: true,
-  label: (name) => (name ? `Switch to the ${name} Inventory (asks first)` : "Switch to another named Inventory (asks first)"),
+  label: (name) => (name ? `Switch to the ${name} Inventory (asks first)` : "Switch Inventory (asks first)"),
   doc:
     "Switches roster to another named Inventory (`roster inv add NAME PATH` names one). It asks first, saying what " +
     "happens: roster starts again on that Inventory's file, and the vault locks, since only one Inventory's vault is " +

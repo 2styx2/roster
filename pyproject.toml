@@ -1,6 +1,6 @@
 [project]
 name = "roster"
-version = "0.6.0"
+version = "0.7.0"
 description = "Give a box - and Claude running on it - access to every host on your network, from one YAML file."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -70,4 +70,17 @@ include = ["src/roster"]
 pythonVersion = "3.10"
 typeCheckingMode = "basic"
 strict = ["src/roster/models.py", "src/roster/completion.py", "src/roster/inventories.py", "src/roster/servemodels.py", "src/roster/jsondocs.py",
-          "src/roster/jsonout.py"]
+          "src/roster/jsonout.py",
+          "src/roster/authorized.py",
+          "src/roster/boxsetup.py",
+          "src/roster/catchup.py",
+          "src/roster/cliparser.py",
+          "src/roster/context.py",
+          "src/roster/hosts.py",
+          "src/roster/keyline.py",
+          "src/roster/named.py",
+          "src/roster/providers/problems.py",
+          "src/roster/revoke.py",
+          "src/roster/rotate.py",
+          "src/roster/sshconfig.py",
+          "src/roster/vaultcli.py"]

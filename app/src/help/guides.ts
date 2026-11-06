@@ -17,6 +17,8 @@ export interface Guide {
   /** From the repo's root: `docs/app/config.md`. Relative links resolve against it. */
   path: string;
   title: string;
+  /** The topic finder's name for it when the title is longer than 24 characters (HelpPage.short). */
+  short?: string;
   /** One line, for the index and the topic finder. */
   summary: string;
   part: Part;
@@ -34,6 +36,7 @@ export const guides: readonly Guide[] = [
     id: "start",
     path: "docs/app/start.md",
     title: "Getting started with roster",
+    short: "Getting started",
     summary: "New to roster? Start here: open a Host, find any command, make it yours",
     part: "Getting started",
     order: 1,
@@ -94,6 +97,7 @@ export const guides: readonly Guide[] = [
     id: "themes-guide",
     path: "docs/app/themes.md",
     title: "Themes: the bundled ones and their tokens",
+    short: "Theme tokens",
     summary: "The bundled Themes, their colour tokens, and making your own",
     part: "Make it yours",
     order: 23,
@@ -102,9 +106,11 @@ export const guides: readonly Guide[] = [
     id: "errors-guide",
     path: "docs/app/errors.md",
     title: "Connection errors: every way a Session can fail",
+    short: "When a Session fails",
     summary: "Every connection error: what happened, the cause, where it lives, the fix",
     part: "Reference",
     order: 61,
+    aliases: { "host-keys": "errors-guide#checking-a-host-key" },
   },
   {
     id: "cli",
@@ -120,12 +126,14 @@ export const guides: readonly Guide[] = [
       discover: "cli#discover",
       resources: "cli#resources-secrets-with-no-address",
       json: "cli#machine-readable-output",
+      "vault-changes": "cli#when-your-vault-changes",
     },
   },
   {
     id: "mesh",
     path: "docs/mesh.md",
     title: "The Mesh: Hosts that reach each other",
+    short: "The Mesh",
     summary: "mesh: and links: in roster.yml, via: jump Hosts, seen_as: addresses, roster mesh, cut, drift in roster check, ESXi and mesh_dir:, appliances",
     part: "Reference",
     order: 72,
@@ -166,8 +174,6 @@ export const guides: readonly Guide[] = [
     aliases: {
       permissions: "plugins#permissions",
       "plugin-events": "plugin-api#events",
-      ":plugins": "plugins#installing-and-trusting",
-      ":packages": "plugins#packages",
       "shell-integration": "plugins#shell-integration",
       "osc-133": "plugins#shell-integration",
       "shell-hooks": "plugins#shell-hooks-roster-sets-it-up",
@@ -183,13 +189,14 @@ export const guides: readonly Guide[] = [
     part: "Extending",
     order: 82,
     // `:help roster.inventory.host()`, `:help roster-Host`: one topic per function, value, module
-    // and type, written by the generator with the page (crates/roster-core/src/plugin/api.rs).
+    // and type, written by the generator with the page (crates/roster-core/src/plugin/api/).
     aliases: { "roster-api": "plugin-api", ...pluginApiTags },
   },
   {
     id: "plugin-types",
     path: "examples/plugins/types/roster.lua",
     title: "roster.lua: the Plugin API's types",
+    short: "Plugin API types",
     summary: "The LuaCATS annotations for lua-language-server: completion and type checks for Plugins",
     part: "Extending",
     order: 83,
@@ -232,7 +239,7 @@ export const guides: readonly Guide[] = [
 ];
 
 /** A path from the repo's root, `.` and `..` resolved: `docs/app/../serve-api.md` → `docs/serve-api.md`. */
-export function repoPath(from: string, href: string): string {
+function repoPath(from: string, href: string): string {
   const out = from.split("/").slice(0, -1);
   for (const seg of href.split("/")) {
     if (seg === "..") out.pop();

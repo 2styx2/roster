@@ -6,12 +6,12 @@ from . import SecretError, register
 
 # ---- built-in: simple sources
 
-@register("prompt", help="ask once per group when setup runs:  auth: prompt")
+@register("prompt", help="ask once per group when setup runs:  auth: prompt", holds_items=False)
 def _prompt(spec, ctx):
     return ctx.ask(f"password for group '{ctx.group}': ")
 
 
-@register("env", help="an environment variable:  env:VAR_NAME")
+@register("env", help="an environment variable:  env:VAR_NAME", holds_items=False)
 def _env(spec, ctx):
     val = os.environ.get(spec.strip())
     if val is None:
@@ -19,7 +19,7 @@ def _env(spec, ctx):
     return val
 
 
-@register("cmd", help="any command that prints the password:  cmd:COMMAND")
+@register("cmd", help="any command that prints the password:  cmd:COMMAND", holds_items=False)
 def _cmd(spec, ctx):
     r = ctx.run(spec, shell=True)       # noqa: S604 - cmd:COMMAND is the user's own command, by definition
     if r.returncode != 0:
