@@ -6,6 +6,7 @@ import { IDLE_MS, hookLine } from "./shellHooks";
 import { PromptWatch } from "./prompt";
 import { Tabs, type TabStatus } from "./tabs";
 import { sinceOf } from "../backend/capabilities";
+import { PATH_NOT_REPEATED } from "../backend/serveContract";
 
 const hosts = makeHosts(12);
 const reviewed = hosts.hosts.filter((h) => h.reviewed).map((h) => h.name);
@@ -1488,6 +1489,23 @@ describe("Sessions from another named Inventory (ticket 115)", () => {
     tabs.serveStarting();
     tabs.setInventory({ name: null, path: "/home/you/b/roster.yml" });
     await expect(tabs.fill(id)).rejects.toThrow(/came from \/home\/you\/a\/roster\.yml/);
+    expect(asked).toEqual([]);
+  });
+
+  // #529: serve says "(not repeated)" for a roster.yml in a folder that looks like a token, so two
+  // such unnamed files can't be told apart: fail closed, and never show the words as where it's from.
+  it("never take an unnamed roster.yml serve won't name for the same one", async () => {
+    const { tabs, asked, prompt } = await atPrompts();
+    tabs.serveStarting();
+    const id = tabs.open(reviewed[0]!);
+    tabs.setInventory({ name: null, path: PATH_NOT_REPEATED });
+    await settle();
+    expect(tabs.snapshot().tabs[0]?.label).toBe(reviewed[0]);
+    await prompt(0);
+    tabs.serveStarting();
+    tabs.setInventory({ name: null, path: PATH_NOT_REPEATED });
+    expect(tabs.snapshot().tabs[0]).toMatchObject({ label: `${reviewed[0]} · another Inventory`, from: "another Inventory" });
+    await expect(tabs.fill(id)).rejects.toThrow(/came from another Inventory/);
     expect(asked).toEqual([]);
   });
 });

@@ -15,6 +15,7 @@ import {
   type SessionHandle,
   type TermSize,
 } from "../backend/types";
+import { PATH_NOT_REPEATED } from "../backend/serveContract";
 import { classifyDrop, classifyExit, terminalTail, type Problem } from "../errors/classify";
 import { problemFromCallError } from "../errors/catalog";
 import { hostnameIn } from "../quick/hostname";
@@ -322,6 +323,9 @@ export class Tabs {
   /** Where the serve now running runs (`inventories.list`'s `name` and `path`). Tabs opened on it
    * before it said count as opened there; the others stay marked until it's theirs. */
   setInventory(at: InventoryAt) {
+    // The same serve saying it again (no serveStarting since) keeps the one it said first, so a
+    // file it won't name is still known as its own (#529).
+    if (this.here && this.here.name === at.name && this.here.path === at.path) at = this.here;
     for (const [id, where] of this.opened) if (where === null) this.opened.set(id, at);
     this.here = at;
     this.changed();
@@ -332,8 +336,12 @@ export class Tabs {
     const where = this.opened.get(id);
     if (where === undefined || where === null) return null;
     if (where === LOST) return "another Inventory";
-    if (this.here && this.here.name === where.name && this.here.path === where.path) return null;
-    return where.name ?? where.path ?? "another Inventory";
+    if (this.here === where) return null;
+    // An unnamed roster.yml serve won't name (its path is PATH_NOT_REPEATED, #529) can't be told
+    // from another such one once serve has started again: it fails closed, as another's.
+    const unknowable = where.name === null && where.path === PATH_NOT_REPEATED;
+    if (this.here && !unknowable && this.here.name === where.name && this.here.path === where.path) return null;
+    return where.name ?? (unknowable ? null : where.path) ?? "another Inventory";
   }
 
   /** The tab as the snapshot shows it: marked with its Inventory while that isn't roster's now. */

@@ -7,6 +7,8 @@
 //
 // It opens from a key, so it doesn't animate. Esc closes it (or backs out of a step).
 import { useEffect, useRef, useState } from "react";
+import type { Capabilities } from "../backend/capabilities";
+import { isHidden, RENAME, shownPath } from "../backend/shown";
 import type { PendingChanges, PublishResult } from "../backend/types";
 import type { Problem } from "../errors/classify";
 import { problemFromCallError, type ErrorRow } from "../errors/catalog";
@@ -33,6 +35,8 @@ export interface ChangesPanelProps {
   leader: string;
   /** roster speaks `changes.publish` (API 7). */
   canPublish: boolean;
+  /** What this roster can do: whether `changes.diff`'s path is one it won't name (#529). */
+  caps: Capabilities;
   rows: readonly ErrorRow[];
   actions: ProblemActions;
   onDiscard(): Promise<void>;
@@ -132,9 +136,15 @@ export function ChangesPanel(props: ChangesPanelProps) {
       )}
       {changes.state === "done" && count > 0 && (
         <>
-          <p className="muted changes-where">
-            Edits on this Box that aren't Published yet, in <code>{changes.changes.path}</code>.
-          </p>
+          {isHidden(changes.changes.path, props.caps) ? (
+            <p className="muted changes-where">
+              Edits on this Box that aren't Published yet, in {shownPath(changes.changes.path, props.caps, "the roster.yml")}. {RENAME}
+            </p>
+          ) : (
+            <p className="muted changes-where">
+              Edits on this Box that aren't Published yet, in <code>{changes.changes.path}</code>.
+            </p>
+          )}
           <ul className="changes-hosts">
             {changes.changes.hosts.map((h) => (
               <li key={h.host}>

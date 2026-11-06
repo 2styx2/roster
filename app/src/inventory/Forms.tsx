@@ -142,6 +142,7 @@ export function Forms(p: FormsProps) {
             editKeys={p.editKeys}
             leader={p.leader}
             canPublish={caps.has("publish")}
+            caps={caps}
             rows={errorRows}
             actions={actions}
             onDiscard={async () => {

@@ -1,5 +1,7 @@
 // The workspace's middle: the Sessions' terminals (with the tab strip when `sessions = "tabs"`), or
 // what to do when there are none.
+import type { Capabilities } from "../backend/capabilities";
+import { isHidden, RENAME, shownPath } from "../backend/shown";
 import { Logo } from "../chrome/Logo";
 import { Keys } from "../ui/Keys";
 import { SessionPanes, TabStrip, type SessionPanesProps } from "./Sessions";
@@ -9,8 +11,9 @@ export interface SessionsMainProps {
   /** A click in a Session's pane: keys go back to its terminal. */
   onPaneClick(): void;
   tabStrip: boolean;
-  /** The Inventory has no Hosts yet: its file, where they go. */
-  noHostsIn: string | null;
+  /** The Inventory has no Hosts yet: its file, where they go (as serve named it: `caps` says
+   * whether that's a path it won't repeat, #529). */
+  noHostsIn: { path: string; caps: Capabilities } | null;
   findKeys: string | null;
   panes: SessionPanesProps;
 }
@@ -33,9 +36,15 @@ export function SessionsMain({ mainRef, onPaneClick, tabStrip, noHostsIn, findKe
         <div className="empty">
           <Logo size={48} className="empty-mark" />
           <p className="empty-title">No Hosts in the Inventory yet.</p>
-          <p className="empty-hint">
-            Add them to <code>{noHostsIn}</code> and they show up here.
-          </p>
+          {isHidden(noHostsIn.path, noHostsIn.caps) ? (
+            <p className="empty-hint">
+              Add them to {shownPath(noHostsIn.path, noHostsIn.caps, "the roster.yml")} and they show up here. {RENAME}
+            </p>
+          ) : (
+            <p className="empty-hint">
+              Add them to <code>{noHostsIn.path}</code> and they show up here.
+            </p>
+          )}
         </div>
       ) : none ? (
         <div className="empty">

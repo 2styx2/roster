@@ -1,6 +1,8 @@
 // The status bar: its segments as the mode's layout picks and orders them (decision Q39), the
 // hints and the mode to the right, and what Plugins are doing.
 import { useSyncExternalStore, type ReactNode } from "react";
+import { capabilities } from "../backend/capabilities";
+import { isHidden, RENAME, shownPath } from "../backend/shown";
 import type { BackendInfo, Inventories } from "../backend/types";
 import { keyHint, type Keymap } from "../keymap";
 import type { Registries } from "../registries";
@@ -29,6 +31,9 @@ export interface StatusBarProps {
 
 export function StatusBar(p: StatusBarProps) {
   const { info, keymap, leader, run } = p;
+  const caps = capabilities(info.inventory);
+  /** A roster.yml path for a tooltip: one serve won't name says so, and what to do (#529). */
+  const tip = (path: string) => (isHidden(path, caps) ? `${shownPath(path, caps, "the roster.yml")}. ${RENAME}` : path);
   const statusDefs = useSyncExternalStore(p.registries.status.subscribe, p.registries.status.list);
   const sourceKeys = keyHint(keymap, "source");
   const hints = [
@@ -53,13 +58,13 @@ export function StatusBar(p: StatusBarProps) {
     // The named Inventory serve runs on (ticket 115): always in sight while there is one.
     inventory: (id) =>
       p.inventories?.name && (
-        <span key={id} className="box" title={`Inventory ${p.inventories.name}: ${p.inventories.path ?? ""}`}>
+        <span key={id} className="box" title={`Inventory ${p.inventories.name}: ${p.inventories.path === null ? "" : tip(p.inventories.path)}`}>
           <span className="statusbar-cut">{p.inventories.name} Inventory</span>
         </span>
       ),
     path: (id) => (
-      <span key={id} className="statusbar-cut path" title={`${info.inventory.path}\n${info.command.join(" ")}`}>
-        {info.inventory.path}
+      <span key={id} className="statusbar-cut path" title={`${tip(info.inventory.path)}\n${info.command.join(" ")}`}>
+        {isHidden(info.inventory.path, caps) ? "roster.yml (not repeated)" : info.inventory.path}
       </span>
     ),
     // Pending changes (ticket 10): only when there are some; it opens them.
