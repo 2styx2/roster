@@ -378,7 +378,7 @@ def login_failure(h, password, stderr, limited=(), resolved=None, nist_only=Fals
     if "host key verification failed" in low or "remote host identification has changed" in low:
         return Problem(errors.HOST_KEY_CHANGED, f"{name}'s host key changed - not connecting (reinstalled, or another "
                        "machine at its address?)", fix="compare the fingerprint with the Host's console or owner "
-                       f"before trusting it; if it was reinstalled, delete its line in {known_hosts_label()} and run "
+                       f"before trusting it; if it was reinstalled, delete its line in {current().known_hosts_label} and run "
                        f"`roster setup --host {name}` (its keys went with the reinstall)", details=stderr)
     if "permission denied" in low:
         if password:

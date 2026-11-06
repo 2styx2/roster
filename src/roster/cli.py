@@ -34,6 +34,7 @@ from .boxsetup import locked, setup, setup_mesh, skip_left_out, warn_os, warn_ov
 from .claude import write_claude_files
 from .cliparser import build_parser, check, command_parser, wants_json
 from .common import (
+    ago,
     die,
     find_program,
     never_look_in_the_current_folder,
@@ -59,6 +60,7 @@ from .context import Context, current
 from .discover import cmd_discover
 from .errors import (
     KEY_FILE,
+    NO_KEY_YET,
     RENAME_HINT,
     ROTATION_PENDING,
     UNKNOWN_HOST,
@@ -72,7 +74,7 @@ from .example import EXAMPLE_CONFIG
 from .hosts import NO_PASSWORD, PLACEHOLDER_USER, is_windows, placeholder_user, prompted
 from .providers import PROVIDERS, get_secret, setup_providers
 from .resources import TYPES, fields, login, summary, wifi_uri
-from .sshops import ssh_ok, write_ssh_config
+from .sshops import write_ssh_config
 from .web import cmd_web
 
 # ---------------------------------------------------------------- commands
@@ -210,6 +212,10 @@ def cmd_sync(cfg, args):
     for name in sorted(set(before or {}) - set(cfg["hosts"]) - catchup.renamed(before or {}, cfg).keys()):
         say(f"note: {name} left roster.yml, so its ssh entry is gone; this Box's key may still be on it: remove its "
             f"{keyline.TAG} line there by hand (next time, `roster revoke --only {name}` before taking a Host out)")
+    for name, was in sorted(catchup.readdressed(before or {}, cfg).items()):
+        say(f"note: {name}'s address changed ({was} to {cfg['hosts'][name]['ip']}): `roster setup --host {name}` "
+            "records its host key there; compare that key with the Host's console first (a moved Host keeps its key, "
+            "a reinstalled or another machine shows a new one)")
     if line := catchup.next_line(changed, catchup.gaps(cfg, unmapped=unmapped)):
         say(line)
     return 0
@@ -370,18 +376,26 @@ def cmd_check(cfg, args):
     if not args.json:
         warn_problems(hosts)
 
+    # T243: each key login's cause and its one fix when it failed (catchup: one login each, a rate limiter stops it)
+    logins = catchup.login_checks(cfg, [h for h in hosts if h["enroll"]], cfg["workers"])
+    problems = {n: why for n, (_, why) in logins.items() if why is not None}
+
     def check(h):
-        res = {"ssh": ssh_ok(h["name"]) if h["enroll"] else tcp_ok(h["ip"], h["ssh"]["port"])}
+        res = {"ssh": logins[h["name"]][0] if h["enroll"] else tcp_ok(h["ip"], h["ssh"]["port"])}
         if res["ssh"] and h["enroll"] and is_windows(h):
             check_windows_key(cfg, h)
         for name, s in h["services"].items():
             res[name] = tcp_ok(urlparse(s["url"]).hostname if s["url"] else h["ip"], s["port"])
         return h, res
 
+    def problem(name):
+        p = problems.get(name)
+        return {"code": p.code, "message": p.message, "fix": p.fix} if p else None
+
     if args.json:
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
             results = [{"name": h["name"], "ok": all(res.values()), "ssh": "login" if h["enroll"] else "port",
-                        "checks": res} for h, res in ex.map(check, hosts)]
+                        "checks": res, "problem": problem(h["name"])} for h, res in ex.map(check, hosts)]
         drift = mesh.drift(cfg) if not narrowed else None
         broken = drift is not None and meshview.broken(drift)
         waiting = rotation_waiting(cfg, wanted)
@@ -396,9 +410,12 @@ def cmd_check(cfg, args):
     width = max((len(h["name"]) for h in hosts), default=0)
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
         for h, res in sorted(ex.map(check, hosts), key=lambda r: r[0]["name"]):
-            line = "  ".join(f"{k}:{'ok' if v else 'FAIL'}" for k, v in res.items())
+            todo = getattr(problems.get(h["name"]), "code", None) == NO_KEY_YET     # a to-do, not a FAIL
+            line = "  ".join(f"{k}:{'ok' if v else 'todo' if k == 'ssh' and todo else 'FAIL'}" for k, v in res.items())
             bad += not all(res.values())
             say(f"{h['name']:<{width}}  {line}")
+    for name, p in sorted(problems.items()):
+        say(f"  {name}: {tagged(p)}: {p.fix}")
     say(f"\n{len(hosts) - bad}/{len(hosts)} hosts fully reachable"
         + ("" if all(h["enroll"] for h in hosts) else "  (password-only hosts: ssh = port open)"))
     drift = mesh.drift(cfg) if not narrowed else None
@@ -1017,7 +1034,7 @@ def cmd_vault_status(cfg, args):
         say("\nLast sync (the vault isn't watched: roster sees new or changed items after a sync)")
     for name in shown:
         when = synced[name]
-        say(f"  {name}: last synced {vaultsync.ago(when)}; run `roster vault sync` for what changed" if when else
+        say(f"  {name}: last synced {ago(when)}; run `roster vault sync` for what changed" if when else
             f"  {name}: never synced by roster; run `roster vault sync`")
     if unknown:
         say(f"\nUNKNOWN providers used in roster.yml: {', '.join(unknown)}")
@@ -1038,10 +1055,11 @@ def cmd_vault_sync(cfg, args):
         if e is not None:
             bad += 1
             when = None if isinstance(e, providers_locked()) else vaultsync.last_synced(p)
-            say(f"  FAIL  {p}: {e}" + (f"; roster uses it as last synced {vaultsync.ago(when)}" if when else ""))
+            say(f"  FAIL  {p}: {e}" + (f"; roster uses it as last synced {ago(when)}" if when else ""))
             if isinstance(e, providers.VaultLocked):
                 say(f"        fix: {providers.unlock_fix(p)}")
             continue
+        unmapped += (r or {}).get("unmapped") or []        # named at each sync until mapped (#503's review LOW-4)
         if r is None:
             say(f"  ok    {p}: keeps no local copy (it asks its own server or file each time), nothing to sync")
         elif r["count"] is None:
@@ -1051,7 +1069,6 @@ def cmd_vault_sync(cfg, args):
         elif not (r["added"] or r["changed"] or r["removed"]):
             say(f"  ok    {p}: up to date (no change since the last sync)")
         else:
-            unmapped += r["unmapped"]
             parts = [f"{len(r[k])} {k}: {', '.join(r[k])}" for k in ("added", "changed") if r[k]]
             parts += [f"{r['removed']} removed"] if r["removed"] else []
             say(f"  ok    {p}: synced; since the last sync, {'; '.join(parts)}")

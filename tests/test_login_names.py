@@ -76,7 +76,7 @@ def test_hosts_check_auth_check_and_info_report_the_problem(write_config, capsys
     from roster import cli
     write_config(HOSTS)
     monkeypatch.setattr(cli, "tcp_ok", lambda *a, **k: True)       # no network
-    monkeypatch.setattr(cli, "ssh_ok", lambda *a, **k: True)
+    monkeypatch.setattr("roster.sshops.login_probe", lambda *a, **k: (True, ""))
     for argv in (["hosts"], ["check"], ["check", "--auth"]):
         cli.main(argv)
         err = capsys.readouterr().err

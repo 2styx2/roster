@@ -83,8 +83,10 @@ why_no_pull() {                 # why_no_pull DIR: why the map's `git pull --ff-
     if ! git -C "$d" fetch --quiet --prune 2>/dev/null; then
         echo "couldn't reach the map's server (offline?)"
     elif ! git -C "$d" rev-parse --verify --quiet '@{u}' >/dev/null 2>&1; then
-        echo "${up:-its branch} is gone from the server (merged and deleted?): git -C $(home "$d") switch main"
-    elif [[ -n $(git -C "$d" status --porcelain --untracked-files=no 2>/dev/null) ]]; then
+        local main                # the remote's default branch, as changes.pull reads it (main when it doesn't say)
+        main=$(git -C "$d" rev-parse --abbrev-ref "${up%%/*}/HEAD" 2>/dev/null); main=${main#*/}
+        echo "${up:-its branch} is gone from the server (merged and deleted?): git -C $(home "$d") switch ${main:-main}"
+    elif [[ -n $(git -C "$d" -c core.fsmonitor=false status --porcelain --untracked-files=no 2>/dev/null) ]]; then
         echo "uncommitted edits in $(home "$d") block the fast-forward (they're kept)"
     elif [[ $(git -C "$d" rev-list --count '@{u}..HEAD' 2>/dev/null) != 0 ]]; then
         echo "$(home "$d") and $up both have new commits (diverged): merge or rebase it yourself"
