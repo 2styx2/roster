@@ -81,8 +81,8 @@ def test_two_hosts_sharing_an_account_with_their_own_key_types_keep_both_lines(s
         assert rc == 0, out
         assert sorted(ln.split()[0] for ln in shared.lines()) == ["ecdsa-sha2-nistp384", "ssh-ed25519"], out
     assert "2 already work, 0 need the key installed" in out
-    assert main(["revoke", "-y"]) == 0              # one takes every line of this Box's; the other is done with it
-    assert "the same account as app-" in capsys.readouterr().err
+    assert main(["revoke", "-y"]) == 1              # one takes every line; the other's refusal is said, not counted
+    assert "another entry on this account" in capsys.readouterr().out
     assert shared.lines() == []
 
 
@@ -165,7 +165,43 @@ def test_revoke_tries_every_entry_on_a_shared_account(shared, capsys, isolated):
     assert main(["setup"]) == 0
     log = isolated["home"].parent / "hosts" / "connections"
     log.write_text("")
-    assert main(["revoke", "-y"]) == 0
+    assert main(["revoke", "-y"]) == 1
     started = [ln.split()[1] for ln in log.read_text().splitlines() if ln.startswith("start ")]
     assert sorted(set(started)) == ["app-01", "app-alias"]
     assert shared.lines() == []
+
+
+VIP_YML = """\
+box_name: ws1
+groups:
+  lab:
+    user: root
+    auth: env:PW
+    hosts:
+      vip-a: {ip: 10.0.0.4}
+      vip-b: {ip: 10.0.0.4}
+"""
+
+
+def test_a_refused_entry_on_an_account_another_entry_revoked_stays_a_failure_with_the_hint(
+        shared, write_config, isolated, capsys):
+    """#524's second pass: one address, port and user can reach two machines (a VIP, a round-robin name). The second
+    still holds this Box's line but refuses the key for another reason (here the stand-in's FIPS mode; in life
+    StrictModes, a key type turned off): revoke must not say done there. It fails, with the hint."""
+    from roster.cli import main
+    root = isolated["home"].parent / "hosts"
+    for n in ("vip-a", "vip-b"):
+        d = root / n / "home" / ".ssh"
+        d.mkdir(parents=True)
+        (d / "authorized_keys").write_text("ssh-ed25519 AAAAown own@laptop\n")
+        (root / n / "keys").touch()
+    write_config(VIP_YML)
+    assert main(["setup"]) == 0, capsys.readouterr().out
+    capsys.readouterr()
+    (root / "vip-b" / "fips").touch()               # vip-b now refuses this Box's key; its line stays
+    assert main(["revoke", "-y"]) == 1
+    out = capsys.readouterr().out
+    assert "roster-managed:ws1" in (root / "vip-b/home/.ssh/authorized_keys").read_text()
+    fail = next(ln for ln in out.splitlines() if ln.strip().startswith("FAIL") and "vip-" in ln)
+    assert "this Box's key no longer logs in there" in fail and "another entry on this account" in fail
+    assert "Not finished" in out

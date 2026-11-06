@@ -38,8 +38,10 @@ def revoke_on(h: dict[str, Any], tag_re: str) -> object:
 
 def in_turn(turn: AccountLocks) -> Any:
     """revoke_on, with Host entries that share an account (TURN's locks) taking turns (T258). Every entry is tried
-    (#524's review M1): one whose key login is refused once another entry's revoke took TAG_RE's lines off that same
-    account (address, port and user) is done too, as this Box's key no longer logs in there, and says so."""
+    (#524's review M1). One whose key login is refused once another entry's revoke took TAG_RE's lines off that same
+    account (address, port and user) stays a failure (#524's second pass: one address can reach two machines, a VIP
+    or a round-robin name, and the refusal may have another cause while the line stays): its why says so, as a hint
+    to check by hand."""
     done: dict[tuple[tuple[str, int, str], str], str] = {}
 
     def run(h: dict[str, Any], tag_re: str) -> object:
@@ -48,10 +50,10 @@ def in_turn(turn: AccountLocks) -> Any:
             if why is None:
                 done.setdefault((account(h), tag_re), h["name"])
             elif isinstance(why, Refused) and (first := done.get((account(h), tag_re))):
-                print(f"note: {h['name']}: this Box's key no longer logs in there: the same account as {first} (its "
-                      "address, port and user), whose revoke took this Box's key lines there", file=sys.stderr,
-                      flush=True)
-                return None
+                return (f"{why} - this Box's key no longer logs in there: {first}, another entry on this account "
+                        "(address, port and user), just had this Box's lines taken off, so this is likely the same "
+                        f"machine; check by hand that {h['name']} holds no line of this Box's (one address can reach "
+                        "two machines)")
             return why
     return run
 

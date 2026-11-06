@@ -437,8 +437,9 @@ wrote() {  # wrote RC PATH: did the command that wrote PATH's new version (exit 
            # 2 (a read or write error: a full disk) or another command's failure leaves PATH as it was (#524's F1)
   [ "$1" -le 1 ] && return 0; echo "ERROR couldn't write the new $2 (exit $1): nothing was changed"; return 1
 }
-put() {  # put PATH LABEL < content: write it when it differs
-  t=$(mktemp) || { echo "ERROR mktemp failed"; exit 1; }; cat > "$t"
+put() {  # put PATH LABEL < content: write it when it differs; a failed write (a full disk) changes nothing (#524)
+  t=$(mktemp) || { echo "ERROR mktemp failed"; exit 1; }
+  cat > "$t" || { rm -f "$t"; echo "ERROR couldn't write the new $1: nothing was changed"; return 1; }
   if [ -f "$1" ] && cmp -s "$t" "$1"; then echo "SAME $2"
   else echo "CHANGE $2"; [ "$MODE" = apply ] && { mkdir -p "${1%/*}" && replace "$1" < "$t"; }; fi
   rm -f "$t"
@@ -469,7 +470,8 @@ else
   if [ "$MODE" = apply ]; then
     mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"; t=$(mktemp)
     # the Include after an earlier mark (another directory) goes with it
-    rc=0; { echo "$MARK"; echo "$INC"; [ ! -f "$C" ] || awk -v m="$MARK" 'd { d = 0; if (/^Include /) next } $0 == m { d = 1; next } { print }' "$C"; } > "$t" || rc=2
+    # set -e in the subshell: each command's failure counts, not only the last's
+    rc=0; ( set -e; echo "$MARK"; echo "$INC"; [ ! -f "$C" ] || awk -v m="$MARK" 'd { d = 0; if (/^Include /) next } $0 == m { d = 1; next } { print }' "$C" ) > "$t" || rc=2
     wrote $rc "$C" && replace "$C" < "$t"; rm -f "$t"
   fi
 fi
@@ -485,7 +487,7 @@ if [ -z "$FOREIGN" ] && [ -z "$ESXI" ] && [ -d "$HOME/.claude" ]; then
     echo "CHANGE claude"
     if [ "$MODE" = apply ]; then
       t=$(mktemp)
-      rc=0; ( [ ! -f "$CM" ] || cat "$CM" || exit 2; [ -s "$CM" ] && [ -n "$(tail -c 1 "$CM")" ] && echo; echo "$IMPORT" ) > "$t" || rc=2
+      rc=0; ( set -e; [ ! -f "$CM" ] || cat "$CM"; if [ -s "$CM" ] && [ -n "$(tail -c 1 "$CM")" ]; then echo; fi; echo "$IMPORT" ) > "$t" || rc=2
       wrote $rc "$CM" && replace "$CM" < "$t"; rm -f "$t"
     fi
   fi
@@ -636,8 +638,11 @@ def preamble(h, mode, own, prev=()):
             f"IMPORT={q(CLAUDE_IMPORT)}\n" + WHERE.replace("@MESH_FILES@", boxkeys.MESH_FILES))
 
 
-def heredoc(text):
-    return f"<<'ROSTER_MESH_EOF'\n{text}ROSTER_MESH_EOF\n"
+def stash(var, text):
+    """VAR=$(mktemp) holding TEXT, or the script stops there, said: a temporary file written in part (a full disk)
+    is never what a later step puts in place (#524's second pass)."""
+    return (f'{var}=$(mktemp)\ncat > "${var}" <<\'ROSTER_MESH_EOF\' || {{ echo "ERROR couldn\'t write a temporary file '
+            f'on this Host (a full disk?)"; exit 1; }}\n{text}ROSTER_MESH_EOF\n')
 
 
 def probe_script(h, peers, mode, rotate, own, prev=()):
@@ -664,7 +669,7 @@ def write_script(h, mode, files, keys, keep, own, prev=(), adopt=()):
     if files is not None:
         s.append(SOURCE)
         for name, text in files.items():
-            f = f"FC=$(mktemp)\ncat > \"$FC\" {heredoc(text)}"
+            f = stash("FC", text)
             if name == "ROSTER.md":
                 s.append(f + 'if [ -n "$FOREIGN" ]; then { [ -n "$R" ] && { [ ! -f "$R" ] || ours "$R"; }; } '
                          f'&& same "$R" {q(name)} 2 < "$FC"\n'
@@ -676,13 +681,13 @@ def write_script(h, mode, files, keys, keep, own, prev=(), adopt=()):
                          f'else put "$P/{name}" {q(name)} < "$FC"; fi\nrm -f "$FC"\n')
     else:
         s.append(NOT_SOURCE)
-    s.append("W=$(mktemp)\ncat > \"$W\" " + heredoc("".join(line + "\n" for line in keys)))
+    s.append(stash("W", "".join(line + "\n" for line in keys)))
     s.append(f"KEEP={q('|'.join(ere(k) for k in sorted(keep)))}\n")
     retag = sorted({k.rsplit(":", 1)[1].split("@", 1)[0] for k in keys} - set(keep))
     old = "-" in prev and bool(retag)
     pattern = [f"( {TAG}:{NAME_ERE}@{ere(p)}$)" for p in prev if p != "-"]
     s.append(f"RETAG={q('|'.join(pattern))}\n")
-    s.append("ADOPT=$(mktemp)\ncat > \"$ADOPT\" " + heredoc("".join(line + "\n" for line in sorted(adopt)) if old else ""))
+    s.append(stash("ADOPT", "".join(line + "\n" for line in sorted(adopt)) if old else ""))
     s.append(f"UNT={q('|'.join(ere(k) for k in retag) if old else '')}\n")
     s.append(AUTHORIZED)
     return "".join(s) + "echo ROSTER_DONE\n"
