@@ -1,0 +1,369 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the docs website's search results > are the same for ":connect" 1`] = `
+{
+  "all": "ae848e69185d9413",
+  "firstTexts": [
+    "help.html?hl=%3Aconnect#opening-it …a command (:help :connect, or :help connect), an error (:help E13), a Theme (:he…",
+    "help.html?hl=%3Aconnect#help-from-where-you-are …you're typing: :conn opens :connect. With nothing typed, the Commands page. Esc…",
+    "help.html?hl=%3Aconnect#help-from-where-you-are …row in the Sidebar opens :connect, any other row the command it runs. With nothi…",
+    "help.html?hl=%3Aconnect#help-from-where-you-are …result: a Host opens :connect, a Theme its entry (themes#nord), a help topic its…",
+    "help.html?hl=%3Aconnect#writing-help …topic: [Options](options), \`:connect\`, \`terminal.size\` (a code span that names a…",
+  ],
+  "firstTopics": [
+    "commands.html#%3Aconnect",
+    "commands.html#%3Areconnect",
+  ],
+  "texts": 17,
+  "topics": 2,
+}
+`;
+
+exports[`the docs website's search results > are the same for "cnct" 1`] = `
+{
+  "all": "76eff83943cd0d35",
+  "firstTexts": [],
+  "firstTopics": [
+    "errors.html",
+    "errors-guide.html",
+    "commands.html#%3Aconnect",
+    "commands.html#%3Areconnect",
+    "plugin-api.html#rostercanceltimer",
+  ],
+  "texts": 0,
+  "topics": 16,
+}
+`;
+
+exports[`the docs website's search results > are the same for "error 141" 1`] = `
+{
+  "all": "d1dedef224df4acf",
+  "firstTexts": [],
+  "firstTopics": [],
+  "texts": 0,
+  "topics": 0,
+}
+`;
+
+exports[`the docs website's search results > are the same for "font pixels" 1`] = `
+{
+  "all": "05649ab23193fc33",
+  "firstTexts": [],
+  "firstTopics": [],
+  "texts": 0,
+  "topics": 0,
+}
+`;
+
+exports[`the docs website's search results > are the same for "init.lua" 1`] = `
+{
+  "all": "afaad908fdc89610",
+  "firstTexts": [
+    "start.html?hl=init.lua …it comes: you don't need an init.lua to use it. When you want it to look or beha…",
+    "start.html?hl=init.lua#coming-from-another-tool …cursor and colours into init.lua, so a Session looks the way your terminal does.",
+    "start.html?hl=init.lua#coming-from-another-tool …and the Config is Lua. init.lua, :source and :help options do what you'd expect.",
+    "start.html?hl=init.lua#make-it-yours :config opens your init.lua (it makes one, every line commented out, if there's…",
+    "start.html?hl=init.lua#see-how-far-it-goes …are all registries that your init.lua and Plugins add to. How far roster bends s…",
+  ],
+  "firstTopics": [
+    "health.html#config",
+    "config.html",
+    "errors-guide.html#initluas-roster-table",
+    "deprecated.html#initlua-options",
+    "config.html#writing-initlua",
+  ],
+  "texts": 265,
+  "topics": 51,
+}
+`;
+
+exports[`the docs website's search results > are the same for "known_hosts" 1`] = `
+{
+  "all": "00206bc53ecb6d88",
+  "firstTexts": [
+    "new-box.html?hl=known_hosts#6-run-setup Records each host's fingerprint in ~/.ssh/roster_known_hosts.",
+    "new-box.html?hl=known_hosts#9-optional-add-your-own-inventory …setup # its own ssh config, known_hosts and ROSTER.md; work's stay as they are",
+    "errors.html?hl=known_hosts#E13 …its line in ~/.ssh/roster_known_hosts and run roster setup --host HOST. Offers:…",
+    "errors-guide.html?hl=known_hosts#quick-connect …(a reinstall), delete its line in ~/.ssh/roster_known_hosts. Never asked about",
+    "errors-guide.html?hl=known_hosts#when-the-vault-or-the-map-changes …record and setup-left; never known_hosts, which a first login writes itself) · H…",
+  ],
+  "firstTopics": [],
+  "texts": 23,
+  "topics": 0,
+}
+`;
+
+exports[`the docs website's search results > are the same for "mesh" 1`] = `
+{
+  "all": "d6c4dddde28bfb1a",
+  "firstTexts": [
+    "new-box.html?hl=mesh#3-put-the-host-list-in-place …discover --write and roster mesh cut save straight to it, and there's nothing to…",
+    "new-box.html?hl=mesh#6-run-setup …share, and each one's roster mesh takes the other's Mesh entries (Whose Mesh it…",
+    "new-box.html?hl=mesh#6-run-setup Applies the Mesh when roster.yml has one (The Mesh).",
+    "new-box.html?hl=mesh#removing-a-box …of this, in this order: the Mesh and this box's key off the hosts first, then th…",
+    "new-box.html?hl=mesh#removing-a-box roster mesh cut --all # this box's Mesh entries off every host (with a Mesh)",
+  ],
+  "firstTopics": [
+    "plugin-api.html#meshresult",
+    "plugin-api.html#meshlink",
+    "plugin-api.html#meshhost",
+    "plugin-api.html#meshstarted",
+    "plugin-api.html#meshcut",
+  ],
+  "texts": 354,
+  "topics": 52,
+}
+`;
+
+exports[`the docs website's search results > are the same for "news" 1`] = `
+{
+  "all": "190213b3c831034d",
+  "firstTexts": [
+    "news.html?hl=news …0.2.0: what's new: :help news". Deprecated names lists every old name that still…",
+    "news.html?hl=news#new-6 What's new: this page, :help news, and the status line says once after an upgrad…",
+  ],
+  "firstTopics": [
+    "news.html",
+    "news.html#unreleased",
+    "news.html#breaking",
+    "news.html#changed",
+    "news.html#security",
+  ],
+  "texts": 2,
+  "topics": 77,
+}
+`;
+
+exports[`the docs website's search results > are the same for "plugin" 1`] = `
+{
+  "all": "915843351770773f",
+  "firstTexts": [
+    "start.html?hl=plugin#see-how-far-it-goes …that your init.lua and Plugins add to. How far roster bends shows each one and w…",
+    "help.html?hl=plugin#on-the-web-and-on-paper …there (no init.lua, no Plugins) and say so; in the app they show what's in effec…",
+    "help.html?hl=plugin#the-tutor …(registries.tutorials), so a Plugin can ship one (roster.tutor.set, plugins.md);…",
+    "help.html?hl=plugin#the-tutor Your Plugins come along. The ones running in your workspace load in the demo too…",
+    "help.html?hl=plugin#plugins-add-pages …plain data, never HTML. So a Plugin's page (roster.help.set, plugins.md) looks l…",
+  ],
+  "firstTopics": [
+    "plugin-api.html#plugin",
+    "help.html#plugins-add-pages",
+    "commands.html#plugins",
+    "options.html#plugin_proxy",
+    "errors-guide.html#plugin-interactions",
+  ],
+  "texts": 615,
+  "topics": 310,
+}
+`;
+
+exports[`the docs website's search results > are the same for "roster.keymap" 1`] = `
+{
+  "all": "10e2e7752e02cc85",
+  "firstTexts": [
+    "config.html?hl=roster.keymap#writing-initlua roster.keymap.set("leader", "t", "next")",
+    "config.html?hl=roster.keymap#writing-initlua roster.o holds every option, roster.keymap the key bindings, roster.themes the T…",
+    "config.html?hl=roster.keymap#split-into-modules lua/myconf/keys.lua roster.keymap.set calls",
+    "config.html?hl=roster.keymap#finding-options …has now. :help terminal.size opens one, :help roster.keymap.set a function.",
+    "config.html?hl=roster.keymap#the-roster-table roster.keymap · set(context, keys, action), del(context, keys), get(context, key…",
+  ],
+  "firstTopics": [
+    "plugin-api.html#rosterkeymap",
+    "options.html#roster.keymap.set",
+    "options.html#roster.keymap.del",
+    "options.html#roster.keymap.get",
+    "options.html#roster.keymap.has",
+  ],
+  "texts": 65,
+  "topics": 11,
+}
+`;
+
+exports[`the docs website's search results > are the same for "rotate key" 1`] = `
+{
+  "all": "5dd2803de51769f6",
+  "firstTexts": [
+    "adding-hosts.html?hl=rotate#fips-hosts …then run roster setup --rotate: the new type's key goes on and every other line…",
+    "errors-guide.html?hl=rotate#the-mesh 73 · 110 · --rotate (or rotate) names a Host that isn't a Mesh source · roster.y…",
+    "errors-guide.html?hl=rotate#the-mesh …is. When it's for the key --rotate replaces, the warning says that key still get…",
+    "errors-guide.html?hl=rotate#the-mesh …Mesh files the source's are rotated that key or cut the source, so this Box's li…",
+    "errors-guide.html?hl=rotate#named-inventories …that say other peers; or --rotate of such a key · Host · "orion-2: its Mesh file…",
+  ],
+  "firstTopics": [
+    "cli.html#rotating-the-box-key-roster-setup---rotate",
+    "plugin-api.html#rosterkeymapsetcontext-keys-action",
+    "plugin-api.html#rosterkeymapdelcontext-keys",
+    "plugin-api.html#rosterkeymapgetcontext-keys",
+    "plugin-api.html#rosterkeymaphascontext-keys",
+  ],
+  "texts": 38,
+  "topics": 10,
+}
+`;
+
+exports[`the docs website's search results > are the same for "sandbox" 1`] = `
+{
+  "all": "224c6340d498278d",
+  "firstTexts": [
+    "help.html?hl=sandbox#opening-it …heading (:help config#the-sandbox) or another name for one (:help roster.yml, :h…",
+    "help.html?hl=sandbox#writing-help …topic, page#slug (config#the-sandbox). Renaming one breaks links to it, and CI s…",
+    "config.html?hl=sandbox#split-into-modules …from the config folder (The sandbox). The modules run in the order init.lua requ…",
+    "plugins.html?hl=sandbox …names. It runs in the same sandbox as your init.lua (config.md), and it only get…",
+    "plugins.html?hl=sandbox#limits …on its own thread, with the sandbox's libraries and coroutine (no io, no os.exec…",
+  ],
+  "firstTopics": [
+    "config.html#the-sandbox",
+  ],
+  "texts": 7,
+  "topics": 1,
+}
+`;
+
+exports[`the docs website's search results > are the same for "session.fill" 1`] = `
+{
+  "all": "b37a3caddab15aa1",
+  "firstTexts": [
+    "serve-api.html?hl=session.fill#sessions-sessionprepare …the Session connects to, for session.fill · 2, 20, 21, 22, 30, 11, 12, 14, 31-35…",
+    "serve-api.html?hl=session.fill#filling-a-password-prompt-sessionfill session.fill · {host, address, port, user, prompt} (exact Host name; what its Se…",
+    "serve-api.html?hl=session.fill#filling-a-password-prompt-sessionfill session.fill · {host, address, port, user, prompt, hop: {host, address, port, us…",
+    "serve-api.html?hl=session.fill#filling-a-password-prompt-sessionfill 130 · session.fill: the prompt isn't one roster fills (not sudo's for the ssh us…",
+    "serve-api.html?hl=session.fill#filling-a-password-prompt-sessionfill 131 · session.fill: the Login that would answer has no saved password (auth: age…",
+  ],
+  "firstTopics": [
+    "serve-api.html#filling-a-password-prompt-sessionfill",
+  ],
+  "texts": 8,
+  "topics": 1,
+}
+`;
+
+exports[`the docs website's search results > are the same for "ssh config" 1`] = `
+{
+  "all": "007a63da2639a03b",
+  "firstTexts": [
+    "new-box.html?hl=ssh …repo, or the Hosts in ~/.ssh/config. --inventory blank|file:PATH|repo:URL|ssh-co…",
+    "new-box.html?hl=ssh#3-put-the-host-list-in-place …init --inventory ssh-config # or the Hosts already in ~/.ssh/config (it isn't ch…",
+    "new-box.html?hl=ssh#6-run-setup Writes ~/.ssh/config.d/roster, so ssh <name> works.",
+    "new-box.html?hl=ssh#8-use-it-with-claude …and reaches them through ssh, roster run and roster web without seeing passwords…",
+    "new-box.html?hl=ssh#9-optional-add-your-own-inventory …--inv home setup # its own ssh config, known_hosts and ROSTER.md; work's stay as…",
+  ],
+  "firstTopics": [
+    "errors.html#E19",
+    "options.html#roster.packages.has",
+    "options.html#roster.folders.has",
+  ],
+  "texts": 106,
+  "topics": 3,
+}
+`;
+
+exports[`the docs website's search results > are the same for "terminal.size" 1`] = `
+{
+  "all": "3180bd8375ad186d",
+  "firstTexts": [
+    "help.html?hl=terminal.size#opening-it …options), an option (:help terminal.size), a command (:help :connect, or :help c…",
+    "help.html?hl=terminal.size#on-the-web-and-on-paper …Every page ends with the commit it was made from, a link to edit its Markdown, a…",
+    "help.html?hl=terminal.size#writing-help …\`:connect\`, \`terminal.size\` (a code span that names a topic is already a link),…",
+    "help.html?hl=terminal.size#writing-help …people write them (roster.o.terminal.size = "16pt"), and each lua block in confi…",
+    "tutor.html?hl=terminal.size#lesson-3 Open :help options and find terminal.size: search the page with /, or go straigh…",
+  ],
+  "firstTopics": [
+    "options.html#terminal.size",
+    "options.html#roster.o",
+  ],
+  "texts": 36,
+  "topics": 2,
+}
+`;
+
+exports[`the docs website's search results > are the same for "the sandbox" 1`] = `
+{
+  "all": "382e3d3f31a29c3b",
+  "firstTexts": [
+    "help.html?hl=the#opening-it …an error (:help E13), a Theme (:help themes#nord), a guide's heading (:help conf…",
+    "help.html?hl=the#writing-help …a topic, page#slug (config#the-sandbox). Renaming one breaks links to it, and CI…",
+    "config.html?hl=the#split-into-modules …(. is a folder), only from the config folder (The sandbox). The modules run in t…",
+    "plugins.html?hl=the …of Lua that adds to roster the way the app's own features do: commands, key bind…",
+    "plugins.html?hl=the#limits …on its own thread, with the sandbox's libraries and coroutine (no io, no os.exec…",
+  ],
+  "firstTopics": [
+    "config.html#the-sandbox",
+  ],
+  "texts": 7,
+  "topics": 1,
+}
+`;
+
+exports[`the docs website's search results > are the same for "theme" 1`] = `
+{
+  "all": "a243eec0f0052f0d",
+  "firstTexts": [
+    "start.html?hl=theme#see-how-far-it-goes Commands, keys, Themes, finders, Sidebar sections, the toolbar and these help pa…",
+    "help.html?hl=theme#opening-it …an error (:help E13), a Theme (:help themes#nord), a guide's heading (:help conf…",
+    "help.html?hl=theme#help-from-where-you-are …a Host opens :connect, a Theme its entry (themes#nord), a help topic itself, any…",
+    "help.html?hl=theme#the-pages Make it yours: Your init.lua, Recipes, Keyboard, Themes.",
+    "help.html?hl=theme#the-pages …and where it came from), themes, finders, errors, health (this Box's health, as…",
+  ],
+  "firstTopics": [
+    "options.html#theme",
+    "plugin-api.html#theme",
+    "themes-guide.html",
+    "themes.html",
+    "config.html#themes-and-colours",
+  ],
+  "texts": 171,
+  "topics": 60,
+}
+`;
+
+exports[`the docs website's search results > are the same for "vault unlock" 1`] = `
+{
+  "all": "01b389f3565b5dcd",
+  "firstTexts": [
+    "new-box.html?hl=vault#4-unlock-the-vault …every roster run on this box (including Claude sessions) use the unlocked vault",
+    "new-box.html?hl=vault#4-unlock-the-vault roster vault unlock # asks the master password once, saves the session in ~/.con…",
+    "new-box.html?hl=vault#4-unlock-the-vault roster vault unlock keeps the vault unlocked until roster vault lock, bw lock, o…",
+    "new-box.html?hl=vault#4-unlock-the-vault …file is ignored and roster vault unlock refuses (202). On Windows the same holds…",
+    "adding-hosts.html?hl=vault#after-you-put-a-login-in-the-vault It syncs the vault first (--no-sync skips that), lists the login items no auth:…",
+  ],
+  "firstTopics": [
+    "new-box.html#4-unlock-the-vault",
+    "cli.html#staying-unlocked-roster-vault-unlock",
+    "errors.html#E7",
+    "deprecated.html#a-removal-of-something-the-plugin-never-added-doing-nothing-rosterthemesremove-rosterkeymapdel-any-collections-remove-rosterviewsupdateopenclose-of-an-unknown-view-and-a-key-context-that-isnt-one-refused-with-a-notice",
+  ],
+  "texts": 83,
+  "topics": 4,
+}
+`;
+
+exports[`the docs website's search results > are the same for "windows" 1`] = `
+{
+  "all": "13d446b27be1a7fb",
+  "firstTexts": [
+    "start.html?hl=windows#coming-from-another-tool Windows Terminal: :config import-terminal copies your profile's font, size, curs…",
+    "new-box.html?hl=windows#1-prerequisites …macOS or WSL with Python 3.10 or newer; or Windows itself (see On Windows)",
+    "new-box.html?hl=windows#1-prerequisites …ssh-keygen, ssh-keyscan); on Windows, the one built in (Settings, Optional featu…",
+    "new-box.html?hl=windows#1-prerequisites …(on Windows the standalone bw.exe is better: npm's bw.cmd is a batch file, which…",
+    "new-box.html?hl=windows#4-unlock-the-vault On Windows, in PowerShell (the folder is %APPDATA%\\roster):",
+  ],
+  "firstTopics": [
+    "adding-hosts.html#windows-hosts",
+    "errors-guide.html#windows-hosts",
+    "mesh.html#windows-hosts",
+    "recipes.html#something-different-on-windows",
+    "cli.html#on-windows",
+  ],
+  "texts": 165,
+  "topics": 7,
+}
+`;
+
+exports[`the docs website's search results > are the same for "zzqqxx" 1`] = `
+{
+  "all": "c94851139267a547",
+  "firstTexts": [],
+  "firstTopics": [],
+  "texts": 0,
+  "topics": 0,
+}
+`;
