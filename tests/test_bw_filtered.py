@@ -129,7 +129,7 @@ def unreadable(monkeypatch):
 @contextlib.contextmanager
 def timed_out(monkeypatch):
     monkeypatch.setenv("FAKE_BW_CREATE_HANG", "30")
-    with deadline(2):
+    with deadline(3):                          # bw sync and the duplicate check come first (Windows CI is slow)
         yield
 
 
@@ -152,7 +152,7 @@ def test_a_lost_answer_still_finds_the_item_in_its_collection(orgs, monkeypatch,
 
 def test_a_create_that_timed_out_and_saved_nothing_says_so(vault, monkeypatch, capsys):
     monkeypatch.setenv("FAKE_BW_SLOW", json.dumps({"create": 30}))          # bw is stopped before it saves
-    with deadline(2), pytest.raises(providers.WriteFailed, match="nothing was saved") as e:
+    with deadline(3), pytest.raises(providers.WriteFailed, match="nothing was saved") as e:
         providers.create_item("bw", name="box ssh", password=NEW_PW)
     assert "box ssh" not in names(vault)
     clean(str(e.value), capsys.readouterr())

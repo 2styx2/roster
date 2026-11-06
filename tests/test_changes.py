@@ -168,7 +168,8 @@ def result(r):
 SOMEONE_ADDS = """\
 import pathlib, subprocess, sys
 yml = pathlib.Path(sys.argv[1])
-yml.write_text(yml.read_text() + "  shelf:\\n    user: ops\\n    hosts:\\n      " + sys.argv[2] + ": 10.0.0.77\\n")
+with open(yml, "a", newline="") as f:                   # "\\n" on Windows too, as the file has it
+    f.write("  shelf:\\n    user: ops\\n    hosts:\\n      " + sys.argv[2] + ": 10.0.0.77\\n")
 for args in (["add", "-A"], ["commit", "-q", "-m", "someone else"], ["push", "-q"]):
     subprocess.run(["git", "-C", str(yml.parent), *args], check=True)
 """
