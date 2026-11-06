@@ -43,7 +43,7 @@ def two(isolated):
 
 def list_path():
     """roster's list of named Inventories (in %APPDATA%\\roster on Windows)."""
-    from roster.inventories import list_file
+    from roster.named import list_file
     return list_file()
 
 
@@ -287,6 +287,7 @@ import shutil  # noqa: E402
 import stat  # noqa: E402
 import subprocess  # noqa: E402
 import sys  # noqa: E402
+import time  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 REAL_SSH = shutil.which("ssh")
@@ -471,6 +472,24 @@ def test_a_removed_names_host_keys_dont_go_to_a_new_file_of_the_same_name(two, c
     assert list(ssh(isolated).glob("roster_known_hosts-work.removed*"))
 
 
+def test_a_removed_names_key_name_rotation_and_lock_dont_go_to_a_new_file_of_the_same_name(two, capsys):
+    """`inv remove` takes every file roster keeps for an Inventory (context.FILES), not only its ssh config,
+    known_hosts and Mesh state: a new Inventory of that name never inherits the old one's recorded key name, pending
+    Box key rotation or lock."""
+    from roster.context import Context
+    run(capsys, "inv", "add", "work", str(two["work"]))
+    ctx = Context("work")
+    for f in (ctx.key_name, ctx.rotation, ctx.lock):
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("x\n")
+    _, out, _ = run(capsys, "inv", "remove", "work")
+    assert not ctx.key_name.exists() and not ctx.lock.exists() and not ctx.rotation.exists()
+    kept = list(ctx.rotation.parent.glob("key-rotation-work.removed-*"))
+    assert len(kept) == 1 and str(kept[0]) in out                 # set aside, and said where
+    run(capsys, "inv", "add", "work", str(two["home"]))
+    assert not any(f.exists() for f in (ctx.key_name, ctx.rotation, ctx.lock))
+
+
 @needs_ssh
 def test_key_path_cant_inject_ssh_config_lines(write_config, capsys, isolated):
     """P1 (before named Inventories too): a value roster writes into ssh config can't end its line or its quotes."""
@@ -478,18 +497,19 @@ def test_key_path_cant_inject_ssh_config_lines(write_config, capsys, isolated):
     with pytest.raises(SystemExit, match="key_path"):
         main(["sync"])
     d = ssh(isolated)
-    assert "ProxyCommand" not in "".join(p.read_text() for p in d.rglob("*") if p.is_file()) if d.exists() else True
+    written = "".join(p.read_text() for p in d.rglob("*") if p.is_file()) if d.exists() else ""
+    assert "ProxyCommand" not in written
 
 
 @pytest.mark.parametrize("value", ['/x/"y', "/x/y\nProxyCommand z", "/x/\ty", "/x/\x7fy"])
 def test_the_ssh_config_quoting_refuses_quotes_and_control_characters(value):
-    from roster.sshops import ssh_quote
+    from roster.sshconfig import ssh_quote
     with pytest.raises(ValueError):
         ssh_quote(value)
 
 
 def test_the_ssh_config_quoting_escapes_percent_for_token_options():
-    from roster.sshops import ssh_quote
+    from roster.sshconfig import ssh_quote
     assert ssh_quote("/home/50%/k", tokens=True) == '"/home/50%%/k"'
     assert ssh_quote("/home/50%/k") == '"/home/50%/k"'
 
@@ -521,7 +541,8 @@ def sync_unnamed(src, root):
 def test_without_named_inventories_sync_is_byte_for_byte_what_dev_wrote(tmp_path):
     """tests/vectors/sync-unnamed.json: sync_unnamed() run with dev's roster before ticket 115 (`git archive origin/dev
     src`, then `sync_unnamed(that src, a temp dir)`). The output, ~/.ssh/config, roster's ssh config, the files written
-    and their modes are the same, byte for byte."""
+    and their modes are the same, byte for byte. One change since, on purpose: T243 (#476) ends sync with the Hosts
+    that need setup, by name, instead of a note it always printed."""
     want = json.loads((Path(__file__).parent / "vectors/sync-unnamed.json").read_text())
     assert sync_unnamed(Path(__file__).parent.parent / "src", tmp_path) == want
 
@@ -634,24 +655,22 @@ def test_a_description_starting_with_from_doesnt_confuse_the_index(two, capsys, 
     run(capsys, "inv", "add", "home", str(two["home"]))
     run(capsys, "sync")
     run(capsys, "--inv", "home", "sync")
-    from roster.sshops import in_ssh_config
+    from roster.named import reachable_hosts
     main(["hosts"])                                        # this process now uses work's files
     capsys.readouterr()
-    assert in_ssh_config("esx") and in_ssh_config("build-pi")
+    assert {"esx", "build-pi"} <= (reachable_hosts() or set())
     main(["--inv", "home", "hosts"])
     capsys.readouterr()
-    assert in_ssh_config("pi")
+    assert "pi" in (reachable_hosts() or set())
 
 
 def test_a_stale_index_is_rebuilt(two, capsys, isolated):
     """Second pass N7: an older roster syncing the unnamed file doesn't rebuild the index; the next roster run does."""
-    import time
     run(capsys, "inv", "add", "work", str(two["work"]))
     run(capsys, "sync")
     own = ssh(isolated) / "roster-inventories/work"
-    time.sleep(0.05)
     own.write_text(own.read_text().replace("Host esx", "Host esx-renamed"))
-    os.utime(own, None)
+    newer(own, ssh(isolated) / "config.d/roster.inventories")
     run(capsys, "hosts")
     assert "Host esx-renamed" in (ssh(isolated) / "config.d/roster.inventories").read_text()
 
@@ -689,12 +708,16 @@ def test_syncing_one_still_leaves_the_others_roster_md_alone_when_nothing_change
     assert (two["home"].parent / "ROSTER.md").stat().st_mtime_ns == before
 
 
+def newer(path, than):
+    """PATH's mtime a second past THAN's: changed after it, whatever the file system's mtime resolution."""
+    t = than.stat().st_mtime + 1 if than.exists() else time.time()
+    os.utime(path, (t, t))
+
+
 def make_stale(isolated, name="work"):
-    import time
     own = ssh(isolated) / f"roster-inventories/{name}"
-    time.sleep(0.02)
     own.write_text(own.read_text().replace("Host esx", "Host esx-renamed"))
-    os.utime(own, None)
+    newer(own, ssh(isolated) / "config.d/roster.inventories")
 
 
 def test_a_read_never_writes_ssh_config(two, capsys, isolated):
@@ -754,18 +777,24 @@ def test_a_users_own_file_by_the_old_name_is_never_moved_or_deleted(two, capsys,
 
 def test_migration_tolerates_a_file_another_process_moved(two, capsys, isolated, monkeypatch):
     """Third pass T5: two roster processes may both see the old file; the one that loses the race carries on."""
-    from roster import inventories
+    from roster import named
     run(capsys, "inv", "add", "work", str(two["work"]))
-    old = ssh(isolated) / "config.d/roster-work"
-    old.parent.mkdir(parents=True, exist_ok=True)
-    old.write_text("# Generated by roster from x\n")
+    run(capsys, "inv", "add", "home", str(two["home"]))
+    olds = {name: ssh(isolated) / f"config.d/roster-{name}" for name in ("work", "home")}
+    for name, old in olds.items():
+        old.parent.mkdir(parents=True, exist_ok=True)
+        old.write_text(f"# Generated by roster from {name}\n")
+        (ssh(isolated) / f"roster-inventories/{name}").unlink(missing_ok=True)
     real = os.replace
 
     def raced(a, b):
-        Path(a).unlink()                                    # the other process got there first
+        if Path(a) == olds["work"]:
+            Path(a).unlink()                                # the other process got there first
         return real(a, b)
-    monkeypatch.setattr(inventories.os, "replace", raced)
-    inventories.migrate(inventories.load())              # no FileNotFoundError
+    monkeypatch.setattr(os, "replace", raced)
+    named.migrate(named.load())                             # no FileNotFoundError, and the next one still moves
+    assert not olds["work"].exists() and not olds["home"].exists()
+    assert (ssh(isolated) / "roster-inventories/home").read_text() == "# Generated by roster from home\n"
 
 
 def test_an_ipv6_zone_loads_and_is_escaped_for_ssh(write_config, capsys, isolated):
@@ -812,7 +841,7 @@ def test_switching_or_refreshing_never_changes_another_threads_inventory(two, ca
     import threading
 
     from roster import inventories
-    from roster.common import known_hosts_file
+    from roster.context import current
     run(capsys, "inv", "add", "work", str(two["work"]))
     run(capsys, "inv", "add", "home", str(two["home"]))
     run(capsys, "--inv", "home", "sync")
@@ -821,7 +850,7 @@ def test_switching_or_refreshing_never_changes_another_threads_inventory(two, ca
 
     def reader():
         while not stop.is_set():
-            seen.add(known_hosts_file().name)
+            seen.add(current().known_hosts.name)
     t = threading.Thread(target=reader)
     t.start()
     try:
@@ -901,18 +930,18 @@ def test_revoke_all_names_every_file_to_delete_once_every_host_is_done(two, caps
     run(capsys, "sync")
     run(capsys, "--inv", "home", "sync")
     done = []
-    monkeypatch.setattr("roster.cli.revoke_on", lambda h, tag_re: done.append(h["name"]))
-    from roster.common import key_name_file
+    monkeypatch.setattr("roster.revoke.revoke_on", lambda h, tag_re: done.append(h["name"]))
+    from roster.context import Context
     for name in (None, "work", "home"):                     # T226 (#435, 4): the names setup recorded go too
-        key_name_file(name).parent.mkdir(parents=True, exist_ok=True)
-        key_name_file(name).write_text("box\n")
+        Context(name).key_name.parent.mkdir(parents=True, exist_ok=True)
+        Context(name).key_name.write_text("box\n")
     code, out, _ = run(capsys, "revoke", "--all", "-y")
     assert sorted(done) == ["build-pi", "nas-1", "pi"] and code == 0
     summary = out.split("\nremoved from ")[1]
     assert summary.startswith("3/3 hosts in 3 Inventories. To finish, delete ")
     d = ssh(isolated)
     for f in (d / "roster_ed25519", d / "roster-inventories/work", d / "roster-inventories/home", d / "config.d/roster",
-              d / "config.d/roster.inventories", *(key_name_file(n) for n in (None, "work", "home"))):
+              d / "config.d/roster.inventories", *(Context(n).key_name for n in (None, "work", "home"))):
         assert str(f) in summary
 
 
@@ -1017,7 +1046,7 @@ def test_an_ssh_roster_wont_hand_the_script_is_a_clean_error(two, capsys, monkey
 
     def refuse(argv):
         raise ValueError("ssh.CMD is a batch file, and roster won't pass it an argument with any of ...")
-    monkeypatch.setattr("roster.cli.program_argv", refuse)
+    monkeypatch.setattr("roster.revoke.program_argv", refuse)
     with pytest.raises(SystemExit) as e:
         main([*argv, "-y"])
     assert "[149]" in str(e.value.code) and "batch file" in str(e.value.code)
@@ -1126,23 +1155,23 @@ def test_revoke_names_the_files_to_delete_only_when_every_host_of_the_file_was_r
     a = a_synced_b_not["a"]
     a.write_text(A_YML + "      nas-1: {ip: 10.0.0.30}\n")
     run(capsys, "-c", str(a), "sync")
-    monkeypatch.setattr("roster.cli.revoke_on", lambda h, tag_re: None)
+    monkeypatch.setattr("roster.revoke.revoke_on", lambda h, tag_re: None)
     code, out, _ = run(capsys, "-c", str(a), "revoke", "--only", "pi", "-y")
     assert code == 0 and "removed from 1/1 hosts" in out and "To finish, delete" not in out
     code, out, _ = run(capsys, "-c", str(a), "revoke", "-y")
-    from roster.common import key_name_file
-    assert code == 0 and "To finish, delete" in out and str(key_name_file(None)) not in out    # none recorded
-    key_name_file(None).parent.mkdir(parents=True, exist_ok=True)
-    key_name_file(None).write_text("box\n")
+    from roster.context import Context
+    assert code == 0 and "To finish, delete" in out and str(Context(None).key_name) not in out    # none recorded
+    Context(None).key_name.parent.mkdir(parents=True, exist_ok=True)
+    Context(None).key_name.write_text("box\n")
     code, out, _ = run(capsys, "-c", str(a), "revoke", "-y")
     assert code == 0 and "To finish, delete" in out and str(ssh(isolated) / "config.d/roster") in out
-    assert str(key_name_file(None)) in out                  # T226 (#435, 4): the name setup recorded goes too
+    assert str(Context(None).key_name) in out                  # T226 (#435, 4): the name setup recorded goes too
 
 
 @revoke_runs
 def test_revoke_all_with_a_left_out_host_skipped_fails(two, capsys, ssh_log, monkeypatch):
     monkeypatch.setenv("HOMEPW", "hunter2")
     clashing(two, capsys)
-    monkeypatch.setattr("roster.cli.revoke_on", lambda h, tag_re: None)
+    monkeypatch.setattr("roster.revoke.revoke_on", lambda h, tag_re: None)
     code, out, _ = run(capsys, "revoke", "--all", "-y")
     assert "home: pi: left out" in out and "To finish, delete" not in out and code == 1

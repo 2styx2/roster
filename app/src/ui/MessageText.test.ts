@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { messageParts } from "./MessageText";
+import { messageParts } from "./messageParts";
 import { keyCancelled } from "../session/Sessions";
 
 const commands = (text: string) => messageParts(text).filter((p) => p.command).map((p) => p.text);

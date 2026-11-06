@@ -11,9 +11,10 @@ from pathlib import Path
 import pytest
 from conftest import POSIX_SH, WINDOWS, stand_in_hosts
 
-from roster import mesh
+from roster import authorized, mesh
 from roster.cli import main
 from roster.config import load_config
+from roster.errors import InventoryError
 
 # The stand-in Hosts run their side with sh (tests/fakes/ssh, FAKE_HOSTS; Git for Windows' sh on native Windows, ticket
 # 63), and ESXi's datastore is a symlink.
@@ -198,13 +199,13 @@ def test_a_meshed_group_reaches_itself_both_ways_and_links_add_one_way_reach(net
 def test_bad_links_are_refused_with_a_clean_error(write_config, links, message):
     p = write_config("defaults: {user: u}\ngroups:\n  lab: {hosts: {a1: 10.0.0.1, a2: 10.0.0.2, a3: 10.0.0.3, a4: 10.0.0.4}}\n"
                      f"links: {links}\n")
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(p)
     assert message in str(e.value)
 
 
 def test_mesh_must_be_true_or_false(write_config):
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(write_config("groups:\n  lab: {mesh: 1, user: u, hosts: {a1: 10.0.0.1}}\n"))
     assert "mesh: must be true or false" in str(e.value)
 
@@ -426,7 +427,7 @@ def test_mesh_dir_works_on_linux_too_and_cascades_from_its_group(net):
     ("/vmfs/volumes/../etc", "mesh_dir: must be an absolute path"),
 ])
 def test_a_bad_mesh_dir_is_refused_when_roster_yml_loads(write_config, value, message):
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(write_config(f"defaults: {{user: u}}\ngroups:\n  lab:\n    hosts:\n      a1: {{ip: 10.0.0.1, mesh_dir: {value}}}\n"))
     assert message in str(e.value) and "a1" in str(e.value)
 
@@ -655,13 +656,13 @@ def test_seen_as_works_for_a_direct_source_and_takes_a_list(net):
     ("a1: {ip: 10.0.0.1, seen_as: ['10.0.0.2,10.0.0.3']}", "host 'a1': seen_as: must be IP addresses"),
 ])
 def test_a_bad_seen_as_is_refused_when_roster_yml_loads(write_config, entry, message):
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(write_config(f"defaults: {{user: u}}\ngroups:\n  lab:\n    hosts:\n      {entry}\n"))
     assert message in str(e.value)
 
 
 def test_seen_as_belongs_to_a_host_not_a_group(write_config):
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(write_config("defaults: {user: u}\ngroups:\n  lab:\n    seen_as: 10.0.0.9\n    hosts:\n      a1: 10.0.0.1\n"))
     assert "seen_as: goes on a Host" in str(e.value)
 
@@ -1026,15 +1027,18 @@ def test_cut_keeps_the_peers_that_confirmed_it_in_the_meshs_bookkeeping(net):
 # ---------------------------------------------------------------- serve's deadline
 
 def test_apply_stops_at_the_deadline_and_leaves_the_rest_pending_without_connecting(net, monkeypatch):
+    import time
+
     from roster import common
     real = mesh.on_host
 
     def first_one_uses_up_the_time(h, script, timeout=mesh.STEP_TIMEOUT):
         out = real(h, script, timeout)
-        common._deadline.at = 0.0                    # the deadline passed during this Host's step
+        while time.monotonic() < common.current_deadline():     # the deadline passes during this Host's step
+            time.sleep(0.05)
         return out
     monkeypatch.setattr(mesh, "on_host", first_one_uses_up_the_time)
-    with common.deadline(240):
+    with common.deadline(3):
         r = mesh.run(net.cfg(), apply=True)
     assert [x for x in net.connections() if x.startswith("start")] == ["start db-9"]
     visit = mesh.graph(net.cfg())["visit"]
@@ -1056,11 +1060,10 @@ def test_cut_stops_at_the_deadline_too(net):
 # ---------------------------------------------------------------- setup and serve
 
 def test_setup_applies_the_mesh_for_meshed_groups(net, capsys, monkeypatch):
-    from roster import cli
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())
-    monkeypatch.setattr(cli, "ssh_ok", lambda name: True)
-    monkeypatch.setattr(cli, "ensure_key", lambda cfg: None)
-    monkeypatch.setattr(cli, "public_key_line", lambda cfg: "ssh-ed25519 AAAAbox roster-managed:box")
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: set())
+    monkeypatch.setattr("roster.boxsetup.ssh_ok", lambda name: True)
+    monkeypatch.setattr("roster.boxsetup.ensure_key", lambda key, tag: None)
+    monkeypatch.setattr("roster.boxsetup.public_key_line", lambda key, tag: "ssh-ed25519 AAAAbox roster-managed:box")
     main(["setup"])
     assert "mesh" in capsys.readouterr().out
     assert net.mesh_lines("nas-1") == [key_line_of(net, "orion-2", "10.0.0.2")]
@@ -1380,9 +1383,10 @@ def test_a_quick_read_answers_while_a_waiting_plan_is_on_a_slow_host(net, serve)
     import time
     s = serve("-c", str(net.cfg_path))
     s.call("inventory.info")
-    (net.host("orion-2") / "slow").write_text("3")                      # the stand-in slow Host
+    hold = net.host("orion-2") / "hold"
+    hold.write_text("")                                                 # the stand-in Host waits until it goes
     plan = s.request("mesh.plan")                                       # the waiting form: no background
-    time.sleep(0.5)
+    connected(net, "orion-2")                                           # the plan is on that Host now
     t = time.monotonic()
     assert s.call("mesh.status")["result"]["out_of_date"] is True
     assert s.call("hosts.list")["result"]["hosts"]
@@ -1390,6 +1394,7 @@ def test_a_quick_read_answers_while_a_waiting_plan_is_on_a_slow_host(net, serve)
     assert took < 1, f"two quick reads took {took:.2f} s behind a Mesh plan"
     busy = s.call("mesh.apply", {"background": True})["error"]          # the waiting plan is a job too
     assert busy["code"] == 111
+    hold.unlink()
     assert s.answer(plan)["result"]["applied"] is False
     assert s.order[-1] == plan
 
@@ -1457,7 +1462,7 @@ def test_a_cut_whose_write_waits_too_long_for_roster_yml_says_so_and_still_cut(n
 # ---------------------------------------------------------------- one mesh.json per Inventory (T182, #346)
 
 def config_dir():
-    from roster.common import user_config_dir
+    from roster.context import user_config_dir
     return user_config_dir()
 
 
@@ -2179,6 +2184,7 @@ OTHER_BOXS_KEY = "ssh-ed25519 AAAAother+Box/key= roster-managed:box"
 def renamed_box(net, isolated):
     """This Box's key (AAAAbox, made as `box`), now named box2; nas-1 also holds another Box's key named box."""
     (isolated["home"] / ".ssh/roster_ed25519").write_text("private\n")
+    (isolated["home"] / ".ssh/roster_ed25519").chmod(0o600)      # this user's alone (T245: boxkeys.vouched)
     (isolated["home"] / ".ssh/roster_ed25519.pub").write_text("ssh-ed25519 AAAAbox roster-managed:box\n")
     add_line(net, "nas-1", OTHER_BOXS_KEY)
     net.cfg_path.write_text(CONFIG.replace("box_name: box\n", "box_name: box2\n"))
@@ -2232,14 +2238,14 @@ def test_setup_installs_the_key_in_esxis_own_keys_file_with_the_sticky_bit(net, 
     from roster import sshops
     net.cfg_path.write_text(CONFIG.replace("esx-02: { ip: 10.0.0.12, user: root }", "esx-02: { ip: 10.0.0.12, user: ops }"))
     (net.host("esx-02") / "login").write_text("ops\n")
-    monkeypatch.setattr(sshops, "get_secret", lambda ref, group: "pw")
+    monkeypatch.setattr(authorized, "get_secret", lambda ref, group: "pw")
     monkeypatch.setattr(sshops, "password_exec", lambda h, command, pw, **k: (
         lambda r: (r.returncode, r.stdout, r.stderr))(subprocess.run(
             [sys.executable, str(fakes / "ssh"), h["name"], command], capture_output=True, text=True)))
     cfg = net.cfg()
     pub = "ssh-ed25519 AAAAbox2 roster-managed:box"
     for _ in range(2):
-        sshops.enroll(cfg["hosts"]["esx-02"], pub, cfg["tag_re"])
+        authorized.enroll(cfg["hosts"]["esx-02"], pub, cfg["tag_re"])
     ak = net.host("esx-02") / "etc/ssh/keys-ops/authorized_keys"
     assert ak.read_text() == pub + "\n"
     assert ak.stat().st_mode & 0o7777 == 0o1600
@@ -2259,8 +2265,7 @@ def test_revoke_on_esxi_refuses_a_user_that_isnt_the_login(net, isolated, capsys
 
 def setup_box(monkeypatch):
     """`roster setup` with the stand-in Hosts' key logins: no ssh-keyscan (the host keys are recorded already)."""
-    from roster import cli
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: set())
 
 
 @key_scripts_run
@@ -2300,8 +2305,8 @@ def test_renaming_onto_a_name_another_box_uses_needs_force(net, isolated, capsys
             "that name") in out
     assert box_lines(net, "orion-2") == ["ssh-ed25519 AAAAbox roster-managed:box", theirs]      # as it was
     assert "ssh-ed25519 AAAAbox roster-managed:box2" in box_lines(net, "orion-3")                # the rest: done
-    from roster.common import key_name_file
-    assert not key_name_file().exists()                                                          # again next time
+    from roster.context import current
+    assert not current().key_name.exists()                                                          # again next time
     assert main(["setup", "--force"]) == 0
     assert box_lines(net, "orion-2") == ["ssh-ed25519 AAAAbox roster-managed:box2", theirs]
 
@@ -2319,8 +2324,8 @@ def test_renaming_onto_a_taken_name_where_the_key_works_from_a_line_of_your_own(
     assert main(["setup"]) == 1
     assert "FAIL  orion-2: [190]" in capsys.readouterr().out
     assert box_lines(net, "orion-2") == [theirs] and "ssh-ed25519 AAAAbox me@laptop" in net.ak("orion-2")
-    from roster.common import key_name_file
-    assert not key_name_file().exists()
+    from roster.context import current
+    assert not current().key_name.exists()
 
 
 def test_setup_dry_run_on_a_renamed_box_says_it_would_retag_and_changes_nothing(net, isolated, capsys, monkeypatch):
@@ -2399,3 +2404,164 @@ def test_this_boxs_own_rotation_plan_says_no_old_key_line(net):
     mesh.run(net.cfg(), apply=True)
     r = mesh.run(net.cfg(), rotate=["orion-2"])
     assert not any("no longer has" in w for w in r["warnings"]), r["warnings"]
+
+
+# ---------------------------------------------------------------- T245 (#478, decision Q212): the Mesh follows key_type
+
+@pytest.fixture
+def fips_keygen(tmp_path, monkeypatch):
+    """A stand-in Host with a `fips-keygen` file is a FIPS-mode one whose ssh-keygen refuses to make an Ed25519 key,
+    as RHEL's does in FIPS mode; every other Host's is the real one."""
+    d = tmp_path / "fips-tools"
+    d.mkdir()
+    (d / "ssh-keygen").write_text(
+        '#!/bin/sh\n'
+        'if [ -f "$FAKE_HOST_ROOT/fips-keygen" ]; then\n'
+        '  p=; for a in "$@"; do [ "$p" = -t ] && [ "$a" = ed25519 ] && { echo "unsupported in FIPS mode" >&2; exit 1; }; p=$a; done\n'
+        'fi\n'
+        f'PATH={shutil.which("ssh-keygen").rsplit("/", 1)[0]}:$PATH exec ssh-keygen "$@"\n')
+    (d / "ssh-keygen").chmod(0o755)
+    monkeypatch.setenv("FAKE_HOST_PATH", str(d))
+
+
+def mesh_pub(net, src, name):
+    return (net.host(src) / "home/.ssh/roster-mesh" / f"{name}.pub").read_text().split()
+
+
+@pytest.mark.skipif(WINDOWS, reason="the stand-in ssh-keygen is a POSIX sh script")
+def test_a_fips_hosts_mesh_key_is_made_of_its_own_key_type(net, fips_keygen, capsys):
+    (net.host("orion-3") / "fips-keygen").touch()
+    net.cfg_path.write_text(CONFIG.replace("      orion-3: 10.0.0.3\n", "      orion-3: {ip: 10.0.0.3, key_type: ecdsa}\n"))
+    g = mesh.graph(net.cfg())
+    assert "orion-3" not in g["excluded"] and "orion-3" in g["sources"]
+    assert main(["mesh"]) == 0, capsys.readouterr().out
+    pub = mesh_pub(net, "orion-3", "roster_mesh_ecdsa")
+    assert pub[0] == "ecdsa-sha2-nistp384" and pub[2] == "roster-mesh:orion-3@box"
+    assert not (net.host("orion-3") / "home/.ssh/roster-mesh/id_ed25519").exists()
+    for peer in ("orion-2", "esx-02", "db-9"):
+        assert any(x.split()[1:3] == pub[:2] and x.endswith("roster-mesh:orion-3@box") for x in net.mesh_lines(peer))
+    assert f"IdentityFile {net.seen(net.host('orion-3'))}/home/.ssh/roster-mesh/roster_mesh_ecdsa" in \
+        net.file("orion-3", "home/.ssh/roster-mesh/config")
+    assert mesh_pub(net, "orion-2", "id_ed25519")[0] == "ssh-ed25519"          # every other source's as before
+    assert mesh.run(net.cfg())["already"]
+
+
+def test_a_key_type_change_replaces_the_mesh_key_with_one_of_the_new_type(net, capsys):
+    mesh.run(net.cfg(), apply=True)
+    old = mesh_pub(net, "orion-3", "id_ed25519")
+    net.cfg_path.write_text(CONFIG.replace("      orion-3: 10.0.0.3\n", "      orion-3: {ip: 10.0.0.3, key_type: rsa}\n"))
+    assert mesh.status(net.cfg())["out_of_date"]                                 # roster.yml changed the Mesh
+    plan = mesh.run(net.cfg())
+    o3 = next(h for h in plan["hosts"] if h["host"] == "orion-3")
+    assert o3["changes"][0] == "replace key (ed25519 -> rsa, its key_type)"
+    assert "replace key from orion-3" in next(h for h in plan["hosts"] if h["host"] == "orion-2")["changes"]
+    r = mesh.run(net.cfg(), apply=True)
+    assert r["pending"] == {}
+    new = mesh_pub(net, "orion-3", "roster_mesh_rsa")
+    assert new[0] == "ssh-rsa"
+    d = net.host("orion-3") / "home/.ssh/roster-mesh"
+    assert not (d / "id_ed25519").exists() and not (d / "id_ed25519.pub").exists()
+    for peer in ("orion-2", "esx-02", "db-9"):
+        lines = [x for x in net.mesh_lines(peer) if "roster-mesh:orion-3@" in x]
+        assert [x.split()[1:3] for x in lines] == [new[:2]] and old[1] not in net.ak(peer)
+    assert mesh.run(net.cfg())["already"]
+    assert main(["mesh", "cut", "orion-3", "--yes"]) == 0                       # a cut takes a key of any type
+    assert not d.exists()
+
+
+def test_an_ed25519_source_linked_to_a_host_of_another_key_type_is_warned_about(net):
+    net.cfg_path.write_text(CONFIG.replace("      nas-1: 10.0.0.30\n", "      nas-1: {ip: 10.0.0.30, key_type: ecdsa}\n"))
+    r = mesh.run(net.cfg())
+    assert any(w.startswith("[220] orion-2's Mesh key is Ed25519 (its key_type), and nas-1's key_type is ecdsa")
+               for w in r["warnings"]), r["warnings"]
+
+
+def test_an_ed25519_source_whose_via_hop_has_another_key_type_is_warned_about_too(net):
+    """#505's review L1: the source's Mesh key logs in to its via: hop as well."""
+    net.cfg_path.write_text(CONFIG.replace("      nas-1: 10.0.0.30\n", "      nas-1: 10.0.0.30\n      jump-1: {ip: 10.0.5.1, key_type: ecdsa}\n")
+                            + "  - { from: orion-2, to: jump-1 }\n  - { from: orion-2, to: db-9, via: jump-1 }\n")
+    r = mesh.run(net.cfg())
+    said = [w for w in r["warnings"] if w.startswith("[220] orion-2's Mesh key is Ed25519")]
+    assert len(said) == 1 and "jump-1's key_type is ecdsa" in said[0], r["warnings"]
+
+
+# ---------------------------------------------------------------- #505's review H1: a user's own keys in a mesh_dir:
+
+def user_key(path, kind="rsa"):
+    subprocess.run(["ssh-keygen", "-q", "-t", kind, "-N", "", "-C", "admin@orion-2", "-f", str(path)], check=True)
+
+
+def users_keys(d):
+    """The user's own keys, made in D after roster's: OpenSSH's own names, and an Ed25519 one with no Mesh tag."""
+    user_key(d / "id_rsa")
+    user_key(d / "id_ecdsa", "ecdsa")
+    return {"id_rsa", "id_rsa.pub", "id_ecdsa", "id_ecdsa.pub"}
+
+
+def typed_mesh_dir(net, d, text=CONFIG, key_type="ecdsa"):
+    return text.replace("      orion-2: 10.0.0.2\n",
+                        f"      orion-2: {{ip: 10.0.0.2, mesh_dir: {net.seen(d)}, key_type: {key_type}}}\n")
+
+
+@pytest.fixture
+def keys_dir(net):
+    d = net.host("orion-2") / "srv/keys"
+    (net.host("orion-2") / "srv").mkdir()
+    net.cfg_path.write_text(typed_mesh_dir(net, d))
+    assert mesh.run(net.cfg(), apply=True)["pending"] == {}
+    assert (d / "roster_mesh_ecdsa").exists() and not (d / "id_ecdsa").exists()     # never an OpenSSH name (H1 (a))
+    return d
+
+
+def names(d):
+    return {p.name for p in d.iterdir()} if d.exists() else set()
+
+
+def test_a_users_own_keys_in_a_mesh_dir_survive_an_apply_and_a_key_type_change(net, keys_dir):
+    mine = users_keys(keys_dir)
+    r = mesh.run(net.cfg(), apply=True)
+    assert mine <= names(keys_dir) and r["pending"] == {}
+    net.cfg_path.write_text(typed_mesh_dir(net, keys_dir, key_type="rsa"))
+    plan = mesh.run(net.cfg())
+    assert next(h for h in plan["hosts"] if h["host"] == "orion-2")["changes"][0] == "replace key (ecdsa -> rsa, its key_type)"
+    assert mesh.run(net.cfg(), apply=True)["pending"] == {}
+    assert mine | {"roster_mesh_rsa", "roster_mesh_rsa.pub"} <= names(keys_dir)
+    assert "roster_mesh_ecdsa" not in names(keys_dir)
+
+
+def test_an_untagged_id_ed25519_in_a_mesh_dir_is_never_retyped_away_but_said(net, keys_dir):
+    user_key(keys_dir / "id_ed25519", "ed25519")                # no roster-mesh: tag: the user's own
+    r = mesh.run(net.cfg(), apply=True)
+    assert {"id_ed25519", "id_ed25519.pub"} <= names(keys_dir)
+    assert any("id_ed25519 isn't a Mesh key roster made" in w for w in r["warnings"]), r["warnings"]
+
+
+def test_a_tagged_pub_whose_private_key_isnt_its_own_is_left_too(net, keys_dir):
+    """H1 (b): a key goes only when its private key gives its tagged .pub (ssh-keygen -y)."""
+    user_key(keys_dir / "id_ed25519", "ed25519")
+    pub = (keys_dir / "roster_mesh_ecdsa.pub").read_text().split()
+    (keys_dir / "id_ed25519.pub").write_text(f"ssh-ed25519 AAAAnotthisone {pub[2]}\n")
+    mesh.run(net.cfg(), apply=True)
+    assert {"id_ed25519", "id_ed25519.pub"} <= names(keys_dir)
+
+
+def test_a_cut_leaves_a_users_own_keys_in_a_mesh_dir(net, keys_dir):
+    mine = users_keys(keys_dir)
+    user_key(keys_dir / "id_ed25519", "ed25519")
+    assert main(["mesh", "cut", "orion-2", "--yes"]) == 0
+    assert mine | {"id_ed25519", "id_ed25519.pub"} == names(keys_dir)          # roster's own files gone, the rest kept
+
+
+def test_a_source_leaving_leaves_a_users_own_keys_in_a_mesh_dir(net, keys_dir):
+    mine = users_keys(keys_dir)
+    net.cfg_path.write_text(typed_mesh_dir(net, keys_dir, L3))
+    assert mesh.run(net.cfg(), apply=True)["pending"] == {}
+    assert mine == names(keys_dir)
+
+
+def test_leftovers_remove_leaves_a_users_own_keys_in_a_mesh_dir(net, keys_dir):
+    mine = users_keys(keys_dir)
+    net.cfg_path.write_text(typed_mesh_dir(net, keys_dir, L3))
+    reinstall()
+    assert main(["mesh", "leftovers", "--remove", "-y"]) == 0
+    assert mine == names(keys_dir)

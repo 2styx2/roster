@@ -12,6 +12,7 @@ import type { FakePlugin } from "./backend/fakePlugins";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
 import { GRAPHS_KEY } from "./graph/memory";
+import { advanceTimers, fakeTimeouts, pass } from "./test-timers";
 
 const LEADER = "{Control>} {/Control}";
 const PATH = "~/plugins/topo";
@@ -60,7 +61,7 @@ function topoPlugin(extra: Record<string, unknown> = {}): FakePlugin {
 }
 
 async function ready(platform = memoryPlatform(), plugin: FakePlugin = topoPlugin()) {
-  const user = userEvent.setup();
+  const user = userEvent.setup({ advanceTimers });
   const backend = fakeBackend({ hosts: makeHosts(12), plugins: { [PATH]: plugin } });
   const view = render(<App backend={backend} terminalView={StubTerminal} platform={platform} />);
   await user.type(await screen.findByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
@@ -167,6 +168,7 @@ describe("a Plugin's graph", () => {
   });
 
   it("opened at a node that isn't there yet, it goes to it when it arrives, unless the user has moved on (T99)", async () => {
+    fakeTimeouts();
     const { user } = await ready();
     await user.keyboard(`${LEADER}:topo-at late-1{Enter}`);
     await screen.findByRole("application", { name: "Topology" });
@@ -180,7 +182,8 @@ describe("a Plugin's graph", () => {
     await user.keyboard("/esx-02{Enter}");
     expect(foot()).toMatch(/^esx-02/);
     await user.keyboard(`${LEADER}:topo-add late-2{Enter}`);
-    await new Promise((r) => setTimeout(r, 50));
+    // Long past what the Plugin's update takes to reach the graph.
+    await pass(1_000);
     expect(foot()).toMatch(/^esx-02/);
     // One that comes into a collapsed cluster opens it.
     await user.keyboard(`${LEADER}:topo-at web-1{Enter}`);
@@ -296,7 +299,7 @@ describe("a Plugin's graph", () => {
     expect(foot()).not.toMatch(/^web: 2 nodes|^Moving/);
     expect(document.querySelector(".graph-foot .dt-keys")?.textContent).not.toMatch(/put back/);
     // Opened, its nodes are where the cluster took them.
-    await user.keyboard("/{Escape}web-1{Enter}");
+    await user.keyboard("/web-1{Enter}");
     expect(foot()).toMatch(/^web: 2 nodes, collapsed/);
     await user.keyboard("{Enter}");
     await waitFor(async () => expect((await saved())?.nodes["web-1"]).toEqual(after.nodes["web-1"]));

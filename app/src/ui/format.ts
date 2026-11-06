@@ -78,3 +78,8 @@ export function fitMiddle(text: string, width: number, measure: (s: string) => n
   }
   return `${head[0] ?? ""}…${tail}`;
 }
+
+/** What an error says: its message, or the thing itself as text. */
+export function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}

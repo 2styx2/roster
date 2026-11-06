@@ -1,5 +1,6 @@
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -77,12 +78,12 @@ def pytest_sessionfinish(session):
 
 
 def source_copy(tmp_path):
-    """The files install.sh and update.sh read, in a folder of their own that isn't a git clone: they must never run
-    git (a fetch, a pull) on the checkout running the tests."""
+    """The files install.sh, update.sh and uninstall.sh read, in a folder of their own that isn't a git clone: they
+    must never run git (a fetch, a pull) on the checkout running the tests."""
     src = tmp_path / "src-copy"
     (src / "src/roster").mkdir(parents=True, exist_ok=True)
     root = Path(__file__).parent.parent
-    for f in ("install.sh", "update.sh", "install-lib.sh", "pyproject.toml", "src/roster/roster.1"):
+    for f in ("install.sh", "update.sh", "uninstall.sh", "install-lib.sh", "pyproject.toml", "src/roster/roster.1"):
         (src / f).write_bytes((root / f).read_bytes())
     return src
 
@@ -142,26 +143,51 @@ def isolated(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.chdir(work)
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
-    monkeypatch.setattr(providers, "MANUAL_UNLOCK", False)         # an in-process serve test sets it
-    from roster.providers import bitwarden
-    monkeypatch.setitem(bitwarden._session, "key", None)           # bw's session key, held outside os.environ
-    from roster import common
-    monkeypatch.setattr(common, "_inventory", None)                # the named Inventory a run picked (ticket 115)
-    monkeypatch.setattr(common, "_config_path", None)              # and its roster.yml
+    providers.reset()                   # each test is a new run: no secret, session or mode of the last one's
+    from roster import context
+    context.use(None)                   # the Inventory a run picked
     if WINDOWS:                         # files the tests write read as on Linux: "\n", not CRLF
         write_text = Path.write_text
         monkeypatch.setattr(Path, "write_text", lambda self, data, encoding=None, errors=None, newline="\n":
                             write_text(self, data, encoding=encoding, errors=errors, newline=newline))
-    providers._secrets.clear()
-    providers.PROVIDER_STATE.clear()
-    providers.PROVIDER_SETTINGS.clear()
-    providers.BOX_SETTINGS.clear()
     yield {"home": home, "work": work}
+    providers.reset()
     providers.PROVIDERS.clear()
     providers.PROVIDERS.update(saved_providers)
     os.environ.clear()
     os.environ.update(saved_env)
     shutil.rmtree(temp, ignore_errors=True)
+
+
+VAULT_CLIS = ("bw", "op", "keepassxc-cli")
+
+
+@pytest.fixture(autouse=True)
+def no_real_vault_cli(request, tmp_path, monkeypatch):
+    """A test never runs the developer's real bw, op or keepassxc-cli (T247: a flaky test was running the real 140 MB
+    bw twice). Each name, first on PATH, is a tripwire that runs nothing: it says which test ran it, on stderr, and
+    the test fails when it ends, even when it swallowed the tool's failure. The `fakes` fixture puts the stand-ins
+    before it; a test's own stand-ins (or a PATH of its own) go before it too. Windows finds a tool by PATHEXT, so
+    there each one also gets a NAME.cmd (an extensionless one is for Git for Windows' sh)."""
+    guard = tmp_path / "no-real-vault-cli"
+    guard.mkdir()
+    ran = guard / "ran"
+    for tool in VAULT_CLIS:
+        why = f"{request.node.nodeid} ran a real {tool} from PATH: use the stand-in in tests/fakes (the `fakes` fixture)"
+        script = guard / tool
+        script.write_text(f'#!/bin/sh\nprintf "%s\\n" {shlex.quote(why)} >&2\n'
+                          f'printf "%s\\n" "{tool} $*" >> {shlex.quote(str(ran))}\nexit 1\n')
+        script.chmod(0o755)
+        if WINDOWS:
+            plain = "".join("?" if c in '&|<>^%"' else c for c in why)
+            (guard / f"{tool}.cmd").write_text(f'@echo {plain} 1>&2\r\n@echo {tool} %*>>"{ran}"\r\n@exit /b 1\r\n',
+                                               newline="")
+    monkeypatch.setenv("PATH", f"{guard}{os.pathsep}{os.environ.get('PATH', '')}")
+    yield
+    if ran.exists():
+        calls = ran.read_text(errors="replace").split("\n")
+        pytest.fail("\n".join(f"{request.node.nodeid} ran a real {c.split(' ')[0]} from PATH ({c.strip()}): use the "
+                              "stand-in in tests/fakes (the `fakes` fixture)" for c in calls if c.strip()), pytrace=False)
 
 
 @pytest.fixture

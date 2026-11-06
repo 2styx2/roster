@@ -4,18 +4,7 @@
 // arrives in the webview first; a Rust timer would need an IPC call per keystroke. Input only
 // records a timestamp. One timer waits for the deadline and, when it fires, re-checks the clock:
 // a late timer (a throttled or sleeping machine) still locks, and input never reschedules timers.
-
-export interface Clock {
-  now(): number;
-  setTimeout(fn: () => void, ms: number): unknown;
-  clearTimeout(handle: unknown): void;
-}
-
-export const realClock: Clock = {
-  now: () => Date.now(),
-  setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
-  clearTimeout: (h) => globalThis.clearTimeout(h as ReturnType<typeof setTimeout>),
-};
+import { realClock, type Clock } from "../ui/clock";
 
 export interface IdleTimer {
   /** Start counting from now. */

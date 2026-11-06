@@ -3,7 +3,7 @@
 // Leader: it gets a cap with the space-bar glyph and the real chord as its tooltip, so it never
 // reads as an underscore.
 import { Fragment } from "react";
-import { messageParts } from "./MessageText";
+import { messageParts } from "./messageParts";
 import "./keys.css";
 
 const NAMES: Record<string, string> = {

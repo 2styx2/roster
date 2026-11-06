@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from roster import errors, serve
-from roster.cli import build_parser
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = sorted(
@@ -73,13 +72,6 @@ def test_every_error_code_is_in_serve_api_md():
     codes = {name: value for name, value in vars(errors).items() if name.isupper() and isinstance(value, int)}
     assert codes, "errors.py has no codes?"
     assert [f"{name} = {code}" for name, code in sorted(codes.items()) if f"`{code}`" not in doc] == []
-
-
-def test_every_cli_command_is_in_cli_reference_md():
-    doc = (ROOT / "docs/cli-reference.md").read_text(encoding="utf-8")
-    sub = next(a for a in build_parser()._actions if a.dest == "cmd")
-    missing = [name for name in sub.choices if not re.search(rf"^\| `{re.escape(name)}\b", doc, re.M)]
-    assert missing == []
 
 
 SYNC = ROOT / "app/scripts/app-sync.sh"

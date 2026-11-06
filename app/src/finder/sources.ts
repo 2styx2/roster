@@ -10,9 +10,9 @@ import { searchHosts } from "../picker/match";
 import { searchItems } from "./search";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import type { CommandLine } from "../keymap";
-import { connectPhase, statusText } from "../session/Sessions";
-import type { Light } from "../ui/StateDot";
-import type { Dot, SidebarSection } from "../sidebar/Sidebar";
+import { connectPhase, isLive, statusText } from "../session/status";
+import type { Light } from "../ui/dot";
+import type { Dot, SidebarSection } from "../sidebar/model";
 import { buildSections, hostDot, type SidebarContext, type SidebarSectionDef } from "../sidebar/sections";
 
 export interface FinderItem {
@@ -38,7 +38,7 @@ export interface FinderItem {
    * (see SidebarRow.lit). */
   lit?: Light;
   /** `false`: a lit node without its edge stub (nine or more Sessions: only the on-screen Host
-   * keeps it, the Sidebar's and the Picker's rule, Q219 a, Q235). */
+   * keeps it, the Sidebar's and the Picker's rule, Q229 a, Q245). */
   stub?: false;
   /** The Session on screen, or the one before it (the session bar's `*` and `-`). */
   mark?: "current" | "previous";
@@ -126,7 +126,7 @@ export const sessionsFinder: FinderSourceDef = {
   items: ({ sessions, hostByName }) =>
     sessions.tabs.map((tab, i) => {
       const host = hostByName.get(tab.host);
-      const ended = tab.status.state === "ended" || tab.status.state === "failed";
+      const ended = !isLive(tab.status);
       const mark = tab.id === sessions.active ? "current" : tab.id === sessions.previous ? "previous" : undefined;
       return {
         id: `session-${tab.id}`,

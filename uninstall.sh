@@ -40,57 +40,19 @@ while (( $# )); do
 done
 EXTRA=N; (( PURGE )) && EXTRA=Y          # the default for things other tools may share
 
-# ---- look (as install.sh)
-
-if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-    B=$'\e[1m' D=$'\e[2m' R=$'\e[31m' G=$'\e[32m' Y=$'\e[33m' C=$'\e[36m' N=$'\e[0m'
-else
-    B='' D='' R='' G='' Y='' C='' N=''
+# ---- what install.sh, update.sh and uninstall.sh share: the look, the questions, have and home (install-lib.sh,
+# beside this script in a checkout and in the Release's roster-cli tarball)
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)     # before any cd: BASH_SOURCE may be relative
+if [[ ! -f $here/install-lib.sh ]]; then
+    echo "uninstall.sh needs install-lib.sh beside it: run it in a roster checkout or in the unpacked roster-cli tarball" >&2
+    exit 2
 fi
-case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
-    *UTF-8*|*utf8*) FULL="█" EMPTY="░" OK="✔" BAD="✘" SKIP="–" ;;
-    *) FULL="#" EMPTY="-" OK="ok" BAD="x" SKIP="-" ;;
-esac
+# shellcheck source=install-lib.sh
+source "$here/install-lib.sh"
 
 STAGES=("Hosts" "Auto-update" "Shell startup" "SSH files" "Vault" "roster" "Config folder")
 TOTAL=${#STAGES[@]}
 DONE=() SKIPPED=() FAILED=()
-
-stage() {
-    local n=$1 w=30 fill bar="" i
-    fill=$(( n * w / TOTAL ))
-    for ((i = 0; i < w; i++)); do (( i < fill )) && bar+="$FULL" || bar+="$EMPTY"; done
-    printf '\n%s%s%s %s%d/%d%s  %s%s%s\n' "$C" "$bar" "$N" "$D" "$n" "$TOTAL" "$N" "$B" "${STAGES[n-1]}" "$N"
-    CUR="${STAGES[n-1]}"
-}
-ok()   { printf '  %s%s%s %s\n' "$G" "$OK" "$N" "$*"; }
-warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
-bad()  { printf '  %s%s%s %s\n' "$R" "$BAD" "$N" "$*"; }
-info() { printf '  %s%s%s\n' "$D" "$*" "$N"; }
-skip() { printf '  %s%s %s%s\n' "$D" "$SKIP" "$*" "$N"; SKIPPED+=("$CUR"); }
-done_stage() { DONE+=("$CUR"); }
-fail_stage() { FAILED+=("$CUR"); }
-listed() { local x=$1 e; shift; for e in "$@"; do [[ $e == "$x" ]] && return 0; done; return 1; }  # listed NAME LIST...
-
-TTY=/dev/tty
-( : < "$TTY" ) 2>/dev/null || TTY=/dev/stdin
-
-ask() {                         # ask "Question?" Y|N  -> 0 for yes
-    local q=$1 def=${2:-Y} hint reply
-    [[ $def == Y ]] && hint="Y/n" || hint="y/N"
-    if (( YES )); then
-        printf '  %s?%s %s %s[%s]%s %s\n' "$C" "$N" "$q" "$D" "$hint" "$N" "$([[ $def == Y ]] && echo yes || echo no)"
-        [[ $def == Y ]]; return
-    fi
-    while true; do
-        printf '  %s?%s %s %s[%s]%s ' "$C" "$N" "$q" "$D" "$hint" "$N"
-        read -r reply < "$TTY" || reply=""
-        case "${reply:-$def}" in
-            [Yy]*) return 0 ;;
-            [Nn]*) return 1 ;;
-        esac
-    done
-}
 
 step() {                        # step "what" cmd...  - output to the log, shown when it fails
     local what=$1; shift
@@ -133,9 +95,6 @@ drop_lines() {                  # drop_lines FILE PATTERN  - delete the lines ma
     ok "removed roster's line from ${f/#$HOME/\~}"
 }
 
-have() { command -v "$1" >/dev/null 2>&1; }
-home() { printf '%s' "${1/#$HOME/\~}"; }
-
 # ---- what's here
 
 (( DRY )) || mkdir -p "$(dirname "$LOG")"
@@ -172,7 +131,6 @@ for y in ${yamls[@]+"${yamls[@]}"}; do
     k=${k/#\~/$HOME}
     [[ -n $k && $k != "${keys[0]}" ]] && ! listed "$k" ${other_keys[@]+"${other_keys[@]}"} && other_keys+=("$k")
 done
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)       # before any cd: BASH_SOURCE may be relative
 
 printf '\n%sroster uninstaller%s\n' "$B" "$N"
 info "Takes this box off its hosts, then removes roster and the files it wrote here. Your vault is not touched."
@@ -347,13 +305,35 @@ if (( ! keep_roster )); then
 remove "the roster source install.sh unpacked" "${XDG_DATA_HOME:-$HOME/.local/share}/roster/source"
 remove "install.sh's kept answers" "$CONF_DIR/install-choices"
 (( DRY )) || rmdir "${XDG_DATA_HOME:-$HOME/.local/share}/roster" 2>/dev/null || true
-# roster's own folder: what roster wrote (Mesh state, the Inventory list) goes; what you put there is asked about.
-# Kept with roster: revoke --all and mesh cut --all need them.
-mine=()
-for p in "$CONF_DIR"/mesh*.json* "$CONF_DIR"/inventories.json* "$CONF_DIR"/*.removed-*; do [[ -e $p ]] && mine+=("$p"); done
+# roster's own folder: what roster wrote goes; what you put there (roster.yml, providers/) is asked about.
+# Kept with roster: revoke --all and mesh cut --all need them. Every name roster writes there must be below
+# (tests/test_install_scripts.py reads them from roster's source): the Mesh state, the Inventory list and what a
+# removed Inventory left, the run lock, the key's name and age, a key rotation's record, the vault snapshots
+# (vault-sync/, vault-seen/), and the temp files of a run cut short (bw-session is stage 5's).
+# Kept: a Box key rotation's record (key-rotation, key-rotation-NAME) while a KEY.old or KEY.new is in ~/.ssh:
+# it's what says those key files are roster's (Q204 (d2)); without it a later roster won't use or clean them up.
+mine=() kept_rotation=()
+rotating=0
+for k in "${keys[@]}" ${other_keys[@]+"${other_keys[@]}"}; do [[ -e $k.old || -e $k.new ]] && rotating=1; done
+shopt -s dotglob
+for p in "$CONF_DIR"/mesh*.json* "$CONF_DIR"/mesh*.new "$CONF_DIR"/inventories.json* "$CONF_DIR"/*.removed-* \
+         "$CONF_DIR"/inventory.create.lock "$CONF_DIR"/run.lock "$CONF_DIR"/run-*.lock "$CONF_DIR"/key-created \
+         "$CONF_DIR"/key-name "$CONF_DIR"/key-name-* "$CONF_DIR"/key-types "$CONF_DIR"/key-types-* \
+         "$CONF_DIR"/setup-left "$CONF_DIR"/setup-left-* "$CONF_DIR"/vault-sync "$CONF_DIR"/vault-seen \
+         "$CONF_DIR"/.*.new "$CONF_DIR"/key-rotation "$CONF_DIR"/key-rotation-*; do
+    [[ -e $p ]] || continue
+    if (( rotating )) && [[ ${p##*/} == key-rotation* && ${p##*/} != *.new ]]; then kept_rotation+=("$p"); else mine+=("$p"); fi
+done
+shopt -u dotglob
 remove "roster's state in $(home "$CONF_DIR")" ${mine[@]+"${mine[@]}"}
+if (( ${#kept_rotation[@]} )); then
+    info "kept the Box key rotation's record (${kept_rotation[*]/#$CONF_DIR\//}): a key ending .old or .new is still in"
+    info "$(home "$HOME/.ssh"), and the record is what says roster made it (delete both by hand once no host holds that key)"
+fi
 yours=()
-for p in "$CONF_DIR"/*; do [[ -e $p ]] && yours+=("$p"); done
+for p in "$CONF_DIR"/*; do
+    [[ -e $p ]] && ! listed "$p" ${kept_rotation[@]+"${kept_rotation[@]}"} && yours+=("$p")
+done
 if (( ${#yours[@]} )) && [[ ${cfg_dir:-} == "$CONF_DIR" ]]; then
     info "kept $(home "$CONF_DIR"): your roster.yml is there (the next stage asks about it, checking it's saved)"
 elif (( ${#yours[@]} )); then
@@ -424,15 +404,7 @@ fi
 
 # ---- summary
 
-printf '\n%sSummary%s\n' "$B" "$N"
-for s in "${STAGES[@]}"; do
-    if   listed "$s" ${FAILED[@]+"${FAILED[@]}"};   then bad "$s"
-    elif listed "$s" ${SKIPPED[@]+"${SKIPPED[@]}"}; then printf '  %s%s %s (skipped)%s\n' "$D" "$SKIP" "$s" "$N"
-    elif listed "$s" ${DONE[@]+"${DONE[@]}"};       then ok "$s"
-    else printf '  %s%s %s%s\n' "$D" "$SKIP" "$s" "$N"
-    fi
-done
-printf '\n'
+summary
 info "Not touched: your vault, the hosts' own accounts, and this roster source folder ($(home "$here"))."
 if have uv && (( PURGE )); then
     info "uv stays (other tools use it). To remove it too: uv cache clean; rm ~/.local/bin/uv ~/.local/bin/uvx"

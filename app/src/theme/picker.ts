@@ -72,7 +72,6 @@ export class ThemeChoice {
     return () => this.listeners.delete(listener);
   };
 
-  /** The Theme being previewed, or null. */
   previewing = (): string | null => this.previewId;
 
   preview(id: string | null) {

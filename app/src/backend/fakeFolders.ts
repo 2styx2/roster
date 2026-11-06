@@ -5,6 +5,7 @@
 // tests/folders_plugin.rs drives that, and this mirrors it for the UI tests and the browser.
 import { addToFolder, createFolder, deleteFolder, parseFolders, quote, removeFromFolder, renameFolder, splitName, type Folder, type Outcome } from "../folders/folders";
 import type { FakePlugin, FakeRoster } from "./fakePlugins";
+import { errorText } from "../ui/format";
 
 const FILE = "folders.json";
 const SECTION = "folders";
@@ -53,7 +54,7 @@ export const fakeFoldersPlugin: FakePlugin = {
         problem = null;
         return true;
       } catch (e) {
-        problem = `can't save the Folders: ${e instanceof Error ? e.message : String(e)}`;
+        problem = `can't save the Folders: ${errorText(e)}`;
         return false;
       }
     };
@@ -68,7 +69,7 @@ export const fakeFoldersPlugin: FakePlugin = {
         if (save()) {
           moved = { from, n: folders.length };
           if (folders.length > 0) {
-            // From the State there's nothing to do, so it's quiet (Q209); from folders.yml it needs attention.
+            // From the State there's nothing to do, so it's quiet (Q219); from folders.yml it needs attention.
             roster.notify(from === "folders.yml" ? `Moved ${count(folders.length, "Folder")} from folders.yml to roster's data folder: folders.yml isn't read any more (:check)` : `Moved ${count(folders.length, "Folder")} to roster's data folder. Nothing to do.`, "info", {
               quiet: from !== "folders.yml",
             });
@@ -76,7 +77,7 @@ export const fakeFoldersPlugin: FakePlugin = {
         }
       }
     } catch (e) {
-      problem = blocked = e instanceof Error ? e.message : String(e);
+      problem = blocked = errorText(e);
     }
 
     let names: string[] | null = null;

@@ -4,10 +4,13 @@
 // sections (roster.yml, ssh, the vault CLIs, askpass, the infra repo) come from `box.check`; the
 // app adds what only it knows: how it reaches roster, init.lua, the terminal font. Every check is
 // local. Nothing here connects to a Host; `:check HOST` is the one that does.
-import { BOX_CHECK_API_VERSION, type BoxCheck, type HealthCheck, type HealthLevel } from "../backend/types";
+import type { Capabilities } from "../backend/capabilities";
+import { SERVE_API_VERSION } from "../backend/serveContract";
+import type { BoxCheck, HealthCheck, HealthLevel } from "../backend/types";
 import type { ConfigError } from "../config/types";
 import type { ConfigWarning } from "../config/apply";
 import { BUILTIN, Registry, type Entry, type Source } from "../registry";
+import { errorText } from "../ui/format";
 
 /** What the sections check, read when `:check` runs. */
 export interface HealthContext {
@@ -15,7 +18,7 @@ export interface HealthContext {
   box: BoxCheck | null;
   boxProblem: string | null;
   /** How the app reaches roster: "Local" or "WSL: <distro>", and what `inventory.info` said. */
-  backend: { name: string; rosterVersion: string; apiVersion: number } | null;
+  backend: { name: string; distro: string | null; rosterVersion: string; caps: Capabilities } | null;
   config: { path: string | null; error: ConfigError | null; warnings: readonly ConfigWarning[] };
   /** terminal.font's families, and the one the terminal draws with (null: none of them is there). */
   font: { families: readonly string[]; inUse: string | null };
@@ -74,14 +77,14 @@ const appSection: HealthSection = {
   order: 10,
   checks: (ctx) => {
     if (!ctx.backend) return [{ section: "app", level: "error", message: "roster serve isn't running", fix: "restart the app; its start screen says why serve didn't start", topic: "E21" }];
-    const { name, rosterVersion, apiVersion } = ctx.backend;
-    const out = [ok("app", `roster serve answers through ${name}: roster ${rosterVersion}, API ${apiVersion}`)];
-    if (name.startsWith("WSL")) out.push(ok("app", `the WSL distro answers (${name.slice(4).trim() || "the default one"})`));
-    if (apiVersion < BOX_CHECK_API_VERSION) {
+    const { name, distro, rosterVersion, caps } = ctx.backend;
+    const out = [ok("app", `roster serve answers through ${name}: roster ${rosterVersion}, API ${caps.api}`)];
+    if (distro !== null) out.push(ok("app", `the WSL distro answers (${distro || "the default one"})`));
+    if (!caps.has("boxCheck")) {
       out.push(
         warn(
           "app",
-          `this roster speaks API ${apiVersion}; the app has features up to API ${BOX_CHECK_API_VERSION}, so some are off (roster's own checks below among them)`,
+          `this roster speaks API ${caps.api}; the app has features up to API ${SERVE_API_VERSION}, so some are off (roster's own checks below among them)`,
           "install a newer roster on this Box, then restart the app",
         ),
       );
@@ -173,7 +176,7 @@ export async function runHealth(sections: readonly HealthSection[], ctx: HealthC
         if (checks === "late") return failed(s, `this section didn't answer within ${limit / 1000} seconds`);
         return { id: s.id, title: s.title, source: s.source, checks };
       } catch (e) {
-        return failed(s, `this section failed: ${e instanceof Error ? e.message : String(e)}`);
+        return failed(s, `this section failed: ${errorText(e)}`);
       } finally {
         clearTimeout(timer);
       }

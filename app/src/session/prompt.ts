@@ -72,7 +72,8 @@ export interface PasswordPrompt {
  * another Host's prompt (API 26). */
 export interface HopSource {
   hosts(): readonly HopHost[];
-  fill: boolean;
+  /** Null when serve fills a nested ssh's prompts; else why `what` can't be done here. */
+  refuseFill: ((what: string) => string) | null;
 }
 
 type Phase = "none" | "prompt" | "input" | "output" | "idle";
@@ -308,7 +309,8 @@ export class PromptWatch {
     const { hop } = state;
     const refuse = (why: string): PasswordPrompt => ({ line, elsewhere: why, marked: true, kind: "ssh", hop: null });
     if (!hop.known) return refuse(`roster can't tell where this ssh went: ${hop.why}`);
-    if (!this.hops?.fill) return refuse(`filling ${hop.host}'s ssh prompt needs a newer roster; update roster on this Box`);
+    const older = this.hops?.refuseFill?.(`filling ${hop.host}'s ssh prompt`);
+    if (older) return refuse(older);
     if (hop.sshFill) return refuse(hop.sshFill);
     if (who !== hop.user || where.toLowerCase() !== hop.target) {
       return refuse(`the prompt asks for ${who}@${where}'s password, and this ssh logs in as ${hop.user}@${hop.target}`);
@@ -329,7 +331,8 @@ export class PromptWatch {
       return who === this.user ? refuse(`\`${this.outer.command}\` is running, not sudo itself, so this prompt may be another machine's`) : null;
     }
     if (who !== hop.user) return null;
-    if (!this.hops?.fill) return refuse(`filling ${hop.host}'s sudo prompt needs a newer roster; update roster on this Box`);
+    const older = this.hops?.refuseFill?.(`filling ${hop.host}'s sudo prompt`);
+    if (older) return refuse(older);
     if (hop.sudoFill) return refuse(hop.sudoFill);
     if (!state.innerMarked) return refuse(`the shell on ${hop.host} doesn't mark its commands, so roster can't tell what asks`);
     if (inner.shell) return refuse(`a shell started inside a command on ${hop.host}, so roster can't tell what runs now`);

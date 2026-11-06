@@ -26,62 +26,12 @@ import { CloseGlyph } from "../ui/CloseGlyph";
 import { useForgetOnLock } from "../lock/forgetOnLock";
 import { cardMoreBelow, revealInCard } from "./reveal";
 import { slip, type Message } from "../ui/messages";
-
-/** Where a Session is on its way to a shell (issue #78): `starting` while roster prepares it and
- * ssh starts on this Box, `logging-in` once ssh runs and the Host hasn't answered yet, null once
- * it has (or it ended, or was refused). For a Host whose key roster hasn't seen (ticket 36):
- * `checking-key` while its key is fetched, `asking` while the user decides, `trusting` while
- * roster records it. */
-export type ConnectPhase =
-  | "starting"
-  | "logging-in"
-  | "checking-key"
-  | "asking"
-  | "trusting"
-  | "password";
-
-export function connectPhase(tab: Tab): ConnectPhase | null {
-  const s = tab.status;
-  if (s.state === "asking")
-    return !s.key ? "checking-key" : s.trusting ? "trusting" : "asking";
-  if (s.state === "password") return "password";
-  if (s.state === "connecting") return "starting";
-  if (tab.status.state === "open" && !tab.shell) return "logging-in";
-  return null;
-}
-
-/** How the Session's link to its Host stands, for the edge drawn from its node (taste.md: an
- * edge drawn on connect, snapping back on failure): drawing, up, or down. */
-export function linkOf(tab: Tab): "connecting" | "up" | "down" {
-  if (connectPhase(tab)) return "connecting";
-  return tab.status.state === "open" ? "up" : "down";
-}
-
-export function statusText(tab: Tab): string {
-  const s = tab.status;
-  switch (s.state) {
-    case "connecting":
-      return "connecting…";
-    case "asking":
-      return s.key ? "new host key" : "connecting…";
-    case "password":
-      return "password";
-    case "open":
-      return tab.shell ? "" : "connecting…";
-    case "failed":
-      return "failed";
-    case "ended":
-      if (s.exit.closed) return "closed";
-      return s.exit.code === null
-        ? "ended (signal)"
-        : `ended (code ${s.exit.code})`;
-  }
-}
+import { connectPhase, isLive, statusText, type ConnectPhase } from "./status";
 
 /** The tab's state dot (as in the prototype): filled for a key login, hollow for a password one,
  * grey once the Session has ended or was refused. */
 function StateDot({ tab }: { tab: Tab }) {
-  const done = tab.status.state === "ended" || tab.status.state === "failed";
+  const done = !isLive(tab.status);
   const auth = tab.auth;
   const connecting = connectPhase(tab) !== null;
   const cls = [
@@ -183,7 +133,7 @@ export interface KeyAnswers {
  * It's the network-map motif (taste.md), never a spinner. When the shell answers, it fades out
  * over the first output; a failure replaces it with the error at once.
  */
-export function ConnectCard({
+function ConnectCard({
   host,
   address,
   phase,
@@ -317,7 +267,7 @@ export function ConnectCard({
     return () => watch.disconnect();
   }, [asking, short]);
   // Keyboard first: the question takes focus (after the terminal, which the active pane focuses
-  // first): Cancel, so Enter and Esc both cancel and trusting is deliberate (Q222). Once answered,
+  // first): Cancel, so Enter and Esc both cancel and trusting is deliberate (Q232). Once answered,
   // focus goes back to the terminal.
   const asked = useRef(false);
   useEffect(() => {
@@ -460,8 +410,8 @@ export function ConnectCard({
                 answers?.cancel();
               } else if (e.key === "Enter" && e.target === e.currentTarget) {
                 // Enter on the card itself (focus lands there when its text is clicked) never
-                // trusts a key: a host-key question needs Trust and connect itself (Q222), and
-                // Quick Connect's needs "I've checked this key" ticked (Q225), and even then
+                // trusts a key: a host-key question needs Trust and connect itself (Q232), and
+                // Quick Connect's needs "I've checked this key" ticked (Q235), and even then
                 // Enter here goes on to the password field: only the field or Trust connects
                 // (round 22). A password prompt (no key in question) still connects.
                 e.preventDefault();
@@ -547,7 +497,7 @@ export function ConnectCard({
             (round 13). */}
         <line className="connect-route" x1="8.4" y1="6" x2="61" y2="6" />
         <line className="connect-edge" x1="8.4" y1="6" x2="61" y2="6" />
-        {/* The Host's ring is open while connecting (the Sidebar's connecting node, Q205); a
+        {/* The Host's ring is open while connecting (the Sidebar's connecting node, Q215); a
             closed ring fades in over it when the shell answers, then fills for a key login. */}
         {/* One arc, its 50° gap facing the edge (on the card; the Sidebar's node keeps the logo's
             upper-right gap). A dash pattern under non-scaling-stroke drew two gaps (round 9). */}
@@ -783,7 +733,7 @@ export function ConnectCard({
               ref={trustButton}
               onClick={() => answers.trust()}
             >
-              {/* The question opens on Cancel, so trusting is deliberate (Q222): ↵ shows on Trust
+              {/* The question opens on Cancel, so trusting is deliberate (Q232): ↵ shows on Trust
                   only once Tab brings focus to it, on Cancel while it has focus (round 21: a dim
                   ↵ on Trust read as the default while Enter cancelled); hidden, its room is
                   even padding either side (round 22). */}
@@ -1150,7 +1100,7 @@ export function SessionPanes({
                 />
               )
             )}
-            {s.state !== "failed" && s.state !== "ended" && (
+            {isLive(s) && (
               <ConnectCard
                 key={tab.attempt}
                 host={tab.host}

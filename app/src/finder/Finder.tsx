@@ -338,6 +338,7 @@ export function Finder({
   return (
     <div
       className="picker-backdrop"
+      data-panel="finder"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div

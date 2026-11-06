@@ -204,7 +204,7 @@ describe(":plugins types", () => {
     const command = pluginsCommand(manager, () => undefined);
     command.run({ say: (m: string) => void said.push(m) } as unknown as CommandContext, "types ~/plugins/pinned");
     await new Promise((r) => setTimeout(r, 0));
-    expect(said).toEqual(["Wrote ~/plugins/pinned/types/roster.lua: the Plugin API 6's types, for lua-language-server"]);
+    expect(said).toEqual(["Wrote ~/plugins/pinned/types/roster.lua: the Plugin API 7's types, for lua-language-server"]);
     command.run({ say: (m: string) => void said.push(m) } as unknown as CommandContext, "types");
     expect(said.at(-1)).toBe("Which Plugin folder? :plugins types PATH writes its types/roster.lua");
   });

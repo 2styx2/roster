@@ -17,7 +17,7 @@ Before writing or changing a Plugin (the first-party ones of iteration 8 too), r
 - **`docs/plugin-api.md`**: every `roster.*` function (parameters, returns, errors, permission, example), every type with all its fields, every event and what each `roster.serve.call` returns.
 - **`examples/plugins/types/roster.lua`**: the same as LuaCATS stubs. Annotate the Plugin with them and run `lua-language-server --check` on its folder, as CI does for `examples/plugins/`.
 
-Then `docs/plugins.md` for the narrative (manifest, permissions, limits) and `examples/plugins/recent-alerts` as the worked example. A Plugin needing something the API lacks is a change to `crates/roster-core/src/plugin/api.rs` and the runtime together (CONTRIBUTING.md, "Docs").
+Then `docs/plugins.md` for the narrative (manifest, permissions, limits) and `examples/plugins/recent-alerts` as the worked example. A Plugin needing something the API lacks is a change to `crates/roster-core/src/plugin/api/` and the runtime together (CONTRIBUTING.md, "Docs").
 
 ## Changing roster's Lua surface
 

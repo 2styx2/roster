@@ -11,6 +11,7 @@ A fast, keyboard-first desktop app that gets you onto any Host in your team's ro
 | [docs/app/vision.md](../docs/app/vision.md) | Why this exists, how it compares with SecureCRT, Termius, Tabby and XPipe, and what makes it different |
 | [docs/app/competitors.md](../docs/app/competitors.md) | Sourced competitor analysis (XPipe, Termix, Termius, RDM, Tabby, WezTerm and more): matrix, config and plugins, secrets model, positioning |
 | [docs/app/architecture.md](../docs/app/architecture.md) | The processes, the `roster serve` API, how Sessions connect, and the backends |
+| [docs/architecture.md](../docs/architecture.md) | The codebase's structure and standards: layers, where new code goes, what's generated (both halves) |
 | [docs/app/security.md](../docs/app/security.md) | Where secrets go and where they never go, and how locking works |
 | [docs/app/keyboard.md](../docs/app/keyboard.md) | The leader key, the two focus modes, and the default bindings |
 | [docs/README.md](../docs/README.md) | Every doc, grouped as `:help`'s index groups them |
@@ -53,23 +54,40 @@ A fast, keyboard-first desktop app that gets you onto any Host in your team's ro
 
 Both use the installed `roster` (needs `roster serve`, API 3+; asking about a new Host's host key needs API 11, Q60; Quick Connect needs API 12, ticket 14; its "Save to vault" API 13, ticket 15; signing the vault out to use a different account API 14, ticket 42; roster's sections of `:check` with no Host API 16, ticket 49; the Mesh controls need API 17 (Mesh jobs), Discover 18, Topology 19 (`mesh.status`'s `grouped`); Plugins' `job_progress` and `:check` sections that answer later need 20 (concurrent serve); cancelling and check jobs 21; making an Inventory on a Box with none, and "saved" for a plain `roster.yml`, 28) unless `ROSTER_APP_ROSTER` is set, and both share the same State and `init.lua`. The scripts and the app still read the old `ROSTER_DESK_*` env var names when the new ones aren't set.
 
-Paths below are from the repo root.
+Paths below are from the repo root. Which folder may import which, the pure modules, and where a new command, panel or Plugin op goes: [docs/architecture.md](../docs/architecture.md#the-frontend) (`app/src/architecture.test.ts` checks it).
 
 ```text
 Cargo.toml            workspace (repo root); default member is roster-core, so `cargo test` in WSL never builds Tauri
-crates/roster-core/   Tauri-free core: Backend detection (detect.rs), `roster serve` JSON-RPC client (rpc.rs: answers matched by id in any order, `$/cancel` when it stops waiting),
-                      start-up and API-version check (backend.rs), the one Backend slot (slot.rs), error kinds (error.rs), Sessions:
+crates/roster-core/   Tauri-free core: Backend detection and the plan from init.lua (detect.rs), `roster serve` JSON-RPC client (rpc.rs: answers matched by id in any order, `$/cancel` when it stops waiting),
+                      start-up and API-version check, the check job (woken by `job.progress`), opening and filling Sessions (backend.rs),
+                      the serve methods the frontend calls as they are, through the one `serve_call` (serve_api.rs), the one Backend slot (slot.rs), error kinds (error.rs), Sessions:
                       session.prepare → command (wsl --exec …, env via WSLENV) and the PTY manager (session.rs; its `fill` types a prompt's password after a no-echo probe, ticket 119),
-                      the State file (state.rs), where the window reopens (window.rs), the Windows build (platform.rs),
+                      the State file (state.rs), where the window reopens (window.rs), the OS and the Windows build (platform.rs),
+                      running a short command to its end (process.rs), atomic writes and paths kept inside a folder (files.rs),
+                      the Plugins' proxy address (proxy.rs), help anchors (anchor.rs), the repaint check (screen.rs) and
+                      character widths from xterm.js (wcwidth.rs), wiped secrets (wipe.rs),
                       Windows Terminal's settings.json → an init.lua block, previewed as a diff (wt.rs, ticket 33),
-                      the ROSTER_APP_* env vars with their old names (env.rs), the one-time copy from roster-desk (migrate.rs),
+                      the ROSTER_APP_* env vars with their old names and the app's data folder (env.rs), the one-time copy from roster-desk (migrate.rs),
                       opening a web service's URL in the default browser, http/https only, no user or password (browser.rs)
 app/src-tauri/        thin Tauri shell: the window, and the commands the frontend calls (every one is in
-                      `generate_handler!` in src-tauri/src/lib.rs), each a thin wrapper over roster-core
-                      (+ `config-changed` events after each save of init.lua);
-                      clipboard-manager plugin
+                      `generate_handler!` in src-tauri/src/lib.rs), each an adapter over a method of roster-core's
+                      `Shell` (shell.rs: one `serve_call` for the serve methods passed as they are, a command of its
+                      own where the core adds something, the events such as `config-changed`); clipboard-manager plugin.
+                      shell/bridge.rs (the `bridge` feature and example, never in the app) runs the same `Shell` over a
+                      local WebSocket for app/e2e/fullstack; tests/shell.rs keeps the three command lists one
 app/src/backend/      the one typed Backend client: types.ts (interface), tauri.ts (real), fake.ts (fixtures)
-                      fakePlugins.ts (the fake Plugin host), redact.ts (the core's cmd:/env: cut on what its Plugins get, Q92)
+                      fakePlugins.ts (the fake Plugin host), redact.ts (the core's cmd:/env: cut on what its Plugins get, Q92, and serve's error object, PluginServeError, Plugin API 7);
+                      serveContract.ts (generated by scripts/gen-serve-api.py: roster's codes by name, each method's
+                      API version, the step and field lists, and servemodels.py's params and results as types;
+                      types.ts's constants come from it),
+                      capabilities.ts (what serve can do from its api_version: every comparison of it, `sinceOf` for
+                      the fakes and tests, and the one "needs a newer roster" line), afterTimeout.ts,
+                      index.ts and fixtureProps.ts (which Backend main.tsx starts, and a fixture's App props),
+                      the fake's parts: fakeViews.ts, fakeGraph.ts (demo views), fakeMesh.ts, fakeTopology.ts,
+                      fakeDiscover.ts (stand-ins for the first-party Plugins, replaying their transcripts),
+                      fakeManifests.ts (their manifests, read from plugins/), fakePackages.ts, fakeFolders.ts,
+                      fakeRecentAlerts.ts, worstCase.ts (`?fixture=worst-case`), fakeVault.ts (the fake vault's password, no
+                      imports, so app/e2e types the same one)
 app/src/picker/       the Picker: match.ts (fuzzy ranking), Picker.tsx (a user@address query offers Quick Connect first;
                       a row's ⓘ or Ctrl+I shows its Host details), timing.ts (its open time, for `:info`, Q86)
 app/src/details/      Host details (ticket 18, decision Q71): details.ts (roster hosts HOST's fields and services as rows, which
@@ -79,40 +97,70 @@ app/src/quick/        Quick Connect (ticket 14): target.ts (user@address[:port],
                       SavePanel.tsx (`:save`: name, group, Save to, then quick.save; for an
                       `auth: prompt` Host (ticket 16), Save to, then host.save_login)
 app/src/platform/     State file, clipboard, Windows build: types.ts, tauri.ts, browser.ts, memory.ts (tests);
-                      os.ts (Windows or not, at start, for the built-in keys)
+                      os.ts (Windows or not, at start, for the built-in keys), index.ts (which one main.tsx makes),
+                      tauriWindow.ts (the frameless window's controls and its geometry)
 app/src/state/        appState.ts: the State's shape (recent Hosts), parsed leniently
-app/src/session/      Sessions: tabs.ts (store: open/close/select/reconnect/replay/resize, outside React), Sessions.tsx
+app/src/session/      Sessions: tabs.ts (store: open/close/select/reconnect/replay/resize, outside React; configure() with
+                      what the app knows), attempt.ts (one Session start's own state: its output window, watch, hooks),
+                      status.ts (what a Session's status means: live, connecting, its words), commands.ts (the Session
+                      commands and SessionContext, what they ask of the app), actions.ts (what they do), useTabsConfig.ts, integrate.ts (what `:integrate` says), SessionsMain.tsx (the
+                      terminals or the empty workspace, and the bottom line), RecentMap.tsx (the idle pane's map of
+                      recent Hosts), useRecent.ts (the Recent list once a Session logs in; the window's title),
+                      reveal.ts (what a focus move in the connect card scrolls into view), Sessions.tsx
                       (terminal panes + the basic tab strip for `sessions = "tabs"`), prompt.ts (a password prompt at
                       the cursor, for the fill key's offer, ticket 119; and the Host a nested ssh is on, ticket 120),
                       sshTarget.ts (where a nested `ssh` command line goes, by ssh's rules and the Inventory),
-                      HopCrumb.tsx (the breadcrumb: `esx-01 ─ esx-02`)
+                      HopCrumb.tsx (the breadcrumb: `esx-01 ─ esx-02`; breadcrumb.ts its words), shellHooks.ts (the
+                      shell hooks' line and the OSC 133 marks they bring, Q130), osc7.ts (the folder a shell says it's
+                      in), commandLine.ts (reading a command line the shell's `C` mark says it ran), promptScreen.ts
+                      (the screen the shell hooks read the prompt off)
 app/src/terminal/     TerminalView.tsx (xterm.js, WebGL → DOM; copy/paste, find, zoom), SearchBar.tsx,
                       renderer.ts (WebGL, or DOM when its context can't start or is lost; what `:info` says, ticket 20),
                       options.ts (font, colour overrides, standard ANSI palette as data), fonts.ts (which installed font is
                       in use, cells rounded as Windows Terminal does, ticket 33), keymap.ts (ticket 08's keys),
                       keys.ts (Leader filter), input.ts (keys and pastes to the Session: Ctrl+V on Windows, Q138),
-                      StubTerminal (tests)
+                      clipboard.ts (copy as Windows Terminal does), osc52.ts (a Host's copy to the clipboard, when
+                      allowed), useTerminalEnv.ts (what every terminal is drawn with), StubTerminal.tsx (tests)
 app/src/errors/       clean connection errors (ticket 26, docs/app/errors.md): classify.ts (classifyExit: ssh's last lines +
                       exit code + askpass line → a Problem), catalog.ts (the rows as a Registry: where, fix, actions,
-                      extras), ErrorPanel.tsx (the Session pane's error), CheckPanel.tsx (`:check HOST`; checkProgress.ts follows its steps as they run)
+                      extras), ErrorPanel.tsx (the Session pane's error), CheckPanel.tsx (`:check HOST`; checkProgress.ts follows its steps as they run),
+                      useCheck.ts (`:check` in the workspace: a Host's, this Box's health, Stop), command.ts (`:check`),
+                      rosterApi.ts (the connected roster's Capabilities, so a fix names the command it takes)
 app/src/edit/         editing a Host (ticket 10): form.ts (the draft, what changed, whether it needs a test login),
                       EditPanel.tsx (`:edit`: pull, the form, test login, save), ChangesPanel.tsx (`:changes`: the diff,
                       `:discard`, `:publish`: the message, the commit's hash); adding one (ticket 11): addForm.ts (the draft, checks, Vault item suggestions,
-                      host.add's params), AddPanel.tsx (`:host add`: pull, the form, host key, test login, add), SaveTo.tsx (the "Save to" choice, shared)
-app/src/lock/         the Lock: useVault.ts (lock state, idle lock), idle.ts (idle timer, injectable Clock), LockScreen.tsx
+                      host.add's params), AddPanel.tsx (`:host add`: pull, the form, host key, test login, add), SaveTo.tsx (the "Save to" choice, shared),
+                      pull.ts and PullStatus.tsx (the pull before a form, and what it says), diff.ts (a unified diff's
+                      lines, shared with the Packages' updates)
+app/src/lock/         the Lock: useVault.ts (lock state, idle lock), idle.ts (idle timer, injectable Clock), LockScreen.tsx,
+                      useWorkspaceVault.ts (init.lua's vault settings, then the Lock, `:lock`, `:vault signout`;
+                      SignOutPanel.tsx asks first), forgetOnLock.ts (each workspace's
+                      typed passwords, emptied when it locks), SignIn.tsx and signin.css (signing the vault CLI in from
+                      the lock screen)
 crates/roster-core/src/config/
                       the Lua Config (ticket 21, docs/app/config.md): schema.rs (every option and default), lua.rs
                       (sandboxed Lua 5.4, `require` in the config dir, the `roster` table), locate.rs (file:line
-                      for schema errors), watch.rs (live reload), folders.rs (folders.yml's text, read once to move its Folders in), editor.rs (`:config`: the commented-out
+                      for schema errors), watch.rs (live reload), package_spec.rs (`packages` entries: sources, names,
+                      `dir`; the installer applies the same rules), folders.rs (folders.yml's text, read once to move its Folders in), editor.rs (`:config`: the commented-out
                       starter file, made once, and opening it in the `editor`), mod.rs (load, Loader
                       keeping the last good one)
-app/src/config/       the Config in the frontend (ImportPanel.tsx: `:config import-terminal`'s diff): types.ts (the core's object), apply.ts (→ options, and keys,
-                      Themes, Folders through the registries as "init.lua"), ConfigToast.tsx (errors, warnings)
+app/src/config/       the Config in the frontend (ImportPanel.tsx: `:config import-terminal`'s diff): core.gen.ts (the TypeScript types of what the
+                      core sends: the Config, the import's preview, BackendInfo, errors, an opened Session; generated from the Rust types by
+                      crates/roster-core/tests/ts_types.rs, which fails while it's stale), types.ts (names them for the app), defaults.ts (the core's defaults, until init.lua
+                      loads; fixture.ts is the same for tests), ranges.ts (each number option's bounds, from the core's shape table), apply.ts (→ options, and keys,
+                      Themes, Folders through the registries as "init.lua"), ConfigToast.tsx (errors, warnings),
+                      useConfigReport.ts (each save's Config, the newest wins; `:source`'s init.lua), command.ts (`:config`
+                      and its subcommands), useConfigActions.ts (what each does, the import panel's write),
+                      source.ts (`:source` and the reloaders), vault.ts (init.lua's vault settings for serve)
 examples/init.lua     every option with its default, commented (a Rust test loads it)
 crates/roster-core/src/plugin/
                       Plugins (ticket 23, docs/plugins.md): mod.rs (PluginHost: one thread and Lua state per Plugin,
-                      load/call/event, time budget, strikes, the manifest), runtime.rs (the `roster` module a
-                      Plugin gets, by its grants; ops), permission.rs (what can be granted, the serve allow-list),
+                      load/call/event, time budget, strikes, the manifest, Plugin paths), runtime.rs (a Plugin's
+                      Lua: runs, handlers, timers, requests, and the helpers the modules' bindings use), api/ (the
+                      `roster` module, declared once (Q89): one file per Lua module with its declarations and its
+                      binding, types.rs the data types, generate.rs the reference, stubs, plugin-api.json and
+                      app/src/plugins/core.gen.ts), op.rs (the ops' wire format, `Op`), demo.rs (`:tutor`'s demo
+                      host), permission.rs (what can be granted, the serve allow-list, each permission's words),
                       network.rs (`network:SITE`: the HTTP client, sites, the private-address check; Q97),
                       fair.rs (the Plugins' fair share of serve: 2 calls each, 4 in all, Q112),
                       folder.rs (a Plugin's folders are its own, Q93: `inside` for its code's files, `Storage` for
@@ -126,21 +174,32 @@ crates/roster-core/plugins/hosts/
 crates/roster-core/plugins/folders/
                       the Sidebar's Folders (`builtin:folders`, Q93): section, `:folder`, ␣ a / ␣ A, its Folders in
                       its own data folder; init.lua's handed over as settings, folders.yml's moved in once
-app/src/plugins/      Plugins in the frontend: manager.ts (installed + grants in the State, prompts, ops → registries,
-                      events, timers, the Sessions' output for terminal.read; Packages as `package:NAME`), committed.ts
-                      (a Session's committed lines, from a terminal of its own, for terminal_output; OSC 133 marks for command_done), ops.ts (checks every
-                      op), command.ts (`:plugins`, `:packages`), PluginsPanel.tsx (the prompt, an update's diff,
-                      `:plugins`, `:packages`, a float, notices); backend/fakePackages.ts is the fake Backend's
-app/src/view/status.ts  the status segment and Host-badge registries Plugins add to
+app/src/plugins/      Plugins in the frontend: manager.ts (installed + grants in the State, prompts, loading, calls and
+                      events; Packages as `package:NAME`), opRegistry.ts (each op kind's parse and apply, keyed by the
+                      core's kinds), ops.ts (the ops' types and field checks), shown.ts (notices, the float, the
+                      question, progress), outputFeed.ts (the Sessions' output for terminal.read), core.gen.ts (the
+                      core's tables: events, limits, permissions' words, op kinds; generated), committed.ts
+                      (a Session's committed lines, from a terminal of its own, for terminal_output; OSC 133 marks for command_done), command.ts (`:plugins`, `:packages`), PluginsPanel.tsx (the prompt, an update's diff,
+                      `:plugins`, `:packages`, a float, notices), cmd.ts (which commands a Plugin's line may run),
+                      sessionEvents.ts (Sessions opening and ending as events, and the list open), sessionList.ts
+                      (that list sent to the core); backend/fakePackages.ts is the fake Backend's
+app/src/view/status.ts  the status segment and Host-badge registries Plugins add to; segments.ts (the bar's own segments,
+                      one entry each); StatusBar.tsx draws the bar; SessionBar.tsx (the tmux-style bar of Sessions);
+                      layout.ts (each view mode's pieces and where they go)
+app/src/view/useLayout.ts  the view mode, its layout, the Sidebar's kept choice and the one toggle (`:mode`, `:focus`: commands.ts); ModeHint.tsx
 app/src/view/views.ts   views and Host-details sections as registries (ticket 76): `:view`, the `views` finder, the open
                       view (ViewHost); ViewContent.tsx draws a view or section (text, facts, a table) and the view panel
 app/src/panel/          every panel and view docked, at any width, or full window (ticket 95, Q106): layout.ts (the
                       choice per panel in the State over init.lua's defaults, limits, which panel keys act on),
-                      PanelFrame.tsx (the frame, its draggable edge, the header's button), command.ts (`:panel`)
-app/src/ui/messages.ts  the message line (Q115): which messages are quiet under `ui.messages`, the `:messages` history
-app/src/ui/table.ts     a table's model: sort, updates in place, which rows are on screen; ui/DataTable.tsx draws it
+                      PanelFrame.tsx (the frame, its draggable edge, the header's button), command.ts (`:panel`),
+                      stack.ts (the panels as one stack: open and close with focus given back, Esc closes the top)
+app/src/ui/messages.ts  the message line (Q115): which messages are quiet under `ui.messages`, the `:messages` history;
+                      useMessages.ts (the workspace's line and history)
+app/src/ui/table.ts     a table's model: sort, updates in place, which rows are on screen; ui/DataTable.tsx draws it;
+                      when.ts (an action's `when`, for a table's rows and a graph's nodes alike)
 app/src/graph/          a view's graph (ticket 77): model.ts (data, updates, reach), layout.ts (where nodes go), scene.ts
-                      (collapsed clusters, keys, search, highlight), memory.ts (places in the State), draw.ts (the
+                      (collapsed clusters, keys, search, highlight), memory.ts (places in the State), sizes.ts (sizes on
+                      screen, no imports, for app/e2e), draw.ts (the
                       canvas), lists.ts (the node and edge tables), FilterMenu.tsx (a filter dimension's checkbox menu), GraphView.tsx; plugins/graphOps.ts checks a Plugin's graph
 plugins/mesh, plugins/discover, plugins/topology
                       roster's first-party Plugins (Q80, Q94), installed as Packages with `dir = "plugins/NAME"`;
@@ -150,9 +209,14 @@ examples/plugins/recent-alerts the worked example in docs/plugins.md, a third-pa
                       installs it from a git repo and records app/src/plugins/recent-alerts.transcript.json, which
                       plugins/recentAlerts.test.ts replays against its stand-in, backend/fakeRecentAlerts.ts
 app/src/registry.ts   Registry: entries by id with a source (builtin/init.lua/Plugin), ADR 0006; registries.ts = the app's set
-app/src/commands/     table.ts: the ONE command table (`:` names; keys, the command line and buttons all run these)
-app/src/keymap.ts     keys → command lines, as a registry of bindings; Options (Leader, vim, layout, idle lock)
-app/src/keyboard/     mode.ts (Terminal mode / App mode machine, key sequences), bindings.ts + BindingsPanel (␣ K)
+app/src/commands/     table.ts: the ONE command table (`:` names; keys, the command line and buttons all run these),
+                      CommandContext (each feature's part, declared beside its commands: session/, inventory/, sidebar/,
+                      view/, errors/command.ts, config/command.ts) and AppContext (what any command may ask);
+                      builtins.ts (registerBuiltins: the commands on the app's own objects, for the app, the docs site and the lint)
+app/src/keymap.ts     keys → command lines, as a registry of bindings, and keysFor/keyHint (which keys run a line);
+                      Options (Leader, vim, layout, idle lock)
+app/src/keyboard/     mode.ts (Terminal mode / App mode machine, key sequences), bindings.ts + BindingsPanel.tsx (␣ K),
+                      useAppKeys.ts (the workspace's keys, and focus on the Sidebar's tree in App mode)
 app/src/health/       `:check` with no Host (ticket 49): health.ts (the health section registry, the app's own sections,
                       runHealth; roster's sections come from box.check), shown as the `health` help page
 app/src/help/         `:help` (ticket 37, docs/app/help.md): pages.ts (the help page registry, the pages generated from the
@@ -160,40 +224,75 @@ app/src/help/         `:help` (ticket 37, docs/app/help.md): pages.ts (the help 
                       build time as the help chunk, T213), text.ts (HelpText: loads that chunk on the first :help), tagTable.ts
                       and guideBlocks.ts (the guides' topics, made at build time by scripts/help-plugin.mjs as
                       `virtual:help-tags`, so startup knows them before the text loads), luaStubs.ts (plugin-types' Lua
-                      stubs, written from plugin-api.json), markdown.ts (that Markdown
-                      → blocks, doc.ts), options.ts (config.md's option tables + each value and where it came from),
+                      stubs, written from plugin-api.json), pluginApiDoc.ts (plugin-api's reference, written from
+                      plugin-api.json too, T228), markdown.ts (that Markdown
+                      → blocks, doc.ts), options.ts (config.md's option tables + each value and where it came from), reference.ts (the option
+                      reference from the core's shape table: `:help options`, `:options`),
                       command.ts (`:help`, the `help` finder, HelpView, `:lookup`), lookup.ts (which topic the lookup
-                      keys open: the command typed, the selected result or row, a binding's option, ticket 52), HelpPanel.tsx
+                      keys open: the command typed, the selected result or row, a binding's option, ticket 52), HelpPanel.tsx,
+                      useHelp.ts (help in the workspace, and its layer), grep.ts (`:helpgrep`), highlight.ts (code's
+                      colours, Q90)
 app/src/tutor/        `:tutor` (ticket 55, decision Q76): tutor.ts (the tutorial registry, steps as matches on app events,
                       the progress in the State, each tutorial as a help page, roster's own), demo.ts (the demo
                       Inventory: the fake Backend's made-up Hosts, a Platform with a State in memory, and your running
                       Plugins on the core's demo Plugin host, ticket 66), command.ts,
-                      plugin.ts (`roster.tutor.set`'s tutorial), DemoBanner.tsx; App.tsx keeps your workspace mounted
-                      and hidden behind the demo's
+                      plugin.ts (`roster.tutor.set`'s tutorial), DemoBanner.tsx, useDemo.ts (the demo workspace;
+                      App.tsx keeps yours mounted and hidden behind it)
 app/src/news/         news.ts: what's new after an upgrade, said once in the status line (`newsSeen` in the State, ticket 47)
 app/src/ui/Announce.tsx
                       a live region that speaks a count once it settles (finders, the Picker, help's search; ticket 54)
-app/src/sidebar/      Sidebar.tsx (sections of rows, raised row, cursor), RowMenu.tsx and hostMenu.ts (a Host row's
-                      menu, Q156), sections.ts (section registry, Sessions)
+app/src/sidebar/      model.ts (rows, sections, what a row says, the cursor's moves, folding), Sidebar.tsx (draws them),
+                      commands.ts (its commands: show, move, fold, a row's menu),
+                      RowMenu.tsx and hostMenu.ts (a Host row's menu, Q156), sections.ts (section registry, Sessions),
+                      useSidebarModel.ts (the workspace's sections, cursor and selection), context.ts (what its
+                      commands act on)
 app/src/inventory/    the Live Inventory (ticket 28): commands.ts (`:host add|remove|rename|move`, `:group new|rename|delete`),
-                      ConfirmPanel.tsx (removing a Host asks first), store.ts (a plain roster.yml or a team repo: "saved" or
-                      "a Pending change", T212), FirstRun.tsx (Start your Inventory: a Box with none, through serve)
+                      store.ts (a plain roster.yml or a team repo: "saved" or
+                      "a Pending change", T212), FirstRun.tsx (Start your Inventory: a Box with none, through serve),
+                      useInventory.ts (Pending changes, the pull, outside edits, each change through roster),
+                      useInventories.ts (named Inventories and `:inventory`'s switch; SwitchPanel.tsx asks), actions.ts (the Inventory commands,
+                      the one form slot; commands.ts declares InventoryContext), Forms.tsx (its panels), useForms.ts (the
+                      form slot and the removal question as panels), said.ts (what's said after each change),
+                      switch.ts (whether `:inventory NAME` may switch, and what it asks)
 app/src/folders/      Folders (GLOSSARY), now the built-in Plugin's: folders.ts (the Folder model and the `folders` registry
-                      init.lua's go into), file.ts (folders.yml parsed for the one-time move, the Plugin's settings);
+                      init.lua's go into), file.ts (folders.yml parsed for the one-time move, the Plugin's settings),
+                      builtin.ts (the workspace's link to the built-in Plugin: its settings, and when they change);
                       backend/fakeFolders.ts is the same Plugin for the fake Backend
 app/src/cmdline/      CommandLine.tsx (␣ :, Tab completion from the command table and Host names)
-app/src/theme/        Themes (ticket 09): theme.ts (the colour-token set, AppearanceOptions, terminal colours), themes.ts
+app/src/theme/        Themes (ticket 09): useWorkspaceTheme.ts (the Theme and hints in effect), theme.ts (the colour-token set, AppearanceOptions, terminal colours), themes.ts
                       (Roster dark/light, Gruvbox Dark, Nord, Catppuccin Mocha, Tokyo Night as a registry; docs/app/themes.md),
                       useTheme.ts (tokens → CSS variables, follows the OS), picker.ts (`:theme` and the `themes` finder,
                       ticket 30), contrast.ts (WCAG ratios and OKLab ΔE for the contrast test)
-app/src/chrome/       TitleBar.tsx (frameless window's bar: mark, the toolbar, minimize/maximize/close), toolbar.tsx (the toolbar registry:
-                      visible controls for common commands, decision Q65), Logo.tsx (the Gap orbit mark in Theme colours)
-app/src/ui/           Keys.tsx (keycaps for every key hint), StateDot.tsx (state nodes: shape + words), CloseGlyph.tsx
+app/src/chrome/       WindowFrame.tsx (what every screen sits in), TitleBar.tsx (frameless window's bar: mark, the toolbar, minimize/maximize/close), toolbar.tsx (the toolbar registry:
+                      visible controls for common commands, decision Q65), Logo.tsx and logo.css (the Gap orbit mark in Theme colours)
+app/src/ui/           Keys.tsx (keycaps for every key hint), StateDot.tsx (state nodes' shapes; dot.ts their states and words), CloseGlyph.tsx,
+                      ConfirmPanel.tsx (a question before a change: removing a Host, signing out, switching Inventory),
+                      withCode.tsx (roster's backticks as code),
+                      icons.tsx (row and table action glyphs), useFocusReturn.ts (where the keys go back to), keepFocus.ts,
+                      format.ts (counts, errorText), latest.ts (Latest and useLatest: what code outside React calls back into),
+                      completion.ts (Tab's common prefix, and `matching`: completion's ranking for every command),
+                      hints.ts (whether key hints show), typing.ts (whether a key went to a field), clock.ts (time
+                      for whatever waits; manualClock.ts the tests'), MessageText.tsx (a message's commands, files
+                      and keys in Iosevka or as keycaps; messageParts.ts splits the text), FitBar.tsx (the status
+                      bar that gives way in order), PathText.tsx and path.ts (a path cut by whole folders),
+                      useMediaMatch.ts
 app/src/styles.css    the whole look, written only against Theme tokens (no colour literals); styles.test.ts lints it
                       (no text in `--faint` or `--tone`, nothing under 11 px, :hover only for a real pointer)
 app/assets/           logo-icon.svg (app icon master: Gap orbit, transparent) + the small cut, one per size on its own pixel grid (logo-icon-small-16/20/24.svg, logo-icon-small.svg for 32 px), logo.svg / logo-small.svg (on the Ink tile, for a README or avatar), logo-mark*.svg (Theme colours, no tile), logo-mono*.svg (one colour); `npm run icons` renders src-tauri/icons
 docs/app/design/      taste.md, the interface review, Theme screenshots (themes/, made from the fake Backend)
-app/src/App.tsx       connect → error screen, Lock gate, Standard layout; routes keys through mode.ts to commands
+app/src/App.tsx       wires the workspace's hooks together and draws it: connect → error screen, Lock gate, the layout;
+                      ErrorScreen.tsx (a Backend that can't start: what to fix); main.tsx (picks the Backend and
+                      Platform, loads the Config, renders App); test-*.ts (the tests' setup, fake timeouts, budgets)
+app/src/app/          the workspace's own wiring: useConnection.ts (connecting, Retry, a new Backend in init.lua, the
+                      Host list), usePluginBridge.ts
+                      (Plugins' events and PluginUi), useBuiltins.ts, useWorkspaceLife.ts (start, State, focus), Overlays.tsx
+                      (the command line, a finder, the Picker), PluginLayers.tsx (what Plugins put over the workspace),
+                      infoLine.ts (what `:info` with no Host says)
+app/src/finder/       finders: sources.ts (the finder source registry, ADR 0006: what the Finder overlay can search,
+                      each item a label and the command line Enter runs), search.ts (their scoring, which the docs
+                      site's search ships too), Finder.tsx (the overlay), command.ts (`:finder`)
+app/src/details/useDetails.ts  the Host details panel: which Host it shows, `:info HOST`
+app/src/dev/          FixtureToggle.tsx (the dev page's "Demo data / Worst case" toggle; dev builds only)
 app/scripts/app-*.sh  Windows build loop from WSL (sync, tauri dev, stop)
 app/src/docs-site/    the docs website and PDF (ticket 46, ADR 0008): site.tsx renders every help page with HelpPanel's
                       HelpDoc and help/doc.css, writes tags.json, tag.html, print.html; the build fails on a dead link
@@ -214,7 +313,14 @@ app/scripts/linux-run.sh  the Linux build (ticket 20, docs/app/dev/linux.md): `b
                       `measure` with its own HOME and XDG dirs (opens a window), `report`
 app/e2e/              copy and paste end to end (T158): TerminalView in headless Chromium through Vite, a fake
                       Session and clipboard (`npm run e2e`; docs/app/dev/testing.md, copy-paste-checklist.md);
-                      a Host row's menu placed in the whole app's layout (T173, host-menu.e2e.ts)
+                      a Host row's menu placed in the whole app's layout (T173, host-menu.e2e.ts); dragging in a
+                      Plugin's graph on the real canvas (T179, graph-drag.e2e.ts); lazy `:help` in the built app
+                      with no network (T213, lazy-help.e2e.ts)
+app/e2e/fullstack/    the whole stack (`npm run e2e:full`): the real app in headless Chromium, `@tauri-apps/*` aliased to
+                      tauri/ (the bridge's WebSocket transport), roster-core's bridge example (shell/bridge.rs), `uv run
+                      roster serve` in a sandbox (stack.ts), stand-in Hosts with sshd in containers (Containerfile,
+                      setup.ts); *.full.ts: first run, Sessions and fill, the Inventory's edits, init.lua's reloads, help
+                      and Plugins (docs/app/dev/testing.md#full-stack-the-core-bridge)
 app/src/terminal/hold.ts  a hidden terminal holds its Session's output until it's shown (questions go through)
 app/src/terminal/csiClamp.ts  caps every CSI count at 9999 before an xterm reads a Session's output (T163, Q153); bound to its xterm, guards it (T172)
 app/src/terminal/xtermGuard.ts  what keeps an xterm fed a Session's output going when a handler throws: ED 1 rerun as ED 2, any other sequence skipped, logged once (T172, Q158)
@@ -225,7 +331,8 @@ app/src/terminal/xtermGuard.ts  what keeps an xterm fed a Session's output going
 ```bash
 cd app && npm ci       # once, in WSL
 npm run check          # in app/: tsc --noEmit + eslint + Vitest (UI tests use the fake Backend)
-npm run e2e            # in app/: copy and paste, and the Host row menu, in headless Chromium (npx playwright-core install --only-shell chromium once)
+npm run e2e            # in app/: copy and paste, the Host row menu, a graph drag and lazy :help, in headless Chromium (npx playwright-core install --only-shell chromium once)
+npm run e2e:full       # in app/: the whole stack through roster-core's bridge, with stand-in Hosts (needs podman or docker)
 cargo test             # at the root: roster-core only (WSL can't build app/src-tauri: no webkit2gtk)
 cargo clippy -p roster-core --all-targets -- -D warnings && cargo fmt --check
 ```

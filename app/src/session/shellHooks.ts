@@ -194,7 +194,6 @@ const OSC7_START = "\x1b]7;";
 const squash = (s: string) => s.replace(ESCAPES, "").replace(/\s+/g, "");
 const encoder = new TextEncoder();
 
-/** The bytes as one array. */
 function joined(chunks: readonly Uint8Array[]): Uint8Array {
   const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
   let at = 0;
@@ -302,7 +301,6 @@ export class ShellHooks {
     return new Promise((resolve) => this.waiting.push(resolve));
   }
 
-  /** The Session's size changed. */
   resize(size: { cols: number; rows: number }) {
     this.screen?.resize(size);
   }

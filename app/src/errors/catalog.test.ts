@@ -1,12 +1,33 @@
-// The catalog covers docs/app/errors.md and every code roster's docs/serve-api.md lists.
+// The catalog covers docs/app/errors.md and every code roster's errors.py has (serveContract.ts).
 import { describe, expect, it } from "vitest";
+import { Code, type CodeName } from "../backend/serveContract";
+import { capabilities } from "../backend/capabilities";
 import { BackendCallError } from "../backend/types";
 import { builtinErrorRegistry, builtinErrorRows, problemFromCallError, rowFor } from "./catalog";
 import type { Problem } from "./classify";
 
 const rows = builtinErrorRegistry().list();
-const ROSTER_CODES = [1, 2, 3, 11, 12, 14, 20, 21, 22, 30, 31, 32, 33, 34, 35, 36, 37, 38, 40, 41, 42, 43, 44, 45, 46, 47, 48, 23];
 const p = (code: Problem["code"]): Problem => ({ code, host: "esx", message: "m", details: "d" });
+
+/** roster's codes with no row of their own: none is a way a Session, an edit or the lock screen fails in the
+ * app, so the panel shows roster's message in the "other" row. The command line's own refusals and warnings
+ * (`roster vault bw`/`op`, setup, revoke, check --box, init, add, the named Inventories, Windows Hosts, the
+ * Box key), Discover's (the discover Plugin shows them) and the first run's (its own form). A new code is on
+ * this list or gets a row. */
+const NO_ROW: readonly CodeName[] = [
+  "SCAN_RUNNING", "TOO_MANY_ADDRESSES", "NO_SCAN", "CANT_ADD",
+  "UNKNOWN_INVENTORY", "INVENTORY_TAKEN", "BAD_INVENTORY", "INVENTORIES_UNREADABLE", "OTHER_DOESNT_LOAD",
+  "SAME_MACHINE", "SAME_HOST_NAME", "SAME_ADDRESS", "INDEX_NOT_WRITTEN", "SSH_REFUSES_SCRIPT",
+  "WINDOWS_TYPE_NO_OS", "LOOKS_LIKE_WINDOWS", "NOT_WINDOWS", "KEY_FILE", "CONNECTION_SHARING", "RUN_SUDO_WINDOWS",
+  "MESH_WINDOWS", "NOT_POWERSHELL", "SHARED_BOX_NAME",
+  "BW_NEEDS_WRITE", "BW_NOT_ALLOWED", "BW_REFUSED", "OP_NEEDS_WRITE", "OP_NOT_ALLOWED", "OP_REFUSED",
+  "INVENTORY_THERE", "NOT_AN_INVENTORY", "CLONE_FAILED", "SSH_CONFIG_UNREADABLE", "FOLDER_NOT_WRITABLE",
+  "ADDRESS_TAKEN", "NEEDS_FLAG", "NO_ITEM_FIELDS", "LIST_FAILED", "NO_LISTABLE_VAULT",
+  "BOX_NAME_TAKEN", "KEY_TYPE_FIPS", "MESH_KEY_TYPE", "KEY_TYPE_MISMATCH",
+  "SESSION_FILE_REFUSED", "NO_SESSION", "SESSION_FILE_FAILED",
+  "BOX_BUSY", "ROTATION_PENDING", "KEY_TOO_OLD", "NEW_KEY_REFUSED",
+  "KEY_TYPE_DRIFT", "MESH_KEY_PEER", "KEY_FILE_SHARED",
+];
 
 describe("the error catalog", () => {
   it("has a row for every one of docs/app/errors.md's 21 rows", () => {
@@ -14,10 +35,23 @@ describe("the error catalog", () => {
     for (let n = 1; n <= 21; n++) expect(covered.has(n), `row ${n}`).toBe(true);
   });
 
-  it("gives every roster code and the app's own a row with a place and a fix", () => {
-    for (const code of [...ROSTER_CODES, "dropped", "closed-early", "backend-lost"] as const) {
+  it("gives every roster code a row with a place and a fix, or has it on the list of codes with none", () => {
+    for (const [name, code] of Object.entries(Code) as [CodeName, number][]) {
       const row = rowFor(rows, code);
-      expect(row.codes, String(code)).toContain(code);
+      if (NO_ROW.includes(name)) {
+        expect(row.codes, `${name} (${code}) has a row: take it off NO_ROW`).not.toContain(code);
+        continue;
+      }
+      expect(row.codes, `${name} (${code}) has no row: give it one, or put it on NO_ROW`).toContain(code);
+      expect(row.where.length).toBeGreaterThan(0);
+      expect(row.fix(p(code))).not.toBe("");
+    }
+  });
+
+  it("gives the app's own failures a row with a place and a fix", () => {
+    for (const code of ["dropped", "closed-early", "backend-lost"] as const) {
+      const row = rowFor(rows, code);
+      expect(row.codes, code).toContain(code);
       expect(row.where.length).toBeGreaterThan(0);
       expect(row.fix(p(code))).not.toBe("");
     }
@@ -27,6 +61,14 @@ describe("the error catalog", () => {
     expect(rowFor(rows, 5).row).toBe(114);
     expect(rowFor(rows, 49).row).toBe(115);
     expect(rowFor(rows, 5).fix(p(5))).toContain("Nothing was done");
+  });
+
+  it("says roster setup --host for one Host from API 29, --only before, and --host when it can't know (:help)", () => {
+    // A changed host key (43) names the setup after a reinstall too (#461).
+    const row = rowFor(rows, 43);
+    expect(row.fix(p(43), { caps: capabilities({ api_version: 29 }) })).toContain("run `roster setup --host esx`");
+    expect(row.fix(p(43), { caps: capabilities({ api_version: 28 }) })).toContain("run `roster setup --only esx`");
+    expect(row.fix(p(43))).toContain("run `roster setup --host esx`");
   });
 
   it("gives the host key question's own refusal its row (docs/app/errors.md row 62, ticket 36)", () => {
@@ -168,5 +210,14 @@ describe("the error catalog", () => {
   it("reports a lost roster serve as its own row (21)", () => {
     const e = new BackendCallError("The backend exited (code 1).", null, null, true);
     expect(rowFor(rows, problemFromCallError("esx", e).code).row).toBe(21);
+  });
+
+  it("offers to copy row 1's roster.yml path, but never the words roster prints for a hidden one (#487)", () => {
+    const copyOf = (path: string) => {
+      const action = rowFor(rows, 1).actions.find((a) => a.kind === "copy");
+      return action?.kind === "copy" ? action.text({ ...p(1), data: { path } }) : undefined;
+    };
+    expect(copyOf("/home/you/lab/roster.yml")).toBe("/home/you/lab/roster.yml");
+    expect(copyOf("(not repeated)")).toBeNull();
   });
 });

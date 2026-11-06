@@ -89,7 +89,7 @@ On a source it writes:
 
 | What | Where (Linux) | What's in it |
 |---|---|---|
-| The Mesh key | `~/.ssh/roster-mesh/id_ed25519` | Made on the Host with `ssh-keygen`. The private key never leaves it |
+| The Mesh key | `~/.ssh/roster-mesh/id_ed25519` (`roster_mesh_<type>` for another `key_type:`) | Made on the Host with `ssh-keygen`, of the Host's `key_type:`. The private key never leaves it |
 | Known hosts | `~/.ssh/roster-mesh/known_hosts` | The peers' host keys as this Box recorded them, so ssh checks them strictly |
 | ssh config | `~/.ssh/roster-mesh/config`, included from the top of `~/.ssh/config` | A `Host PEER` block per peer, so `ssh PEER` works |
 | `ROSTER.md` | `~/ROSTER.md` | The Host's peers only, for Claude there; imported from `~/.claude/CLAUDE.md` (an `@~/ROSTER.md` line) when Claude is installed |
@@ -110,7 +110,7 @@ from="10.0.0.2",no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA… roster
 
 **Removing.** Taking a Host out of `roster.yml`, a Link, or `mesh: true` removes exactly this Box's tagged entries for it on the next apply, and a Host that is no longer a source loses its Mesh files (the key, known hosts, config, the two `Include` lines, `ROSTER.md` and the import line). A Host taken out of `roster.yml` altogether can't be reached any more, so its own Mesh files stay there; `roster mesh` says so.
 
-**Rotating.** `roster mesh --rotate HOST` makes a new key on HOST and replaces its line on every peer, in the same run. `--dry-run` shows it first.
+**Rotating.** `roster mesh --rotate HOST` makes a new key on HOST and replaces its line on every peer, in the same run. `--dry-run` shows it first. This Box's own key is another key: `roster setup --rotate` replaces it ([Rotating the Box key](cli-reference.md#rotating-the-box-key-roster-setup---rotate)); neither touches the other's lines.
 
 `roster setup` applies the Mesh after setting up the Box when `roster.yml` has one (not with `--only`, since the Mesh covers every Host). `roster sync` says `mesh out of date` when `roster.yml` changed the Mesh since the last complete apply on this Box; nothing applies it by itself.
 
@@ -142,6 +142,22 @@ left out: dc-01 ([160] os: windows: the Mesh's scripts are sh, which a Windows H
 
 The Mesh never wrote anything on a Windows Host (sh isn't there), so nothing is left to take off one. `mesh.plan` and `mesh.status` give the same reason in `excluded`.
 
+## Hosts with another key type
+
+A source's Mesh key is of the source's own `key_type:` ([FIPS Hosts](adding-hosts.md#fips-hosts)), made on the Host as before, so a FIPS-mode Host (which refuses Ed25519, and may not even make an Ed25519 key) is a source, a peer and a hop like any other. The key's file is `id_ed25519` for the default type, as before, and `roster_mesh_<type>` for the others (`roster_mesh_ecdsa`, `roster_mesh_rsa-4096`), never one of OpenSSH's own names for your keys (`id_rsa`, `id_ecdsa`); its line on each peer is tagged as always (`roster-mesh:SOURCE@OWNER`), whatever its type.
+
+**roster replaces or removes only a Mesh key it made:** one whose `.pub` carries a `roster-mesh:` tag of this Box's (or Inventory's) and whose private key gives that very `.pub` (`ssh-keygen -y`). A file by a Mesh key's name that isn't one (your own `id_ed25519` in a `mesh_dir:`, say) is left where it is on a type change, a cut, a source leaving and `mesh leftovers --remove`, and said: `orion-2: /srv/keys/id_ed25519 isn't a Mesh key roster made (…), so roster left it there; move it out of the Mesh's directory`.
+
+**Changing a source's `key_type:`** makes the Mesh out of date. The next `roster mesh` replaces the source's Mesh key with one of the new type, as `--rotate` would (`orion-3: replace key (ed25519 -> rsa, its key_type)`), puts its line on every peer in place of the old one, and deletes the old key's files. `--dry-run` shows it first. Another Box's (or Inventory's) Mesh key on a shared source is used as it is, whatever its type (T199).
+
+**A source whose key is Ed25519, linked to a peer whose `key_type:` isn't**, gets a warning: a FIPS-mode peer refuses an Ed25519 key, so that Link doesn't log in. The Link is still written (a `key_type:` on a Host that isn't in FIPS mode is a choice, not a refusal):
+
+```text
+warning: [220] orion-2's Mesh key is Ed25519 (its key_type), and fips-01's key_type is ecdsa: if fips-01 is in FIPS mode it refuses that key, so the Link doesn't log in; set key_type: ecdsa on orion-2 too (an ECDSA or RSA key works on both)
+```
+
+Before T245, such a Host was left out of the Mesh (note 200) and a Link `via:` it was dropped; neither happens now.
+
 ## ESXi
 
 ESXi works as a source and as a peer, with everything kept where it survives a reboot:
@@ -155,7 +171,7 @@ ESXi works as a source and as a peer, with everything kept where it survives a r
       esx-02: { ip: 10.0.0.12, user: root, mesh_dir: /vmfs/volumes/datastore2/roster-mesh }
 ```
 
-It cascades like `mesh:` (`defaults` → group → Host; `mesh_dir: null` on a Host goes back to roster's pick), and it works on Linux too, in place of `~/.ssh/roster-mesh`. It must be an absolute path of letters, digits and `. _ - /` (it goes into ssh's config as it is), or `roster.yml` doesn't load. On the Host, roster checks it before writing anything, and leaves the Host pending with the reason when: on ESXi it isn't on a datastore (`/vmfs/volumes/<datastore>/…`), its parent isn't there, roster can't write there, or it already holds a `config`, `known_hosts`, `ROSTER.md` or `id_ed25519` that isn't roster's (give the Mesh a directory of its own; roster never touches those files, not even to remove them). Without `mesh_dir:`, nothing changes. Moving a source to a `mesh_dir:`, to another one, or back to roster's pick (removing `mesh_dir:`) makes a new key there (unless roster's pick still holds the key from before the `mesh_dir:`: roster uses that one again and warns, `orion-2: ~/.ssh/roster-mesh still holds an older Mesh key from before mesh_dir: changed, and roster uses it again: run roster mesh --rotate orion-2 to replace it`), replaces its line on every peer and its `Include` in `~/.ssh/config`; the old directory isn't removed, and `roster mesh` warns about it (`esx-02: /vmfs/volumes/datastore2/roster-mesh holds an earlier Mesh key that roster no longer uses`) until you delete it by hand. That holds when the source also stops being one in the same edit (`mesh: false`, or its Links gone): roster goes by the directory the `Include` after its mark in `~/.ssh/config` names, the one in use until now, so an old `mesh_dir:` is warned about and kept, roster's own default directory (`~/.ssh/roster-mesh`, a datastore's `.roster-mesh`) is removed, and the `Include` goes either way. Moving a Host to another group keeps the `mesh_dir:` it had (roster writes it on the Host); a Host with none takes the new group's, as for `mesh:`.
+It cascades like `mesh:` (`defaults` → group → Host; `mesh_dir: null` on a Host goes back to roster's pick), and it works on Linux too, in place of `~/.ssh/roster-mesh`. It must be an absolute path of letters, digits and `. _ - /` (it goes into ssh's config as it is), or `roster.yml` doesn't load. On the Host, roster checks it before writing anything, and leaves the Host pending with the reason when: on ESXi it isn't on a datastore (`/vmfs/volumes/<datastore>/…`), its parent isn't there, roster can't write there, or it already holds a `config`, `known_hosts`, `ROSTER.md` or a Mesh key's file (`id_ed25519`, `roster_mesh_ecdsa`, …) that isn't roster's (give the Mesh a directory of its own; roster never touches those files, not even to remove them). Without `mesh_dir:`, nothing changes. Moving a source to a `mesh_dir:`, to another one, or back to roster's pick (removing `mesh_dir:`) makes a new key there (unless roster's pick still holds the key from before the `mesh_dir:`: roster uses that one again and warns, `orion-2: ~/.ssh/roster-mesh still holds an older Mesh key from before mesh_dir: changed, and roster uses it again: run roster mesh --rotate orion-2 to replace it`), replaces its line on every peer and its `Include` in `~/.ssh/config`; the old directory isn't removed, and `roster mesh` warns about it (`esx-02: /vmfs/volumes/datastore2/roster-mesh holds an earlier Mesh key that roster no longer uses`) until you delete it by hand. That holds when the source also stops being one in the same edit (`mesh: false`, or its Links gone): roster goes by the directory the `Include` after its mark in `~/.ssh/config` names, the one in use until now, so an old `mesh_dir:` is warned about and kept, roster's own default directory (`~/.ssh/roster-mesh`, a datastore's `.roster-mesh`) is removed, and the `Include` goes either way. Moving a Host to another group keeps the `mesh_dir:` it had (roster writes it on the Host); a Host with none takes the new group's, as for `mesh:`.
 
 ## Appliances
 

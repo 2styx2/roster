@@ -3,11 +3,13 @@
 // with only the functions its grants give (as the core's), and functions it hands over come back
 // as `{ handler: N }`. Errors name the Plugin and `init.lua`, a load error or a third error
 // disables it, as in the core. The built-in `hosts` Plugin is here as the core's Lua is.
-import PERMISSIONS from "../../../crates/roster-core/tests/fixtures/plugin-permissions.json";
 import { PLUGIN_COMMANDS, ROSTER_ONLY } from "../plugins/cmd";
+import { api_version as pluginApiVersion } from "../../../crates/roster-core/tests/fixtures/plugin-api.json?pick=api_version,commands,roster_only,tags";
+import { CORE } from "../plugins/core.gen";
 import { fakeFoldersPlugin } from "./fakeFolders";
-import { redact, redactError } from "./redact";
-import { BackendCallError, PLUGIN_EVENTS, type Host, type OpenSession, type PluginEventName, type PluginCaller, type PluginData, type PluginManifest, type PluginReply } from "./types";
+import { PluginServeError, pluginServeError, redact } from "./redact";
+import { BackendCallError, type Host, type OpenSession, type PluginEventName, type PluginCallBy, type PluginData, type PluginLoaded, type PluginManifest, type PluginReply } from "./types";
+import { errorText } from "../ui/format";
 
 type Fn = (arg: Record<string, unknown>) => unknown;
 type Spec = Record<string, unknown>;
@@ -90,7 +92,7 @@ export interface FakeRoster {
    * `request` doesn't wait: `done` runs later, as the core's does (decision Q103). */
   serve?: {
     call(method: string, params?: Spec): unknown;
-    request(method: string, params: Spec | null | undefined, done: (result: unknown, err?: string) => void): void;
+    request(method: string, params: Spec | null | undefined, done: (result: unknown, err?: string | PluginServeError) => void): void;
   };
 }
 
@@ -103,9 +105,7 @@ interface Reads {
 /** A UI piece the app draws: set, remove and the reads. */
 type Piece = Reads & { set(id: string, spec: Spec): void; remove(id: string): void };
 
-/** As runtime.rs's COMPLETE_API: from this api a removal of what the Plugin never added is an error. */
-const COMPLETE_API = 5;
-const KEY_CONTEXTS = ["leader", "list", "list_vim"];
+const { complete_api: COMPLETE_API, key_contexts: KEY_CONTEXTS, limits: LIMITS, permissions: PERMISSIONS } = CORE;
 
 /** A copy of a Plugin's value, as runtime.rs's copy: plain tables copied all the way down,
  * functions the same functions. */
@@ -125,43 +125,13 @@ export interface FakePlugin {
   load(roster: FakeRoster): void;
 }
 
-const RISKS: Record<string, string> = {
-  "inventory.write": "Can change Hosts. The changes stay Pending until you review and Publish them.",
-  "sessions.open": "Can open Sessions on your Hosts.",
-  "terminal.read":
-    "Sees everything your Sessions print, including anything a server echoes back. A password you type at a prompt that echoes it would be visible too.",
-  "terminal.write": "Can type into your open Sessions, as if you typed it: it can run commands on your servers.",
-};
-const SUMMARIES: Record<string, string> = {
-  "inventory.read": "Read your Hosts and their Login references (never a password)",
-  "inventory.write": "Change Hosts, as Pending changes",
-  "sessions.open": "Open Sessions",
-  "terminal.read": "Read what your Sessions print",
-  "terminal.write": "Type into your Sessions",
-};
+/** The permissions with words of their own; every other `serve:` method has the generic ones. */
+const WORDS: Readonly<Record<string, { summary: string; risk: string | null } | undefined>> = PERMISSIONS.words;
 
-/** The serve methods whose summary and risk say more than "Call roster's …" (permission.rs). */
-const SERVE: Record<string, { summary: string; risk: string | null } | undefined> = PERMISSIONS.serve;
+const EVENT_NEEDS = Object.fromEntries(CORE.events.map((e) => [e.name, e.needs as readonly string[]])) as Record<PluginEventName, readonly string[]>;
 
-const EVENT_NEEDS: Record<PluginEventName, string[]> = {
-  lock: [],
-  unlock: [],
-  host_selected: ["inventory.read", "terminal.read"],
-  session_open: ["inventory.read", "terminal.read"],
-  session_exit: ["inventory.read", "terminal.read"],
-  inventory_changed: ["inventory.read"],
-  terminal_output: ["terminal.read"],
-  command_done: ["terminal.read"],
-  job_progress: ["serve:mesh.job", "serve:discover.status", "serve:host.check_job"],
-};
-
-/** As runtime.rs's JOB_KINDS: a `job_progress` reaches a Plugin only for a kind of job it may ask
- * about (decision Q112f). */
-const JOB_KINDS: Record<string, string> = {
-  mesh: "serve:mesh.job",
-  discover: "serve:discover.status",
-  check: "serve:host.check_job",
-};
+/** A `job_progress` reaches a Plugin only for a kind of job it may ask about (decision Q112f). */
+const JOB_KINDS: Readonly<Record<string, string | undefined>> = CORE.job_kinds;
 const hearsThis = (name: PluginEventName, payload: Record<string, unknown>, grants: Set<string>): boolean => {
   if (name !== "job_progress") return true;
   const needs = typeof payload.kind === "string" ? JOB_KINDS[payload.kind] : undefined;
@@ -173,24 +143,19 @@ const isName = (s: string) => /^[a-z0-9_.]*$/.test(s);
 /** Whether a Plugin may ever call `method`, as permission.rs's serve_method_allowed. */
 function serveMethodAllowed(method: string): boolean {
   return (
-    PERMISSIONS.serve_methods.includes(method) ||
+    (PERMISSIONS.serve_methods as readonly string[]).includes(method) ||
     PERMISSIONS.serve_prefixes.some((p) => method.length > p.length && method.startsWith(p) && isName(method.slice(p.length)))
   );
 }
 
 /** Whether a Plugin may call `method` only in the user's call, as permission.rs's serve_user_only:
  * every method the install prompt flags (decision Q100). */
-const userOnlyMethod = (method: string): boolean => !PERMISSIONS.serve_reads.includes(method);
+const userOnlyMethod = (method: string): boolean => !(PERMISSIONS.serve_reads as readonly string[]).includes(method);
 
 /** As runtime.rs's own_command: one the Plugin added that no built-in has (the app's, as it last
  * said, the ones a Plugin may run, and the ones that change trust or writes, issue #184). */
-const ownCommand = (r: { commands: Set<string> }, word: string, builtins: ReadonlySet<string> | null): boolean =>
-  r.commands.has(word) && !ROSTER_ONLY.includes(word) && !PLUGIN_COMMANDS.some((c) => c.name === word) && builtins !== null && !builtins.has(word);
-/** As runtime.rs's not_yet: the Plugin's command can't run before the app has said its built-ins. */
-const notYet = (r: { commands: Set<string> }, word: string, builtins: ReadonlySet<string> | null): string | null =>
-  builtins === null && r.commands.has(word) && !ROSTER_ONLY.includes(word) && !PLUGIN_COMMANDS.some((c) => c.name === word)
-    ? `:${word} can't run yet: the app hasn't told roster its own commands`
-    : null;
+const ownCommand = (r: { commands: Set<string> }, word: string, builtins: ReadonlySet<string>): boolean =>
+  r.commands.has(word) && !ROSTER_ONLY.includes(word) && !PLUGIN_COMMANDS.some((c) => c.name === word) && !builtins.has(word);
 
 // ------------------------------------------------------------------ network:<site> (Q97)
 // As roster-core's plugin/network.rs Site::parse, on the same table of cases.
@@ -202,8 +167,16 @@ const isDomain = (s: string) => {
 };
 const isIpv4 = (s: string) => /^(0|[1-9][0-9]{0,2})(\.(0|[1-9][0-9]{0,2})){3}$/.test(s) && s.split(".").every((n) => Number(n) <= 255);
 
-/** An IPv6 address's eight groups, or null. */
-function ipv6Groups(s: string): number[] | null {
+/** An IPv6 address's eight groups, or null. Its last 32 bits may be written as an IPv4 address
+ * (`::ffff:10.0.0.1`). */
+function ipv6Groups(text: string): number[] | null {
+  let s = text;
+  const dotted = /^(.*:)(\d+\.\d+\.\d+\.\d+)$/.exec(s);
+  if (dotted) {
+    if (!isIpv4(dotted[2] ?? "")) return null;
+    const [a = 0, b = 0, c = 0, d = 0] = (dotted[2] ?? "").split(".").map(Number);
+    s = `${dotted[1] ?? ""}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
   if (!/^[0-9a-f:]+$/.test(s)) return null;
   const halves = s.split("::");
   if (halves.length > 2) return null;
@@ -234,6 +207,7 @@ function ipv6Text(g: number[]): string {
   return best < 0 ? hex(g) : `${hex(g.slice(0, best))}::${hex(g.slice(best + len))}`;
 }
 
+// As network.rs's is_public, on the same table of cases (tests/fixtures/addresses.json).
 function v4Public(s: string): boolean {
   const [a = 0, b = 0, c = 0] = s.split(".").map(Number);
   return !(
@@ -242,6 +216,25 @@ function v4Public(s: string): boolean {
     (a === 192 && b === 168) || (a === 198 && (b === 18 || b === 19)) || (a === 198 && b === 51 && c === 100) ||
     (a === 203 && b === 0 && c === 113) || a >= 224
   );
+}
+
+function v6Public(g: number[]): boolean {
+  const [g0 = 0, g1 = 0, g2 = 0] = g;
+  const v4 = (hi: number, lo: number) => [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join(".");
+  const [g6 = 0, g7 = 0] = g.slice(6);
+  const zeros = (n: number) => g.slice(0, n).every((x) => x === 0);
+  if (zeros(5) && g[5] === 0xffff) return v4Public(v4(g6, g7)); // mapped
+  if (zeros(6) && !(g6 === 0 && g7 <= 1)) return v4Public(v4(g6, g7)); // compatible
+  if (g0 === 0x64 && g1 === 0xff9b && g.slice(2, 6).every((x) => x === 0)) return v4Public(v4(g6, g7)); // NAT64
+  if (g0 === 0x2002) return v4Public(v4(g1, g2)); // 6to4
+  return (g0 & 0xe000) === 0x2000 && !(g0 === 0x2001 && (g1 === 0x0db8 || g1 < 0x0200));
+}
+
+/** Whether `text` (an IPv4 or IPv6 address) is a public internet address; null if it isn't one. */
+export function publicAddress(text: string): boolean | null {
+  if (isIpv4(text)) return v4Public(text);
+  const g = ipv6Groups(text);
+  return g ? v6Public(g) : null;
 }
 
 interface Site {
@@ -297,8 +290,7 @@ function parseSite(text: string): Site | string {
     const g = ipv6Groups(addr);
     if (!g) return bad("that isn't an IPv6 address");
     if (ipv6Text(g) !== addr) return bad(`write the address as [${ipv6Text(g)}]`);
-    const [g0 = 0, g1 = 0] = g;
-    inside = (g0 & 0xe000) !== 0x2000 || (g0 === 0x2001 && (g1 === 0x0db8 || g1 < 0x0200));
+    inside = !v6Public(g);
     host = `[${addr}]`;
     kind = "ip";
   } else {
@@ -366,7 +358,7 @@ function sitesProblem(permissions: readonly string[]): string | null {
 
 /** Why the core refuses `p` in a manifest (permission.rs's Permission::parse), or null. */
 function permissionProblem(p: string): string | null {
-  if (PERMISSIONS.permissions.includes(p)) return null;
+  if (p in WORDS && !p.startsWith("serve:")) return null;
   if (p === "network") return `"network" names the site it may reach: "network:api.example.com", one for each site`;
   if (p.startsWith("network:")) {
     const site = parseSite(p.slice(8));
@@ -401,16 +393,10 @@ export function described(m: FakePlugin["manifest"]): PluginManifest {
       if (site && typeof site !== "string") {
         return { name, summary: networkSummary(site), risk: networkRisk(site) };
       }
-      return {
-      name,
-      summary: SUMMARIES[name] ?? SERVE[name]?.summary ?? `Call roster's ${name.replace(/^serve:/, "")}`,
-      risk:
-        RISKS[name] ??
-        SERVE[name]?.risk ??
-        (name.startsWith("serve:") && !PERMISSIONS.serve_reads.includes(name.slice(6))
-          ? `Can run roster's ${name.slice(6)}, which can change things on your Hosts or in the Inventory.`
-          : null),
-      };
+      const words = WORDS[name];
+      const method = name.startsWith("serve:") ? name.slice(6) : null;
+      const generic = method === null ? null : { summary: PERMISSIONS.serve_summary.replace("{method}", method), risk: userOnlyMethod(method) ? PERMISSIONS.serve_risk.replace("{method}", method) : null };
+      return { name, summary: words?.summary || (generic?.summary ?? name), risk: words ? words.risk : (generic?.risk ?? null) };
     }),
   };
 }
@@ -418,7 +404,7 @@ export function described(m: FakePlugin["manifest"]): PluginManifest {
 /** A file name `roster.storage` takes, as folder.rs checks it: a plain name, never a path. */
 function storageName(name: string, fn: string): string {
   if (!name) throw new Error(`roster.storage.${fn}: a file needs a name, like "folders.json"`);
-  if (name.length > 100) throw new Error(`roster.storage.${fn}: the name is over 100 characters`);
+  if (name.length > LIMITS.storage_name) throw new Error(`roster.storage.${fn}: the name is over ${LIMITS.storage_name} characters`);
   if (!/^[A-Za-z0-9_.-]+$/.test(name) || name.startsWith(".")) {
     throw new Error(`roster.storage.${fn}: ${JSON.stringify(name)} isn't a file name: letters, digits, - _ and . only, not starting with . (no folders, no paths)`);
   }
@@ -426,7 +412,7 @@ function storageName(name: string, fn: string): string {
 }
 
 /** The status bar's Host count, as crates/roster-core/plugins/hosts/init.lua writes it. */
-export const fakeHostsPlugin: FakePlugin = {
+const fakeHostsPlugin: FakePlugin = {
   manifest: { name: "hosts", version: "1.0.0", description: "The status bar's Host count", author: "roster", api: 2, permissions: ["inventory.read"] },
   load(roster) {
     const inventory = roster.inventory;
@@ -460,8 +446,7 @@ interface Running {
   own: Map<string, Map<string, unknown>>;
 }
 
-/** How many `roster.serve.request` calls a Plugin may have waiting, as runtime.rs's. */
-const MAX_SERVE_REQUESTS = 8;
+const MAX_SERVE_REQUESTS = LIMITS.max_serve_requests;
 
 export function fakePluginHost(
   plugins: Record<string, FakePlugin>,
@@ -475,16 +460,13 @@ export function fakePluginHost(
 ): {
   pluginManifest(path: string): Promise<{ manifest: PluginManifest; dir: string }>;
   pluginTypes(path: string): Promise<string>;
-  pluginLoad(path: string, grants: readonly string[], settings?: Record<string, unknown> | null): Promise<{ manifest: PluginManifest; dir: string; reply: PluginReply }>;
+  pluginLoad(path: string, grants: readonly string[], settings?: Record<string, unknown> | null, builtins?: readonly string[]): Promise<PluginLoaded>;
   pluginForget(plugin: string): Promise<boolean>;
-  pluginBuiltins(names: readonly string[]): Promise<void>;
-  /** As a core host built anew: it hasn't been told roster's own commands (tests use it). */
-  pluginForgetBuiltins(): void;
   pluginData(names: readonly string[]): Promise<Record<string, PluginData>>;
   /** What each Plugin keeps in its data folder (tests look). */
   pluginFiles(plugin: string): Map<string, string>;
-  pluginCall(plugin: string, handler: number, args: unknown, user?: PluginCaller): Promise<PluginReply>;
-  pluginEvent(name: PluginEventName, payload: Record<string, unknown>): Promise<PluginReply[]>;
+  pluginCall(plugin: string, handler: number, args: unknown, user?: PluginCallBy, builtins?: readonly string[]): Promise<PluginReply>;
+  pluginEvent(name: PluginEventName, payload: Record<string, unknown>, builtins?: readonly string[]): Promise<PluginReply[]>;
   pluginSessions(open: OpenSession[]): Promise<void>;
   pluginUnload(plugin: string): Promise<boolean>;
   onPluginReply(onReply: (reply: PluginReply) => void): () => void;
@@ -506,8 +488,11 @@ export function fakePluginHost(
    * section's check): never a user's call. */
   const quiet = new Set<number>();
   const running = new Map<string, Running>();
-  /** The app's built-in commands, as it last said (PluginHost::set_builtins): null until it has. */
-  let builtins: ReadonlySet<string> | null = null;
+  /** The app's built-in commands, as the last load, call or event carried them. */
+  let builtins: ReadonlySet<string> = new Set();
+  const told = (names: readonly string[] | undefined) => {
+    if (names) builtins = new Set(names);
+  };
   let next = 0;
   let ops: unknown[] = [];
   /** Whether the run is a call the user started: only then may a Plugin copy. */
@@ -568,7 +553,7 @@ export function fakePluginHost(
     });
     /** As runtime.rs's key_context: always checked by the reads, by set and del from api 5. */
     const keyContext = (what: string, context: string, always: boolean) => {
-      if (KEY_CONTEXTS.includes(context)) return true;
+      if ((KEY_CONTEXTS as readonly string[]).includes(context)) return true;
       if (always || r.manifest.api >= COMPLETE_API) throw new Error(`${what}: ${JSON.stringify(context)} isn't a key context (a Plugin binds keys in leader, list or list_vim)`);
       return false;
     };
@@ -599,7 +584,7 @@ export function fakePluginHost(
     const detailsIds = () =>
       [...r.own].filter(([k, m]) => k.startsWith("details:") && m.size > 0).map(([k]) => k.slice("details:".length)).sort();
     const m: FakeRoster = {
-      api_version: 6,
+      api_version: pluginApiVersion,
       plugin: { name: r.manifest.name, version: r.manifest.version, permissions: [...r.grants], config },
       commands: {
         add: (name, spec) => {
@@ -733,15 +718,13 @@ export function fakePluginHost(
       cmdline: (text) => {
         userOnly("roster.cmdline");
         const word = text.trim().split(/\s+/)[0] ?? "";
-        const why = notYet(r, word, builtins);
-        if (why) throw new Error(`roster.cmdline: ${why}`);
         if (!ownCommand(r, word, builtins)) throw new Error(`roster.cmdline: ${JSON.stringify(word)} isn't one of your commands`);
         push({ op: "cmdline", text });
       },
       storage: {
         read: (name) => filesOf(r.manifest.name).get(storageName(name, "read")) ?? null,
         write: (name, text) => {
-          if (text.length > 1024 * 1024) throw new Error(`roster.storage.write: ${name} would be ${text.length} bytes: a file holds at most 1 MB (1048576 bytes)`);
+          if (text.length > LIMITS.storage_file) throw new Error(`roster.storage.write: ${name} would be ${text.length} bytes: a file holds at most 1 MB (${LIMITS.storage_file} bytes)`);
           filesOf(r.manifest.name).set(storageName(name, "write"), text);
         },
         list: () => [...filesOf(r.manifest.name).keys()].sort(),
@@ -771,8 +754,6 @@ export function fakePluginHost(
         userOnly("roster.cmd");
         const word = line.trim().split(/\s+/)[0] ?? "";
         if (!word) throw new Error('roster.cmd: which command? (a line such as "finder alerts")');
-        const why = notYet(r, word, builtins);
-        if (why) throw new Error(`roster.cmd: ${why}`);
         if (!ownCommand(r, word, builtins)) {
           const rule = PLUGIN_COMMANDS.find((c) => c.name === word);
           if (!rule) throw new Error(`roster.cmd: :${word} isn't one a Plugin may run (its own commands, and ${PLUGIN_COMMANDS.map((c) => c.name).join(", ")})`);
@@ -829,8 +810,6 @@ export function fakePluginHost(
     // As runtime.rs: `roster.serve` with any serve: grant, each call checked against its own.
     if ([...r.grants].some((g) => g.startsWith("serve:"))) {
       // serve's answers and errors with their cmd:/env: references cut, as runtime.rs's redacted (Q92).
-      const errorText = (e: unknown) =>
-        redactError(e instanceof BackendCallError && e.code !== null ? `${e.message} (code ${e.code})` : e instanceof Error ? e.message : String(e));
       m.serve = {
         call: (method, params = {}) => {
           if (!r.grants.has(`serve:${method}`)) throw new Error(`roster.serve.call: not granted (serve:${method})`);
@@ -839,8 +818,8 @@ export function fakePluginHost(
             return redact(serve(method, params));
           } catch (e) {
             // No `cause`: serve's own error is uncut, and a Plugin could read it there (Q92).
-            // eslint-disable-next-line preserve-caught-error -- the cut message is all a Plugin gets
-            throw new Error(`roster.serve.call ${method}: ${errorText(e)}`);
+            const failed = pluginServeError(`roster.serve.call ${method}`, e);
+            throw typeof failed === "string" ? new Error(failed) : failed;
           }
         },
         // serve is asked now (the core's thread asks at once); `done` runs later, as a call of its
@@ -857,7 +836,8 @@ export function fakePluginHost(
             const result = redact(serve(method, params ?? {}));
             answer = () => done(result ?? undefined);
           } catch (e) {
-            answer = () => done(undefined, `${what}: ${errorText(e)}`);
+            const failed = pluginServeError(what, e);
+            answer = () => done(undefined, failed);
           }
           later(r, answer);
         },
@@ -887,13 +867,13 @@ export function fakePluginHost(
 
   /** As runtime.rs's add_timer: the same floors, ceiling and op. */
   const timer = (r: Running, what: string, ms: number, f: () => void, every: boolean): number => {
-    if (!Number.isFinite(ms) || ms < 0 || ms > 2_147_483_647) throw new Error(`${what}: ms must be a number of milliseconds from 0 to 2147483647`);
-    if (every && ms < 1000) throw new Error(`${what}: at least 1000 ms between runs (use roster.defer for once, soon)`);
-    if (r.timers.size >= 100) throw new Error(`${what}: more than 100 timers waiting at once (roster.cancel the ones you don't need)`);
+    if (!Number.isFinite(ms) || ms < 0 || ms > LIMITS.timer_max_ms) throw new Error(`${what}: ms must be a number of milliseconds from 0 to ${LIMITS.timer_max_ms}`);
+    if (every && ms < LIMITS.every_min_ms) throw new Error(`${what}: at least ${LIMITS.every_min_ms} ms between runs (use roster.defer for once, soon)`);
+    if (r.timers.size >= LIMITS.max_timers) throw new Error(`${what}: more than ${LIMITS.max_timers} timers waiting at once (roster.cancel the ones you don't need)`);
     const id = ++next;
     r.handlers.set(id, () => f());
     r.timers.set(id, every);
-    ops.push({ op: "timer", id: String(id), ms: Math.max(50, Math.ceil(ms)), every, run: { handler: id } });
+    ops.push({ op: "timer", id: String(id), ms: Math.max(LIMITS.defer_min_ms, Math.ceil(ms)), every, run: { handler: id } });
     return id;
   };
 
@@ -903,7 +883,7 @@ export function fakePluginHost(
     const before = new Map([...r.own].map(([k, m]) => [k, new Map(m)]));
     // As mod.rs's settle: which events it listens for, when that's news (always at load).
     const listens = (): PluginEventName[] | null => {
-      const now = PLUGIN_EVENTS.filter((e) => (r.listeners.get(e)?.length ?? 0) > 0);
+      const now = CORE.events.map((e) => e.name).filter((e) => (r.listeners.get(e)?.length ?? 0) > 0);
       if (!loading && now.join() === r.told) return null;
       r.told = now.join();
       return now;
@@ -913,9 +893,9 @@ export function fakePluginHost(
       return { plugin: name, result: data(r, result) ?? null, ops, error: null, disabled: null, listens: listens() };
     } catch (e) {
       r.own = before;
-      const message = e instanceof Error ? e.message : String(e);
-      r.errors += loading ? 3 : 1;
-      if (r.errors >= 3) r.disabled = loading ? `it failed to load: ${name}: init.lua: ${message}` : `it failed ${r.errors} times`;
+      const message = errorText(e);
+      r.errors += loading ? LIMITS.strikes : 1;
+      if (r.errors >= LIMITS.strikes) r.disabled = loading ? `it failed to load: ${name}: init.lua: ${message}` : `it failed ${r.errors} times`;
       return { plugin: name, result: null, ops: [], error: { plugin: name, file: "init.lua", line: null, message }, disabled: r.disabled, listens: loading ? null : listens() };
     }
   };
@@ -929,7 +909,8 @@ export function fakePluginHost(
     async pluginManifest(path) {
       return { manifest: described(find(path).manifest), dir: path };
     },
-    async pluginLoad(path, grants, settings) {
+    async pluginLoad(path, grants, settings, names) {
+      told(names);
       const p = find(path);
       const manifest = described(p.manifest);
       const r: Running = {
@@ -946,11 +927,12 @@ export function fakePluginHost(
         own: new Map(),
       };
       running.set(manifest.name, r);
-      const config = path.startsWith("builtin:") && settings ? settings : configs.get(path);
+      const config = path.startsWith(CORE.builtin_prefix) && settings ? settings : configs.get(path);
       const reply = run(manifest.name, r, () => p.load(module(r, config)), true);
-      return { manifest, dir: path, reply };
+      return { manifest, dir: path, reply, refused: [] };
     },
-    async pluginCall(plugin, handler, args, user = true) {
+    async pluginCall(plugin, handler, args, user = "user", names) {
+      told(names);
       const r = running.get(plugin);
       if (!r || r.disabled) {
         const message = r?.disabled ? `it's disabled: ${r.disabled}` : "it isn't loaded";
@@ -964,7 +946,7 @@ export function fakePluginHost(
         r.timers.delete(handler);
         r.handlers.delete(handler);
       }
-      userCall = user !== false && timer === undefined && !quiet.has(handler);
+      userCall = user !== "app" && timer === undefined && !quiet.has(handler);
       carried = userCall && user === "carried";
       try {
         return run(plugin, r, () => f((args ?? {}) as Record<string, unknown>));
@@ -972,7 +954,8 @@ export function fakePluginHost(
         [userCall, carried] = [false, false];
       }
     },
-    async pluginEvent(name, payload) {
+    async pluginEvent(name, payload, names) {
+      told(names);
       const replies: PluginReply[] = [];
       // serve's own text (job_progress) is cut as its answers are, as runtime.rs's heard_payload.
       const heard = name === "job_progress" ? redact(payload) : payload;
@@ -991,12 +974,6 @@ export function fakePluginHost(
     },
     async pluginUnload(plugin) {
       return running.delete(plugin);
-    },
-    async pluginBuiltins(names) {
-      builtins = new Set(names);
-    },
-    pluginForgetBuiltins() {
-      builtins = null;
     },
     async pluginForget(plugin) {
       return files.delete(plugin);

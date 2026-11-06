@@ -5,7 +5,9 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{Event, Limits, OpenSession, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
@@ -18,7 +20,7 @@ struct CountingServe {
 }
 
 impl Serve for CountingServe {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
         self.calls.lock().unwrap().push(method.to_string());
         match method {
             "hosts.list" => Ok(json!({
@@ -30,7 +32,7 @@ impl Serve for CountingServe {
             })),
             "host.update" => Ok(json!({ "host": "esx-02", "changed": true })),
             "mesh.cut" => Ok(json!({ "host": "esx-02", "confirmed": [], "pending": {} })),
-            other => Err(format!("unknown method '{other}' (code -32601)")),
+            other => Err(CallError::rpc(-32601, format!("unknown method '{other}'"))),
         }
     }
 }
@@ -274,7 +276,7 @@ roster.on("inventory_changed", function() roster.inventory.hosts() end)
         .find(|o| o["op"] == "command" && o["name"] == "note")
         .and_then(|o| o["run"]["handler"].as_u64())
         .unwrap();
-    ok(&host.call("reader", run, json!({ "words": [] })));
+    ok(&host.call("reader", run, json!({ "words": [] }), By::User));
     assert_eq!(
         serve.count("hosts.list"),
         2,
@@ -313,8 +315,11 @@ end)
 fn an_inventory_request_that_fails_says_why_in_done() {
     struct Down;
     impl Serve for Down {
-        fn call(&self, _method: &str, _params: Value) -> Result<Value, String> {
-            Err("roster.yml is busy: changes.publish is still running (code 4)".into())
+        fn call(&self, _method: &str, _params: Value) -> Result<Value, CallError> {
+            Err(CallError::rpc(
+                4,
+                "roster.yml is busy: changes.publish is still running",
+            ))
         }
     }
     let host = PluginHost::new(Arc::new(Down), Limits::default());
@@ -356,7 +361,7 @@ end })
         .find(|o| o["op"] == "command" && o["name"] == "cut")
         .and_then(|o| o["run"]["handler"].as_u64())
         .unwrap();
-    ok(&host.call("reader", run, json!({ "words": [] })));
+    ok(&host.call("reader", run, json!({ "words": [] }), By::User));
     assert_eq!(
         serve.count("hosts.list"),
         2,

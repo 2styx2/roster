@@ -2,13 +2,18 @@
 
 One repo, two halves: the Python CLI at the root (`src/roster/`, `tests/`) and the desktop app, the roster app, in `app/` (frontend `app/src/`, Tauri shell `app/src-tauri/`) with its Rust core in `crates/roster-core/`. Decision Q56 and ADR 0007 explain the layout.
 
+## Where code goes
+
+- **Placing code:** before adding a module, a file roster keeps, a serve method, a command, a Plugin op, or any value two modules or languages share, read `docs/architecture.md`: each half's layers, the "Where new code goes" table, the generated files. Code goes in its fact's owner; a cross-language value is generated or checked, never copied.
+- The layers are tests: `tests/test_layers.py` (a new Python module needs its layer there and in the doc), `app/src/architecture.test.ts`, `app/src/docs-site/build.test.ts`, `crates/roster-core/tests/layers.rs`. Fix the structure they name, not the test.
+
 ## The CLI
 
 - Module map: `docs/development.md` (one line per file in `src/roster/`). Open only the module it points you to.
 - How hosts, logins and vault items are named and added: `docs/adding-hosts.md`; setting up a box: `docs/new-box.md`.
 - The live inventory is the infra repo's `roster.yml` (`~/infra`), not this repo; `examples/` holds the template.
 - Vault: `roster vault bw -- <bw args>` runs the Bitwarden CLI with this box's session file, e.g. `roster vault bw -- list items --search proxmox`.
-- Checks (same as CI): `uv run ruff check src tests scripts app/scripts` and `uv run pytest`. Tests use the stand-in CLIs in `tests/fakes/`.
+- Checks (same as CI): `uv run ruff check src tests scripts app/scripts`, `uv run pyright` and `uv run pytest`. Tests use the stand-in CLIs in `tests/fakes/`.
 
 ## The app
 
@@ -17,7 +22,7 @@ One repo, two halves: the Python CLI at the root (`src/roster/`, `tests/`) and t
 - Work comes from GitHub issues (github.com/2styx2/roster): one issue per ticket, titled `TNN: …`, in its iteration's milestone, with "Blocked by" naming other issues. Pick from the frontier of the current iteration's milestone (`gh issue list --milestone "Iteration N — …"`). There's no `tickets/` folder: new tickets are new issues, never files or a pull request. Ticket numbers (TNN) aren't issue numbers.
 - The app reaches roster only through `roster serve` (ADR 0001). Never read `roster.yml` or a vault from the app. Secrets must never reach the frontend, and never the Rust core except for one narrow exception (owner's ruling, decision Q129): for `session.fill` only, `roster serve` returns the password to the core, which writes it straight to the Session's PTY and wipes it; never the webview, logs, `:messages` or Plugins (`docs/app/security.md`).
 - TypeScript is strict and required. UI tests go through the typed backend client with a fake backend.
-- Checks (same as CI): in `app/`, `npm ci` once, then `npm run check`; at the root, `cargo test`, `cargo clippy -p roster-core --all-targets -- -D warnings` and `cargo fmt --check` (WSL can't build `app/src-tauri`: no webkit2gtk; CI can).
+- Checks (same as CI): in `app/`, `npm ci` once, then `npm run check`; at the root, `cargo test`, `cargo clippy -p roster-core --all-targets -- -D warnings` (CI runs it with `--workspace`, which takes in app/src-tauri) and `cargo fmt --check` (WSL can't build `app/src-tauri`: no webkit2gtk; CI can).
 - Windows builds from WSL: `app/scripts/app-dev.sh`, `app-build.sh`, `app-stop.sh` (`docs/app/dev/windows-build-loop.md`). Warn the user before opening a window on their desktop.
 - **Taste:** `docs/app/design/taste.md` is roster's own design identity: the network-map motif and the Gap orbit mark, the accent (apricot) means live, Iosevka for data and Inter for talk, an honest voice, motion that confirms. Read it before any UI work. It wins over references (except on accessibility). `PRODUCT.md` (users, purpose, positioning) and `DESIGN.md` (tokens, named rules, components; sidecar `.impeccable/design.json`) at the root are what the `impeccable` skill reads; keep them in step with `themes.ts`, `styles.css` and `taste.md` when a UI change alters them.
 - **Design rule:** every UI or design change follows the core of the `emil-design-eng` skill (call it first). **Every** animation or transition, new or changed, goes through the `animate` skill. The `interfaces:*` skills are for reviews and focused fixes; when they disagree on motion, `animate` wins.

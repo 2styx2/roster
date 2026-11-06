@@ -60,6 +60,8 @@ impl StateFile {
         match serde_json::from_str::<Value>(&text) {
             Ok(v @ Value::Object(_)) => v,
             _ => {
+                // If it can't be moved aside it's read (and refused) again next time: the app
+                // still starts fresh, and the next save replaces it.
                 let _ = std::fs::rename(&self.path, self.path.with_extension("json.bad"));
                 Value::Object(Map::new())
             }
@@ -79,12 +81,6 @@ impl StateFile {
                 text.len()
             )));
         }
-        if let Some(dir) = self.path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, text)?;
-        std::fs::rename(&tmp, &self.path)?;
-        Ok(())
+        Ok(crate::files::write_atomic(&self.path, &text)?)
     }
 }

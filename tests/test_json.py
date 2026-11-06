@@ -171,7 +171,9 @@ def test_a_usage_error_is_json_with_exit_2(write_config, capsys):
     with pytest.raises(SystemExit) as e:
         main(["hosts", "--bogus", "--json"])
     out, err = capsys.readouterr()
-    assert e.value.code == 2 and out == "" and "--bogus" in json.loads(err)["error"]["message"]
+    message = json.loads(err)["error"]["message"]
+    assert e.value.code == 2 and out == "" and "unrecognized arguments (not repeated)" in message
+    assert "--bogus" not in message                     # a word typed is never repeated (T235)
 
 
 def test_reveal_has_no_json(write_config, capsys):

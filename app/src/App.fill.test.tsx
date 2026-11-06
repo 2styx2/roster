@@ -8,9 +8,12 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_LOGIN_PASSWORD, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "./backend/fake";
-import { FILL_API_VERSION, FillRefusal, NESTED_FILL_API_VERSION } from "./backend/types";
+import { FillRefusal } from "./backend/types";
 import { builtinRegistries } from "./registries";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { IDLE_MS } from "./session/shellHooks";
+import { advanceTimers, fakeTimeouts, pass } from "./test-timers";
+import { sinceOf } from "./backend/capabilities";
 
 const hosts = makeHosts(12);
 // makeHosts: every third Host has a vault Login (bw:…), the rest log in with keys (auth: key).
@@ -21,16 +24,19 @@ const keyHost = keyHosts[0]?.name ?? "";
 // Every Host with `shell_hooks: true`: roster sends its hook line, so the shell's marks carry the
 // Session's token (ticket 120).
 const hooked = { ...hosts, hosts: hosts.hosts.map((h) => ({ ...h, shell_hooks: true })) };
-/** Waits for roster's hook line to have gone (the login idle at its prompt for IDLE_MS). */
-const hooksOn = () => new Promise((r) => setTimeout(r, 700));
+/** Roster's hook line has gone: it goes once the login has idled at its prompt for IDLE_MS, looking
+ * again each IDLE_MS while the screen hasn't drawn what came. The tests that use it run on fake
+ * timeouts (`ready({ hosts: hooked })`). */
+const hooksOn = () => pass(3 * IDLE_MS);
 const LEADER = "{Control>} {/Control}";
 type User = ReturnType<typeof userEvent.setup>;
 
 async function ready(scenario: Partial<FakeScenario> = {}) {
-  const user = userEvent.setup();
+  if (scenario.hosts === hooked) fakeTimeouts();
+  const user = userEvent.setup({ advanceTimers });
   render(
     <App
-      backend={fakeBackend({ hosts, apiVersion: NESTED_FILL_API_VERSION, ...scenario })}
+      backend={fakeBackend({ hosts, apiVersion: sinceOf("nestedFill"), ...scenario })}
       terminalView={StubTerminal}
       registries={builtinRegistries()}
     />,
@@ -128,10 +134,9 @@ describe("filling a password prompt", () => {
     await connect(user, vaultHost);
     await user.keyboard("su{Enter}");
     await within(output()).findByText(/Password:/);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(offer()).toBeNull();
     await user.keyboard(`${LEADER}p`);
     await waitFor(() => expect(messageLine()).toHaveTextContent(/No password prompt/));
+    expect(offer()).toBeNull();
   });
 
   it("shows serve's refusal of a prompt for another Host", async () => {
@@ -187,7 +192,7 @@ describe("filling a password prompt", () => {
   });
 
   it("isn't offered by an older roster, and the key says why", async () => {
-    const user = await ready({ apiVersion: FILL_API_VERSION - 1 });
+    const user = await ready({ apiVersion: sinceOf("fill") - 1 });
     await connect(user, vaultHost);
     await sudo(user);
     expect(offer()).toBeNull();
@@ -199,7 +204,7 @@ describe("filling a password prompt", () => {
   });
 
   it("says there's no Session to fill, before any roster version, when none is open (round 20)", async () => {
-    for (const apiVersion of [FILL_API_VERSION - 1, NESTED_FILL_API_VERSION]) {
+    for (const apiVersion of [sinceOf("fill") - 1, sinceOf("nestedFill")]) {
       const user = await ready({ apiVersion });
       await user.keyboard(`${LEADER}p`);
       // The keys are keycaps, as every key hint is (round 21); the tooltip and :messages keep the text.
@@ -288,7 +293,7 @@ describe("a nested ssh to another Host (ticket 120)", () => {
   });
 
   it("shows the Host but offers no fill on a roster before API 26", async () => {
-    const user = await ready({ hosts: hooked, apiVersion: FILL_API_VERSION });
+    const user = await ready({ hosts: hooked, apiVersion: sinceOf("fill") });
     await nested(user);
     await within(output()).findByText(new RegExp(`admin@${there}'s password:`));
     expect(tab()).toHaveAccessibleName(new RegExp(`now on ${there}`));
@@ -335,7 +340,7 @@ describe("on Windows' ConPTY (ticket 162)", () => {
 describe("the fake's printed-prompt check, as the core's", () => {
   const td = new TextDecoder();
   async function session(scenario: Partial<FakeScenario> = {}, marks?: string) {
-    const backend = fakeBackend({ hosts, apiVersion: NESTED_FILL_API_VERSION, vault: { status: "unlocked" }, ...scenario });
+    const backend = fakeBackend({ hosts, apiVersion: sinceOf("nestedFill"), vault: { status: "unlocked" }, ...scenario });
     let seen = "";
     const events = { output: (d: Uint8Array) => void (seen += td.decode(d)), exit: () => {} };
     const handle = await backend.openSession(vaultHost, { cols: 80, rows: 24 }, events, undefined, marks);

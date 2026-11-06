@@ -4,7 +4,7 @@
 // and an unreviewed Host can be marked reviewed from the Sidebar, the Picker, `:review` and the
 // edit form.
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_FINGERPRINT, FAKE_HOST_PASSWORD, FAKE_PASSWORD, fakeBackend, fixtures, type FakeScenario } from "./backend/fake";
@@ -13,6 +13,7 @@ import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
 import { chooseInMenu, inventoryRow, menuLabels } from "./test-menu";
 import { onMessageLine } from "./test-messageLine";
+import { advanceTimers, fakeTimeouts, pass } from "./test-timers";
 
 const LEADER = "{Control>} {/Control}";
 const UNREVIEWED = "switch-4-003";
@@ -35,7 +36,7 @@ function recording(scenario: FakeScenario) {
 }
 
 async function ready(scenario: FakeScenario = fixtures.add as FakeScenario) {
-  const user = userEvent.setup();
+  const user = userEvent.setup({ advanceTimers });
   const { backend, calls } = recording(scenario);
   const platform = memoryPlatform();
   render(<App backend={backend} terminalView={StubTerminal} platform={platform} />);
@@ -150,6 +151,18 @@ describe("the add form", () => {
     await screen.findByRole("main", { name: /workspace/i });
     expect(within(await form()).getByLabelText("Password")).toHaveValue("");
     expect(JSON.stringify(calls)).not.toContain(FAKE_HOST_PASSWORD);
+  });
+
+  it("keeps what you typed when only the tutor's demo locks: each workspace empties its own", async () => {
+    const { user } = await ready();
+    const panel = await openForm(user);
+    await user.type(within(panel).getByLabelText("Password"), FAKE_HOST_PASSWORD);
+    await user.keyboard(`${LEADER}:tutor{Enter}`);
+    await screen.findByRole("region", { name: "Demo Inventory" });
+    await screen.findByRole("complementary", { name: "Help" });
+    await user.keyboard(`${LEADER}:tutor quit{Enter}`);
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Demo Inventory" })).toBeNull());
+    expect(within(await form()).getByLabelText("Password")).toHaveValue(FAKE_HOST_PASSWORD);
   });
 
   it("a lock while the host key waits to be confirmed goes back to the form, so nothing is sent without a password", async () => {
@@ -438,13 +451,15 @@ describe("Fill from this item (#437, vault.item_fields, API 29)", () => {
   });
 
   it("drops a reply that comes after the item changed (M2)", async () => {
+    fakeTimeouts();
     const { user } = await ready({ ...vault(), delay: 300 });
     const panel = await openForm(user);
     await fill(user, panel, { Name: "nas-01", Address: "10.19.9.9" });
     await user.click(within(panel).getByLabelText("An existing vault item"));
     await user.click(within(panel).getByRole("button", { name: "Fill from this item" }));
     await user.type(within(panel).getByLabelText("Vault item"), "bw:nas-01 web");
-    await new Promise((r) => setTimeout(r, 500));
+    // Long past every reply the fake Backend holds back (300 ms each, one after another).
+    await pass(5_000);
     expect(within(panel).getByLabelText("Address")).toHaveValue("10.19.9.9");
     expect(within(panel).queryByText(/^Filled/)).toBeNull();
   });

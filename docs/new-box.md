@@ -73,9 +73,10 @@ bw login                   # once. Headless box: export BW_CLIENTID=... BW_CLIEN
 bw sync
 
 # let every roster run on this box (including Claude sessions) use the unlocked vault
-mkdir -p ~/.config/roster
-(umask 077; bw unlock --raw > ~/.config/roster/bw-session)
+roster vault unlock        # asks the master password once, saves the session in ~/.config/roster/bw-session (0600)
 ```
+
+`roster vault unlock` keeps the vault unlocked until `roster vault lock`, `bw lock`, or the roster app's lock (bw keeps one unlock at a time, so the app's lock or unlock makes the saved session expire; the next run says so). While it's saved, any program running as you can use it to read the vault: that's the trade-off, so lock it when you're done ([Staying unlocked](cli-reference.md#staying-unlocked-roster-vault-unlock)). Without it, a terminal unlock lasts for one run, and roster asks afterwards whether to keep it. By hand, the same file: `(umask 077; bw unlock --raw > ~/.config/roster/bw-session)`.
 
 On Windows, in PowerShell (the folder is `%APPDATA%\roster`):
 
@@ -86,7 +87,7 @@ bw unlock --raw | Set-Content -Encoding ascii -NoNewline $env:APPDATA\roster\bw-
 
 `Set-Content -Encoding ascii` writes the key as plain text. Windows PowerShell 5.1's `>` writes UTF-16 instead, and PowerShell 7's UTF-8; roster reads both (with or without a byte-order mark, and without the line end), and ignores, with a warning, a file that isn't a session key.
 
-roster only uses the session file if it's yours alone: a plain file (not a symlink or a hard link), owned by you, that only you can read (mode 600); otherwise it warns and ignores it. Only the file itself is checked, not the folders it's in, so keep `~/.config/roster` your own. On Windows the same holds through the file's owner and permissions: owned by you (or Administrators), and nobody but you, SYSTEM and Administrators may open it, as a file in your own `%APPDATA%` is. When the vault locks or the session expires, roster tells you; rerun the `bw unlock` line. `bw lock` ends the session. `roster vault bw …` then runs other `bw` commands with that session, read-only unless `--write` ([`roster vault bw`](cli-reference.md#roster-vault-bw): first-time setup, changing a password, what roster can and can't see).
+roster only uses the session file if it's yours alone: a plain file (not a symlink or a hard link), owned by you, that only you can read (mode 600); otherwise it warns and ignores it. Its folder is checked too: `~/.config/roster` (or a link you own to a folder) must be owned by you, and nobody else may write to it; otherwise the file is ignored and `roster vault unlock` refuses (202). On Windows the same holds through the file's owner and permissions: owned by you (or Administrators), and nobody but you, SYSTEM and Administrators may open it, as a file in your own `%APPDATA%` is. When the vault locks or the session expires, roster tells you; run `roster vault unlock` again. `roster vault status` says whether the saved session is there and works. `bw lock` ends the session. `roster vault bw …` then runs other `bw` commands with that session, read-only unless `--write` ([`roster vault bw`](cli-reference.md#roster-vault-bw): first-time setup, changing a password, what roster can and can't see).
 
 **1Password:** use the desktop app integration, `eval $(op signin)`, or `OP_SERVICE_ACCOUNT_TOKEN` on a headless box.
 
@@ -180,7 +181,7 @@ roster mesh cut --all      # this box's Mesh entries off every host (with a Mesh
 roster revoke --all        # removes this box's key from every host, in every Inventory here
 ```
 
-Then delete `~/.ssh/roster_ed25519*`, `~/.ssh/config.d/roster*`, `~/.ssh/roster-inventories/` and `~/.config/roster/bw-session` (and `~/.config/roster/inventories.json` if you named Inventories). `roster revoke --all` covers every named Inventory and the unnamed one; plain `roster revoke` covers only the Inventory it runs on (`roster --inv home revoke`). Its summary lists the files to delete.
+Then delete `~/.ssh/roster_ed25519*`, `~/.ssh/config.d/roster*`, `~/.ssh/roster-inventories/` and what roster wrote in `~/.config/roster`: everything there but your `roster.yml` and `providers/` (the vault session `bw-session`, the Mesh state `mesh*.json`, `inventories.json`, the run lock `run*.lock`, the key's `key-name*`, `key-types*` and `key-created`, `vault-sync/` and `vault-seen/`). `uninstall.sh` keeps a key rotation's record (`key-rotation*`) while a `~/.ssh/roster_*.old` or `.new` key is still there: the record is what says roster made that key; delete both once no host holds it. `roster revoke --all` covers every named Inventory and the unnamed one; plain `roster revoke` covers only the Inventory it runs on (`roster --inv home revoke`). Its summary lists the files to delete.
 
 ## See also
 

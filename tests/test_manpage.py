@@ -13,6 +13,10 @@ from conftest import no_roster_path, posix_shell, source_copy
 from roster import manpage
 from roster.cli import build_parser, main
 
+# install.sh runs `bw --version`: the stand-ins in tests/fakes answer, never the developer's own bw (T247; conftest's
+# no_real_vault_cli fails a test that runs a real one)
+pytestmark = pytest.mark.usefixtures("fakes")
+
 ROOT = Path(__file__).parent.parent
 REFERENCE = ROOT / "docs" / "cli-reference.md"
 

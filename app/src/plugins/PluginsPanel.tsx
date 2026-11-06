@@ -8,8 +8,9 @@ import { CloseGlyph } from "../ui/CloseGlyph";
 import { PanelButton } from "../panel/PanelFrame";
 import { Keys } from "../ui/Keys";
 import type { PackageStatus, PackageUpdate, PluginData, SiteRequests } from "../backend/types";
-import { kindOf, SIGN_WORD } from "../edit/ChangesPanel";
+import { kindOf, shortCommit, SIGN_WORD } from "../edit/diff";
 import { PACKAGE_PREFIX, type Notice, type PendingConfirm, type PluginStatus, type Prompt, type RunningProgress, type Snapshot } from "./manager";
+import { isTyping } from "../ui/typing";
 
 /** Install or update: who it's from, every permission with the risky ones flagged and explained.
  * A Package's shows its git URL as the source, and its update the new commit and its diff. */
@@ -28,7 +29,7 @@ export function PluginPrompt({ prompt, onAnswer, safe }: { prompt: Prompt; onAns
   const asked = m.permissions.filter((p) => prompt.asking.includes(p.name));
   const title = install ? `Install ${m.name}?` : update ? `Update ${m.name}?` : `${m.name} asks for more`;
   const action = install ? "Install" : update ? "Update" : "Allow";
-  const noLabel = install ? "Cancel" : update ? `Keep ${short(update.from)}` : "Not now";
+  const noLabel = install ? "Cancel" : update ? `Keep ${shortCommit(update.from)}` : "Not now";
   const noHint = install ? "cancel" : update ? "keep the version it has" : "run without them";
   return (
     <section
@@ -69,7 +70,7 @@ export function PluginPrompt({ prompt, onAnswer, safe }: { prompt: Prompt; onAns
         {pkg?.commit && !update ? (
           <>
             {" "}
-            at <span className="mono">{short(pkg.commit)}</span>
+            at <span className="mono">{shortCommit(pkg.commit)}</span>
           </>
         ) : null}
         . A Plugin is code; install only what you trust.
@@ -117,7 +118,6 @@ export function PluginPrompt({ prompt, onAnswer, safe }: { prompt: Prompt; onAns
   );
 }
 
-const short = (commit: string | null) => (commit ?? "").slice(0, 7);
 
 /** What a Package's update changes: the commits, then the diff (data, so Iosevka; tinted lines). */
 function PackageChange({ update }: { update: PackageUpdate }) {
@@ -126,7 +126,7 @@ function PackageChange({ update }: { update: PackageUpdate }) {
   return (
     <>
       <p>
-        <span className="mono">{short(update.from)}</span> to <span className="mono">{short(update.to)}</span>
+        <span className="mono">{shortCommit(update.from)}</span> to <span className="mono">{shortCommit(update.to)}</span>
         {update.log.length > 0 && <>, {update.log.length === 1 ? "1 commit" : `${update.log.length} commits`}:</>}
       </p>
       {update.log.length > 0 && (
@@ -136,7 +136,7 @@ function PackageChange({ update }: { update: PackageUpdate }) {
           ))}
         </ul>
       )}
-      <pre className="diff package-diff" aria-label={`What changes from ${short(update.from)} to ${short(update.to)}`}>
+      <pre className="diff package-diff" aria-label={`What changes from ${shortCommit(update.from)} to ${shortCommit(update.to)}`}>
         {lines.map((line, i) => {
           const kind = kindOf(line);
           return (
@@ -159,7 +159,7 @@ const ago = (at: number, now: number) => {
 };
 
 /** What `:plugins` says under a granted site (decision Q116): counts and a time, never what went. */
-export function requestsLine(r: SiteRequests | undefined, now: number): string {
+function requestsLine(r: SiteRequests | undefined, now: number): string {
   if (!r || r.requests === 0) return "No requests since roster started";
   const n = (x: number) => x.toLocaleString("en-US");
   const failed = r.failed > 0 ? `, ${n(r.failed)} with no answer` : "";
@@ -210,8 +210,9 @@ function RowActions({ actions, onRun }: { actions: readonly RowAction[]; onRun: 
 /** The `:help` topic of the Plugin authors' note on what changed at api 4 (issue #228). */
 export const UPGRADE_TOPIC = "plugins#upgrading-a-plugin-written-before-api-4";
 
-/** Since api 4 a Plugin's info notices are quiet (decision Q126), whatever `api` it says. */
-const QUIET_NOTICES_API = 4;
+/** Since api 4 a Plugin's info notices are quiet (decision Q126), whatever `api` it says (checked against
+ * NoticeOptions.quiet in plugin-api.json). */
+export const QUIET_NOTICES_API = 4;
 
 /** Whether a Plugin's problem is one `:plugins reload` can fix: not a Package init.lua no longer
  * names, which `:packages clean` removes. */
@@ -415,6 +416,7 @@ export function PluginFloatPanel({
       ref={panel}
       tabIndex={-1}
       className="side-panel plugin-float"
+      data-panel="plugin-float"
       aria-label={`${float.title || float.plugin} (from ${float.plugin})`}
       onKeyDown={(e) => {
         // A key held down from before the prompt (the Enter that unlocked, say) answers nothing.
@@ -422,7 +424,7 @@ export function PluginFloatPanel({
           e.preventDefault();
           return;
         }
-        const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+        const typing = isTyping(e.target);
         if (!typing && !e.ctrlKey && !e.altKey && !e.metaKey && !e.repeat) {
           const i = actions.findIndex((a) => a.key === e.key);
           if (i >= 0) {
@@ -503,6 +505,7 @@ export function PluginConfirmPanel({ confirm, onAnswer }: { confirm: PendingConf
     <section
       tabIndex={-1}
       className="side-panel confirm-panel plugin-confirm"
+      data-panel="plugin-confirm"
       role="alertdialog"
       aria-label={`${confirm.title} (from ${confirm.plugin})`}
       onKeyDown={(e) => {
@@ -730,7 +733,7 @@ export function PackagesPanel({ snapshot, onClose, onRun }: { snapshot: Snapshot
               <li key={p.name} className="plugin-row" aria-label={`${p.name}, ${state.text}`}>
                 <div className="plugin-head">
                   <span className="plugin-name mono">{p.name}</span>
-                  {p.commit && <span className="mono muted">{short(p.commit)}</span>}
+                  {p.commit && <span className="mono muted">{shortCommit(p.commit)}</span>}
                   <span className={`plugin-state${state.problem ? " problem" : ""}`}>{state.text}</span>
                 </div>
                 <div className="plugin-source muted mono">{p.dir ? `${p.url}, folder ${p.dir}` : p.url}</div>

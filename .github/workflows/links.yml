@@ -21,14 +21,14 @@ permissions:
 jobs:
   links:
     name: External links
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       TITLE: Dead links in the docs
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Check the links

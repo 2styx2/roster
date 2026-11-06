@@ -42,7 +42,7 @@ export function ImportPanel({
   const shown = useMemo(() => hunks(preview.diff), [preview.diff]);
   const unchanged = preview.diff.every((l) => l.kind === "same");
   return (
-    <div className="picker-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="picker-backdrop" data-panel="import" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
         className="picker import"
         role="dialog"

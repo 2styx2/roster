@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import { memoryPlatform } from "../platform/memory";
 import { builtinRegistries } from "../registries";
 import { StateStore } from "../state/store";
-import { MessageLog, MessagesChoice, logView, quiet, registerMessages, shownText, spokenText, tooOld, type Message } from "./messages";
+import { MessageLog, MessagesChoice, logView, quiet, registerMessages, shownText, spokenText, type Message } from "./messages";
+import { capabilities, sinceOf } from "../backend/capabilities";
 
 async function setup(state: Record<string, unknown> = {}) {
   const platform = memoryPlatform({ state });
@@ -124,11 +125,12 @@ describe(":messages, the recent ones", () => {
 
 describe("a feature this roster is too old for (round 20)", () => {
   it("shows plain words in the text colour, and keeps the API numbers for :messages", () => {
-    const m = tooOld("Quick Connect", 12, 11);
+    const need = sinceOf("quickConnect");
+    const m = capabilities({ api_version: need - 1 }).needsNewer("quickConnect");
     expect(shownText(m, false)).toBe("Quick Connect needs a newer roster. Update roster on this Box.");
-    expect(typeof m !== "string" && m.kind).toBe("slip");
+    expect(m.kind).toBe("slip");
     const log = new MessageLog();
     log.push(m);
-    expect(log.snapshot()[0]?.text).toBe("Quick Connect needs a newer roster (API version 12; this one speaks 11). Update roster on this Box.");
+    expect(log.snapshot()[0]?.text).toBe(`Quick Connect needs a newer roster (API version ${need}; this one speaks ${need - 1}). Update roster on this Box.`);
   });
 });

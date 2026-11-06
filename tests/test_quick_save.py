@@ -15,10 +15,10 @@ import time
 
 import pytest
 from conftest import SECRET
-from test_changes import app, box, git, infra, result, sshd  # noqa: F401 (fixtures)
+from test_changes import app, box, git, infra, result, someone_adds_while_the_item_is_made, sshd  # noqa: F401
 from test_quick import needs_ssh, run_ssh, to
 
-from roster import askpass, edit
+from roster import askpass
 from roster import serve as rpc
 from roster.sshops import fingerprint
 
@@ -208,15 +208,11 @@ def test_a_failure_adding_the_host_takes_the_new_item_back_out(box, sshd, vault,
     with __import__("roster").askpass.Channel(rpc.askpass_lookup) as state.askpass:
         spec = call(state, "quick.prepare", to(sshd, password=SECRET, save=True))["result"]
         log_in(spec)
-        real, calls = edit.add_text, []
-
-        def second_add_breaks(text, *a):
-            calls.append(1)
-            return real(text, *a) if len(calls) == 1 else text.replace("groups:", "groups: [", 1)
-        monkeypatch.setattr(edit, "add_text", second_add_breaks)
+        someone_adds_while_the_item_is_made(monkeypatch, box, "nas")
         r = call(state, "quick.save", {"quick": spec["quick"], "name": "nas", "group": "lab"})
     err = r["error"]
-    assert err["code"] == 74 and "the vault item 'nas ssh' was taken back out" in err["message"]
+    assert err["code"] == 81 and "already in the Inventory (group shelf)" in err["message"]
+    assert "the vault item 'nas ssh' was taken back out" in err["message"]
     nothing_written(box, vault, isolated)
     assert SECRET not in json.dumps(r)
 

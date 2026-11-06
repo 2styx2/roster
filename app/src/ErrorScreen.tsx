@@ -3,7 +3,7 @@
 // one click away under Details.
 import type { BackendProblem, BackendProblemKind } from "./backend/types";
 import { CopyCommand } from "./errors/ErrorPanel";
-import { withCode } from "./lock/withCode";
+import { withCode } from "./ui/withCode";
 
 const HEADINGS: Record<BackendProblemKind, string> = {
   "no-wsl": "No WSL distro",

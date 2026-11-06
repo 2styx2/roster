@@ -7,7 +7,7 @@ import json
 import pytest
 
 from roster.config import load_config_text
-from roster.errors import Problem
+from roster.errors import InventoryError, Problem
 from roster.fill import FILL_REFUSED, NOTHING_TO_FILL, login_for
 
 INVENTORY = """\
@@ -119,10 +119,10 @@ def test_sudo_cascades_from_the_group_and_stays_off_the_host():
     ("sudo: {auth: agent}", "a vault reference"),
 ])
 def test_a_bad_sudo_block_says_how(block, says):
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config_text(INVENTORY.replace("{ip: 10.0.0.6, enroll: false}", f"{{ip: 10.0.0.6, {block}}}"),
                          "/tmp/roster.yml")
-    assert says in str(e.value.code)
+    assert says in e.value.message
 
 
 # ---------------------------------------------------------------- session.fill, as the app's core calls it
@@ -206,17 +206,6 @@ def test_session_fill_names_the_sudo_login_when_its_item_is_missing(serve, write
     s = unlocked(serve, write_config, INVENTORY.replace("bw:Network gear (old)", "bw:no such item"))
     err = s.call("session.fill", params("box"))["error"]
     assert err["code"] == 32 and "sudo Login of box" in err["message"]
-
-
-def test_the_apps_list_of_logins_without_a_password_is_roster_s():
-    """app/src/backend/types.ts keeps providers.NO_PASSWORD as NO_PASSWORD_AUTHS: one list, checked here."""
-    import re
-    from pathlib import Path
-
-    from roster import providers
-    ts = (Path(__file__).parents[1] / "app" / "src" / "backend" / "types.ts").read_text(encoding="utf-8")
-    m = re.search(r"export const NO_PASSWORD_AUTHS = \[([^\]]*)\]", ts)
-    assert m and tuple(re.findall(r'"([^"]+)"', m[1])) == providers.NO_PASSWORD
 
 
 # ---------------------------------------------------------------- a nested ssh's Host (ticket 120, decision Q131)

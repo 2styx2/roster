@@ -8,7 +8,7 @@ import { makeHosts } from "../backend/fake";
 import { fakePluginHost } from "../backend/fakePlugins";
 import { recentAlerts } from "../backend/fakeRecentAlerts";
 import type { PluginEventName, PluginReply } from "../backend/types";
-import { parseOp } from "./ops";
+import { parseOp } from "./opRegistry";
 import transcript from "./recent-alerts.transcript.json";
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };

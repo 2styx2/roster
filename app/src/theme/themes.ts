@@ -389,7 +389,6 @@ export const tokyoNight: Theme = {
 
 export const bundledThemes: readonly Theme[] = [rosterDark, rosterLight, gruvbox, nord, catppuccinMocha, tokyoNight];
 
-/** A Theme registry holding the bundled Themes. */
 export function builtinThemeRegistry(): ThemeRegistry {
   const registry = new Registry<Theme>();
   for (const t of bundledThemes) registry.register(t);

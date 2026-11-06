@@ -62,16 +62,10 @@ export function slip(text: string): Slip {
   return { kind: "slip", text };
 }
 
-/** A feature this roster is too old for, said calmly in the app's words (round 20, decision Q237):
- * what needs a newer roster and what to do, in the text colour, with serve's API numbers kept for
- * `:messages` only. `what` starts the sentence ("Quick Connect", ":edit"). */
-export function tooOld(what: string, need: number, speaks: number): Slip {
-  return {
-    kind: "slip",
-    text: `${what} needs a newer roster. Update roster on this Box.`,
-    logged: `${what} needs a newer roster (API version ${need}; this one speaks ${speaks}). Update roster on this Box.`,
-  };
-}
+/** Why Hosts can't be added here (round 19): in the app's words, not serve's API numbers, with
+ * the way that works instead. A roster too old for `host.add` offers no + (the toolbar, the
+ * Inventory heading), so only a typed `:host add` or its keys say it. */
+export const ADD_HOSTS_TOO_OLD = "Adding Hosts here needs a newer roster. Update roster on this Box, or add them to roster.yml.";
 
 export function quiet(said: string, text: string = said): Quiet {
   return { kind: "quiet", said, text };

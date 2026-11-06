@@ -5,9 +5,7 @@ import type { Platform } from "./types";
 export interface MemoryPlatform extends Platform {
   /** What was last saved to the State file (undefined if nothing was). */
   saved(): unknown;
-  /** The clipboard's text. */
   clipboardText(): string;
-  /** Whether the window is fullscreen now. */
   fullscreen(): boolean;
   /** Acts as the core reloading init.lua: the app gets `report` as a live change. */
   saveConfig(report: ConfigReport): void;

@@ -3609,5 +3609,51 @@
     "nord",
     "catppuccin-mocha",
     "tokyo-night"
-  ]
+  ],
+  "ranges": {
+    "fonts.ui_size": {
+      "min": 11.0,
+      "max": 20.0
+    },
+    "idle_lock_minutes": {
+      "min": 1.0,
+      "max": 1440.0
+    },
+    "panel.width": {
+      "min": 10.0,
+      "max": 95.0
+    },
+    "pull_fresh_minutes": {
+      "min": 0.0,
+      "max": 1440.0
+    },
+    "terminal.bold_weight": {
+      "min": 100.0,
+      "max": 900.0
+    },
+    "terminal.cell_height": {
+      "min": 0.5,
+      "max": 3.0
+    },
+    "terminal.line_height": {
+      "min": 0.5,
+      "max": 3.0
+    },
+    "terminal.scrollback": {
+      "min": 0.0,
+      "max": 1000000.0
+    },
+    "terminal.size": {
+      "min": 6.0,
+      "max": 72.0
+    },
+    "terminal.weight": {
+      "min": 100.0,
+      "max": 900.0
+    },
+    "views.*.width": {
+      "min": 10.0,
+      "max": 95.0
+    }
+  }
 }

@@ -117,7 +117,7 @@ export function CommandLine({ initial = "", caret, complete, describe, keys = de
   const optionId = (i: number) => `${listId}-${i}`;
 
   return (
-    <div className="cmdline">
+    <div className="cmdline" data-panel="cmdline">
       {candidates.length > 0 && (
         <div className="cmdline-candidates">
           <ul role="listbox" id={listId} aria-label="Completions">

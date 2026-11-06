@@ -67,7 +67,7 @@ function footFade(g: RevealGeometry, s: number, max: number): boolean {
 }
 
 /** Whether `span` sits whole between the two fades at scroll `s`. Each fade shows only while
- * there's text to fade (Q237 c): the title's once the card has scrolled, the footer's while text
+ * there's text to fade (Q247 c): the title's once the card has scrolled, the footer's while text
  * lies below it. */
 function clear(g: RevealGeometry, span: Span, s: number, max: number): boolean {
   const d = s - g.scrollTop;

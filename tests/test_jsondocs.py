@@ -31,22 +31,6 @@ def doc_of(capsys, *argv):
     return capsys.readouterr().out
 
 
-@pytest.mark.parametrize("argv, model", [
-    (("hosts",), jsondocs.HostsDoc),
-    (("hosts", "box"), jsondocs.HostInfoDoc),
-    (("hosts", "guest"), jsondocs.ResourceInfoDoc),
-    (("hosts", "--resources"), jsondocs.ResourcesDoc),
-    (("inv", "list"), jsondocs.InventoriesDoc),
-    (("inv", "which"), jsondocs.WhichDoc),
-])
-def test_each_document_is_its_model(write_config, capsys, argv, model):
-    write_config(INVENTORY)
-    out = doc_of(capsys, *argv)
-    sent = json.loads(out)
-    assert sent.pop("version") == 1
-    assert json.dumps(jsondocs.plain(model.model_validate(sent))) == json.dumps(sent)    # same keys, same order
-
-
 def test_emit_takes_a_document_model():
     with pytest.raises(TypeError):
         emit({"hosts": []})

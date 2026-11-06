@@ -37,7 +37,7 @@ pub const SERVE_METHODS: &[&str] = &[
 ];
 /// The grantable methods that change nothing (read, or stop a Mesh job before its next Host): every
 /// other one is flagged in the install prompt.
-const READS: &[&str] = &[
+pub const READS: &[&str] = &[
     "inventory.info",
     "hosts.list",
     "host.get",
@@ -109,44 +109,115 @@ impl Permission {
         })
     }
 
+    /// The grants the app kept (as text) that name a permission, and each one that doesn't any
+    /// more with why (`"serve:x.y: …"`): a grant this version refuses runs as not granted.
+    pub fn parse_grants(texts: &[String]) -> (Vec<Permission>, Vec<String>) {
+        let mut grants = Vec::new();
+        let mut refused = Vec::new();
+        for text in texts {
+            match Permission::parse(text) {
+                Ok(p) => grants.push(p),
+                Err(why) => refused.push(format!("{text}: {why}")),
+            }
+        }
+        (grants, refused)
+    }
+
     /// Whether the install prompt flags it, and why (shown under it).
     pub fn risk(&self) -> Option<String> {
-        Some(match self {
-            Permission::InventoryWrite => {
-                "Can change Hosts. The changes stay Pending until you review and Publish them.".into()
-            }
-            Permission::SessionsOpen => "Can open Sessions on your Hosts.".into(),
-            Permission::TerminalRead => "Sees everything your Sessions print, including anything a server echoes back. A password you type at a prompt that echoes it would be visible too.".into(),
-            Permission::TerminalWrite => {
-                "Can type into your open Sessions, as if you typed it: it can run commands on your servers.".into()
-            }
-            Permission::Network(site) => site.risk(),
-            Permission::Serve(m) if m == "discover.start" => "Can scan networks from this computer, once you've confirmed it: roster connects to every address in a range, on many ports. A network's security tools may take a scan for an attack, so scan only networks you may.".into(),
-            Permission::Serve(m) if m == "discover.add" => {
-                "Can add the Hosts a scan found to your Inventory, unreviewed, as Pending changes you review and Publish.".into()
-            }
-            Permission::Serve(m) if m == "host.check" => "Can check your Hosts as :check HOST does: roster connects to the Host and signs in once with its Login, then leaves (the Plugin never sees the password). It changes nothing there or in the Inventory, but a failed sign-in counts like any other.".into(),
-            Permission::Serve(m) if !READS.contains(&m.as_str()) => {
-                format!("Can run roster's {m}, which can change things on your Hosts or in the Inventory.")
-            }
-            _ => return None,
-        })
+        if let Permission::Network(site) = self {
+            return Some(site.risk());
+        }
+        match (words(self), self) {
+            (Some(w), _) => w.risk.map(String::from),
+            (None, Permission::Serve(m)) if !READS.contains(&m.as_str()) => Some(SERVE_RISK.replace("{method}", m)),
+            _ => None,
+        }
     }
 
     /// One line on what it allows.
     pub fn summary(&self) -> String {
-        match self {
-            Permission::InventoryRead => "Read your Hosts and their Login references (never a password)".into(),
-            Permission::InventoryWrite => "Change Hosts, as Pending changes".into(),
-            Permission::SessionsOpen => "Open Sessions".into(),
-            Permission::TerminalRead => "Read what your Sessions print".into(),
-            Permission::TerminalWrite => "Type into your Sessions".into(),
-            Permission::Serve(m) if m == "discover.start" => "Scan a network you name, from this computer".into(),
-            Permission::Serve(m) if m == "discover.add" => "Add the Hosts a scan found, as Pending changes".into(),
-            Permission::Serve(m) => format!("Call roster's {m}"),
-            Permission::Network(site) => format!("Send and fetch over the network: {}", site.shown()),
+        if let Permission::Network(site) = self {
+            return format!("Send and fetch over the network: {}", site.shown());
+        }
+        match (words(self), self) {
+            (Some(w), _) if !w.summary.is_empty() => w.summary.into(),
+            (_, Permission::Serve(m)) => SERVE_SUMMARY.replace("{method}", m),
+            _ => self.to_string(),
         }
     }
+}
+
+/// What the install prompt says of a permission: one line on what it allows (empty: the serve
+/// method's [`SERVE_SUMMARY`]), and why it's flagged, if it is.
+#[derive(Debug, Clone, Copy)]
+pub struct Words {
+    pub name: &'static str,
+    pub summary: &'static str,
+    pub risk: Option<&'static str>,
+}
+
+/// The permissions with words of their own; every other `serve:` method has [`SERVE_SUMMARY`],
+/// and [`SERVE_RISK`] unless it's a read.
+pub const WORDS: &[Words] = &[
+    Words {
+        name: "inventory.read",
+        summary: "Read your Hosts and their Login references (never a password)",
+        risk: None,
+    },
+    Words {
+        name: "inventory.write",
+        summary: "Change Hosts, as Pending changes",
+        risk: Some("Can change Hosts. The changes stay Pending until you review and Publish them."),
+    },
+    Words {
+        name: "sessions.open",
+        summary: "Open Sessions",
+        risk: Some("Can open Sessions on your Hosts."),
+    },
+    Words {
+        name: "terminal.read",
+        summary: "Read what your Sessions print",
+        risk: Some(
+            "Sees everything your Sessions print, including anything a server echoes back. A password you type at a prompt that echoes it would be visible too.",
+        ),
+    },
+    Words {
+        name: "terminal.write",
+        summary: "Type into your Sessions",
+        risk: Some("Can type into your open Sessions, as if you typed it: it can run commands on your servers."),
+    },
+    Words {
+        name: "serve:discover.start",
+        summary: "Scan a network you name, from this computer",
+        risk: Some(
+            "Can scan networks from this computer, once you've confirmed it: roster connects to every address in a range, on many ports. A network's security tools may take a scan for an attack, so scan only networks you may.",
+        ),
+    },
+    Words {
+        name: "serve:discover.add",
+        summary: "Add the Hosts a scan found, as Pending changes",
+        risk: Some(
+            "Can add the Hosts a scan found to your Inventory, unreviewed, as Pending changes you review and Publish.",
+        ),
+    },
+    Words {
+        name: "serve:host.check",
+        summary: "",
+        risk: Some(
+            "Can check your Hosts as :check HOST does: roster connects to the Host and signs in once with its Login, then leaves (the Plugin never sees the password). It changes nothing there or in the Inventory, but a failed sign-in counts like any other.",
+        ),
+    },
+];
+
+/// A `serve:` method's summary, `{method}` its name.
+pub const SERVE_SUMMARY: &str = "Call roster's {method}";
+/// A `serve:` method's flag when it isn't a read, `{method}` its name.
+pub const SERVE_RISK: &str = "Can run roster's {method}, which can change things on your Hosts or in the Inventory.";
+
+fn words(p: &Permission) -> Option<&'static Words> {
+    let name = p.to_string();
+    WORDS.iter().find(|w| w.name == name)
 }
 
 impl fmt::Display for Permission {

@@ -5,6 +5,7 @@ import pytest
 from roster.claude import write_claude_files
 from roster.cli import main
 from roster.config import load_config, service_credentials
+from roster.errors import InventoryError
 from roster.example import EXAMPLE_CONFIG
 from roster.sshops import write_ssh_config
 
@@ -127,7 +128,7 @@ def test_only_the_bad_service_is_left_out(write_config):
     ("{ip: 10.0.0.1, port: abc}", "bad port 'abc'"),
 ])
 def test_host_level_errors_still_fail_the_load(write_config, hostyml, err):
-    with pytest.raises(SystemExit, match=err):
+    with pytest.raises(InventoryError, match=err):
         load_config(write_config(f"groups:\n  a:\n    user: u\n    hosts:\n      h1: {hostyml}\n"))
 
 

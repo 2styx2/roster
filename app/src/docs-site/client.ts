@@ -7,6 +7,7 @@
 // Nothing moves: the list is opened and walked from the keyboard, many times a visit, and motion
 // there would only slow it (taste.md, "motion confirms"; emil-design-eng).
 import { searchDocs, type SearchIndex, type SearchResults } from "./search";
+import { isTyping } from "../ui/typing";
 
 /** How many of each the box lists; its last row goes to every result. */
 const BOX_TOPICS = 6;
@@ -260,8 +261,7 @@ export function mountSearchBox(input: HTMLInputElement, deps: BoxDeps): void {
   // `/` from anywhere but a field, as in Neovim (and most docs sites).
   doc.addEventListener("keydown", (e) => {
     if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented || !input.isConnected) return;
-    const t = e.target as HTMLElement | null;
-    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    if (isTyping(e.target)) return;
     e.preventDefault();
     input.focus();
     input.select();

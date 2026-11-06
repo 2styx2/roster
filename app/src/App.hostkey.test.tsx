@@ -6,7 +6,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_FINGERPRINT, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "./backend/fake";
-import { HOST_KEY_API_VERSION } from "./backend/types";
+
 import { StubTerminal } from "./terminal/StubTerminal";
 import { memoryPlatform } from "./platform/memory";
 import { revealInCard } from "./session/reveal";
@@ -16,13 +16,14 @@ vi.mock("./session/reveal", async (original) => {
   const real = await original<typeof import("./session/reveal")>();
   return { ...real, revealInCard: vi.fn(real.revealInCard) };
 });
+import { sinceOf } from "./backend/capabilities";
 
 const hosts = makeHosts(12);
 const HOST = hosts.hosts.find((h) => h.reviewed && h.enroll)!;
 const OTHER = hosts.hosts.find((h) => h.reviewed && h.enroll && h.name !== HOST.name)!;
 
 function backendWith(unknown: NonNullable<FakeScenario["unknownKeys"]>[string] = {}) {
-  const backend = fakeBackend({ hosts, apiVersion: HOST_KEY_API_VERSION, unknownKeys: { [HOST.name]: unknown } });
+  const backend = fakeBackend({ hosts, apiVersion: sinceOf("hostKey"), unknownKeys: { [HOST.name]: unknown } });
   const trusted: string[] = [];
   const trust = backend.trustHostKey.bind(backend);
   backend.trustHostKey = (host, fp) => (trusted.push(`${host} ${fp}`), trust(host, fp));
@@ -57,7 +58,7 @@ describe("a Host whose host key roster hasn't seen", () => {
       new RegExp(`^${HOST.name}, new host key`),
     );
     expect(trusted).toEqual([]);
-    // Enter on the card itself never trusts (Q222).
+    // Enter on the card itself never trusts (Q232).
     q.focus();
     await user.keyboard("{Enter}");
     expect(trusted).toEqual([]);
@@ -253,7 +254,7 @@ describe("a Host whose host key roster hasn't seen", () => {
   });
 
   it("doesn't ask through a roster older than API 11", async () => {
-    const backend = fakeBackend({ hosts, apiVersion: HOST_KEY_API_VERSION - 1, unknownKeys: { [HOST.name]: {} } });
+    const backend = fakeBackend({ hosts, apiVersion: sinceOf("hostKey") - 1, unknownKeys: { [HOST.name]: {} } });
     const user = await ready(backend);
     await user.keyboard(`{Control>} {/Control}:connect ${HOST.name}{Enter}`);
     expect(await within(pane()).findByRole("heading", { name: /couldn't open a session/i })).toBeInTheDocument();

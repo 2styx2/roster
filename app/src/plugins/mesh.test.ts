@@ -9,12 +9,13 @@ import { describe, expect, it } from "vitest";
 import { makeHosts } from "../backend/fake";
 import { meshPlugin, words } from "../backend/fakeMesh";
 import { fakePluginHost } from "../backend/fakePlugins";
-import type { PluginEventName, PluginReply } from "../backend/types";
+import { BackendCallError, type PluginEventName, type PluginReply } from "../backend/types";
 import transcript from "./mesh.transcript.json";
-import { parseOp } from "./ops";
+import { parseOp } from "./opRegistry";
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
-type Call = { method: string; params: Json; result?: Json; error?: string };
+/** A call and serve's answer; an error as the core's CallError serializes (`kind`, `code`, `message`). */
+type Call = { method: string; params: Json; result?: Json; error?: { code?: number | null; message?: string } };
 type Step = { do: string; ops: Json[]; answers: Json[][]; serve: Call[] } & Record<string, Json>;
 
 const steps = transcript.steps as unknown as Step[];
@@ -44,7 +45,7 @@ describe("the Mesh controls stand-in", () => {
       const next = expected.shift();
       expect(next, `an unexpected ${method}`).toBeDefined();
       expect({ method, params }).toEqual({ method: next?.method, params: next?.params });
-      if (next?.error !== undefined) throw new Error(next.error);
+      if (next?.error !== undefined) throw new BackendCallError(next.error.message ?? "", next.error.code ?? null);
       return next?.result ?? null;
     };
     const host = fakePluginHost({ mesh: meshPlugin() }, () => makeHosts(2).hosts, undefined, serve);

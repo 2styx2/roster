@@ -15,7 +15,7 @@ import type { ErrorRow } from "../errors/catalog";
 import { CopyCommand } from "../errors/ErrorPanel";
 import { SignIn } from "./SignIn";
 import { WRONG_PASSWORD, type Vault, type VaultView } from "./useVault";
-import { withCode } from "./withCode";
+import { withCode } from "../ui/withCode";
 import { Keys } from "../ui/Keys";
 
 const PROVIDER_NAMES: Record<string, string> = {

@@ -31,7 +31,16 @@ while (( $# )); do
         --allow-downgrade) ALLOW_DOWNGRADE=1 ;;
         --no-completion) COMPLETION=0 ;;
         -h|--help) sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
+        # never the whole word: a mistyped flag can carry a URL with a token, and so can a word with no flag (#484 M2);
+        # the name ends at its first character that is not a letter, digit or - (=, :, a glued -iURL: #484 L4);
+        # longer than any real option (20), it's a glued token, not a name (#489 L1); and it's printed only when it
+        # looks like one (--[a-z][a-z-]* or -[a-zA-Z]), so a glued token's start never is (#489 N5)
+        -*) opt=${1%%[^A-Za-z0-9-]*}
+            if [ ${#opt} -le 20 ] && [[ $opt =~ ^(--[a-z][a-z-]*|-[a-zA-Z])$ ]]; then
+                echo "unknown option: $opt (try --help)" >&2
+            else echo "unknown option (not repeated) (try --help)" >&2; fi
+            exit 2 ;;
+        *) echo "unexpected argument (not repeated) (try --help)" >&2; exit 2 ;;
     esac
     shift
 done
@@ -216,8 +225,14 @@ if [[ -z $cfg ]]; then
 else
     export ROSTER_CONFIG="$cfg"
     cd "$(dirname "$cfg")" || exit 1
-    if step "roster sync (ssh config and ROSTER.md from the map)" roster sync; then done_stage; else fail_stage; fi
-    info "a host the map gained needs this box's key once: roster setup (roster check says which)"
+    # the map only, never reading the terminal (#503's review HIGH-1): a vault unlock mid-update would lock the
+    # roster app's session; `roster sync` or `roster vault sync` picks up the vault
+    if step "roster sync (ssh config and ROSTER.md from the map)" roster sync --no-vault </dev/null; then
+        done_stage
+        # T243: end as `roster sync` does: its next command (the last line it printed), only when something is left
+        last=$(tail -n 1 "$LOG")
+        (( DRY )) || [[ $last != *"next: "* ]] || info "next: ${last#*next: }"
+    else fail_stage; fi
 fi
 
 # 5. Tab completion: on, as install.sh turns it on, for a box installed before it did (unless you said no)

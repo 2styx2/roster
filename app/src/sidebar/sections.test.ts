@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { makeHosts } from "../backend/fake";
 import type { Tab, TabsSnapshot } from "../session/tabs";
 import { inventorySection, sectionBuilder, sessionsSection, type SidebarContext } from "./sections";
-import { rowName } from "./Sidebar";
+import { rowName } from "./model";
 
 const hosts = makeHosts(5);
 const hostByName = new Map(hosts.hosts.map((h) => [h.name, h]));

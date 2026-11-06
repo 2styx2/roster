@@ -13,7 +13,7 @@ from conftest import EXAMPLES
 
 from roster import __version__
 from roster.cli import main
-from roster.common import known_hosts_file
+from roster.context import current
 from roster.sshops import hk_name
 
 
@@ -25,7 +25,7 @@ def test_inventory_info(serve, isolated):
     assert info["path"] == str(example.resolve())
     assert info["box"] and info["host_count"] == 5
     assert {"bw", "op", "env", "prompt"} <= set(info["providers"])
-    assert info["roster_version"] == __version__ and info["api_version"] == 29
+    assert info["roster_version"] == __version__ and info["api_version"] == 30
     assert s.close() == (0, "", "")
 
 
@@ -149,7 +149,7 @@ def test_an_inventory_that_doesnt_load_is_an_error_not_an_exit(serve, write_conf
     err = s.call("inventory.info")["error"]
     assert err["code"] == 1
     assert err["message"] == "host 'box' has no user (set it on the host, its group, or defaults)"
-    assert err["data"] == {"path": str(path), "roster_version": __version__, "api_version": 29,
+    assert err["data"] == {"path": str(path), "roster_version": __version__, "api_version": 30,
                            "fix": f"fix {path}, or make one if there's none yet: `roster init --blank` "
                                   "(`roster init --help`: the others)"}
     assert s.call("hosts.list")["error"]["code"] == 1
@@ -315,7 +315,7 @@ def synced(write_config, capsys, text=INVENTORY):
     """roster.yml written and `roster sync` run, so this box's ssh config has every Host's alias, and a host key
     recorded for each Host, as `roster setup` would (without one, session.prepare asks first: ticket 36)."""
     path = write_config(text)
-    assert main(["sync"]) == 0
+    assert main(["sync", "--no-vault"]) == 0
     capsys.readouterr()
     record_keys(path)
 
@@ -327,8 +327,8 @@ def record_keys(path):
     """A host key in roster's known hosts for every Host in the roster.yml at PATH (none of them is ever reached)."""
     from roster.config import load_config
     lines = {f"{hk_name(h)} {HOST_KEY.get_name()} {HOST_KEY.get_base64()}\n" for h in load_config(path)["hosts"].values()}
-    known_hosts_file().parent.mkdir(mode=0o700, exist_ok=True)
-    known_hosts_file().write_text("".join(sorted(lines)))
+    current().known_hosts.parent.mkdir(mode=0o700, exist_ok=True)
+    current().known_hosts.write_text("".join(sorted(lines)))
 
 
 def test_session_prepare_for_an_enrolled_host(serve, write_config, capsys, fakes):
@@ -486,7 +486,9 @@ def test_a_token_expires(serve, write_config, capsys, fakes, monkeypatch):
     monkeypatch.setenv("ROSTER_ASKPASS_TTL", "0.2")              # shortens the 60 s; it can't lengthen it
     s = unlocked_serve(serve, write_config, capsys)
     spec = s.call("session.prepare", {"host": "esx"})["result"]
-    time.sleep(0.5)
+    expired = time.monotonic() + 0.2 + 0.05                      # its TTL, and the clock's grain
+    while time.monotonic() < expired:                            # waiting for the expiry itself, not a guess
+        time.sleep(0.01)
     r = run_askpass(spec)
     assert (r.returncode, r.stdout) == (1, "")
 
@@ -496,12 +498,11 @@ def test_an_unused_typed_password_leaves_memory_when_its_token_expires(monkeypat
     from roster.askpass import Channel, Typed
     monkeypatch.setenv("ROSTER_ASKPASS_TTL", "0.3")
     with Channel(lambda login: "unused") as ch:
-        time.sleep(0.5)                                          # the channel idles first: no token, nothing to wake for
+        minted = time.monotonic()
         ch.mint(Typed("typed secret"), "quick")
-        time.sleep(0.2)
-        assert len(ch.tokens) == 1
-        time.sleep(0.4)
-        assert ch.tokens == {}
+        while ch.tokens and time.monotonic() - minted < 5:
+            time.sleep(0.01)
+        assert ch.tokens == {} and 0.3 <= time.monotonic() - minted < 2      # at its expiry, not before
         start = time.monotonic()
     assert time.monotonic() - start < 0.5                        # closing doesn't wait for a timeout either
 
@@ -635,18 +636,18 @@ def test_a_refused_create_is_a_clean_error_without_the_password(serve, write_con
 
 
 def in_process(write_config, method, params, state=None):
+    """METHOD in this process, on STATE or a new serve with the vault unlocked."""
     from roster import serve as rpc
-    state = state or rpc.State(str(write_config(INVENTORY)))
-    if method != "vault.unlock" and not state.created and not getattr(state, "_unlocked", False):
-        rpc.handle(state, json.dumps({"jsonrpc": "2.0", "id": 0, "method": "vault.unlock",
-                                      "params": {"password": "hunter2"}}))
-        state._unlocked = True
+    if state is None:
+        state = rpc.State(str(write_config(INVENTORY)))
+        assert "result" in rpc.handle(state, json.dumps({"jsonrpc": "2.0", "id": 0, "method": "vault.unlock",
+                                                         "params": {"password": "hunter2"}}))
     return state, rpc.handle(state, json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}))
 
 
 def test_a_create_that_times_out_after_saving_counts_as_made_and_can_be_undone(write_config, vault, monkeypatch):
     from roster import serve as rpc
-    monkeypatch.setitem(rpc.DEADLINES, "vault.create_item", 2)
+    monkeypatch.setattr(rpc.METHODS["vault.create_item"], "deadline", 2)
     monkeypatch.setenv("FAKE_BW_CREATE_HANG", "30")
     state, r = in_process(write_config, "vault.create_item", {"name": "box ssh", "password": NEW_PW})
     made = r["result"]
@@ -659,7 +660,7 @@ def test_a_create_that_times_out_after_saving_counts_as_made_and_can_be_undone(w
 
 def test_a_create_that_times_out_before_saving_says_nothing_was_saved(write_config, vault, monkeypatch):
     from roster import serve as rpc
-    monkeypatch.setitem(rpc.DEADLINES, "vault.create_item", 2)
+    monkeypatch.setattr(rpc.METHODS["vault.create_item"], "deadline", 2)
     monkeypatch.setenv("FAKE_BW_SLOW", json.dumps({"create": 30}))
     _, r = in_process(write_config, "vault.create_item", {"name": "box ssh", "password": NEW_PW})
     err = r["error"]
@@ -667,15 +668,11 @@ def test_a_create_that_times_out_before_saving_says_nothing_was_saved(write_conf
     assert NEW_PW not in json.dumps(r)
 
 
-def test_a_create_that_times_out_and_cant_be_checked_says_so(write_config, vault, monkeypatch):
+def test_a_create_that_times_out_and_cant_be_checked_says_so(write_config, vault, tmp_path, monkeypatch):
     from roster import serve as rpc
-    monkeypatch.setitem(rpc.DEADLINES, "vault.create_item", 2)
+    monkeypatch.setattr(rpc.METHODS["vault.create_item"], "deadline", 2)
     monkeypatch.setenv("FAKE_BW_CREATE_HANG", "30")
-    from roster.providers import bitwarden
-
-    def list_breaks(ctx, *search):
-        raise rpc.providers.SecretError("`bw` timed out")
-    monkeypatch.setattr(bitwarden, "_bw_lookup", list_breaks)
+    monkeypatch.setenv("FAKE_BW_LOCK_ON_CREATE", str(tmp_path / "locked"))     # locked elsewhere once it's saved
     _, r = in_process(write_config, "vault.create_item", {"name": "box ssh", "password": NEW_PW})
     err = r["error"]
     assert err["code"] == 62 and "couldn't check" in err["message"] and "'box ssh'" in err["message"], err

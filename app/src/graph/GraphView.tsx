@@ -1,7 +1,8 @@
 // A Plugin's graph in a view (ticket 77, decision Q99): a map of nodes and edges drawn on one
 // canvas (draw.ts) from the pure scene (scene.ts), and the same graph as two tables (lists.ts).
 //
-// Keyboard first: h j k l (or the arrows) go to the nearest node that way, / searches and n N go
+// Keyboard first: h j k l (or the arrows) go to the nearest node that way, / searches (opening
+// empty, as the Picker does, #475) and n N go
 // through the matches, Enter opens a node (or opens and closes a collapsed cluster), o collapses
 // or opens the selected node's cluster and O all of them, + - zoom and 0 fits it all, H J K L pan,
 // t switches to the nodes' list and the edges' list, f goes to the filter (clusters, kinds or states
@@ -21,12 +22,12 @@ import { DataTable } from "../ui/DataTable";
 import { countOf, formatCount } from "../ui/format";
 import { Keys } from "../ui/Keys";
 import type { TableRow } from "../ui/table";
-import type { GraphModel } from "../view/views";
 import { drawFrame, easeOut, nodeRadius, readPalette, STAND_IN_RADIUS, toScreen, toWorld, type Camera } from "./draw";
 import { edgeTable, nodeTable, SHAPE_WORDS, stateWords } from "./lists";
 import { FilterMenu } from "./FilterMenu";
 import { GraphPlaces, type GraphMemory } from "./memory";
-import { filterGraph, filtering, graphIndex, nodeActionApplies, type FilterState, type GraphFilter } from "./model";
+import { filterGraph, filtering, graphIndex, type FilterState, type GraphFilter, type GraphModel } from "./model";
+import { whenApplies } from "../ui/when";
 import { buildScene, foldsFor, highlightOf, matchesOf, stepFrom, type Direction, type Highlight, type Scene } from "./scene";
 
 export interface GraphViewProps {
@@ -86,7 +87,6 @@ function fitted(scene: Scene, w: number, h: number): Camera {
   return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, k };
 }
 
-/** Whether the user asked for less motion. */
 const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /** --dur-draw in ms (0 under reduced motion). */
@@ -497,7 +497,11 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
       case "0":
         return fit;
       case "/":
-        return () => search.current?.focus();
+        // Empty, as the Picker opens (#475): a new name never adds to the last one.
+        return () => {
+          setQuery("");
+          search.current?.focus();
+        };
       case "n":
         return () => nextMatch(false);
       case "N":
@@ -521,7 +525,7 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
         return query ? () => setQuery("") : hiding ? () => setFilter({}) : null;
     }
     const action = model.actions.find((a) => a.key === k);
-    if (!action || !currentNode || !nodeActionApplies(action.when, currentNode)) return null;
+    if (!action || !currentNode || !whenApplies(action.when, currentNode)) return null;
     return e.repeat ? () => {} : () => action.run(currentNode);
   };
 
@@ -663,7 +667,7 @@ export function GraphView({ model, label, leader, memory, memoKey, autoFocus = f
   })();
   const searchSays = query.trim() ? (matches.length ? `${countOf(matches.length, "match", "matches")} for ${query.trim()}` : `Nothing matches ${query.trim()}`) : "";
   // An action with `when` is offered only on the nodes it names (T89).
-  const keyed = model.actions.filter((a) => a.key && currentNode !== undefined && nodeActionApplies(a.when, currentNode));
+  const keyed = model.actions.filter((a) => a.key && currentNode !== undefined && whenApplies(a.when, currentNode));
 
   // The filter's choices: the clusters, the kinds and the states the graph has.
   const kinds = useMemo(() => [...new Set(data.nodes.flatMap((n) => (n.kind ? [n.kind] : [])))].sort(), [data]);

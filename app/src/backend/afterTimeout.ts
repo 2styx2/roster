@@ -4,6 +4,7 @@
 // write holds roster.yml for its whole request, `changes.diff` takes roster.yml too, and `host.get`
 // with `settled` waits for it (an older serve answers in order, which waits anyway). These wrappers ask, and report what actually happened:
 // never "it failed" for something that was done, never silence.
+import { Code } from "./serveContract";
 import { BackendCallError, type AddHostParams, type Backend, type HostAdd, type PublishResult } from "./types";
 
 const LATE = "roster answered late, so the app checked afterwards";
@@ -23,16 +24,16 @@ export async function addHostChecked(backend: Backend, params: AddHostParams): P
     try {
       host = await backend.getHost(params.name, { settled: true });
     } catch (check) {
-      if (check instanceof BackendCallError && check.code === 2) {
+      if (check instanceof BackendCallError && check.code === Code.UNKNOWN_HOST) {
         throw new BackendCallError(
           `roster didn't answer in time; checked afterwards: ${params.name} isn't in the Inventory, so it wasn't added (roster takes back a vault item it made for it)`,
-          3,
+          Code.ROSTER_ERROR,
           { fix: "add it again" },
         );
       }
       throw new BackendCallError(
         `roster didn't answer in time, and the app couldn't check whether ${params.name} was added`,
-        3,
+        Code.ROSTER_ERROR,
         { fix: `look for ${params.name} in the Sidebar and in :changes before adding it again` },
       );
     }
@@ -75,7 +76,7 @@ export async function publishChecked(backend: Backend, message: string): Promise
     }
     throw new BackendCallError(
       "roster didn't answer in time, and the app couldn't check whether it was published",
-      3,
+      Code.ROSTER_ERROR,
       { fix: "open :changes: no Pending changes and the commit on the upstream means it was" },
     );
   }

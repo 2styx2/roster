@@ -15,10 +15,8 @@ import {
   NewInventoryError,
   type BackendProblem,
   type BoxCheck,
-  BOX_CHECK_API_VERSION,
   type HealthCheck,
   type CallErrorData,
-  CHECK_JOBS_API_VERSION,
   CHECK_STEPS,
   type CheckStarted,
   EditError,
@@ -49,8 +47,6 @@ import {
   type VaultStatus,
   type VaultStatusWord,
   VaultError,
-  VAULT_CONFIG_API_VERSION,
-  ITEM_FIELDS_API_VERSION,
   type VaultItemFields,
   type VaultSettings,
   type SaveTarget,
@@ -63,7 +59,6 @@ import {
   type SessionHandle,
   type TermSize,
   SessionRefusal,
-  FILL_API_VERSION,
   FillRefusal,
   NO_PASSWORD_AUTHS,
   type NestedHost,
@@ -74,9 +69,7 @@ import {
   type SaveLogin,
   type SaveLoginParams,
   PublishError,
-  SAVE_TO_VAULT_API_VERSION,
   SaveLoginError,
-  SIGN_OUT_API_VERSION,
   type SignedOut,
   SiteRequests,
 } from "./types";
@@ -84,6 +77,8 @@ import type { KeymapOverrides } from "../keymap";
 import { fakeCommit, fakePackageHost, type FakePackages } from "./fakePackages";
 import { discoverPlugin, fakeDiscoverServe, hugeNet, smallNet, type FakeNet } from "./fakeDiscover";
 import { recentAlerts } from "./fakeRecentAlerts";
+import { FAKE_PASSWORD } from "./fakeVault";
+import DEMO_MESH from "../../../crates/roster-core/tests/fixtures/demo-mesh.json";
 import { MESH_OTHERS, MESH_PERMISSIONS, meshLab, meshPlugin, meshServe, type MeshWorld } from "./fakeMesh";
 import { TOPOLOGY_PERMISSIONS, topologyPlugin, topologyServe, type TopologyWorld } from "./fakeTopology";
 import { described, fakePluginHost, type FakePlugin, type FakeServe } from "./fakePlugins";
@@ -103,6 +98,9 @@ import {
   worstCaseHosts,
   worstCaseSessions,
 } from "./worstCase";
+import { capabilities, sinceOf } from "./capabilities";
+import { setupHost } from "../errors/catalog";
+import { Code, SINCE } from "./serveContract";
 
 /** The fake's named Inventories (FakeScenario.inventories). */
 export interface FakeInventories {
@@ -233,7 +231,7 @@ export interface FakeScenario {
    * `save_to` (default: none, so the personal vault). init.lua's, sent with vault.configure, wins. */
   saveTo?: { targets: SaveTarget[]; setting?: SaveTo };
   /** `connect()`'s answer, where it differs from the default (a long Box name, path, distro). */
-  info?: { backend?: string; box?: string; path?: string; command?: string[] };
+  info?: { backend?: string; distro?: string; box?: string; path?: string; command?: string[] };
   /** The not-logged-in or missing-cli message, where it differs from roster's usual one. */
   vaultMessage?: string;
   /** Every Session's shell prints a busy log at this many lines a second once it has logged in, like
@@ -301,9 +299,8 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 
 const refuse = (r: Refusal) => new BackendCallError(r.message, r.code, r.data ?? null);
 
-/** A `host.check` answer with every step ok (a key Host's provider and vault-item skipped). */
-export /** A check a lock stopped as `at` was to start: the steps before it ok, the rest skipped. */
-function stoppedCheck(host: string, at: CheckStepName): HostCheck {
+/** A check a lock stopped as `at` was to start: the steps before it ok, the rest skipped. */
+export function stoppedCheck(host: string, at: CheckStepName): HostCheck {
   const stop = CHECK_STEPS.indexOf(at);
   return {
     host,
@@ -314,6 +311,7 @@ function stoppedCheck(host: string, at: CheckStepName): HostCheck {
   };
 }
 
+/** A `host.check` answer with every step ok (a key Host's provider and vault-item skipped). */
 function passingCheck(host: Host): HostCheck {
   const password = authOf(host) === "password";
   return {
@@ -371,8 +369,7 @@ function failingSession(id: number, auth: SessionAuth, output: string, events: S
   return { id, auth, write: done, resize: done, close: done };
 }
 
-/** The fake vault's master password (type it on the lock screen in a plain browser). */
-export const FAKE_PASSWORD = "correct horse";
+export { FAKE_PASSWORD };
 
 // roster's own wording (roster/src/roster/providers).
 const NOT_LOGGED_IN = "Bitwarden CLI isn't logged in on this box - run `bw login` once";
@@ -454,6 +451,9 @@ export function makeHosts(n: number): HostList {
       reviewed: i % 7 !== 3,
       enroll: i % 3 !== 0,
       ssh: { user: "admin", port: 22, auth: i % 3 === 0 ? `bw:${type}-${i} ssh` : "key" },
+      // serve API 30 (T239): every Host's key type and file; a few FIPS-mode ones on ECDSA
+      key_type: i % 10 === 4 ? "ecdsa" : "ed25519",
+      key_file: i % 10 === 4 ? "/home/admin/.ssh/roster_ecdsa" : "/home/admin/.ssh/roster_ed25519",
       ...servicesFor(type, `${type}-${subnet}-${String(i).padStart(3, "0")}`, `10.19.${subnet}.${(i % 250) + 2}`),
     };
   });
@@ -498,35 +498,35 @@ export const fixtures: Record<string, FakeScenario> = {
   "plugin-graph-worst": { hosts: makeHosts(12), plugins: { [GRAPH_PATH]: demoMapPlugin(2000, 40, true) }, app: { state: installedPlugin(GRAPH_PATH, "demo-map") } },
   "few-hosts": { hosts: makeHosts(12) },
   /** Ticket 10: a roster that can edit and publish (api 7), no Pending changes yet. */
-  edit: { hosts: makeHosts(12), apiVersion: 7 },
+  edit: { hosts: makeHosts(12), apiVersion: sinceOf("publish") },
   /** Ticket 12: the same, under the name the Publish tests use. */
-  publish: { hosts: makeHosts(12), apiVersion: 7 },
+  publish: { hosts: makeHosts(12), apiVersion: sinceOf("publish") },
   /** Ticket 11: a roster that can add Hosts (api 6). The new Host's password is FAKE_HOST_PASSWORD. */
-  add: { hosts: makeHosts(12), apiVersion: 6 },
+  add: { hosts: makeHosts(12), apiVersion: sinceOf("add") },
   /** #437: today's add form (API 29): "Fill from this item" reads a vault item's address, port and
    * user (`vault.item_fields`), and a Host at another Host's address and port is warned about. */
   "add-vault": {
     hosts: makeHosts(12),
-    apiVersion: 29,
+    apiVersion: sinceOf("itemFields"),
     itemFields: {
       "nas-01 ssh": { address: "10.19.9.50", port: 2222, user: "root" },
       "old box ssh": { address: "10.19.1.2", port: 22, user: "admin" },
       "nas-01 web": { note: "its URI isn't a network address (androidapp:), so it gives no address" },
-      "printer ssh": { code: 186, message: "op can't give an item's address and user without roster reading its password" },
+      "printer ssh": { code: Code.NO_ITEM_FIELDS, message: "op can't give an item's address and user without roster reading its password" },
     },
   },
   /** Issue #78: today's roster (api 9), which can also un-review a Host. */
-  review: { hosts: makeHosts(12), apiVersion: 9 },
+  review: { hosts: makeHosts(12), apiVersion: sinceOf("unreview") },
   /** Two Pending changes already made on this Box. */
   "edit-pending": {
     hosts: makeHosts(12),
-    apiVersion: 7,
+    apiVersion: sinceOf("publish"),
     pending: { "linux-1-000": { title: "Build box", description: "rack 1, top" }, "esxi-2-001": { type: "esxi8" } },
   },
   /** Ticket 12: two Pending changes, and someone else published roster.yml meanwhile. */
   "publish-moved": {
     hosts: makeHosts(12),
-    apiVersion: 7,
+    apiVersion: sinceOf("publish"),
     pending: { "linux-1-000": { title: "Build box" }, "esxi-2-001": { type: "esxi8" } },
     publishRefusal: {
       code: PublishError.remoteMoved,
@@ -541,7 +541,7 @@ export const fixtures: Record<string, FakeScenario> = {
   /** The pull before an edit fails: the branch has diverged. */
   "edit-diverged": {
     hosts: makeHosts(12),
-    apiVersion: 7,
+    apiVersion: sinceOf("publish"),
     pullRefusal: {
       code: EditError.diverged,
       message: "this box's infra repo and origin/main have diverged (1 local and 2 new commits there), so roster won't pull",
@@ -552,13 +552,13 @@ export const fixtures: Record<string, FakeScenario> = {
   "91-hosts": { hosts: makeHosts(91) },
   slow: { hosts: makeHosts(300), delay: 1500 },
   /** Issue #78: Sessions take 1.2 s to start and 2.5 s more to log in, so the connecting state shows. */
-  "slow-login": { hosts: makeHosts(12), apiVersion: 9, sessionDelay: 1200, loginMs: 2500 },
+  "slow-login": { hosts: makeHosts(12), apiVersion: sinceOf("unreview"), sessionDelay: 1200, loginMs: 2500 },
   /** Ticket 36: no Host's key is recorded yet, so every first Session asks (fetching takes 0.8 s). */
-  "host-key": { hosts: makeHosts(12), apiVersion: 11, delay: 800, unknownKeys: unknownKeysOf(makeHosts(12)) },
+  "host-key": { hosts: makeHosts(12), apiVersion: sinceOf("hostKey"), delay: 800, unknownKeys: unknownKeysOf(makeHosts(12)) },
   /** Ticket 36: the same, but each Host offers another key by the time it's trusted (row 62). */
   "host-key-changed": {
     hosts: makeHosts(12),
-    apiVersion: 11,
+    apiVersion: sinceOf("hostKey"),
     unknownKeys: unknownKeysOf(makeHosts(12), { changesOnTrust: true }),
   },
   /** Ticket 14: Quick Connect (API 12). Any user@address answers with an unrecorded key and takes
@@ -566,7 +566,7 @@ export const fixtures: Record<string, FakeScenario> = {
    * differs from the one recorded, 10.0.0.23's changes before the connect. */
   quick: {
     hosts: makeHosts(12),
-    apiVersion: 12,
+    apiVersion: sinceOf("quickConnect"),
     delay: 600,
     quickBoxes: { "10.0.0.66": { unreachable: true }, "10.0.0.23": { changesOnConnect: true } },
     scanKeys: { "10.0.0.43": { recorded: "changed" } },
@@ -575,7 +575,7 @@ export const fixtures: Record<string, FakeScenario> = {
    * window title, which pre-fills the Host's name); a vault item "dup ssh" is already there. */
   "quick-save": {
     hosts: makeHosts(12),
-    apiVersion: 13,
+    apiVersion: sinceOf("saveToVault"),
     delay: 300,
     loginMs: 800,
     quickBoxes: { "10.0.0.5": { hostname: "nas-01" }, "10.0.0.66": { unreachable: true } },
@@ -583,7 +583,7 @@ export const fixtures: Record<string, FakeScenario> = {
   },
   /** Ticket 16: the first Host's Login is still `auth: prompt` (API 13): its Session asks for the
    * password (`host pass`) with the Save to vault tick. */
-  "prompt-save": { hosts: withPromptHost(makeHosts(12)), apiVersion: 13, delay: 300, loginMs: 800 },
+  "prompt-save": { hosts: withPromptHost(makeHosts(12)), apiVersion: sinceOf("saveToVault"), delay: 300, loginMs: 800 },
   "roster-too-old": {
     hosts: makeHosts(0),
     startProblem: problem(
@@ -639,7 +639,7 @@ export const fixtures: Record<string, FakeScenario> = {
     ),
   },
   /** T212: roster.yml is a plain file (serve API 28): every edit saved straight to it, nothing to publish. */
-  "plain-file": { hosts: makeHosts(12), apiVersion: 28, store: "file", info: { path: "~/infra/roster.yml" } },
+  "plain-file": { hosts: makeHosts(12), apiVersion: sinceOf("store"), store: "file", info: { path: "~/infra/roster.yml" } },
   locked: { hosts: makeHosts(12) },
   "not-logged-in": { hosts: makeHosts(12), vault: { status: "not-logged-in" } },
   "missing-cli": { hosts: makeHosts(12), vault: { status: "missing-cli" } },
@@ -665,17 +665,17 @@ export const fixtures: Record<string, FakeScenario> = {
   "sign-in-eu": signingIn({ server: "https://vault.bitwarden.eu" }),
   /** Ticket 42 (API 14): a locked Bitwarden signed in as you@example.com; "Use a different account"
    * and `:vault signout` sign it out, and the sign-in form takes the same fake account. */
-  "sign-out": { hosts: makeHosts(12), apiVersion: SIGN_OUT_API_VERSION },
+  "sign-out": { hosts: makeHosts(12), apiVersion: sinceOf("signOut") },
   /** Ticket 49 (API 16): `:check` with no Host shows this Box's health, with an error and two warnings. */
-  health: { hosts: makeHosts(12), apiVersion: BOX_CHECK_API_VERSION, boxChecks: [...UNHEALTHY_BOX] },
+  health: { hosts: makeHosts(12), apiVersion: sinceOf("boxCheck"), boxChecks: [...UNHEALTHY_BOX] },
   /** Ticket 110: `:check HOST` as serve's job (API 21): each step starts 0.7 s after the last. */
-  "check-live": { hosts: makeHosts(12), apiVersion: 22, checkSteps: { stepMs: 700 } },
+  "check-live": { hosts: makeHosts(12), apiVersion: sinceOf("checkJobs"), checkSteps: { stepMs: 700 } },
   /** Ticket 110: the TCP step never ends (a Host that doesn't answer, up to its timeout). */
-  "check-hang": { hosts: makeHosts(12), apiVersion: 22, checkSteps: { stepMs: 300, hangAt: "tcp" } },
+  "check-hang": { hosts: makeHosts(12), apiVersion: sinceOf("checkJobs"), checkSteps: { stepMs: 300, hangAt: "tcp" } },
   /** Ticket 110: every Host's check is stopped at its Host key step (a lock stopped it). */
   "check-stopped": {
     hosts: makeHosts(12),
-    apiVersion: 22,
+    apiVersion: sinceOf("checkJobs"),
     checkSteps: { stepMs: 300 },
     checks: Object.fromEntries(makeHosts(12).hosts.map((h) => [h.name, stoppedCheck(h.name, "host-key")])),
   },
@@ -791,13 +791,8 @@ function pluginServe(scenario: FakeScenario): FakeServe | undefined {
   };
 }
 
-/** The demo's Mesh, fixed and made up, as plugin/demo.rs has it (#233): the lab's demo-01 to
- * demo-03 meshed, demo-01 reaching demo-05 too, which didn't answer the last apply; the switch
- * demo-04 kept out. */
-const DEMO_MESHED = ["demo-01", "demo-02", "demo-03"];
-const DEMO_LINKS: [string, string][] = [["demo-01", "demo-05"]];
-
-/** `mesh.status` on the demo, in real serve's shape: plain, `grouped` (API 19) or `brief` (API 17). */
+/** `mesh.status` on the demo, in real serve's shape: plain, `grouped` (API 19) or `brief` (API 17),
+ * from the made-up Mesh the core's demo answers from too (#233). */
 function demoMeshStatus(params: Record<string, unknown>): Record<string, unknown> {
   const flag = (name: string) => {
     const v = params[name];
@@ -808,25 +803,7 @@ function demoMeshStatus(params: Record<string, unknown>): Record<string, unknown
   const grouped = flag("grouped");
   const brief = flag("brief");
   if (grouped && brief) throw new BackendCallError("params.grouped and params.brief don't go together", -32602);
-  const link = ([from, to]: [string, string]) => ({ from, to, kind: "key" });
-  const pairs = DEMO_MESHED.flatMap((a) => DEMO_MESHED.filter((b) => b !== a).map((b): [string, string] => [a, b]));
-  const links = [...pairs, ...DEMO_LINKS];
-  const count = (names: string[]) => names.reduce<Record<string, number>>((n, x) => ({ ...n, [x]: (n[x] ?? 0) + 1 }), {});
-  const out: Record<string, unknown> = {
-    links: links.map(link),
-    excluded: { "demo-04": "mesh: false" },
-    reach: count(links.map(([from]) => from)),
-    members: ["demo-01", "demo-02", "demo-03", "demo-05"],
-    pending: { "demo-05": "no answer: ssh: connect to host 10.0.0.15 port 22: Connection timed out" },
-    cut_pending: {},
-    out_of_date: false,
-  };
-  if (grouped) Object.assign(out, { links: DEMO_LINKS.map(link), meshed: { "demo-lab": DEMO_MESHED } });
-  if (brief) {
-    // Untested Links all work (`asked`), with no hop: none is worth a look, so only counts.
-    Object.assign(out, { links: [], links_more: 0, link_count: links.length, link_statuses: { asked: links.length }, reached: count(links.map(([, to]) => to)) });
-  }
-  return out;
+  return structuredClone({ ...DEMO_MESH.plain, ...(grouped ? DEMO_MESH.grouped : {}), ...(brief ? DEMO_MESH.brief : {}) });
 }
 
 /** roster serve as `:tutor`'s demo has it (plugin/demo.rs in the core): its Hosts, a made-up Mesh
@@ -837,10 +814,10 @@ export function demoServe(demo: HostList): FakeServe {
     if (method === "mesh.status") return demoMeshStatus(params);
     if (method === "host.get") {
       const host = demo.hosts.find((h) => h.name === params.name);
-      if (!host) throw new BackendCallError(`No Host named '${String(params.name)}' on the demo Inventory`, 2);
+      if (!host) throw new BackendCallError(`No Host named '${String(params.name)}' on the demo Inventory`, Code.UNKNOWN_HOST);
       return host;
     }
-    throw new BackendCallError(notOnDemo(method), 3);
+    throw new BackendCallError(notOnDemo(method), Code.ROSTER_ERROR);
   };
 }
 
@@ -851,7 +828,7 @@ function discoverCase(found: FakeNet["found"], step: number): FakeScenario {
   const permissions = discoverPlugin().manifest.permissions;
   return {
     hosts: makeHosts(12),
-    apiVersion: 18,
+    apiVersion: SINCE["discover.start"],
     vault: { status: "unsupported" },
     discover: { found, step },
     packages: {
@@ -894,6 +871,7 @@ function worstCase(): FakeScenario {
     hosts,
     info: {
       backend: "WSL: FedoraLinux-44",
+      distro: "FedoraLinux-44",
       box: LONG_BOX,
       path: LONG_PATH,
       command: ["wsl.exe", "-d", "FedoraLinux-44", "--exec", "/home/aleksandra.wisniewska-kowalczyk/.local/bin/roster", "-c", LONG_PATH, "serve"],
@@ -1361,13 +1339,13 @@ export interface FakeBackend extends Backend {
   pluginReplied(reply: PluginReply): void;
   /** What a Plugin keeps in its data folder (`roster.storage`, decision Q93), by file name. */
   pluginFiles(plugin: string): Map<string, string>;
-  /** As a core host built anew: it hasn't been told roster's own commands. */
-  pluginForgetBuiltins(): void;
 }
 
 const NAME = /^[A-Za-z0-9._-]+$/;
 
 export function fakeBackend(scenario: FakeScenario): FakeBackend {
+  const api = scenario.apiVersion ?? 2;
+  const caps = capabilities({ api_version: api });
   let failures = 0;
   /** inventory.create made one (T212): connect() starts from now on. */
   let created = false;
@@ -1431,7 +1409,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     }
     onDisk = null;
   };
-  const plain = scenario.store === "file" && (scenario.apiVersion ?? 2) >= 28;
+  const plain = scenario.store === "file" && caps.has("store");
   const pending = (): PendingChanges => {
     if (plain) {
       // a plain file (T212): every edit was saved to it, so what's on disk is what's "committed"
@@ -1499,7 +1477,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
   };
   /** Ticket 42: signed out through `vault.logout`; the sign-in form then takes the fake account. */
   let signedOut = false;
-  const accountApi = (scenario.apiVersion ?? 2) >= SIGN_OUT_API_VERSION;
+  const accountApi = caps.has("signOut");
   const signInAccount = (): FakeAccount | undefined => scenario.signIn ?? (signedOut ? {} : undefined);
   const vaultStatus = (): VaultStatus => {
     const vault = vaultNow();
@@ -1565,7 +1543,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
   };
   /** host.scan_key / host.trust_key at an address that doesn't answer (roster's 42). */
   const unanswered = (h: Host) =>
-    new BackendCallError(`${h.name} (${h.ip}:${h.ssh.port}) didn't answer within 5 s`, 42, {
+    new BackendCallError(`${h.name} (${h.ip}:${h.ssh.port}) didn't answer within 5 s`, Code.TIMEOUT, {
       fix: "retry later; is the Host up and the network path open? If not, a rate limiter on the network can cause this: wait a few minutes, don't retry in a loop",
       details: "timed out",
     });
@@ -1767,6 +1745,8 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       const info = scenario.info ?? {};
       return {
         backend: info.backend ?? "Fake",
+        kind: info.distro === undefined ? "local" : "wsl",
+        distro: info.distro ?? null,
         command: info.command ?? ["roster", "serve"],
         inventory: {
           path: serveOn?.path ?? info.path ?? "~/team-inventory/roster.yml",
@@ -1774,8 +1754,8 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
           host_count: hosts.length,
           providers: ["bw"],
           roster_version: "0.1.0",
-          api_version: scenario.apiVersion ?? 2,
-          ...((scenario.apiVersion ?? 2) >= 28
+          api_version: api,
+          ...(caps.has("store")
             ? {
                 store:
                   scenario.store === "file"
@@ -1798,7 +1778,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (created) throw new BackendCallError("this roster serve made one already", NewInventoryError.there);
       if (params.how !== "blank" && !params.source) throw new BackendCallError(`params.source: the ${params.how === "file" ? "roster.yml to copy" : "git URL"}`, -32602);
       if (scenario.firstRun === "name-taken" && !params.name) {
-        throw new BackendCallError("params.name: there's already an Inventory named 'infra'", -32602, {
+        throw new BackendCallError("params.name: there's already an Inventory named 'infra'", Code.INVENTORY_TAKEN, {
           field: "name",
           name: "infra",
           fix: "give it another name, or pick another folder (its name names the Inventory); `roster inv remove infra` forgets the other one",
@@ -1810,7 +1790,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
           stopCreate = resolve;
         });
         stopCreate = null;
-        throw new BackendCallError("inventory.create was stopped while git cloned the repo: nothing was kept", 5);
+        throw new BackendCallError("inventory.create was stopped while git cloned the repo: nothing was kept", Code.CANCELLED);
       }
       if (params.how === "repo" && params.source?.includes("nope")) {
         throw new BackendCallError(`git couldn't clone ${params.source}`, NewInventoryError.cloneFailed, {
@@ -1836,7 +1816,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (options?.settled) settled.push(name);
       await wait();
       const h = hosts.find((x) => x.name === name);
-      if (!h) throw new BackendCallError(`unknown host '${name}'`, 2);
+      if (!h) throw new BackendCallError(`unknown host '${name}'`, Code.UNKNOWN_HOST);
       return h;
     },
     vaultStatus: () =>
@@ -1869,7 +1849,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     configureVault: (next) =>
       inOrder(async () => {
         await wait();
-        if ((scenario.apiVersion ?? 2) < VAULT_CONFIG_API_VERSION) {
+        if (!caps.has("vaultConfig")) {
           throw new BackendCallError("unknown method 'vault.configure'", -32601);
         }
         const before = named();
@@ -1882,7 +1862,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     saveTargets: () =>
       inOrder(async () => {
         await wait();
-        if ((scenario.apiVersion ?? 2) < VAULT_CONFIG_API_VERSION) {
+        if (!caps.has("vaultConfig")) {
           throw new BackendCallError("unknown method 'vault.targets'", -32601);
         }
         if (vaultNow() !== "unlocked") throw new BackendCallError(VAULT_LOCKED, VaultError.locked);
@@ -1901,13 +1881,13 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     vaultItemFields: (item, provider) =>
       inOrder(async (): Promise<VaultItemFields> => {
         await wait();
-        if ((scenario.apiVersion ?? 2) < ITEM_FIELDS_API_VERSION) {
+        if (!caps.has("itemFields")) {
           throw new BackendCallError("unknown method 'vault.item_fields'", -32601);
         }
         if (vaultNow() !== "unlocked") throw new BackendCallError(VAULT_LOCKED, VaultError.locked);
         const said = scenario.itemFields?.[item];
         if (said === undefined) {
-          throw new BackendCallError(`no vault item matches '${item}'`, 32, {
+          throw new BackendCallError(`no vault item matches '${item}'`, Code.ITEM_NOT_FOUND, {
             near: [],
             fix: "check the item's name in the vault, or use its id",
           });
@@ -1970,10 +1950,10 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (refusal) throw refuse(refusal);
       const auth = authOf(h);
       // Ticket 16: an `auth: prompt` Host's password is the one the user types (API 13).
-      const prompted = auth === "password" && h.ssh.auth === "prompt" && (scenario.apiVersion ?? 2) >= SAVE_TO_VAULT_API_VERSION;
+      const prompted = auth === "password" && h.ssh.auth === "prompt" && caps.has("saveToVault");
       if (auth === "password" && h.ssh.auth === "prompt" && !prompted) {
         // An older roster can't ask: its prompt provider has no terminal under serve.
-        throw new BackendCallError(`needs input (password for group '${h.group}') but there's no terminal to ask in (ssh Login of ${host})`, 35);
+        throw new BackendCallError(`needs input (password for group '${h.group}') but there's no terminal to ask in (ssh Login of ${host})`, Code.LOOKUP_FAILED);
       }
       if (prompted) {
         if (!typed) {
@@ -2004,7 +1984,8 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         throw new BackendCallError(`roster hasn't seen ${host}'s host key before`, SessionRefusal.hostKeyUnknown, {
           address: h.ip,
           port: h.ssh.port,
-          fix: `compare its fingerprint with the Host's console or owner, then trust it when the app asks, or run \`roster setup --only ${host}\``,
+          // As serve says it: `--host` from API 29 (T227), `--only` before.
+          fix: `compare its fingerprint with the Host's console or owner, then trust it when the app asks, or run \`${setupHost(host, { caps })}\``,
         });
       }
       const failure = scenario.sshFailures?.[host];
@@ -2103,7 +2084,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         return { host: now.name };
       };
       const opened = { ...handle, ...(scenario.conpty ? { conpty: true } : {}), fillUser: connected.user };
-      return (scenario.apiVersion ?? 2) >= FILL_API_VERSION ? { ...opened, fill } : opened;
+      return caps.has("fill") ? { ...opened, fill } : opened;
     },
     async openQuickSession(to, password, size, events, options = {}) {
       await (scenario.sessionDelay === undefined ? wait() : new Promise((r) => setTimeout(r, scenario.sessionDelay)));
@@ -2112,7 +2093,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       const box = scenario.quickBoxes?.[to.address];
       const where = `${to.address}:${to.port}`;
       if (box?.unreachable) {
-        throw new BackendCallError(`${label} (${where}) didn't answer within 5 s`, 42, {
+        throw new BackendCallError(`${label} (${where}) didn't answer within 5 s`, Code.TIMEOUT, {
           fix: "retry later; is the Host up and the network path open?",
           details: "timed out",
         });
@@ -2137,7 +2118,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       const id = ++sessions;
       const auth: SessionAuth = password === null ? "key" : "password";
       const qid = `q${quick.length}`;
-      const saving = options.save === true && password !== null && (scenario.apiVersion ?? 2) >= SAVE_TO_VAULT_API_VERSION;
+      const saving = options.save === true && password !== null && caps.has("saveToVault");
       if (saving) {
         holding.set(qid, { loggedIn: false, to });
         heldIds.push(qid);
@@ -2252,12 +2233,12 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     async checkBox(): Promise<BoxCheck> {
       await wait();
       const checks = scenario.boxChecks ?? [...HEALTHY_BOX];
-      return { checks, ok: !checks.some((c) => c.level === "error"), roster_version: "0.1.0", api_version: scenario.apiVersion ?? 2 };
+      return { checks, ok: !checks.some((c) => c.level === "error"), roster_version: "0.1.0", api_version: api };
     },
     async checkHost(host, onStarted) {
       if (scenario.heldChecks?.includes(host)) {
         // serve's check job (API 21): one per Host, so asking again while it runs joins it.
-        if ((scenario.apiVersion ?? 2) >= CHECK_JOBS_API_VERSION) {
+        if (caps.has("checkJobs")) {
           const started = heldJobs.get(host) ?? { job: `check-${++heldJobCount}`, own: !scenario.othersChecks?.includes(host) };
           heldJobs.set(host, started);
           onStarted?.(started);
@@ -2278,7 +2259,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         if (!h) {
           const steps = CHECK_STEPS.map((step, i) =>
             i === 0
-              ? { step, status: "fail" as const, code: 2, message: `unknown host '${host}'`, fix: "check the name" }
+              ? { step, status: "fail" as const, code: Code.UNKNOWN_HOST, message: `unknown host '${host}'`, fix: "check the name" }
               : { step, status: "skipped" as const, message: "an earlier step failed" },
           );
           return { host, ok: false, steps };
@@ -2327,7 +2308,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     async verifyLogin(host, changes) {
       await wait();
       const h = hosts.find((x) => x.name === host);
-      if (!h) throw new BackendCallError(`unknown host '${host}'`, 2);
+      if (!h) throw new BackendCallError(`unknown host '${host}'`, Code.UNKNOWN_HOST);
       const result = scenario.verifyResults?.[host] ?? passingVerify(host);
       if (result.ok) verified.add(loginKey(host, { ...fieldsOf(h), ...changes }));
       return result;
@@ -2335,7 +2316,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     async updateHost(host, changes) {
       await wait();
       const h = hosts.find((x) => x.name === host);
-      if (!h) throw new BackendCallError(`unknown host '${host}'`, 2);
+      if (!h) throw new BackendCallError(`unknown host '${host}'`, Code.UNKNOWN_HOST);
       const now = fieldsOf(h);
       const wanted = Object.fromEntries(Object.entries(changes).filter(([k, v]) => now[k as keyof HostFields] !== v));
       if (Object.keys(wanted).length === 0) return { changed: false, host: h, backup: null };
@@ -2361,7 +2342,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       const chosen = namedInvs.find((n) => n.name === name);
       if (!chosen) {
         const names = namedInvs.map((n) => n.name);
-        throw new BackendCallError(`no Inventory named '${name}'`, InventoriesError.unknown, { names, fix: `pick one of ${names.join(", ") || "none"}` });
+        throw new BackendCallError(`no Inventory named '${name}' (named: ${names.join(", ") || "none yet"}) - \`roster inv list\` lists them, \`roster inv add NAME PATH\` names one`, InventoriesError.unknown, { names, fix: "`roster inv list` lists them" });
       }
       activeInventory = name;
       return { active: name, path: chosen.path, restart: true as const };
@@ -2428,7 +2409,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     async scanKey(address, port) {
       await wait();
       if (scenario.quickBoxes?.[address]?.unreachable) {
-        throw new BackendCallError(`${address} (${address}:${port}) didn't answer within 5 s`, 42, {
+        throw new BackendCallError(`${address} (${address}:${port}) didn't answer within 5 s`, Code.TIMEOUT, {
           fix: "retry later; is the Host up and the network path open?",
           details: "timed out",
         });
@@ -2481,7 +2462,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
           });
         }
       }
-      const choosing = (scenario.apiVersion ?? 2) >= VAULT_CONFIG_API_VERSION;
+      const choosing = caps.has("vaultConfig");
       const target = p.password === undefined || !choosing ? null : targetFor(p.save_to ?? defaultSetting().setting);
       if (p.password !== undefined && choosing && !target) throw unknownTarget(p.save_to ? "save_to" : "vault.save_to in init.lua");
       const host: Host = {
@@ -2515,7 +2496,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     async reviewHost(host, reviewed = true) {
       await wait();
       const h = hosts.find((x) => x.name === host);
-      if (!h) throw new BackendCallError(`unknown host '${host}'`, 2);
+      if (!h) throw new BackendCallError(`unknown host '${host}'`, Code.UNKNOWN_HOST);
       if (h.reviewed === reviewed) return { changed: false, host: h, backup: null };
       const updated = { ...h, reviewed };
       hosts = hosts.map((x) => (x.name === host ? updated : x));
@@ -2524,14 +2505,14 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     async removeHost(host) {
       await wait();
       const h = hosts.find((x) => x.name === host);
-      if (!h) throw new BackendCallError(`unknown host '${host}'`, 2);
+      if (!h) throw new BackendCallError(`unknown host '${host}'`, Code.UNKNOWN_HOST);
       hosts = hosts.filter((x) => x.name !== host);
       return { removed: host, group: h.group, backup: BACKUP, sync: synced() };
     },
     async renameHost(host, to) {
       await wait();
       const h = hosts.find((x) => x.name === host);
-      if (!h) throw new BackendCallError(`unknown host '${host}'`, 2);
+      if (!h) throw new BackendCallError(`unknown host '${host}'`, Code.UNKNOWN_HOST);
       if (!NAME.test(to)) throw new BackendCallError(`bad host name '${to}' (use letters, digits, . _ -)`, AddError.invalidHost, { field: "name" });
       if (to === host) return { changed: false, host: h, backup: null };
       const there = hosts.find((x) => x.name === to);
@@ -2549,7 +2530,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     async moveHost(host, group) {
       await wait();
       const h = hosts.find((x) => x.name === host);
-      if (!h) throw new BackendCallError(`unknown host '${host}'`, 2);
+      if (!h) throw new BackendCallError(`unknown host '${host}'`, Code.UNKNOWN_HOST);
       if (!(group in groups)) throw unknownGroup(group, groups);
       if (h.group === group) return { changed: false, host: h, backup: null, pinned: [] };
       const moved = { ...h, group };

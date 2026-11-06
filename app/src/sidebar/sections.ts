@@ -5,11 +5,11 @@
 // row's parent, and raises the on-screen Host's first row (the others are "also").
 import { addressCut } from "../ui/format";
 import type { Host, HostList } from "../backend/types";
-import { connectPhase, linkOf, statusText } from "../session/Sessions";
+import { connectPhase, isLive, linkOf, statusText } from "../session/status";
 import { tabFacts, type Tab, type TabsSnapshot } from "../session/tabs";
 import { BUILTIN, Registry, type Entry } from "../registry";
-import { headingId, type Dot, type SidebarRow, type SidebarSection } from "./Sidebar";
-import type { Light } from "../ui/StateDot";
+import { headingId, type Dot, type SidebarRow, type SidebarSection } from "./model";
+import type { Light } from "../ui/dot";
 import type { HostBadge } from "../view/status";
 
 /** What a section can build from. */
@@ -94,7 +94,7 @@ export function sectionBuilder(): SectionBuild {
       .filter((s): s is SidebarSection => s !== null);
     const active = ctx.sessions.tabs.find((t) => t.id === ctx.sessions.active);
     const lit = markLit(sections, ctx.sessions);
-    return active ? markOnScreen(lit, active.host, isLive(active)) : lit;
+    return active ? markOnScreen(lit, active.host, isLive(active.status)) : lit;
   };
 }
 
@@ -118,11 +118,8 @@ function foldSection(section: SidebarSection, folded: ReadonlySet<string>): Side
   return { ...section, rows, folded: folded.has(heading) };
 }
 
-/** A Session that's connected or connecting: not ended, not refused. */
-const isLive = (tab: Tab) => tab.status.state !== "ended" && tab.status.state !== "failed";
-
 /** Rows whose Host has a live or connecting Session: their node takes the accent (`lit`); every
- * other node stays muted (taste.md: the accent means live, decision Q204). An ended or unreviewed
+ * other node stays muted (taste.md: the accent means live, decision Q214). An ended or unreviewed
  * node keeps its own colour. Only the rows that change are new objects, so the memoized rows of a
  * big Inventory don't re-render (#62). */
 function markLit(sections: SidebarSection[], sessions: TabsSnapshot): SidebarSection[] {
@@ -153,11 +150,11 @@ function markLit(sections: SidebarSection[], sessions: TabsSnapshot): SidebarSec
 
 /** How each Host with a Session stands, for its node wherever it's listed: `connecting` while any
  * of its Sessions is, else `current` when the Session on screen is one of its, else `live`. Ended
- * and refused Sessions don't count (decisions Q203, Q204). */
+ * and refused Sessions don't count (decisions Q213, Q214). */
 export function hostLights(sessions: TabsSnapshot): Map<string, Light | "connecting"> {
   const out = new Map<string, Light | "connecting">();
   for (const t of sessions.tabs) {
-    if (!isLive(t)) continue;
+    if (!isLive(t.status)) continue;
     const how = connectPhase(t) ? "connecting" : t.id === sessions.active ? "current" : "live";
     const had = out.get(t.host);
     if (had === "connecting" || (had === "current" && how === "live")) continue;
@@ -187,7 +184,7 @@ function markOnScreen(sections: SidebarSection[], host: string, live: boolean): 
 }
 
 function dotOf(tab: Tab, host: Host | undefined): Dot {
-  if (tab.status.state === "ended" || tab.status.state === "failed") return "ended";
+  if (!isLive(tab.status)) return "ended";
   // Until the shell answers it's connecting: the node fills (or rings) once it's live (issue #78).
   if (connectPhase(tab)) return "connecting";
   // How the Session logged in, once it has; until then an enrolled Host will use this Box's key
@@ -214,10 +211,10 @@ export const sessionsSection: SidebarSectionDef = {
           title: "Sessions",
           count: sessions.tabs.length,
           // One quiet row when empty: the section keeps a row of room, so the first Session takes
-          // that slot and nothing under it moves (Q218).
+          // that slot and nothing under it moves (Q228).
           empty: "None open",
           rows: sessions.tabs.map((tab, i) => {
-            const done = !isLive(tab);
+            const done = !isLive(tab.status);
             const facts = done ? endedFacts(tab) : tabFacts(tab);
             return {
               id: `session-${tab.id}`,
@@ -231,7 +228,7 @@ export const sessionsSection: SidebarSectionDef = {
               ...(tab.cwd ? { detail: folderName(tab.cwd) } : {}),
               ...(facts ? { title: facts } : {}),
               raised: tab.id === sessions.active,
-              ...(tab.id === sessions.active && isLive(tab) ? { live: true } : {}),
+              ...(tab.id === sessions.active && isLive(tab.status) ? { live: true } : {}),
               ...(i < 9 ? { index: i + 1 } : {}),
               command: `session ${i + 1}`,
               actions: [

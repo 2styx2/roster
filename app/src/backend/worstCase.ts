@@ -6,6 +6,7 @@
 //
 // Spread the failures across the first rows: that's what's on screen.
 import { CHECK_STEPS, SessionRefusal, type Group, type Host, type HostCheck, type HostList, type Service } from "./types";
+import { Code } from "./serveContract";
 
 /** The name the ticket names: a `roster discover` result nobody has renamed yet. */
 export const LONG_NAME = "server-10-0-0-202-very-long-discovered-name";
@@ -219,7 +220,7 @@ export function hostKeyCheck(host: string): HostCheck {
           ? {
               step,
               status: "fail" as const,
-              code: 43,
+              code: Code.HOST_KEY_CHANGED,
               message: `${host}'s host key changed since roster recorded it`,
               details: HOST_KEY_CHANGED_OUTPUT,
               data: { recorded: SHA_RECORDED, offered: SHA_OFFERED },

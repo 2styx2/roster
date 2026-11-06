@@ -215,7 +215,7 @@ def kp(fakes, tmp_path):
                                            "URL": "10.0.0.50", "Notes": "note-SECRET-nas"},
                                           {"path": "esx-02 ssh", "UserName": "root", "Password": "pw-mapped-SECRET",
                                            "URL": ""}]}))
-    providers.PROVIDER_SETTINGS["kp"] = {"database": str(db)}
+    providers.setup_providers({"path": tmp_path / "roster.yml", "providers": {"kp": {"database": str(db)}}})
     (tmp_path / "argv.log").unlink(missing_ok=True)
     return tmp_path
 
@@ -282,7 +282,7 @@ def add(capsys, *argv):
 
 
 def seen_files(isolated):
-    from roster.common import user_config_dir
+    from roster.context import user_config_dir
     return sorted((user_config_dir() / "vault-seen").glob("*.json"))
 
 
@@ -325,6 +325,14 @@ def test_json_is_the_list_only(capsys, yml, bw, isolated):
     assert yml.read_text() == YML
 
 
+def test_json_after_a_sync_is_still_the_one_document(capsys, yml, bw, monkeypatch):
+    # found by the end-to-end suite: the sync's line came first on stdout, so stdout wasn't JSON
+    monkeypatch.setenv("FAKE_BW_LAST_SYNC", "2026-11-04T09:00:00.000Z")
+    rc, out, err = add(capsys, "--json")
+    assert rc == 0 and json.loads(out)["unmapped"] == 3
+    assert "synced       bw (the previous sync was" in err
+
+
 def test_mark_seen_makes_them_old_and_all_shows_them_again(capsys, yml, bw, isolated):
     assert add(capsys, "--mark-seen", "--no-sync")[0] == 0
     [f] = seen_files(isolated)
@@ -356,7 +364,7 @@ def test_a_locked_vault_says_how_to_unlock_and_never_asks(capsys, yml, bw, monke
     monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("asked something"))
     rc, out, err = add(capsys)
     assert rc != 0
-    assert "[14]" in str(rc) + err and "locked" in str(rc) + err and "roster vault bw --write -- unlock" in str(rc) + err
+    assert "[14]" in str(rc) + err and "locked" in str(rc) + err and "roster vault unlock" in str(rc) + err
     assert not any(c[0] == "list" for c in calls(bw))
 
 
@@ -458,9 +466,9 @@ def test_kp_from_the_cli_says_how_to_add_it_by_hand(capsys, write_config, kp):
 
 
 def test_setup_flag_sets_each_added_host_up_without_asking(capsys, yml, bw, monkeypatch):
-    from roster import addhost
+    from roster import cli
     done = []
-    monkeypatch.setattr(addhost, "set_up", lambda args, path: done.append(args.name) or 0)
+    monkeypatch.setattr(cli, "set_up", lambda name, path: done.append(name) or 0)
     asked = walk(monkeypatch, "", "lab", "n", "n", "n")
     assert add(capsys, "--no-sync", "--setup")[0] == 0
     assert done == ["nas-01"] and not any("up now" in a for a in asked)

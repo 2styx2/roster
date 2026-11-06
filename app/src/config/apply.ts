@@ -14,8 +14,9 @@ import { defaultTerminalOptions, standardAnsi, type TerminalOptions } from "../t
 import { terminalActions } from "../terminal/keymap";
 import { PASTE_IF_TEXT_KEY } from "../terminal/input";
 import { terminalFontStack } from "../terminal/fonts";
-import type { AppearanceOptions, Theme } from "../theme/theme";
-import { layoutsOf, STATUS_SEGMENTS, type Layouts } from "../view/layout";
+import { defaultAppearance, type AppearanceOptions, type Theme } from "../theme/theme";
+import { layoutsOf, type Layouts } from "../view/layout";
+import { STATUS_SEGMENTS } from "../view/segments";
 import type { Config, ConfigLocation, ThemeDef } from "./types";
 
 export interface Derived {
@@ -31,7 +32,7 @@ const MONO_FALLBACK = '"Cascadia Mono", Consolas, ui-monospace, monospace';
 const EMOJI = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji"';
 
 /** A CSS font stack from a family name ("Iosevka"), or the stack as given if it has a comma. */
-export function fontStack(font: string, fallback: string): string {
+function fontStack(font: string, fallback: string): string {
   const name = font.trim();
   if (name.includes(",")) return name;
   const rest = fallback
@@ -92,7 +93,7 @@ export function normalizeChord(chord: string): string {
 }
 
 /** A key sequence ("g g", "ctrl+x k") with each chord normalized. */
-export const normalizeKeys = (keys: string) => keys.trim().split(/\s+/).map(normalizeChord).join(" ");
+const normalizeKeys = (keys: string) => keys.trim().split(/\s+/).map(normalizeChord).join(" ");
 
 /** The app's options from the Config. */
 export function deriveConfig(c: Config): Derived {
@@ -176,6 +177,14 @@ export function themeOf(id: string, def: ThemeDef, base: Theme, source: string):
   };
 }
 
+/** The Theme `def` starts from: its `base`, else Roster's own of its appearance. When that isn't
+ * there it starts from Roster dark, and `missing` names what wasn't. */
+export function themeBase(def: ThemeDef, get: (id: string) => Theme | undefined): { base: Theme | undefined; missing?: string } {
+  const id = def.base ?? (def.appearance === "light" ? defaultAppearance.light : defaultAppearance.dark);
+  const base = get(id);
+  return base ? { base } : { base: get(defaultAppearance.dark), missing: id };
+}
+
 /** Registers the Config's keys, Themes and Folders; returns what undoes it and the warnings. */
 export function registerConfig(registries: Registries, c: Config): { dispose: () => void; warnings: ConfigWarning[] } {
   const warnings: ConfigWarning[] = [];
@@ -197,15 +206,11 @@ export function registerConfig(registries: Registries, c: Config): { dispose: ()
     const done = built.get(id);
     if (done) return done;
     building.add(id);
-    const baseId = def.base ?? (def.appearance === "light" ? "roster-light" : "roster-dark");
-    const ownBase = c.themes[baseId];
-    let base: Theme | undefined;
-    if (ownBase && baseId !== id && !building.has(baseId)) base = build(baseId, ownBase);
-    else base = registries.themes.get(baseId);
-    if (!base) {
-      warn(`themes.${id}`, `Theme ${id}: no Theme named ${baseId} to start from; using Roster dark`);
-      base = registries.themes.get("roster-dark");
-    }
+    const { base, missing } = themeBase(def, (baseId) => {
+      const own = c.themes[baseId];
+      return own && baseId !== id && !building.has(baseId) ? build(baseId, own) : registries.themes.get(baseId);
+    });
+    if (missing) warn(`themes.${id}`, `Theme ${id}: no Theme named ${missing} to start from; using Roster dark`);
     const theme = themeOf(id, def, base as Theme, CONFIG);
     building.delete(id);
     built.set(id, theme);
@@ -224,7 +229,6 @@ export function registerConfig(registries: Registries, c: Config): { dispose: ()
     }
   }
 
-  // Keys.
   for (const k of c.keys) {
     const path = `keys.${snake(k.context)}.${k.keys}`;
     const keys = normalizeKeys(k.keys);
@@ -251,7 +255,6 @@ export function registerConfig(registries: Registries, c: Config): { dispose: ()
     warn(null, `leader = "${c.leader}": a Leader without Ctrl, Alt or Meta takes that key from every terminal`);
   }
 
-  // Folders.
   for (const f of c.folders) {
     const entry: FolderEntry = { id: f.name.toLowerCase(), source: CONFIG, name: f.name, hosts: f.hosts };
     disposers.push(registries.folders.register(entry));
@@ -263,13 +266,13 @@ export function registerConfig(registries: Registries, c: Config): { dispose: ()
 /** The `modes` layouts' names the app has nothing for (a typo, most likely). Plugins' sections,
  * segments and controls count, so this waits until they've loaded (ticket 79: Plugins load after
  * the Config, and their names were warned about as unknown). */
-export function layoutWarnings(registries: Registries, c: Config): ConfigWarning[] {
+export function layoutWarnings(known: { sections: readonly { id: string }[]; segments: readonly { id: string }[]; controls: readonly { id: string }[] }, c: Config): ConfigWarning[] {
   const warnings: ConfigWarning[] = [];
   const warn = (message: string) => warnings.push({ file: "init.lua", line: null, message });
   // Folders registers its section from App; it counts as known from the start.
-  const sections = new Set(["sessions", "folders", "inventory", ...registries.sidebar.list().map((s) => s.id)]);
-  const segments = [...new Set([...STATUS_SEGMENTS, ...registries.status.list().map((s) => s.id)])];
-  const controls = registries.toolbar.list().map((t) => t.id);
+  const sections = new Set(["sessions", "folders", "inventory", ...known.sections.map((s) => s.id)]);
+  const segments = [...new Set([...STATUS_SEGMENTS, ...known.segments.map((s) => s.id)])];
+  const controls = known.controls.map((t) => t.id);
   for (const [mode, m] of Object.entries(c.modes)) {
     for (const id of m.sidebar.sections ?? []) {
       if (!sections.has(id)) warn(`modes.${mode}.sidebar.sections: no section named "${id}" (there's ${[...sections].join(", ")})`);

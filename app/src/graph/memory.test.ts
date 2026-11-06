@@ -19,10 +19,10 @@ describe("a graph's place in the State", () => {
   it("keeps the most recent few graphs", () => {
     const store = fakeStore();
     const m = new GraphMemory(store);
-    for (let i = 0; i <= KEPT_GRAPHS; i++) m.save(`p/v${i}`, { folds: {} });
-    expect((store.state[GRAPHS_KEY] as unknown[]).length).toBe(KEPT_GRAPHS);
-    expect(m.load("p/v0")).toEqual({ folds: {} });
-    expect(m.load(`p/v${KEPT_GRAPHS}`)).toEqual({ folds: {} });
+    for (let i = 0; i <= KEPT_GRAPHS; i++) m.save(`p/v${i}`, { folds: { [`c${i}`]: true } });
+    const again = new GraphMemory(store);
+    expect(again.load("p/v0")).toEqual({ folds: {} });
+    for (let i = 1; i <= KEPT_GRAPHS; i++) expect(again.load(`p/v${i}`)).toEqual({ folds: { [`c${i}`]: true } });
   });
 
   it("ignores what it can't read", () => {

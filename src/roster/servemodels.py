@@ -13,10 +13,8 @@ from typing import Any, ClassVar, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .errors import Problem
+from .errors import INVALID_PARAMS, Problem
 from .models import Group, Host
-
-INVALID_PARAMS = -32602     # JSON-RPC's (serve.py has the full list)
 
 P = TypeVar("P", bound="Params")
 
@@ -39,9 +37,10 @@ class Params(BaseModel, frozen=True):
 
 
 class Result(BaseModel, frozen=True):
-    """A method's result: read-only, unknown keys refused, no value in a repr or a validation error."""
+    """A method's result (and a --json document, jsondocs.py): read-only, unknown keys refused, no value in a repr or
+    a validation error."""
 
-    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True, populate_by_name=True)
 
 
 class NoParams(Params, frozen=True):
