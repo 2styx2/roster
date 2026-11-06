@@ -178,10 +178,6 @@ fn serve_one(mut stream: TcpStream, heads: &Mutex<Vec<String>>, gate: &Gate) {
             gate.wait();
             reply("200 OK", "", b"let go")
         }
-        "/slow" => {
-            std::thread::sleep(Duration::from_secs(5));
-            reply("200 OK", "", b"late")
-        }
         _ => reply("404 Not Found", "", b""),
     };
     let _ = stream.write_all(&out);
@@ -892,7 +888,7 @@ fn at_most_four_requests_go_at_once() {
     let (_h, reply, _, _folder) = load(
         "in-flight",
         &[&server.site()],
-        json!({ "url": server.url("/slow") }),
+        json!({ "url": server.url("/held") }),
         init,
     );
     let texts: Vec<&str> = reply.ops.iter().map(|o| o["text"].as_str().unwrap()).collect();
@@ -907,11 +903,14 @@ fn an_answer_for_a_plugin_that_was_unloaded_goes_nowhere() {
     let (host, _, rx, _folder) = load(
         "unloaded",
         &[&server.site()],
-        json!({ "url": server.url("/slow") }),
+        json!({ "url": server.url("/held") }),
         init,
     );
+    server.wait_for("/held");
     assert!(host.unload("fetcher"));
-    assert!(rx.recv_timeout(Duration::from_secs(7)).is_err());
+    server.release();
+    // Nothing to wait for but its absence: the answer, which comes at once now, must not arrive.
+    assert!(rx.recv_timeout(Duration::from_secs(1)).is_err());
 }
 
 #[test]
@@ -1471,7 +1470,7 @@ fn through_the_tunnel_the_body_the_cap_and_the_timeout_hold() {
         ),
         (
             "tunnel-slow",
-            "/slow",
+            "/held",
             json!({ "timeout": 0.5 }),
             "failed: no answer within 0.5 s",
         ),
@@ -1932,9 +1931,9 @@ fn removing_a_plugin_forgets_its_counts() {
 fn a_request_stopped_by_an_unload_counts_as_one_with_no_answer() {
     let server = Server::start();
     let (host, _rx) = listening();
-    let _f = load_on_lock("aborted", &host, &[&server.site()], &server.url("/slow"), None);
+    let _f = load_on_lock("aborted", &host, &[&server.site()], &server.url("/held"), None);
     lock(&host);
-    std::thread::sleep(Duration::from_millis(300));
+    server.wait_for("/held");
     host.unload("fetcher");
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while host.requests_by_site("fetcher").first().is_none_or(|c| c.failed == 0) && std::time::Instant::now() < deadline
