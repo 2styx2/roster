@@ -356,7 +356,7 @@ def test_a_locked_vault_says_how_to_unlock_and_never_asks(capsys, yml, bw, monke
     monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("asked something"))
     rc, out, err = add(capsys)
     assert rc != 0
-    assert "[14]" in str(rc) + err and "locked" in str(rc) + err and "roster vault bw --write -- unlock" in str(rc) + err
+    assert "[14]" in str(rc) + err and "locked" in str(rc) + err and "roster vault unlock" in str(rc) + err
     assert not any(c[0] == "list" for c in calls(bw))
 
 

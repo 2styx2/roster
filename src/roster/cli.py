@@ -326,16 +326,19 @@ def setup_run(cfg, args):
     if known:
         boxkeys.record(known)
 
+    locked_vaults = set()                   # the providers a Login's lookup found locked (their own fix each)
     for ref, group in sorted({(h["auth"], h["group"]) for h in todo}, key=lambda t: (str(t[0]), t[1])):
         try:
             get_secret(ref, group)          # ask for / fetch passwords up front, one per group
         except RuntimeError as e:
+            if isinstance(e, providers.VaultLocked):
+                locked_vaults.add(str(ref).partition(":")[0].strip())
             for h in todo:
                 if (h["auth"], h["group"]) == (ref, group):
                     failed[h["name"]] = str(e)
     todo = [h for h in todo if h["name"] not in failed]
 
-    installed = 0
+    installed = []
     if todo:
         say(f"installing   key on {len(todo)} hosts...")
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
@@ -346,7 +349,7 @@ def setup_run(cfg, args):
                 h = futs[f]
                 try:
                     notes = f.result()
-                    installed += 1
+                    installed.append(h["name"])
                     if override:            # roster.yml's type's line stayed, and any other try's: those go (NIT-3)
                         have = set(held.get(h["name"], [])) | keep(h)
                         left = []
@@ -373,23 +376,47 @@ def setup_run(cfg, args):
     write_claude_files(cfg)
     warn_overlaps(cfg)
     failed.update(setup_mesh(cfg, "--only" if args.only else "--host" if narrowed else None))
-    ready = len(key_hosts) - len(todo) + installed
+    # #476 (the owner's run): a Host that failed (the vault locked, say) is never counted as ready too
+    # #503's review LOW-3: a Host whose key works but whose Mesh step failed is key-ready (its gap is the Mesh's)
+    keyed = [h["name"] for h in key_hosts if h["name"] not in failed or str(failed[h["name"]]).startswith("mesh:")]
+    ready = len(keyed)
+    from . import catchup
+    catchup.record_setup(cfg, keyed, [n for n, why in failed.items() if not str(why).startswith("mesh:")])
     say()
     say(f"done         {ready} key hosts ready, {len(pw_hosts)} password-only hosts, {len(failed)} failed")
     if failed:
         say("failed hosts (fix, then re-run setup - hosts that already work are skipped):")
         for name, why in sorted(failed.items()):
             say(f"  {name}: {why}")
+    rc = 1 if failed else 0
     # #471's review LOW-5 (T240): a Box key rotation not finished is never a clean setup, whatever logs in
     if waiting := rotation.pending(cfg):
         say(f"Box key rotation pending on {plural(len(waiting), 'Host')} ({', '.join(sorted(waiting))}): the old Box "
             "key is still on them; `roster setup --rotate` finishes it")
-        return 1
-    if found := rotation.problems(cfg):
+        rc = 1
+    elif found := rotation.problems(cfg):
         for message, fix in found:
             say(f"warning: {message} ({fix})")
-        return 1
-    return 1 if failed else 0
+        rc = 1
+    if line := setup_next_line(sorted(installed), locked_vaults):
+        say(line)
+    return rc
+
+
+CHECK_HOSTS = 5             # setup's next line names at most this many Hosts as --host flags (#503's review LOW-1)
+
+
+def setup_next_line(installed, locked_vaults=()):
+    """setup's last line (T243): the Hosts it put the key on and, to check them, `roster check --host` for exactly
+    those (`roster check` past CHECK_HOSTS of them); a locked vault's own fix first (providers.unlock_fix). None when
+    it changed nothing and nothing is left."""
+    from .catchup import Gap, names, next_line
+    left = [Gap("unlock", (), f"{p} is locked", providers.unlock_fix(p)) for p in sorted(locked_vaults)]
+    if installed:
+        which = " ".join(f"--host {n}" for n in installed) if len(installed) <= CHECK_HOSTS else ""
+        left.append(Gap("check", tuple(installed), "check them", f"roster check {which}".strip()))
+    changed = [f"{'key' if len(installed) == 1 else 'keys'} on {plural(len(installed), 'Host')} ({names(installed)})"]
+    return next_line(changed if installed else [], left)
 
 
 def cleanup_re(cfg, pub, types):
@@ -510,15 +537,146 @@ def warn_overlaps(cfg):
 
 
 def cmd_sync(cfg, args):
+    """`roster sync` (T243, #476): the map (this Box's ssh config and Claude files from roster.yml) and, unless
+    --no-vault, the vault sync too (as `roster vault sync`, never asking without a terminal). One line ends it: what
+    changed in each, then the next command when something is left (catchup), nothing more when all is done."""
+    from . import catchup
+    from .inventories import unnamed_from_elsewhere
+    # #503's review MED-2: an unnamed ssh config another roster.yml wrote isn't this map's past: no diff against it
+    before = written_hosts() if unnamed_from_elsewhere() is None else None
     write_ssh_config(cfg)
     write_claude_files(cfg)
     warn_overlaps(cfg)
     for message in boxkeys.drift(cfg).values():         # T245 (#478 item 4)
         say(f"warning: {message}")
-    say("note: new hosts still need `roster setup` (it only touches hosts that aren't ready)")
-    if mesh.status(cfg)["out_of_date"]:
-        say("mesh out of date: roster.yml changed the Mesh since its last apply here - run `roster mesh`")
+    changed, unmapped = [], []
+    if not getattr(args, "no_vault", False):
+        parts = []
+        for p, r, e in sync_vaults(cfg):
+            if e is not None:
+                parts.append(f"{p} {vault_not_synced(p, e)}")
+            elif r is not None:
+                unmapped += r["unmapped"]
+                if what := vault_changes(r):
+                    parts.append(f"{p}: {what}")
+        if parts:
+            changed.append("vault: " + "; ".join(parts))
+    if before is not None and (what := map_changes(before, cfg)):
+        changed.append(f"map: {what}")
+    for name in sorted(set(before or {}) - set(cfg["hosts"]) - renamed(before or {}, cfg).keys()):
+        say(f"note: {name} left roster.yml, so its ssh entry is gone; this Box's key may still be on it: remove its "
+            f"{KEY_TAG} line there by hand (next time, `roster revoke --only {name}` before taking a Host out)")
+    if line := catchup.next_line(changed, catchup.gaps(cfg, unmapped=unmapped)):
+        say(line)
     return 0
+
+
+def written_hosts():
+    """{Host name: address} in this Inventory's ssh config as roster last wrote it, or None when there's none."""
+    from .common import ssh_config_file
+    f = ssh_config_file()
+    if not f.is_file():
+        return None
+    out, name = {}, None
+    for line in f.read_text().splitlines():
+        if line.startswith("Host "):
+            name = line[5:].strip()
+            out[name] = None
+        elif name and line.strip().startswith("HostName "):
+            out[name] = line.strip()[9:].replace("%%", "%")
+    return out
+
+
+def renamed(before, cfg):
+    """{old name: new name}: a Host gone from the map whose address a new Host has (the same machine, renamed)."""
+    new = {h["ip"]: n for n, h in cfg["hosts"].items() if n not in before}
+    return {old: new[addr] for old, addr in before.items() if old not in cfg["hosts"] and addr in new}
+
+
+def map_changes(before, cfg):
+    """`1 Host added (db-01), 1 removed (web-01), 1 renamed (old-01 to new-01)`, or "" for none."""
+    from .catchup import names
+    moved = renamed(before, cfg)
+    added = sorted(n for n in cfg["hosts"] if n not in before and n not in moved.values())
+    gone = sorted(n for n in before if n not in cfg["hosts"] and n not in moved)
+    pairs = ", ".join(f"{a} to {b}" for a, b in sorted(moved.items()))
+    return counted("Host", [(len(added), f"added ({names(added)})"), (len(gone), f"removed ({names(gone)})"),
+                            (len(moved), f"renamed ({pairs})")])
+
+
+def counted(noun, parts):
+    """`2 Hosts added (a, b), 1 removed (c)`: the first non-zero count says the noun, the others don't."""
+    shown = [(n, what) for n, what in parts if n]
+    return ", ".join(f"{plural(n, noun) if i == 0 else n} {what}" for i, (n, what) in enumerate(shown))
+
+
+def vault_changes(r):
+    """A vault sync's result as `1 item added (nas-01 ssh), 1 changed (web-01 ssh) since the last sync`; "" for none
+    (and for a first sync, which only starts counting)."""
+    from .catchup import names
+    if r["first"] or r["count"] is None:
+        return ""
+    what = counted("item", [(len(r["added"]), f"added ({names(r['added'])})"),
+                            (len(r["changed"]), f"changed ({names(r['changed'])})"), (r["removed"], "removed")])
+    return f"{what} since the last sync" if what else ""
+
+
+def vault_not_synced(p, e):
+    """Why PROVIDER's vault wasn't synced, and what roster used instead: never a value (a SecretError's text never
+    holds one)."""
+    from . import vaultsync
+    if isinstance(e, providers_locked()):
+        from .providers import NotLoggedIn
+        if isinstance(e, NotLoggedIn):
+            return f"not synced (not logged in: roster vault {p} --write -- login)" if p in ("bw", "op") else \
+                f"not synced ({e})"
+        return f"not synced ({e if isinstance(e, NotAsked) else 'locked'}; {providers.unlock_fix(p)})"
+    when = vaultsync.last_synced(p)
+    return f"not synced ({e})" + (f"; using it as last synced {vaultsync.ago(when)}" if when else "")
+
+
+
+def sync_vaults(cfg):
+    """Each vault roster.yml uses that keeps a local copy, synced (vaultsync), one at a time: [(provider, result,
+    error)], result None for a vault with nothing to sync, error what stopped it (a SecretError). Asks for a
+    master password only with a terminal, once a run (T241's offer to keep it unlocked with it)."""
+    from . import fromvault, vaultsync
+    refs = fromvault.refs(cfg["path"])
+    interactive = sys.stdin.isatty()
+    out = []
+    for p in sorted(p for p in refs if p in PROVIDERS and p not in ("env", "cmd", "prompt")):
+        if interactive and p == "bw" and bw_would_ask():    # #503's review MED-1: say what an unlock here costs
+            print(f"note: the vault is locked, so roster asks for its master password once to sync it (Ctrl-D "
+                  f"skips the vault). As with roster vault unlock, {UNLOCK_COST}", file=sys.stderr, flush=True)
+        try:
+            out.append((p, vaultsync.sync(p, interactive=interactive, mapped=fromvault.named(p, refs[p])), None))
+        except EOFError:                   # Ctrl-D at the prompt: the vault is left as last synced (LOW-2)
+            out.append((p, None, NotAsked("no master password given")))
+        except RuntimeError as e:          # a SecretError, or a provider's own failure: its words, never a value
+            out.append((p, None, e))
+    return out
+
+
+UNLOCK_COST = "unlocking here locks the roster app and any other bw session on this Box (bw keeps one unlock at a time)"
+
+
+class NotAsked(providers.VaultLocked):
+    """The vault step was skipped at its prompt (Ctrl-D): left as last synced."""
+
+
+def bw_would_ask():
+    """Would a Bitwarden lookup now ask for the master password? Not with a working BW_SESSION or saved session, nor
+    BW_PASSWORD; not when bw isn't logged in or installed (its own error says so)."""
+    from .providers import Ctx
+    from .providers import bitwarden as bwp
+    if os.environ.get("BW_PASSWORD") or not find_program("bw"):
+        return False
+    try:
+        if providers.vault_status("bw") != "locked":    # unlocked by BW_SESSION, or not logged in
+            return False
+        return bwp.saved_session(Ctx("bw", None))[0] != "working"
+    except providers.SecretError:
+        return False
 
 
 # ---------------------------------------------------------------- the Mesh (ticket 39, decision Q63)
@@ -713,7 +871,16 @@ def cmd_mesh(cfg, args):
 
 
 def cmd_check(cfg, args):
-    wanted = selected(cfg, args.only)
+    if getattr(args, "hosts", None):         # T243: `--host NAME` again for more: exactly those Hosts
+        unknown = [n for n in args.hosts if n not in cfg["hosts"]]
+        if unknown:
+            group = f": {unknown[0]} is a group (--only {unknown[0]} takes its Hosts)" if unknown[0] in cfg["groups"] \
+                else ""
+            die(f"unknown host {unknown[0]!r} (see `roster hosts`){group}")
+        wanted = [cfg["hosts"][n] for n in dict.fromkeys(args.hosts)]
+    else:
+        wanted = selected(cfg, args.only)
+    narrowed = bool(args.only or getattr(args, "hosts", None))     # part of roster.yml: no Mesh drift
     hosts = skip_left_out(wanted, to_stderr=args.json)
     # T194 (#371): a Host skipped (ssh NAME doesn't reach it), or nothing checked at all, isn't a pass
     skipped = len(wanted) - len(hosts) or not hosts
@@ -732,7 +899,7 @@ def cmd_check(cfg, args):
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
             results = [{"name": h["name"], "ok": all(res.values()), "ssh": "login" if h["enroll"] else "port",
                         "checks": res} for h, res in ex.map(check, hosts)]
-        drift = mesh.drift(cfg) if not args.only else None
+        drift = mesh.drift(cfg) if not narrowed else None
         broken = drift is not None and bool(drift["pending"] or any(h["changes"] for h in drift["hosts"])
                                             or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
         waiting = rotation_waiting(cfg, wanted)
@@ -752,7 +919,7 @@ def cmd_check(cfg, args):
             say(f"{h['name']:<{width}}  {line}")
     say(f"\n{len(hosts) - bad}/{len(hosts)} hosts fully reachable"
         + ("" if all(h["enroll"] for h in hosts) else "  (password-only hosts: ssh = port open)"))
-    drift = mesh.drift(cfg) if not args.only else None
+    drift = mesh.drift(cfg) if not narrowed else None
     if drift is not None:
         say()
         show_mesh(drift, drift=True)
@@ -760,7 +927,7 @@ def cmd_check(cfg, args):
                     or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
         if drift["already"]:
             say("mesh         every Host holds what roster wrote")
-    if not args.only:          # T196: a Windows Host in a Link or meshed group is left out, not an error; say why
+    if not narrowed:           # T196: a Windows Host in a Link or meshed group is left out, not an error; say why
         windows = {n: why for n, why in mesh.graph(cfg)["excluded"].items() if is_windows(cfg["hosts"][n])}
         if windows:
             say("mesh         left out: " + ", ".join(f"{n} ({why})" for n, why in windows.items()))
@@ -1526,21 +1693,21 @@ def cmd_vault_status(cfg, args):
 
 def cmd_vault_sync(cfg, args):
     """`roster vault sync`: each vault roster.yml uses that keeps a local copy, synced, and what changed since the last
-    sync (vaultsync): names and counts, never a value."""
-    from . import fromvault, vaultsync
-    used = sorted(p for p in fromvault.refs(cfg["path"]) if p in PROVIDERS and p not in ("env", "cmd", "prompt"))
-    if not used:
+    sync (vaultsync): names and counts, never a value. Ends with the next command when a new item isn't in roster.yml
+    (T243)."""
+    from . import catchup, vaultsync
+    results = sync_vaults(cfg)
+    if not results:
         say("roster.yml's Logins use no vault: nothing to sync")
         return 0
-    bad = 0
-    for p in used:
-        try:
-            r = vaultsync.sync(p, interactive=sys.stdin.isatty())
-        except RuntimeError as e:
+    bad, unmapped = 0, []
+    for p, r, e in results:
+        if e is not None:
             bad += 1
-            say(f"  FAIL  {p}: {e}")
-            if p in fromvault.UNLOCK and isinstance(e, providers_locked()):
-                say(f"        fix: {fromvault.UNLOCK[p]}")
+            when = None if isinstance(e, providers_locked()) else vaultsync.last_synced(p)
+            say(f"  FAIL  {p}: {e}" + (f"; roster uses it as last synced {vaultsync.ago(when)}" if when else ""))
+            if isinstance(e, providers.VaultLocked):
+                say(f"        fix: {providers.unlock_fix(p)}")
             continue
         if r is None:
             say(f"  ok    {p}: keeps no local copy (it asks its own server or file each time), nothing to sync")
@@ -1549,11 +1716,15 @@ def cmd_vault_sync(cfg, args):
         elif r["first"]:
             say(f"  ok    {p}: synced, {plural(r['count'], 'item')}; first sync, so changes are counted from now on")
         elif not (r["added"] or r["changed"] or r["removed"]):
-            say(f"  ok    {p}: synced, no change since the last sync")
+            say(f"  ok    {p}: up to date (no change since the last sync)")
         else:
+            unmapped += r["unmapped"]
             parts = [f"{len(r[k])} {k}: {', '.join(r[k])}" for k in ("added", "changed") if r[k]]
             parts += [f"{r['removed']} removed"] if r["removed"] else []
             say(f"  ok    {p}: synced; since the last sync, {'; '.join(parts)}")
+    left = [g for g in catchup.gaps(cfg, unmapped=unmapped) if g.kind == "vault-items"]
+    if line := catchup.next_line([], left):
+        say(line)
     return 1 if bad else 0
 
 
@@ -1601,7 +1772,7 @@ def cmd_vault_unlock(args):
         bwp.check_session_file()                        # refused before the password is asked
         if bwp.saved_session(ctx)[0] == "working":
             say(f"already unlocked: the saved session in {bwp.session_file()} works until {bwp.UNTIL}")
-            return 0
+            return unlock_next(args)
         status = bwp._bw_status(ctx)                    # with your shell's BW_SESSION, if it has one
         if status == "unauthenticated":
             raise NotLoggedIn(bwp.NOT_LOGGED_IN)
@@ -1610,7 +1781,7 @@ def cmd_vault_unlock(args):
             say(f"saved your shell's working BW_SESSION in {bwp.session_file()} (no new unlock, so the roster app and "
                 f"other bw sessions stay unlocked): other roster runs on this Box use it until {bwp.UNTIL}. Any "
                 "program running as you can use it to read the vault until then")
-            return 0
+            return unlock_next(args)
         key = bwp._bw_ask_unlock(ctx)
         bwp.save_session_file(key)
     except SecretError as e:
@@ -1618,6 +1789,19 @@ def cmd_vault_unlock(args):
     say(f"unlocked until {bwp.UNTIL}: saved in {bwp.session_file()}, so other roster runs on this Box don't ask. "
         "Any program running as you can use it to read the vault until then. bw keeps one unlock at a time, so this "
         "one locked the roster app and any other bw session on this Box")
+    return unlock_next(args)
+
+
+def unlock_next(args):
+    """vault unlock's last line (T243): what's left now the vault is open (a setup it held up, say), from this run's
+    roster.yml when there is one; nothing when all is done. 0."""
+    from . import catchup
+    try:
+        cfg = load_config(find_config(args.config, args.inv))
+    except SystemExit:                      # no roster.yml (vault unlock needs none): nothing to name
+        return 0
+    if line := catchup.next_line([], catchup.gaps(cfg)):
+        say(line)
     return 0
 
 
@@ -2119,7 +2303,10 @@ def build_parser():
                    "`roster mesh --rotate HOST` does those) on every Host: a new key, proven on each Host before the "
                    "old key's line goes, then the old key deleted. --host NAME (a Host or a group) narrows it; a Host "
                    "not reached stays pending until setup --rotate runs again")
-    sub.add_parser("sync", help="rewrite this Box's ssh config and Claude files from roster.yml; it touches no Host")
+    s = sub.add_parser("sync", help="rewrite this Box's ssh config and Claude files from roster.yml, and sync the "
+                       "vault (as roster vault sync); it touches no Host. Ends with what changed and the next command, "
+                       "if any")
+    s.add_argument("--no-vault", action="store_true", help="the map only: leave the vault as last synced")
     s = sub.add_parser("check", help="check: can this Box reach every Host? check HOST: why a Session to it would "
                        "fail, step by step. check --box: this Box's own health. check --auth: every Login's password "
                        "source answers")
@@ -2129,7 +2316,11 @@ def build_parser():
                    "roster.yml, ssh and its config, vault CLIs, askpass, the infra repo")
     s.add_argument("--auth", action="store_true", help="test each Login's password source (SSH, services, "
                    "resources) instead, connecting to no Host and printing nothing secret")
-    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
+    which = s.add_mutually_exclusive_group()
+    values(which.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
+    values(which.add_argument("--host", dest="hosts", action="append", metavar="NAME", help="check exactly this Host "
+                              "(never a group or type by the name); again for more, as setup's last line names them"),
+           HOSTS)
     s.add_argument("--json", **as_json)
     s = sub.add_parser("hosts", help="list the Hosts and resources in roster.yml; hosts NAME: everything about one; "
                        "hosts --resources: only the resources")
@@ -2394,10 +2585,12 @@ def _main(argv=None):
             build_parser().error("revoke --all revokes every Inventory's Hosts: drop --only, --inv and -c")
         return cmd_revoke_all(args)
     if args.cmd == "check" and args.box:
-        if args.host or args.only:
-            build_parser().error("check --box takes no HOST or --only: it checks this Box, not its Hosts")
+        if args.host or args.only or args.hosts:
+            build_parser().error("check --box takes no HOST, --host or --only: it checks this Box, not its Hosts")
         return cmd_check_box(args)
     if args.cmd == "check" and args.host:
+        if args.hosts or args.only:
+            build_parser().error("check HOST diagnoses one Host step by step: drop --host and --only")
         return cmd_check_host(args)
     if args.cmd == "serve":
         from .serve import serve

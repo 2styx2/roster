@@ -1,7 +1,7 @@
 {
   "stdout": [
-    "ssh config   {HOME}/.ssh/config.d/roster (3 hosts)\nclaude       {HOME}/inv/ROSTER.md (imported from CLAUDE.md), .claude/settings.json\nnote: new hosts still need `roster setup` (it only touches hosts that aren't ready)\n",
-    "ssh config   {HOME}/.ssh/config.d/roster (3 hosts)\nclaude       {HOME}/inv/ROSTER.md (imported from CLAUDE.md), .claude/settings.json\nnote: new hosts still need `roster setup` (it only touches hosts that aren't ready)\n"
+    "ssh config   {HOME}/.ssh/config.d/roster (3 hosts)\nclaude       {HOME}/inv/ROSTER.md (imported from CLAUDE.md), .claude/settings.json\nnext: roster setup --host build-pi (no key on build-pi yet)\n",
+    "ssh config   {HOME}/.ssh/config.d/roster (3 hosts)\nclaude       {HOME}/inv/ROSTER.md (imported from CLAUDE.md), .claude/settings.json\nnext: roster setup --host build-pi (no key on build-pi yet)\n"
   ],
   "files": {
     ".ssh/config": "Include \"{HOME}/.ssh/config.d/roster\"\n\nHost *\n    ServerAliveInterval 60\n",

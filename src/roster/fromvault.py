@@ -26,11 +26,8 @@ from . import addhost, providers
 from .common import NAME_RE, NotPrivate, die, read_private, replace_file, say, user_config_dir
 from .errors import LIST_FAILED, NO_LISTABLE_VAULT, VAULT_LOCKED, Problem
 
-UNLOCK = {"bw": "roster vault bw --write -- unlock (then export BW_SESSION=... as it says), or put the session in "
-                "~/.config/roster/bw-session: (umask 077; bw unlock --raw > ~/.config/roster/bw-session)",
-          "kp": "KeePassXC has no session roster can reuse: give the address and user yourself (roster add NAME "
-                "--ip ADDR --user USER --auth kp:ENTRY), or unlock it in the app",
-          "op": "sign in: turn on the 1Password app's CLI integration, or eval $(op signin)"}
+# providers.UNLOCK's fix, and for KeePassXC (which keeps no session) the way round it here
+KP_INSTEAD = "or give the address and user yourself (roster add NAME --ip ADDR --user USER --auth kp:ENTRY)"
 
 
 # ---------------------------------------------------------------- what roster.yml refers to
@@ -153,7 +150,7 @@ def listing(path, sync=True, interactive=False):
 def problem(provider, e):
     if isinstance(e, providers.VaultLocked) or providers.vault_status(provider) in ("locked", "unauthenticated"):
         return Problem(VAULT_LOCKED, f"{provider}: the vault is locked, and roster add --from-vault never asks for "
-                                     "its master password", fix=UNLOCK.get(provider, "unlock it, then run it again"))
+                                     "its master password", fix=providers.unlock_fix(provider) + (f"; {KP_INSTEAD}" if provider == "kp" else ""))
     if isinstance(e, providers.Unsupported):
         return Problem(NO_LISTABLE_VAULT, str(e))
     return Problem(LIST_FAILED, f"{provider}: {e}", fix="see the message; roster check --auth tests the vault")
