@@ -115,7 +115,7 @@ def _op_items(ctx, mapped):
         item = {"id": i["id"], "name": title, "keys": [i["id"], title] + ([f"{where}/{title}"] if where else []),
                 "uris": [], "username": None}
         if not mapped(item):
-            item["uris"] = _op_urls(i, primary_first=False)
+            item["uris"] = _op_urls(i)
             item["username"] = _op_username(ctx, i["id"])
         out.append(item)
     return out
@@ -164,12 +164,12 @@ def _op_overviews(ctx, vault):
     return [i for i in listed if isinstance(i, dict) and isinstance(i.get("id"), str)]
 
 
-def _op_urls(item, primary_first=True):
-    """An overview's URLs, never a URL's user:password@ (no_userinfo); none when its urls isn't a list (#492)."""
+def _op_urls(item):
+    """An overview's URLs, the primary one first (the listing and an item's fields agree, #500), never a URL's
+    user:password@ (no_userinfo); none when its urls isn't a list (#492)."""
     urls = item.get("urls")
     urls = [u for u in urls if isinstance(u, dict) and isinstance(u.get("href"), str)] if isinstance(urls, list) else []
-    if primary_first:
-        urls.sort(key=lambda u: u.get("primary") is not True)
+    urls.sort(key=lambda u: u.get("primary") is not True)
     return [no_userinfo(u["href"]) for u in urls]
 
 

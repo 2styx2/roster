@@ -93,3 +93,46 @@ def test_op_overviews_of_another_shape_list_what_they_can(op, monkeypatch):
 def test_an_op_overview_with_urls_of_another_shape_has_no_address(op, monkeypatch):
     op_raw(monkeypatch, item_list=ODD_OVERVIEW)
     assert providers.login_fields("op", "nas ssh") == {"uri": None, "username": None}
+
+
+# ---- T254 (#500 item 1): a listed organization or collection missing a key it's read by is skipped, never a KeyError
+
+GOOD_ORG = {"id": "0rg-team", "name": "My Team", "status": 2, "type": 2, "enabled": True}
+GOOD_COLLECTION = {"id": "c0l-infra", "organizationId": "0rg-team", "name": "Infra logins", "externalId": None}
+ODD_ORGS = [{k: v for k, v in GOOD_ORG.items() if k != "id"} | {"name": "No id"},
+            {k: v for k, v in GOOD_ORG.items() if k != "name"} | {"id": "0rg-noname"},
+            GOOD_ORG | {"id": 7, "name": "Numeric id"}, GOOD_ORG]
+ODD_COLLECTIONS = [{k: v for k, v in GOOD_COLLECTION.items() if k != "id"} | {"name": "No id"},
+                   {k: v for k, v in GOOD_COLLECTION.items() if k != "name"} | {"id": "c0l-noname"},
+                   {k: v for k, v in GOOD_COLLECTION.items() if k != "organizationId"} | {"id": "c0l-noorg"},
+                   GOOD_COLLECTION | {"id": "c0l-noname-org", "organizationId": "0rg-noname"},
+                   GOOD_COLLECTION | {"id": "c0l-numeric", "name": 5}, GOOD_COLLECTION]
+
+
+def test_bw_targets_skip_organizations_and_collections_missing_a_key(bw, monkeypatch):
+    bw_raw(monkeypatch, list_organizations=json.dumps(ODD_ORGS), list_collections=json.dumps(ODD_COLLECTIONS))
+    targets = providers.save_targets("bw")["targets"]
+    assert [t["id"] for t in targets] == ["personal", "collection:c0l-infra"]
+    assert targets[1]["label"] == "My Team / Infra logins"
+
+
+def test_bw_save_to_by_name_skips_rows_missing_a_key(bw, monkeypatch):
+    """A row with no usable id doesn't count as a second organization or collection of that name."""
+    orgs = ODD_ORGS + [{k: v for k, v in GOOD_ORG.items() if k != "id"}, GOOD_ORG | {"id": 7}]
+    collections = ODD_COLLECTIONS + [{k: v for k, v in GOOD_COLLECTION.items() if k != "id"}]
+    monkeypatch.setenv("FAKE_BW_ORGS", json.dumps([GOOD_ORG | {"collections": [{"id": "c0l-infra",
+                                                                                 "name": "Infra logins"}]}]))
+    bw_raw(monkeypatch, list_organizations=json.dumps(orgs), list_collections=json.dumps(collections))
+    made = providers.create_item("bw", name="box ssh", password="n3w-pw",
+                                 save_to={"organization": "My Team", "collection": "Infra logins"})
+    assert made["target"]["id"] == "collection:c0l-infra"
+
+
+# ---- T254 (#500 item 2): op lists an item's URLs in one order everywhere, the primary one first
+
+def test_op_lists_an_items_urls_primary_first_in_the_listing_and_its_fields(op, monkeypatch):
+    op_raw(monkeypatch, item_list=json.dumps([{"id": "a1", "title": "nas ssh", "vault": {"name": "Infra"}, "urls": [
+        {"href": "https://10.0.0.6"}, {"href": "ssh://10.0.0.5", "primary": True}, {"href": "https://nas.example"}]}]))
+    [item] = providers.vault_items("op")
+    assert item["uris"] == ["ssh://10.0.0.5", "https://10.0.0.6", "https://nas.example"]
+    assert item["uri"] == providers.login_fields("op", "nas ssh")["uri"] == "ssh://10.0.0.5"
