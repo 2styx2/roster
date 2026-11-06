@@ -249,7 +249,7 @@ describe("roster's own handlers in an xterm a Session's output reaches", () => {
       if (calls++ === 0) throw new Error("secret-ish");
       return [];
     };
-    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts, fill: true }, N);
+    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts, refuseFill: null }, N);
     w.hookSent();
     const ssh = async (to: string, before = "") => {
       expect(await within(w.write(`${before}${own("A")}ops@esx-01:~$ ${own("B")}ssh ${to}`))).toBe("ok");
