@@ -335,7 +335,7 @@ def test_the_mesh_takes_a_host_whose_key_type_isnt_ed25519_and_its_via_links(wri
     pairs = {(x["from"], x["to"]): x.get("via") for x in g["links"]}
     assert pairs[("b-01", "a-01")] == "fips-01" and ("b-01", "fips-01") in pairs
     assert {("fips-01", "a-01"), ("a-01", "fips-01")} <= set(pairs) and "fips-01" in g["sources"]
-    assert mesh.mesh_key(load_config(write_config(MESH_YML))["hosts"]["fips-01"]).mesh_file == "id_ecdsa"
+    assert mesh.mesh_key(load_config(write_config(MESH_YML))["hosts"]["fips-01"]).mesh_file == "roster_mesh_ecdsa"
 
 
 def test_moving_a_host_out_of_its_key_type_group_keeps_its_key_type(write_config):
@@ -608,3 +608,42 @@ def test_201_on_a_key_path_naming_the_ed25519_key_says_to_remove_key_path(write_
     with pytest.raises(SystemExit, match=r"\[201\] .* remove key_path from roster.yml \(roster then keeps this key at "
                                          r".*roster_ecdsa\) or point it at another file"):
         ensure_key(boxkeys.box_key(cfg), cfg["tag"])
+
+
+# ---------------------------------------------------------------- #505's review: L2 and the passphrase NIT
+
+def test_a_try_whose_key_file_is_gone_stays_in_the_record_so_check_still_says_its_line_is_there(lab, capsys, isolated):
+    """L2: an earlier --key-type try's line can't be matched by its key once that key file is gone; it stays on the
+    Host (revoke takes it by tag), so the record keeps its type and 219 keeps saying so."""
+    from roster.cli import main
+    lab.write(", key_type: ecdsa")
+    assert main(["setup"]) == 0
+    assert main(["setup", "--host", "fips-01", "--key-type", "rsa"]) == 0
+    for f in ("roster_rsa", "roster_rsa.pub"):
+        (isolated["home"] / ".ssh" / f).unlink()
+    assert main(["setup", "--host", "fips-01", "--key-type", "ecdsa-256"]) == 0
+    assert "ssh-rsa" in lab.kinds("fips-01")
+    assert main(["sync"]) == 0
+    capsys.readouterr()
+    assert main(["check"]) == 1
+    said = next(ln for ln in capsys.readouterr().out.splitlines() if "[219] fips-01" in ln)
+    assert "ecdsa-256 and rsa key line" in said, said
+
+
+def test_setups_cleanup_never_runs_on_a_key_roster_cant_check_its_pub_against(lab, capsys, isolated):
+    """The passphrase NIT: the cleanup writes the key's .pub back after taking this Box's lines off; with a passphrase
+    on the key roster can't tell that .pub is the key that logged in, so it leaves the lines and says so."""
+    import subprocess
+
+    from roster.cli import main
+    lab.write(", key_type: ecdsa")
+    assert main(["setup"]) == 0
+    assert main(["setup", "--host", "fips-01", "--key-type", "rsa"]) == 0
+    assert main(["sync"]) == 0
+    key = isolated["home"] / ".ssh" / "roster_ecdsa"
+    subprocess.run(["ssh-keygen", "-q", "-p", "-N", "secret", "-P", "", "-f", str(key)], check=True)
+    capsys.readouterr()
+    assert main(["setup"]) == 0
+    out = capsys.readouterr().out
+    assert "note  fips-01: this Box's rsa key line is still there, and roster can't check" in out
+    assert lab.kinds("fips-01") == ["ecdsa-sha2-nistp384", "ssh-rsa"]

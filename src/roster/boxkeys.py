@@ -54,8 +54,9 @@ class KeyType:
     @property
     def mesh_file(self) -> str:
         """The name of a Mesh key of this type on a source Host (T245, decision Q212): `id_ed25519` as before T245,
-        `id_<name>` for the rest (`id_ecdsa`, `id_rsa-4096`), so a type change is a key of another name."""
-        return f"id_{self.name}"
+        `roster_mesh_<name>` for the rest (`roster_mesh_ecdsa`, `roster_mesh_rsa-4096`): never one of OpenSSH's own
+        names for a user's key (`id_rsa`, `id_ecdsa`; #505's review H1), and a type change is a key of another name."""
+        return "id_ed25519" if self.name == DEFAULT else f"roster_mesh_{self.name}"
 
 
 def parse(value: Any) -> KeyType:
@@ -80,7 +81,8 @@ def parse(value: Any) -> KeyType:
 
 
 # every Mesh key name a source Host may hold (mesh_file), as an sh `case` pattern: what the Mesh's scripts look for
-MESH_FILES = "id_ed25519|id_ecdsa|id_ecdsa-256|id_ecdsa-521|id_rsa|id_rsa-[0-9][0-9][0-9][0-9]|id_rsa-[0-9][0-9][0-9][0-9][0-9]"
+MESH_FILES = ("id_ed25519|roster_mesh_ecdsa|roster_mesh_ecdsa-256|roster_mesh_ecdsa-521|roster_mesh_rsa|"
+              "roster_mesh_rsa-[0-9][0-9][0-9][0-9]|roster_mesh_rsa-[0-9][0-9][0-9][0-9][0-9]")
 
 
 def key_file(box_key: Path, box_type: str, name: str) -> Path:

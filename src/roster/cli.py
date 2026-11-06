@@ -258,6 +258,13 @@ def setup_run(cfg, args):
 
     tidy = {h["name"]: sorted(set(held.get(h["name"], [])) - keep(h)) for h in key_hosts
             if works[h["name"]] and h["name"] not in pending_rotation and set(held.get(h["name"], [])) - keep(h)}
+    # #505's review (NIT): the cleanup writes the key's .pub back after taking this Box's lines off, so only where
+    # roster can tell that .pub is the key that logged in (a passphrase on it: it can't), never losing the working line
+    for h in key_hosts:
+        if h["name"] in tidy and not boxkeys.matches(boxkeys.for_host(h).key):
+            say(f"  note  {h['name']}: this Box's {' and '.join(tidy.pop(h['name']))} key line is still there, and "
+                f"roster can't check that {boxkeys.for_host(h).pub} is the key that logs in (a passphrase on it?), so "
+                "it left the lines as they are: remove that line by hand, or roster revoke takes it")
 
     failed = {h["name"]: "no answer on SSH port" for h in hosts if h["name"] in no_answer}
     if args.dry_run:
@@ -291,17 +298,21 @@ def setup_run(cfg, args):
     if tidy:
         by_name = {h["name"]: h for h in key_hosts}
 
+        unmatched = {}                      # #505's review L2: an earlier try's type with no key of it here
+
         def tidy_on(name):
             h = by_name[name]
-            return drop_others(h, pub(h), cleanup_re(cfg, pub(h), tidy[name]) if override else box_key_re(cfg),
-                               why="the key works")
+            if not override:
+                return drop_others(h, pub(h), box_key_re(cfg), why="the key works")
+            drop_re, unmatched[name] = cleanup_re(cfg, pub(h), tidy[name])
+            return drop_others(h, pub(h), drop_re, why="the key works")
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
             futs = {ex.submit(tidy_on, n): n for n in tidy if n not in failed}
             for f in cf.as_completed(futs):
                 name = futs[f]
                 try:
                     notes = f.result()
-                    boxkeys.record({name: set(held.get(name, [])) - set(tidy[name])})
+                    boxkeys.record({name: (set(held.get(name, [])) - set(tidy[name])) | set(unmatched.get(name, ()))})
                     say(f"  ok    {name} (took this Box's {' and '.join(tidy[name])} key line off)")
                     for note in notes:
                         say(f"        {note}")
@@ -338,9 +349,11 @@ def setup_run(cfg, args):
                     installed += 1
                     if override:            # roster.yml's type's line stayed, and any other try's: those go (NIT-3)
                         have = set(held.get(h["name"], [])) | keep(h)
+                        left = []
                         if extra := sorted(have - keep(h)):
-                            notes = [*(notes or []), *drop_others(h, pub(h), cleanup_re(cfg, pub(h), extra))]
-                        boxkeys.record({h["name"]: keep(h)})
+                            drop_re, left = cleanup_re(cfg, pub(h), extra)
+                            notes = [*(notes or []), *drop_others(h, pub(h), drop_re)]
+                        boxkeys.record({h["name"]: keep(h) | set(left)})      # L2: a line it couldn't match stays
                     else:
                         boxkeys.record({h["name"]: [h["key_type"]]})
                     say(f"  ok    {h['name']}")
@@ -381,15 +394,18 @@ def setup_run(cfg, args):
 
 def cleanup_re(cfg, pub, types):
     """What drop_others takes on a Host for `setup --key-type` (T245, #471's NIT-3): PUB's line (written again) and
-    this Box's lines of TYPES' keys (the ones this Box holds, boxkeys.vouched), never roster.yml's type's line."""
+    this Box's lines of TYPES' keys (the ones this Box holds, boxkeys.vouched), never roster.yml's type's line. Returns
+    (that ERE, the TYPES with no such key here: their lines stay, and the record keeps them, #505's review L2)."""
     by_type = {k.type.name: k for k in boxkeys.all_keys(cfg)}
-    alts = [key_ere(*pub.split()[:2])]
+    alts, missing = [key_ere(*pub.split()[:2])], []
     for t in types:
         k = by_type.get(t)
         words = boxkeys.public_words(k.pub) if k is not None and boxkeys.vouched(k, cfg["key"]) else None
         if words:
             alts.append(key_ere(*words))
-    return "|".join(alts)
+        else:
+            missing.append(t)
+    return "|".join(alts), missing
 
 
 def setup_mesh(cfg, narrowed_by):

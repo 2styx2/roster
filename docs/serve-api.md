@@ -432,7 +432,7 @@ One person may have several Inventories, the team's for work and their own for h
 | `207` | A warning, not an error: this Box's key is older than `key_max_age:` (`check --box`; in `box.check` as topic `E269`) (T240) |
 | `208` | `roster setup --rotate`: a Host refused the new key, so no old key line was removed anywhere. A CLI error (T240) |
 | `219` | A warning, not an error: by roster's record, a Host holds this Box's key line of another type than its `key_type:`, or none of it (`roster check`, `check --json`'s `key_type_drift`, `roster sync`) (T245) |
-| `220` | A warning, not an error: a Mesh source whose key is Ed25519 has a key Link to a peer whose `key_type:` isn't `ed25519`, which a FIPS-mode peer refuses. In a Mesh result's `warnings` (`mesh.plan`, `mesh.apply`) (T245) |
+| `220` | A warning, not an error: a Mesh source whose key is Ed25519 has a key Link to a peer (or through a `via:` hop) whose `key_type:` isn't `ed25519`, which a FIPS-mode one refuses. In a Mesh result's `warnings` (`mesh.plan`, `mesh.apply`) (T245) |
 | `221` | A note, not an error: `roster revoke` keeps a key file another Inventory on this Box uses too off its list of files to delete. CLI only (T245) |
 
 `box.check`'s warnings carry the catalog row as `topic` (`E192`-`E195`), not the code: the codes are listed so the app and scripts can name them.

@@ -2431,12 +2431,12 @@ def test_a_fips_hosts_mesh_key_is_made_of_its_own_key_type(net, fips_keygen, cap
     g = mesh.graph(net.cfg())
     assert "orion-3" not in g["excluded"] and "orion-3" in g["sources"]
     assert main(["mesh"]) == 0, capsys.readouterr().out
-    pub = mesh_pub(net, "orion-3", "id_ecdsa")
+    pub = mesh_pub(net, "orion-3", "roster_mesh_ecdsa")
     assert pub[0] == "ecdsa-sha2-nistp384" and pub[2] == "roster-mesh:orion-3@box"
     assert not (net.host("orion-3") / "home/.ssh/roster-mesh/id_ed25519").exists()
     for peer in ("orion-2", "esx-02", "db-9"):
         assert any(x.split()[1:3] == pub[:2] and x.endswith("roster-mesh:orion-3@box") for x in net.mesh_lines(peer))
-    assert f"IdentityFile {net.seen(net.host('orion-3'))}/home/.ssh/roster-mesh/id_ecdsa" in \
+    assert f"IdentityFile {net.seen(net.host('orion-3'))}/home/.ssh/roster-mesh/roster_mesh_ecdsa" in \
         net.file("orion-3", "home/.ssh/roster-mesh/config")
     assert mesh_pub(net, "orion-2", "id_ed25519")[0] == "ssh-ed25519"          # every other source's as before
     assert mesh.run(net.cfg())["already"]
@@ -2449,11 +2449,11 @@ def test_a_key_type_change_replaces_the_mesh_key_with_one_of_the_new_type(net, c
     assert mesh.status(net.cfg())["out_of_date"]                                 # roster.yml changed the Mesh
     plan = mesh.run(net.cfg())
     o3 = next(h for h in plan["hosts"] if h["host"] == "orion-3")
-    assert o3["changes"][0] == "replace key (rsa, its key_type)"
+    assert o3["changes"][0] == "replace key (ed25519 -> rsa, its key_type)"
     assert "replace key from orion-3" in next(h for h in plan["hosts"] if h["host"] == "orion-2")["changes"]
     r = mesh.run(net.cfg(), apply=True)
     assert r["pending"] == {}
-    new = mesh_pub(net, "orion-3", "id_rsa")
+    new = mesh_pub(net, "orion-3", "roster_mesh_rsa")
     assert new[0] == "ssh-rsa"
     d = net.host("orion-3") / "home/.ssh/roster-mesh"
     assert not (d / "id_ed25519").exists() and not (d / "id_ed25519.pub").exists()
@@ -2470,3 +2470,94 @@ def test_an_ed25519_source_linked_to_a_host_of_another_key_type_is_warned_about(
     r = mesh.run(net.cfg())
     assert any(w.startswith("[220] orion-2's Mesh key is Ed25519 (its key_type), and nas-1's key_type is ecdsa")
                for w in r["warnings"]), r["warnings"]
+
+
+def test_an_ed25519_source_whose_via_hop_has_another_key_type_is_warned_about_too(net):
+    """#505's review L1: the source's Mesh key logs in to its via: hop as well."""
+    net.cfg_path.write_text(CONFIG.replace("      nas-1: 10.0.0.30\n", "      nas-1: 10.0.0.30\n      jump-1: {ip: 10.0.5.1, key_type: ecdsa}\n")
+                            + "  - { from: orion-2, to: jump-1 }\n  - { from: orion-2, to: db-9, via: jump-1 }\n")
+    r = mesh.run(net.cfg())
+    said = [w for w in r["warnings"] if w.startswith("[220] orion-2's Mesh key is Ed25519")]
+    assert len(said) == 1 and "jump-1's key_type is ecdsa" in said[0], r["warnings"]
+
+
+# ---------------------------------------------------------------- #505's review H1: a user's own keys in a mesh_dir:
+
+def user_key(path, kind="rsa"):
+    subprocess.run(["ssh-keygen", "-q", "-t", kind, "-N", "", "-C", "admin@orion-2", "-f", str(path)], check=True)
+
+
+def users_keys(d):
+    """The user's own keys, made in D after roster's: OpenSSH's own names, and an Ed25519 one with no Mesh tag."""
+    user_key(d / "id_rsa")
+    user_key(d / "id_ecdsa", "ecdsa")
+    return {"id_rsa", "id_rsa.pub", "id_ecdsa", "id_ecdsa.pub"}
+
+
+def typed_mesh_dir(net, d, text=CONFIG, key_type="ecdsa"):
+    return text.replace("      orion-2: 10.0.0.2\n",
+                        f"      orion-2: {{ip: 10.0.0.2, mesh_dir: {net.seen(d)}, key_type: {key_type}}}\n")
+
+
+@pytest.fixture
+def keys_dir(net):
+    d = net.host("orion-2") / "srv/keys"
+    (net.host("orion-2") / "srv").mkdir()
+    net.cfg_path.write_text(typed_mesh_dir(net, d))
+    assert mesh.run(net.cfg(), apply=True)["pending"] == {}
+    assert (d / "roster_mesh_ecdsa").exists() and not (d / "id_ecdsa").exists()     # never an OpenSSH name (H1 (a))
+    return d
+
+
+def names(d):
+    return {p.name for p in d.iterdir()} if d.exists() else set()
+
+
+def test_a_users_own_keys_in_a_mesh_dir_survive_an_apply_and_a_key_type_change(net, keys_dir):
+    mine = users_keys(keys_dir)
+    r = mesh.run(net.cfg(), apply=True)
+    assert mine <= names(keys_dir) and r["pending"] == {}
+    net.cfg_path.write_text(typed_mesh_dir(net, keys_dir, key_type="rsa"))
+    plan = mesh.run(net.cfg())
+    assert next(h for h in plan["hosts"] if h["host"] == "orion-2")["changes"][0] == "replace key (ecdsa -> rsa, its key_type)"
+    assert mesh.run(net.cfg(), apply=True)["pending"] == {}
+    assert mine | {"roster_mesh_rsa", "roster_mesh_rsa.pub"} <= names(keys_dir)
+    assert "roster_mesh_ecdsa" not in names(keys_dir)
+
+
+def test_an_untagged_id_ed25519_in_a_mesh_dir_is_never_retyped_away_but_said(net, keys_dir):
+    user_key(keys_dir / "id_ed25519", "ed25519")                # no roster-mesh: tag: the user's own
+    r = mesh.run(net.cfg(), apply=True)
+    assert {"id_ed25519", "id_ed25519.pub"} <= names(keys_dir)
+    assert any("id_ed25519 isn't a Mesh key roster made" in w for w in r["warnings"]), r["warnings"]
+
+
+def test_a_tagged_pub_whose_private_key_isnt_its_own_is_left_too(net, keys_dir):
+    """H1 (b): a key goes only when its private key gives its tagged .pub (ssh-keygen -y)."""
+    user_key(keys_dir / "id_ed25519", "ed25519")
+    pub = (keys_dir / "roster_mesh_ecdsa.pub").read_text().split()
+    (keys_dir / "id_ed25519.pub").write_text(f"ssh-ed25519 AAAAnotthisone {pub[2]}\n")
+    mesh.run(net.cfg(), apply=True)
+    assert {"id_ed25519", "id_ed25519.pub"} <= names(keys_dir)
+
+
+def test_a_cut_leaves_a_users_own_keys_in_a_mesh_dir(net, keys_dir):
+    mine = users_keys(keys_dir)
+    user_key(keys_dir / "id_ed25519", "ed25519")
+    assert main(["mesh", "cut", "orion-2", "--yes"]) == 0
+    assert mine | {"id_ed25519", "id_ed25519.pub"} == names(keys_dir)          # roster's own files gone, the rest kept
+
+
+def test_a_source_leaving_leaves_a_users_own_keys_in_a_mesh_dir(net, keys_dir):
+    mine = users_keys(keys_dir)
+    net.cfg_path.write_text(typed_mesh_dir(net, keys_dir, L3))
+    assert mesh.run(net.cfg(), apply=True)["pending"] == {}
+    assert mine == names(keys_dir)
+
+
+def test_leftovers_remove_leaves_a_users_own_keys_in_a_mesh_dir(net, keys_dir):
+    mine = users_keys(keys_dir)
+    net.cfg_path.write_text(typed_mesh_dir(net, keys_dir, L3))
+    reinstall()
+    assert main(["mesh", "leftovers", "--remove", "-y"]) == 0
+    assert mine == names(keys_dir)

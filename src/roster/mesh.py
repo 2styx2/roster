@@ -52,17 +52,25 @@ def mesh_key(h):
 
 
 def key_type_warnings(cfg, links):
-    """A warning (220) for each key Link from a source whose Mesh key is Ed25519 to a peer whose key_type isn't: a
-    FIPS-mode peer refuses that key (the Link is still written: key_type: on a Host that isn't FIPS is a choice)."""
+    """A warning (220) for each key Link from a source whose Mesh key is Ed25519 to a peer (or via: hop) whose key_type
+    isn't: a FIPS-mode one refuses that key (the Link is still written: key_type: on a Host that isn't FIPS is a
+    choice). Once per source and Host."""
     hosts = cfg["hosts"]
     out = []
+    said = set()
     for x in links:
-        a, b = hosts[x["from"]], hosts[x["to"]]
-        if "skip" in x or x["kind"] != "key" or mesh_key(a).name != boxkeys.DEFAULT or mesh_key(b).name == boxkeys.DEFAULT:
+        a = hosts[x["from"]]
+        if "skip" in x or mesh_key(a).name != boxkeys.DEFAULT:
             continue
-        out.append(f"[{MESH_KEY_PEER}] {a['name']}'s Mesh key is Ed25519 (its key_type), and {b['name']}'s key_type is "
-                   f"{b['key_type']}: if {b['name']} is in FIPS mode it refuses that key, so the Link doesn't log in; "
-                   f"set key_type: {b['key_type']} on {a['name']} too (an ECDSA or RSA key works on both)")
+        # the peer (a key Link's), and the via: hop, which the source's key logs in to too (#505's review L1)
+        for b in [hosts[x["to"]]] * (x["kind"] == "key") + ([hosts[x["via"]]] if x.get("via") else []):
+            if not b["enroll"] or mesh_key(b).name == boxkeys.DEFAULT or (a["name"], b["name"]) in said:
+                continue
+            said.add((a["name"], b["name"]))
+            out.append(
+                f"[{MESH_KEY_PEER}] {a['name']}'s Mesh key is Ed25519 (its key_type), and {b['name']}'s key_type is "
+                f"{b['key_type']}: if {b['name']} is in FIPS mode it refuses that key, so the Link doesn't log in; "
+                f"set key_type: {b['key_type']} on {a['name']} too (an ECDSA or RSA key works on both)")
     return out
 
 
@@ -221,16 +229,29 @@ def ere(name):
 # A Host's mesh_dir: ($MD) overrides where the files go, on either; roster then only touches them there if they're
 # its own (mine: a Mesh key's public half, or a config roster wrote).
 WHERE = r"""
-# The Mesh keys in DIR (T245: one of any type, id_ed25519 before T245): their names, either half there, space-separated
+KG=$(command -v ssh-keygen 2>/dev/null || echo /usr/lib/vmware/openssh/bin/ssh-keygen)
+# The Mesh keys in DIR (T245: one of any type; id_ed25519, or roster_mesh_TYPE): their names, either half there,
+# space-separated. Only a name roster gives a Mesh key: a file by it is acted on only when it's tagged (below)
 mkeys() {
   s=
-  for f in "$1"/id_*; do
+  for f in "$1"/id_ed25519 "$1"/id_ed25519.pub "$1"/roster_mesh_*; do
     n=${f##*/}; n=${n%.pub}
     case "$n" in @MESH_FILES@) ;; *) continue;; esac
     [ -f "$1/$n" ] || [ -f "$1/$n.pub" ] || continue
     case " $s " in *" $n "*) ;; *) s="$s $n";; esac
   done
   echo $s
+}
+# tagged DIR K: K is a Mesh key this run may replace or remove (#505's review H1): its .pub's comment is a roster-mesh:
+# tag of an owner this run takes (ours_by), and its private key gives that very .pub (ssh-keygen -y, never asking for a
+# passphrase). Anything else by that name (a user's own key) is left where it is, and said (NOTOURS)
+tagged() {
+  [ -f "$1/$2" ] && [ -f "$1/$2.pub" ] || return 1
+  tp=$(cat "$1/$2.pub" 2>/dev/null) || return 1
+  tc=${tp##* }
+  case "$tc" in roster-mesh:*@*) ours_by "${tc#*@}" || return 1;; roster-mesh:*) ours_by - || return 1;; *) return 1;; esac
+  ty=$("$KG" -y -P '' -f "$1/$2" </dev/null 2>/dev/null) || return 1
+  [ "$(printf '%s\n' "$tp" | cut -d ' ' -f 1,2)" = "$(printf '%s\n' "$ty" | cut -d ' ' -f 1,2)" ]
 }
 mine() {
   for k in $(mkeys "$1"); do grep -qs ' roster-mesh:' "$1/$k.pub" && return 0; done
@@ -316,13 +337,12 @@ case "$O" in "Include "/*/config) O=${O#Include }; O=${O%/config}; [ -n "$(mkeys
 # it again now; said (OLDKEY), never replaced unasked (--rotate does). Only while that directory is still there.
 case "$O" in /*) r=$(cd "$O" 2>/dev/null && pwd -P) && [ -n "$(mkeys "$P")" ] && [ "$r" != "$(cd "$P" && pwd -P)" ] && [ "$ROTATE" != 1 ] \
   && echo "OLDKEY $P";; esac
-KG=$(command -v ssh-keygen 2>/dev/null || echo /usr/lib/vmware/openssh/bin/ssh-keygen)
 WHO=$(whose "$P")
 if ! ours_by "$WHO"; then   # another's Mesh key: used as it is (its public half), never replaced or made (T199)
   [ "$ROTATE" = 1 ] && { echo "ERROR its Mesh key in $P is $(whose_words "$WHO"): roster doesn't replace it"; echo ROSTER_DONE; exit 0; }
   # of whatever type it is (T245): its owner's key_type may differ from this roster.yml's
   if ! { [ -f "$K" ] && [ -f "$K.pub" ]; }; then
-    for k in $(mkeys "$P"); do [ -f "$P/$k" ] && [ -f "$P/$k.pub" ] && { K=$P/$k; break; }; done
+    for k in $(mkeys "$P"); do grep -qs ' roster-mesh:' "$P/$k.pub" && [ -f "$P/$k" ] && { K=$P/$k; break; }; done
   fi
   { [ -f "$K" ] && [ -f "$K.pub" ]; } || { echo "ERROR $P holds Mesh files that are $(whose_words "$WHO"), and no key"; echo ROSTER_DONE; exit 0; }
 else
@@ -330,6 +350,7 @@ else
   # --rotate replaces a key; its public half is said (OLDPUB), so an older roster's line for it is this Box's to take
   for k in $(mkeys "$P"); do
     [ "$k" = "$KF" ] && continue
+    tagged "$P" "$k" || { echo "NOTOURS $P/$k"; continue; }     # a user's own key by that name: never touched
     [ -f "$P/$k.pub" ] && echo "OLDPUB $(cat "$P/$k.pub")"
     echo "KEY retype $k"
     [ "$MODE" = apply ] && rm -f "$P/$k" "$P/$k.pub"
@@ -439,9 +460,9 @@ fi
 # the Include after roster's mark names, which isn't $P when mesh_dir: changed in the same edit (T97): roster's own
 # pick goes, as $P would; a mesh_dir: is only warned about (STALE), as after a move.
 NOT_SOURCE = r"""
-clean() {  # clean DIR: roster's files in it (a key of any type, T245); the public halves go last: until they do, mine
-           # knows the rest is roster's
-  ks=$(mkeys "$1")
+clean() {  # clean DIR: roster's files in it (a key of any type, T245, only one it made: tagged, #505's H1); the public
+           # halves go last: until they do, mine knows the rest is roster's
+  ks=; for k in $(mkeys "$1"); do if tagged "$1" "$k"; then ks="$ks $k"; else echo "NOTOURS $1/$k"; fi; done
   for k in $ks; do drop "$1/$k" "remove $k"; done
   for f in known_hosts config ROSTER.md; do drop "$1/$f" "remove $f"; done
   for k in $ks; do drop "$1/$k.pub" "remove $k.pub"; done
@@ -853,6 +874,7 @@ def _run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, vis
                               "key": report(lines, "KEY "),
                               "reach": dict(x.split(" ", 1) for x in report(lines, "REACH "))}
         stale(out, name, lines)
+        not_ours(out, name, lines)
         for d in report(lines, "OLDKEY "):
             out.setdefault("warnings", []).append(
                 f"{name}: {d} still holds an older Mesh key from before mesh_dir: changed, and roster uses it again: "
@@ -974,6 +996,7 @@ def _run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, vis
             "roster leaves them alone; that Box's (or Inventory's) roster.yml can add these Links")
             if theirs and differs else None)
         stale(out, name, lines)                 # a source that left with its mesh_dir: (NOT_SOURCE)
+        not_ours(out, name, lines)
         said = set()
         for x in report(lines, "UNTAGGED "):
             src, key, frm = (x.split(" ", 2) + ["", ""])[:3]
@@ -1025,6 +1048,14 @@ def whose_words(owner):
             else f"another Box's or Inventory's ({owner})")
 
 
+def not_ours(out, name, lines):
+    """A warning for each file by a Mesh key's name that NAME's script left because roster didn't make it (#505's H1)."""
+    for path in dict.fromkeys(report(lines, "NOTOURS ")):
+        out.setdefault("warnings", []).append(
+            f"{name}: {path} isn't a Mesh key roster made (no roster-mesh: tag of this Box's, or its private key doesn't "
+            "give that .pub), so roster left it there; move it out of the Mesh's directory")
+
+
 def stale(out, name, lines):
     """A warning for each earlier Mesh directory NAME's script found (STALE): roster never removes one."""
     for old in report(lines, "STALE "):
@@ -1039,8 +1070,10 @@ def key_changes(probe, apply, rotate, kind=boxkeys.DEFAULT):
     if not probe or "key" not in probe:
         return []
     k = probe["key"]
-    if any(x.startswith("retype ") for x in k):
-        return [f"replace key ({kind}, its key_type)"]
+    old = next((x.removeprefix("retype ") for x in k if x.startswith("retype ")), None)
+    if old is not None:     # the old key's type, from its file name (id_ed25519, roster_mesh_TYPE)
+        was = "ed25519" if old == "id_ed25519" else old.removeprefix("roster_mesh_")
+        return [f"replace key ({was} -> {kind}, its key_type)"]
     return ["replace key"] if "rotate" in k else ["make key"] if ("made" in k or "missing" in k) else []
 
 
@@ -1194,6 +1227,7 @@ def _cut(cfg, name, workers=16, progress=None, stopped=None):
                 confirmed.append(n)
             if lines and n == name:
                 stale(out, n, lines)            # HOST's own side: an earlier mesh_dir: it leaves alone
+                not_ours(out, n, lines)
             if lines and "UNTAGGED" in lines:
                 out.setdefault("warnings", []).append(
                     f"{n}: a roster-mesh:{'…' if n == name else name} line with no Box in its tag is still there: an "
@@ -1247,6 +1281,7 @@ def _cut_all(cfg, workers=16, progress=None, stopped=None):
             else:
                 confirmed.append(n)
                 stale(out, n, lines)
+                not_ours(out, n, lines)
             progress(i, len(todo), n)
     st = load_state()
     done = set(confirmed)
