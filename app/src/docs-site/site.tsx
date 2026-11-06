@@ -46,6 +46,8 @@ export interface Site {
   files: SiteFile[];
   /** Dead links and repeated ids; the build fails on any. */
   problems: string[];
+  /** The search index the search files were written from, whole (not for print). */
+  searchIndex?: SearchIndex;
 }
 
 /** The font files the pages ask for, copied from @fontsource by the script: Inter for prose,
@@ -168,6 +170,7 @@ export function buildSite(ctx: HelpContext, opts: SiteOptions): Site {
   });
 
   const files: SiteFile[] = [];
+  let searchIndex: SearchIndex | undefined;
   if (print) {
     files.push({ path: "print.html", body: printDocument(rendered, opts) });
   } else {
@@ -175,11 +178,12 @@ export function buildSite(ctx: HelpContext, opts: SiteOptions): Site {
     files.push({ path: "tags.json", body: `${JSON.stringify(tagUrls, null, 1)}\n` });
     files.push({ path: "tag.html", body: tagPage(tagUrls) });
     files.push({ path: "search.html", body: searchPage(pages, opts, gh) });
-    files.push(...searchFiles(searchIndexOf(ctx, topics, urlOf)));
+    searchIndex = searchIndexOf(ctx, topics, urlOf);
+    files.push(...searchFiles(searchIndex));
     files.push({ path: "site.css", body: siteCss() });
   }
   problems.push(...linkProblems(files));
-  return { files, problems };
+  return { files, problems, ...(searchIndex ? { searchIndex } : {}) };
 }
 
 /** JSON safe inside a <script> (tag.html) or as a script of its own (the search index's files). */
