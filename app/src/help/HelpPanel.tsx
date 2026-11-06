@@ -93,15 +93,9 @@ export function HelpPanel({ view, snapshot, ctx, leader, vim, onFind, onOutline,
   const tags = useMemo(() => new Set(topics(ctx).map((t) => t.tag)), [ctx]);
   const env: RenderEnv = { query, leader, tags, here: at?.anchor ?? at?.page, open: (tag) => view.openTopic(tag) };
 
-  // Focus comes to the page when help opens, and goes back where it was when it closes.
+  // Focus comes to the page when help opens (its layer, useHelp.ts, gives it back as it closes).
   useLayoutEffect(() => {
-    const before = document.activeElement;
     scrollRef.current?.focus({ preventScroll: true });
-    return () => {
-      const now = document.activeElement;
-      const lost = !now || now === document.body || !now.isConnected;
-      if ((lost || now.closest(".help-panel")) && before instanceof HTMLElement && before.isConnected) before.focus();
-    };
   }, []);
 
   // A new place: to its entry, or the top.

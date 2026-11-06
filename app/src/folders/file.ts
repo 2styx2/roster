@@ -72,7 +72,7 @@ export async function foldersSettings(
   state: { load(): Promise<void>; get(key: string): unknown },
 ): Promise<Record<string, unknown>> {
   const out: Record<string, unknown> = { fixed: fixed.list().map((f) => ({ name: f.name, hosts: [...f.hosts], source: f.source })) };
-  let file: { text: string | null } | null = null;
+  let file: { text: string | null } | null;
   try {
     file = source ? await source.read() : null;
   } catch (e) {

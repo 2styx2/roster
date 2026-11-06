@@ -81,7 +81,7 @@ export function useWorkspaceVault(
   useEffect(() => {
     if (unlocked) tabs.resumeAfterUnlock();
   }, [unlocked, tabs]);
-  const signingOut = usePanelState<VaultAccount>(focus);
+  const signingOut = usePanelState<VaultAccount>(focus, "sign-out");
   const lock = () => {
     if (!vault.lock()) say("Nothing to lock: no Host Login uses a vault with a master password.");
   };

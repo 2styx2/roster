@@ -11,6 +11,7 @@ import type { Registries } from "../registries";
 import type { TerminalOptions } from "../terminal/options";
 import { errorText } from "../ui/format";
 import type { Message } from "../ui/messages";
+import type { Layer } from "../panel/stack";
 import type { CheckState } from "./CheckPanel";
 import { checkJoined, checkOwned, checkProgressed, checkStarted, checkStopFailed, checkStopping, stopTarget } from "./checkProgress";
 
@@ -31,6 +32,8 @@ export interface CheckActions {
   stop(job: string): void;
   /** Closes the panel; a check still running there is no longer followed. */
   close(): void;
+  /** The panel's place in the stack. */
+  layer: Layer;
 }
 
 export function useCheck(opts: {
@@ -128,5 +131,5 @@ export function useCheck(opts: {
     setCheck(null);
   };
 
-  return { check, health, checkHost, checkBox, stopOwn, stop, close };
+  return { check, health, checkHost, checkBox, stopOwn, stop, close, layer: { id: "check", open: check !== null, close } };
 }

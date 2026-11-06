@@ -1,9 +1,8 @@
 // What happens once in the workspace's life, and where the keys go as it changes: the State read
 // at start (and what's new after an upgrade), the window's place, a fixture's Sessions, the tutor's
 // page on the demo, every Session ended at the end; focus after unlocking, after the last Session,
-// back from the demo, and around a Plugin's question or float.
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { inLayer } from "../panel/stack";
+// and back from the demo.
+import { useCallback, useEffect, useState } from "react";
 import { NEWS_KEY, newsNote } from "../news/news";
 import type { Platform } from "../platform/types";
 import type { Registries } from "../registries";
@@ -28,9 +27,6 @@ export function useWorkspaceLife(o: {
   demoTutorial: TutorialDef | null;
   openTutorial(def: TutorialDef): void;
   focus: FocusReturn;
-  /** Plugins' question and float now (null: none up). */
-  pluginConfirm: string | number | null;
-  pluginFloat: string | null;
   say(m: Message): void;
 }): { setPromptButton(el: HTMLButtonElement | null): void } {
   const { store, platform, registries, tabs, appVersion, unlocked, suspended, focus, say } = o;
@@ -96,15 +92,5 @@ export function useWorkspaceLife(o: {
     if (wasSuspended.get() && !suspended) keysHome();
     wasSuspended.set(suspended);
   }, [suspended, wasSuspended, keysHome]);
-  // A Plugin's question (ticket 78) or float (ticket 91) takes the keys; answering or closing puts
-  // them back where they were. Before the panel's own effect focuses its button (layout effects
-  // run first), and only when a new one comes up.
-  const { pluginConfirm, pluginFloat } = o;
-  useLayoutEffect(() => {
-    if (pluginConfirm !== null && !inLayer("plugin-confirm")) focus.remember();
-  }, [pluginConfirm, focus]);
-  useLayoutEffect(() => {
-    if (pluginFloat !== null && !inLayer("plugin-float")) focus.remember();
-  }, [pluginFloat, focus]);
   return { setPromptButton: (el) => prompt.set(el) };
 }
