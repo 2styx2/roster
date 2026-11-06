@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .common import UTC_TIME, die, program_argv, replace_file, say, utc_now
-from .context import key_created_file
+from .context import box_file
 
 DEFAULT = "ed25519"
 # key_max_age:'s default (decision Q204): the strict end of NIST SP 800-57 Part 1 Rev. 5's cryptoperiod for a
@@ -261,15 +261,15 @@ def all_keys(cfg: dict[str, Any]) -> list[BoxKey]:
 # ---------------------------------------------------------------- the key's age (key_max_age:)
 
 def stamp(key: Path) -> None:
-    """Record that roster made (or rotated) KEY now (context.key_created_file): its age is counted from this."""
+    """Record that roster made (or rotated) KEY now (context.BOX_FILES): its age is counted from this."""
     rows = {p: t for t, p in _created_rows()}
     rows[str(key)] = utc_now()
-    replace_file(key_created_file(), "".join(f"{t}\t{p}\n" for p, t in sorted(rows.items())), 0o600)
+    replace_file(box_file("key_created"), "".join(f"{t}\t{p}\n" for p, t in sorted(rows.items())), 0o600)
 
 
 def _created_rows() -> list[tuple[str, str]]:
     try:
-        text = key_created_file().read_text(encoding="utf-8")
+        text = box_file("key_created").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return []
     return [(t, p) for t, _, p in (ln.partition("\t") for ln in text.splitlines()) if p]

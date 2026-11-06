@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from . import sshconfig
 from .common import NAME_RE, replace_file, ssh_path, token_shaped
-from .context import Context, current, ssh_index_file, user_config_dir
+from .context import Context, box_file, current, ssh_index_file
 from .errors import INDEX_NOT_WRITTEN, INVENTORIES_UNREADABLE, UNKNOWN_INVENTORY, Problem
 from .sshconfig import SSH_UNSAFE, blocks, include_line, include_targets, includes
 
@@ -91,7 +91,7 @@ class Inventories(BaseModel, frozen=True):
 
 
 def list_file() -> Path:
-    return user_config_dir() / "inventories.json"
+    return box_file("inventories")
 
 
 def load() -> Inventories:

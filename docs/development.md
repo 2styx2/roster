@@ -26,7 +26,9 @@ src/roster/
   jsonout.py        `--json` on the read commands: one document with a version, `cmd:`/`env:` references cut (Q92, Q110)
   jsondocs.py       each `--json` document as a Pydantic model (T176), imported only when one prints
   context.py        the Inventory a run uses (name, roster.yml) and the one table of files roster keeps per Inventory
-                    (ssh config, known_hosts, Mesh state, key-name, rotation record, lock); `inv remove` walks it
+                    (ssh config, known_hosts, Mesh state, key-name, rotation record, lock); `inv remove` walks it;
+                    BOX_FILES: the ones kept once for this Box (key-created, inventories.json, the first-run lock,
+                    vault-seen/, vault-sync/), which uninstall.sh removes
   common.py         small shared helpers: output, the one atomic writer (replace_file, write_private), reading a
                     private file, text, starting and ending programs
   conpty.py         a program on a Windows pseudoconsole (ConPTY, ctypes), in a job object: native Windows' PTY for bw_login

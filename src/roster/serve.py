@@ -96,7 +96,6 @@ from .errors import (
     SIGN_OUT_FAILED,
     TOO_MANY_ADDRESSES,
     UNKNOWN_HOST,
-    UNKNOWN_INVENTORY,
     UNSUPPORTED,
     Exit,
     InventoryError,

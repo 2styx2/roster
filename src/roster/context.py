@@ -4,7 +4,7 @@ One process uses one Inventory (serve restarts to switch): config.find_config pi
 calls use(). A named Inventory has files of its own (its ssh config, known_hosts, Mesh state, key-name, rotation
 record, lock), so syncing one never wipes another's; the unnamed one (no named Inventories, or a roster.yml that
 isn't one of them) has the files roster always wrote. FILES is the one table of them: every path comes from it, and
-`roster inv remove` walks it.
+`roster inv remove` walks it. BOX_FILES are the ones roster keeps once for this Box.
 
 Imports nothing of roster's: it is what everything else stands on."""
 
@@ -120,10 +120,24 @@ def use(name: str | None, path: Path | None = None) -> Context:
     return _current
 
 
-def key_created_file() -> Path:
-    """When roster made or rotated each of this Box's keys (T240): a line per key file (`ISO-TIME<TAB>PATH`). One key
-    file serves every Inventory that names it, so one record for the Box."""
-    return user_config_dir() / "key-created"
+BOX_FILES = {
+    # When roster made or rotated each of this Box's keys (T240): a line per key file (`ISO-TIME<TAB>PATH`). One key
+    # file serves every Inventory that names it, so one record for the Box.
+    "key_created": "key-created",
+    "inventories": "inventories.json",
+    # serve's inventory.create, one at a time on this Box whichever serve makes it (#417 L3)
+    "first_run_lock": "inventory.create.lock",
+    # a folder: per roster.yml, the vault items `roster add --from-vault` has seen
+    "vault_seen": "vault-seen",
+    # a folder: per provider, `roster vault sync`'s snapshot of item ids and revision dates
+    "vault_sync": "vault-sync",
+}
+
+
+def box_file(kind: str) -> Path:
+    """One of the files (or folders) roster keeps for this Box, whatever the Inventory: BOX_FILES' KIND in roster's
+    folder. uninstall.sh removes each (tests/test_uninstall_state.py)."""
+    return user_config_dir() / BOX_FILES[kind]
 
 
 def ssh_index_file() -> Path:
