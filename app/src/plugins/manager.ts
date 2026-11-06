@@ -1805,7 +1805,7 @@ export class PluginManager {
   }
 
   private rowAction(plugin: string, a: PluginRowAction, context: HandlerContext) {
-    return { label: a.label, icon: a.icon, command: this.line(plugin, a.run, context) };
+    return { label: a.label, ...(a.short ? { short: a.short } : {}), icon: a.icon, command: this.line(plugin, a.run, context) };
   }
 
   /** A Plugin's name as a load failure names it: marked "(in the demo)" on `:tutor`'s demo (#233). */

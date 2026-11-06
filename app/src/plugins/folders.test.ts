@@ -69,6 +69,9 @@ describe("the Folders Plugin in the app", () => {
     // Its Host's menu (T166, Q156) has the Host's commands; the row brings only the Folder's own.
     expect(host).toMatchObject({ menu: true });
     expect(host!.actions!.map((a) => a.label)).toEqual([`Remove ${h1} from Lab`]);
+    // Its words in the menu name neither the Host nor the Folder (round 22).
+    expect(host!.actions!.map((a) => a.short)).toEqual(["Remove from Folder"]);
+    expect(head!.actions!.map((a) => a.short)).toEqual(["Rename…", "Delete Folder"]);
     expect(gone).toMatchObject({ label: "gone-01", note: "not in the Inventory", dot: "off", menu: true });
     expect(host!.dragOut).toBe(`plugins run folders folder remove ${h1} Lab`);
   });

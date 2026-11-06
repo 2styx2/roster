@@ -102,8 +102,8 @@ export const fakeFoldersPlugin: FakePlugin = {
             if (typeof e.dropped === "string") roster.cmd(`folder add ${e.dropped} ${f.name}`);
           };
           head.actions = [
-            { label: `Rename ${f.name}`, icon: "edit", run: `folder rename ${quote(f.name)}` },
-            { label: `Delete Folder ${f.name}`, icon: "close", run: `folder delete ${f.name}` },
+            { label: `Rename ${f.name}`, short: "Rename…", icon: "edit", run: `folder rename ${quote(f.name)}` },
+            { label: `Delete Folder ${f.name}`, short: "Delete Folder", icon: "close", run: `folder delete ${f.name}` },
           ];
         } else {
           head.detail = String(f.hosts.length);
@@ -118,7 +118,7 @@ export const fakeFoldersPlugin: FakePlugin = {
           if (own) {
             row.drop = head.drop;
             row.drag_out = `folder remove ${h} ${f.name}`;
-            row.actions = [{ label: `Remove ${h} from ${f.name}`, icon: "close", run: `folder remove ${h} ${f.name}` }];
+            row.actions = [{ label: `Remove ${h} from ${f.name}`, short: "Remove from Folder", icon: "close", run: `folder remove ${h} ${f.name}` }];
           }
           rows.push(row);
         }

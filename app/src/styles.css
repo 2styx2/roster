@@ -480,6 +480,10 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   .sb-heading:hover { color: var(--text); }
 }
 .sb-count { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+/* Every heading keeps the Inventory's + slot (24 px and its 2 px margin) at its end, filled or
+   not, so every section's count ends at one x (round 22: SESSIONS' ended 26 px right of
+   INVENTORY's). A selected heading's own button fills the slot instead. */
+.sb-heading:not(:has(> .sb-action.pinned)):not(.selected:has(> .sb-action)) > .sb-heading-button { margin-inline-end: 28px; }
 /* A Session's number for ␣ 1–9, as a key (Q215, owner after round 10). */
 .sb-index { margin-left: auto; padding-left: 8px; flex: none; display: flex; }
 /* Sessions' count is right-aligned as the other headings' are (round 21; Q215 had it by the title,
@@ -692,9 +696,15 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
 .sb-details p { margin: 0; overflow-wrap: anywhere; }
 .sb-details-name { font-size: var(--text-sm); color: var(--text); unicode-bidi: isolate; }
 .sb-details-name.data { font-family: var(--font-mono); }
-.sb-details-facts { margin-top: 2px; }
-/* A fact and its "·" stay on one line (facts are short); one too long for the line still wraps. */
+.sb-details-facts { margin-top: 2px; overflow: hidden; }
+/* A fact and its "·" stay on one line (facts are short); one too long for the line still wraps.
+   Each fact leads with its "·" (--sep wide); the inner box starts --sep before the strip's edge,
+   which clips, so the first fact on every line shows none (round 22: a wrapped line began
+   "· 10.0.0.5"). */
+.sb-details-facts { --sep: 1.1em; }
+.sb-facts-in { display: block; margin-inline-start: calc(-1 * var(--sep)); }
 .sb-fact { display: inline-block; max-width: 100%; overflow-wrap: anywhere; margin-inline-end: 0.3em; }
+.sb-fact-sep { display: inline-block; width: var(--sep); text-align: center; }
 .sb-details-facts .data { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 
@@ -719,9 +729,16 @@ code { font-family: var(--font-mono); font-size: 0.95em; }
   width: 100%; height: calc(var(--row-h) - 4px); display: flex; align-items: center; gap: 16px; padding: 0 8px;
   color: var(--text); border-radius: var(--radius-sm); cursor: default; white-space: nowrap;
 }
-.row-menu-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.row-menu-keys { flex: none; } /* at the end: the label takes the free space */
-.row-menu-cmd { flex: none; color: var(--muted); font: 500 var(--text-xs) var(--font-mono); }
+/* The label takes the free space. Where there's too little, the command hint gives way first (its
+   shrink weighs 1000 times the label's), cut with "…", and RowMenu drops it before the label would
+   be cut (round 22: ":folder remove HOST NAME" kept its width and cut the label to "Remove …"). */
+.row-menu-label { flex: 1 0.001 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.row-menu-keys { flex: none; }
+.row-menu-cmd {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  color: var(--muted); font: 500 var(--text-xs) var(--font-mono);
+}
+.row-menu-cmd[hidden] { display: none; }
 /* :focus covers :focus-visible: a menu item has focus only while it's the active one. */
 /* The cursor, as everywhere a key moves one (Sidebar App mode, Picker, Finder): raised, with a
    1px accent outline. */
@@ -1144,6 +1161,8 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 /* The sizer: the Inventory's widest address, group and type, invisible and zero high, so the
    columns are sized by every Host and hold still as a query narrows the list. */
 .picker-row.picker-sizer { visibility: hidden; height: 0; min-height: 0; padding-block: 0; overflow: hidden; }
+/* Each of its cells stacks every value the column can hold, so the column is the widest one's. */
+.picker-sizer > span > span { display: block; }
 /* In the footer's free room (flex 1, before the count): the selected Host's whole name, one line,
    only when its row cuts it (the address, group and type have their columns). */
 .picker-detail {
@@ -1182,7 +1201,9 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 .picker-count { white-space: nowrap; }
 @media (max-width: 600px) {
   .picker-footer { gap: 10px; overflow: hidden; }
-  .picker-footer .picker-hint-word { display: none; }
+  /* Round 22: bare keycaps (↑ ↓ ↵ Esc) said nothing. ↑↓ go first (the arrows explain themselves
+     in a list); ↵ and Esc keep "open" and "close". */
+  .picker-footer .picker-hint[data-what="move"] { display: none; }
   .picker-footer .picker-info-hint { display: none; }
 }
 .picker-footer [role="status"]:not(.visually-hidden):not(:empty) {

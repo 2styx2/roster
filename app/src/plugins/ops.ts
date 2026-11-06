@@ -13,6 +13,8 @@ export type Run = { handler: number } | { command: string };
 
 export interface PluginRowAction {
   label: string;
+  /** Its words in the row's menu (round 22): short, without the row's names. */
+  short?: string;
   icon: RowAction["icon"];
   run: Run;
   /** A view's or Host-details section's heading button only (api 4, #176): its key. */
@@ -305,8 +307,8 @@ function run(v: unknown, what: string): Run {
 const optRun = (o: Obj, what: string): { run?: Run } => (o.run === undefined || o.run === null ? {} : { run: run(o.run, what) });
 
 /** Buttons on a section's heading (ticket 78): row actions, at most 4. */
-function headActions(spec: Obj, what: string): PluginRowAction[] {
-  const actions = rowActions(spec, what);
+function headActions(spec: Obj, what: string, menu = true): PluginRowAction[] {
+  const actions = rowActions(spec, what, menu);
   if (actions.length > MAX_HEAD_ACTIONS) throw new Invalid(`${what}: actions has more than ${MAX_HEAD_ACTIONS}`);
   return actions;
 }
@@ -317,7 +319,8 @@ function headActions(spec: Obj, what: string): PluginRowAction[] {
 function keyedHeadActions(spec: Obj, what: string, taken: readonly string[]): PluginRowAction[] {
   const raw = list(spec, "actions", what);
   const seen = new Set(taken);
-  return headActions(spec, what).map((a, j) => {
+  // A view's or details section's heading has no menu, so no `short` (HeadAction has none).
+  return headActions(spec, what, false).map((a, j) => {
     const where = `${what} action ${j + 1}`;
     const key = optStr(raw[j] as Obj, "key", where, 8);
     if (key === undefined) return a;
@@ -353,13 +356,15 @@ function defined<T>(o: { [K in keyof T]-?: T[K] | undefined }): T {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
 }
 
-function rowActions(v: Obj, at: string): PluginRowAction[] {
+/** `menu`: the actions can be in a row menu, so they may have `short` words for it (round 22). */
+function rowActions(v: Obj, at: string, menu = true): PluginRowAction[] {
   return list(v, "actions", at).map((a, j): PluginRowAction => {
     const where = `${at} action ${j + 1}`;
     if (!isObj(a)) throw new Invalid(`${where}: must be a table`);
     const icon = a.icon === undefined ? "info" : a.icon;
     if (!ICONS.includes(icon as RowAction["icon"])) throw new Invalid(`${where}: icon must be one of ${ICONS.join(", ")}`);
-    return { label: str(a, "label", where), icon: icon as RowAction["icon"], run: run(a.run, where) };
+    const short = menu ? optStr(a, "short", where, 40) : undefined;
+    return { label: str(a, "label", where), ...(short ? { short } : {}), icon: icon as RowAction["icon"], run: run(a.run, where) };
   });
 }
 

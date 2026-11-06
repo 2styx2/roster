@@ -235,11 +235,11 @@ export const sessionsSection: SidebarSectionDef = {
               ...(i < 9 ? { index: i + 1 } : {}),
               command: `session ${i + 1}`,
               actions: [
-                { label: `Close ${tab.label}`, icon: "close", command: `close ${i + 1}` },
+                { label: `Close ${tab.label}`, short: "Close", icon: "close", command: `close ${i + 1}` },
                 // Ended or refused: the one next step, on the row and always there (round 20), last so
                 // the selected row's Close appears beside it without moving it.
                 ...(done
-                  ? [{ label: `Reconnect ${tab.label}`, icon: "reconnect" as const, command: `reconnect ${i + 1}`, pinned: true }]
+                  ? [{ label: `Reconnect ${tab.label}`, short: "Reconnect", icon: "reconnect" as const, command: `reconnect ${i + 1}`, pinned: true }]
                   : []),
               ],
             };
@@ -375,9 +375,10 @@ export const inventorySection: SidebarSectionDef = {
             ? {
                 drop,
                 actions: [
-                  { label: `Add a Host to ${group}`, icon: "add" as const, command: `host add ${group}` },
-                  { label: `Rename group ${group}`, icon: "edit" as const, command: `group rename ${group}` },
-                  { label: `Delete group ${group}`, icon: "close" as const, command: `group delete ${group}` },
+                  { label: `Add a Host to ${group}`, short: "Add a Host…", icon: "add" as const, command: `host add ${group}` },
+                  { label: `Rename group ${group}`, short: "Rename…", icon: "edit" as const, command: `group rename ${group}` },
+                  // It asks where the group's Hosts go.
+                  { label: `Delete group ${group}`, short: "Delete…", icon: "close" as const, command: `group delete ${group}` },
                 ],
               }
             : {}),

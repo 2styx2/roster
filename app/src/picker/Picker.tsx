@@ -292,20 +292,17 @@ export function Picker({
   const current = Math.min(index, Math.max(0, rowCount - 1));
   const selected =
     current >= offset ? shown[current - offset]?.host : undefined;
-  // The widest address, group and type in the whole Inventory, in a hidden row: the columns are
-  // sized by every Host, not by the ones a query leaves, so they hold still while you type.
+  // Every address, group and type in the whole Inventory, stacked in a hidden row's cells: the
+  // columns are sized by every Host, not by the ones a query leaves, so they hold still while you
+  // type. All of them, not the one with the most characters (round 22: in a proportional font a
+  // shorter group can be wider, and the group column moved 3 px between "" and "1-0").
   const widest = useMemo(() => {
-    const longest = (pick: (h: Host) => string) =>
-      hosts.hosts.reduce(
-        (a, h) => (pick(h).length > a.length ? pick(h) : a),
-        "",
-      );
+    const all = (pick: (h: Host) => string) =>
+      [...new Set(hosts.hosts.map(pick))].filter((v) => v !== "");
     return {
-      ip: hosts.hosts
-        .map((h) => addressCut(h.ip, IP_CHARS))
-        .reduce((a, ip) => (ip.length > a.length ? ip : a), ""),
-      group: longest((h) => h.group),
-      type: longest((h) => h.type),
+      ip: all((h) => addressCut(h.ip, IP_CHARS)),
+      group: all((h) => h.group),
+      type: all((h) => h.type),
     };
   }, [hosts.hosts]);
   /** The Host at row `i` (none for the Quick Connect row). */
@@ -567,9 +564,13 @@ export function Picker({
           >
             <span />
             <span />
-            <span className="host-ip">{widest.ip}</span>
-            <span className="host-group">{widest.group}</span>
-            <span className="host-type">{widest.type}</span>
+            {(["ip", "group", "type"] as const).map((k) => (
+              <span key={k} className={`host-${k}`}>
+                {widest[k].map((v) => (
+                  <span key={v}>{v}</span>
+                ))}
+              </span>
+            ))}
           </li>
         </ul>
         {rowCount === 0 && (
@@ -676,7 +677,7 @@ export function Picker({
               !(what === "move" && rowCount <= 1) &&
               // An unreviewed Host can't be opened: no "open" on it (round 16), its badge says why.
               !(what === "open" && selected && !selected.reviewed) && (
-                <span key={what} className="picker-hint key-hint">
+                <span key={what} className="picker-hint key-hint" data-what={what}>
                   <Keys keys={keys} />{" "}
                   <span className="picker-hint-word">{what}</span>
                 </span>

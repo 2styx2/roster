@@ -9,8 +9,11 @@ import type { SidebarRow } from "./Sidebar";
 
 export type MenuEntry =
   | {
-      /** Short: the menu is named after the Host. "…" when the command asks for more. */
+      /** Short: the menu is named after the Host. "…" when the command asks for more. Never the
+       * row's own names (round 22): those go in `full`. */
       label: string;
+      /** The whole label, names and all ("Close esx-02"), for the item's tooltip and description. */
+      full?: string;
       command: CommandLine;
       /** Its keys in keymap notation ("␣ R"), drawn as keycaps when the hints are shown. */
       keys?: string | null;
@@ -39,7 +42,11 @@ export interface HostMenuOptions {
  * unreview, a Plugin's) with the changes. */
 export function hostMenu(row: SidebarRow, o: HostMenuOptions): MenuEntry[] {
   const host = row.host;
-  const own = (row.actions ?? []).map((a) => ({ label: a.label, command: a.command }));
+  const own = (row.actions ?? []).map((a) =>
+    a.short && a.short !== a.label
+      ? { label: a.short, full: a.label, command: a.command }
+      : { label: a.label, command: a.command },
+  );
   // A group's (or another row's) menu is its own actions: the buttons its heading shows on hover.
   if (host === undefined) return own;
   if (o.reviewed === null) return own;

@@ -275,8 +275,9 @@ show = function()
       head.count = #f.hosts
       head.drop = dropped_into(f.name)
       head.actions = {
-        { label = "Rename " .. f.name, icon = "edit", run = "folder rename " .. quote(f.name) },
-        { label = "Delete Folder " .. f.name, icon = "close", run = "folder delete " .. f.name },
+        -- `short`: the words in the row's menu, which is named after the Folder already.
+        { label = "Rename " .. f.name, short = "Rename…", icon = "edit", run = "folder rename " .. quote(f.name) },
+        { label = "Delete Folder " .. f.name, short = "Delete Folder", icon = "close", run = "folder delete " .. f.name },
       }
     else
       head.detail = tostring(#f.hosts)
@@ -291,7 +292,12 @@ show = function()
       if own then
         row.drop = dropped_into(f.name)
         row.drag_out = "folder remove " .. h .. " " .. f.name
-        row.actions = { { label = "Remove " .. h .. " from " .. f.name, icon = "close", run = "folder remove " .. h .. " " .. f.name } }
+        row.actions = { {
+          label = "Remove " .. h .. " from " .. f.name,
+          short = "Remove from Folder",
+          icon = "close",
+          run = "folder remove " .. h .. " " .. f.name,
+        } }
       end
       rows[#rows + 1] = row
     end

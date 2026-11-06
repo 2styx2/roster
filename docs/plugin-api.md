@@ -3755,6 +3755,7 @@ A button on a row.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `label` | `string` | yes | What it does, for its tooltip and screen readers (`"Unpin esx-02"`). |
+| `short` | `string` | no | What it says in the row's menu (a right-click, or the Menu key on the row), which is named after the row: a few words without the row's own names (`"Unpin"`, `"Remove from Folder"`), at most 40 characters; `label` is then its tooltip there. `label` if left out. |
 | `icon` | [`RowIcon`](#rowicon) | no | Its icon; `info` if left out. |
 | `run` | [`Run`](#run) | yes | What pressing it runs. |
 

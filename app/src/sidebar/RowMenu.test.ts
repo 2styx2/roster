@@ -1,7 +1,7 @@
 // Where a Host row's menu goes (T166, Q156): at the pointer, kept inside the window, flipped above
 // the row when there's no room under it. jsdom lays nothing out, so the arithmetic is checked here.
 import { describe, expect, it } from "vitest";
-import { commandHint, menuHint, placeMenu } from "./RowMenu";
+import { commandHint, fitHints, menuHint, placeMenu } from "./RowMenu";
 import { hostMenu, type HostMenuOptions } from "./hostMenu";
 import type { SidebarRow } from "./Sidebar";
 
@@ -69,6 +69,13 @@ describe("hostMenu", () => {
     const own = { ...row, actions: [{ label: "Remove esx-02 from Lab", icon: "close" as const, command: "folder remove esx-02 Lab" }] };
     expect(labels(own, { ...all, reviewed: null })).toEqual(["Remove esx-02 from Lab"]);
   });
+
+  it("an action's short words are its item's label, its whole label the item's description (round 22)", () => {
+    const own = { ...row, actions: [{ label: "Remove esx-02 from Lab", short: "Remove from Folder", icon: "close" as const, command: "folder remove esx-02 Lab" }] };
+    expect(hostMenu(own, { ...all, reviewed: null })).toEqual([
+      { label: "Remove from Folder", full: "Remove esx-02 from Lab", command: "folder remove esx-02 Lab" },
+    ]);
+  });
 });
 
 describe("commandHint (round 18, round 19)", () => {
@@ -84,6 +91,8 @@ describe("commandHint (round 18, round 19)", () => {
     expect(commandHint("host add", "Inventory")).toBe(":host add");
     expect(commandHint("group new", "")).toBe(":group new NAME");
     expect(commandHint("check esx-02b", "esx-02", "HOST")).toBe(":check esx-02b");
+    // A name with a space is quoted on the command line (round 22: it showed whole in the hint).
+    expect(commandHint('folder rename "Rack 4 lab"', "Rack 4 lab")).toBe(":folder rename NAME");
   });
 });
 
@@ -97,5 +106,31 @@ describe("menuHint (round 21)", () => {
     expect(menuHint("plugins call folders 3 %7B%7D", "Folders")).toBeNull();
     expect(menuHint("plugins reload folders", "Folders")).toBeNull();
     expect(menuHint("check esx-02", "esx-02", "HOST")).toBe(":check HOST");
+  });
+});
+
+describe("fitHints (round 22)", () => {
+  /** A menu item whose label and hint have the given widths: [shown, natural]. */
+  function item(label: [number, number], hint: [number, number]) {
+    const menu = document.createElement("div");
+    menu.innerHTML = `<button class="row-menu-item"><span class="row-menu-label">Remove from Folder</span><span class="row-menu-cmd">:folder remove HOST NAME</span></button>`;
+    const size = (el: Element | null, [shown, natural]: [number, number]) => {
+      Object.defineProperty(el, "clientWidth", { value: shown });
+      Object.defineProperty(el, "scrollWidth", { value: natural });
+    };
+    size(menu.querySelector(".row-menu-label"), label);
+    size(menu.querySelector(".row-menu-cmd"), hint);
+    fitHints(menu);
+    return (menu.querySelector(".row-menu-cmd") as HTMLElement).hidden;
+  }
+
+  it("keeps a hint that fits, or one cut that still shows some of it", () => {
+    expect(item([120, 120], [168, 168])).toBe(false);
+    expect(item([120, 120], [99, 168])).toBe(false);
+  });
+
+  it("drops the hint before the label is cut, and a hint cut to its ellipsis", () => {
+    expect(item([100, 130], [0, 168])).toBe(true);
+    expect(item([120, 120], [12, 168])).toBe(true);
   });
 });

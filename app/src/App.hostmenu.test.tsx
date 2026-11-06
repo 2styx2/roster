@@ -168,7 +168,11 @@ describe("a Host row's menu (T166, Q156)", () => {
   it("opens a group's menu with its own actions", async () => {
     const { user } = await ready();
     rightClick(within(inventory()).getByRole("treeitem", { name: /^subnet-1/ }));
-    expect(items().some((i) => /Add a Host to subnet-1/.test(i ?? ""))).toBe(true);
+    // Short words (round 22): the menu is named after the group, the item's tooltip names it.
+    expect(menu()).toHaveAccessibleName("subnet-1");
+    const add = within(menu()).getByRole("menuitem", { name: "Add a Host…" });
+    expect(add).toHaveAttribute("title", "Add a Host to subnet-1");
+    expect(items().some((i) => /subnet-1/.test(i ?? ""))).toBe(false);
     await user.keyboard("{Escape}");
   });
 
@@ -216,20 +220,25 @@ describe("a Host row's menu (T166, Q156)", () => {
     await user.click(row);
     expect(within(row.closest("li") as HTMLElement).queryAllByRole("button")).toEqual([]);
     rightClick(row);
-    expect(within(menu()).getByRole("menuitem", { name: /Remove linux-1-000 from Lab/ })).toBeInTheDocument();
+    // Round 22: the item says it short; the names are in its tooltip and description.
+    const item = within(menu()).getByRole("menuitem", { name: "Remove from Folder" });
+    expect(item).toHaveAttribute("title", "Remove linux-1-000 from Lab");
+    expect(item).toHaveAttribute("aria-description", "Remove linux-1-000 from Lab");
   });
 });
 
 describe("a Host row's menu with worst-case names (break-ui)", () => {
-  it("a long Plugin action keeps its whole text in its name and tooltip, cut on screen", async () => {
+  it("a long Plugin action says it short, its whole text (names and all) in its tooltip and description", async () => {
     const { user } = await ready();
     const folder = "Racks-in-the-second-building-north-wing-cold-aisle-טבלה-🧪";
     await user.keyboard(`${LEADER}:folder add linux-1-000 ${folder}{Enter}`);
     const folders = await screen.findByRole("group", { name: "Folders" });
     rightClick(await within(folders).findByRole("treeitem", { name: /^linux-1-000/ }));
-    const action = within(menu()).getByRole("menuitem", { name: `Remove linux-1-000 from ${folder}` });
-    const label = action.querySelector(".row-menu-label") as HTMLElement;
-    expect(label).toHaveAttribute("title", `Remove linux-1-000 from ${folder}`);
-    expect(label).toHaveAttribute("dir", "auto");
+    const action = within(menu()).getByRole("menuitem", { name: "Remove from Folder" });
+    expect(action).toHaveAttribute("title", `Remove linux-1-000 from ${folder}`);
+    expect(action).toHaveAttribute("aria-description", `Remove linux-1-000 from ${folder}`);
+    // Its hint names no Host or Folder: the shape of the command line.
+    expect(action.querySelector(".row-menu-cmd")).toHaveTextContent(":folder remove HOST NAME");
+    expect(action.querySelector(".row-menu-label")).toHaveAttribute("dir", "auto");
   });
 });

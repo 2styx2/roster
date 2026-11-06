@@ -107,13 +107,14 @@ describe("a row menu stays in the Sidebar pane (round 21)", () => {
     expect((top - 214) % ROW).toBe(0);
   });
 
-  it("is at least as wide as its row and lines up with it, never past the Sidebar's edge", () => {
+  it("is exactly as wide as its row and lines up with it (round 22: it was 7 px wider)", () => {
     vi.spyOn(window, "innerHeight", "get").mockReturnValue(800);
     const { rows } = inPane(10);
     render(<RowMenu label="a" entries={entries} at={null} anchor={() => rows[1]!} leader="␣" run={() => {}} close={() => {}} />);
     const menu = document.querySelector<HTMLElement>(".row-menu")!;
-    expect(menu.style.minWidth).toBe("272px");
-    expect(menu.style.maxWidth).toBe("279px");
+    expect(menu.style.width).toBe("272px");
+    expect(menu.style.minWidth).toBe("0px");
+    expect(menu.style.maxWidth).toBe("none");
     expect(menu.style.left).toBe("6px");
   });
 });

@@ -68,6 +68,10 @@ export interface RowAction {
   title?: string;
   /** Its keys in keymap notation ("␣ +"), added to the tooltip while the hints are shown. */
   keys?: string;
+  /** What it says in the row's menu, which is named after the row: short, without the row's own
+   * names ("Close", "Rename…"); `label` then goes to the item's tooltip (round 22: "Remove esx-02
+   * from Lab" was cut to "Remove …"). `label` if left out. */
+  short?: string;
 }
 
 export interface SidebarRow {
@@ -723,14 +727,18 @@ function Details({ row }: { row: SidebarRow }) {
       </p>
       {(facts.length > 0 || title) && (
         <p className="sb-details-facts">
-          {[...facts, ...(title ? [title] : [])].map((f, i) => (
-            // Each fact keeps its separator: a line never ends on "·" (or breaks inside an address).
-            <span key={i} className="sb-fact">
-              {i > 0 && "· "}
-              {/* An address or a range is data (Iosevka); the rest is the app talking. */}
-              {DATA_FACT.test(f) ? <span className="data">{f}</span> : f}
-            </span>
-          ))}
+          {/* Every fact leads with its separator, and the line box is pulled out past the strip's
+              start edge, which clips it: a fact that starts a line has its "·" cut off, so a line
+              never starts (round 22) or ends on one, or breaks inside an address. */}
+          <span className="sb-facts-in">
+            {[...facts, ...(title ? [title] : [])].map((f, i) => (
+              <span key={i} className="sb-fact">
+                <span className="sb-fact-sep">·</span>
+                {/* An address or a range is data (Iosevka); the rest is the app talking. */}
+                {DATA_FACT.test(f) ? <span className="data">{f}</span> : f}
+              </span>
+            ))}
+          </span>
         </p>
       )}
     </div>

@@ -4,8 +4,10 @@
 // it, Enter or Space runs one, Esc closes and gives focus back where it was, and Tab, a press
 // outside it, a scroll, a resize or the window losing focus close it. It's kept inside the Sidebar
 // pane (round 21: near the foot it lay over the status bar): at the pointer, or under the row, the
-// tree scrolled up for it or the menu flipped above the row where there's no room. It's at least
-// as wide as its row and never wider than the Sidebar.
+// tree scrolled up for it or the menu flipped above the row where there's no room. It's exactly as
+// wide as its row (round 22: 7 px wider, it overhung the row's end). Its labels are short and carry
+// no names (the menu is named after the row; an item's whole label is its tooltip); where an item
+// is too wide, its command hint gives way first, cut, and goes when the label would be cut.
 //
 // Motion (the animate skill, taste.md "motion confirms"): opened by the pointer it fades in from
 // 0.97 at the pointer over 120 ms (strong ease-out), so the click visibly opened it; from a key it
@@ -47,8 +49,13 @@ export interface RowMenuProps {
  * 18: the first word alone gave ":group" for both Rename and Delete; round 19: a closing "…" read
  * as cut text. `what` names the row's kind: HOST on a Host's row, GROUP on a group's, else NAME. */
 export function commandHint(command: string, subject: string, what = "NAME"): string {
-  const at = subject === "" ? -1 : command.indexOf(` ${subject}`);
-  const end = at + subject.length + 1;
+  // The name as the command line writes it: bare, or quoted when it has a space (round 22: a
+  // Folder's quoted name wasn't found, so its whole name showed in the hint).
+  const written = [subject, `"${subject}"`, `'${subject}'`].find(
+    (w) => subject !== "" && command.includes(` ${w}`),
+  );
+  const at = written === undefined ? -1 : command.indexOf(` ${written}`);
+  const end = at + (written?.length ?? 0) + 1;
   const ends = at >= 0 && (command.length === end || command[end] === " ");
   // A `new` asks for the new thing's name (round 21: "New Folder" showed no shape at all).
   if (!ends) return `:${command}${/(^| )new$/.test(command) ? " NAME" : ""}`;
@@ -93,6 +100,23 @@ function paneOf(row: Element | null): Bounds {
     ? { left: pane.left, top: pane.top, right: pane.right, bottom: pane.bottom }
     : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
 }
+
+/** Each item's command hint gives way to its label (styles.css shrinks it first, cut with "…");
+ * where the label would still be cut, or the hint would show only its "…", the hint goes. */
+export function fitHints(menu: HTMLElement) {
+  for (const item of menu.querySelectorAll<HTMLElement>(".row-menu-item")) {
+    const label = item.querySelector<HTMLElement>(".row-menu-label");
+    const hint = item.querySelector<HTMLElement>(".row-menu-cmd");
+    if (!label || !hint) continue;
+    hint.hidden = false;
+    const cut = label.scrollWidth > label.clientWidth + 1;
+    const stub = hint.clientWidth < Math.min(hint.scrollWidth, HINT_MIN);
+    if (cut || stub) hint.hidden = true;
+  }
+}
+
+/** The least of a cut command hint worth showing, in px (about four characters and the "…"). */
+const HINT_MIN = 36;
 
 /** The nearest ancestor of `el` that scrolls vertically. */
 function scrollerOf(el: Element | null): HTMLElement | null {
@@ -223,11 +247,15 @@ export function RowMenu({
     // details strip). Its width: at least its row's, so no sliver of the row under it shows beside
     // it, and never past the Sidebar's edge (round 21: a Host's menu overhung it by 16 px, a
     // heading's was narrower than its row).
+    // Round 22: its width is the row's exactly (at least it, it was 7 px wider), never past the
+    // Sidebar's edge; what doesn't fit gives way inside it (fitHints).
     const area = paneOf(anchor());
     const row0 = anchor()?.getBoundingClientRect();
     if (row0 && row0.width > 0) {
-      el.style.minWidth = `${Math.round(row0.width)}px`;
-      el.style.maxWidth = `${Math.floor(area.right - row0.left)}px`;
+      el.style.minWidth = "0";
+      el.style.maxWidth = "none";
+      el.style.width = `${Math.min(row0.width, area.right - row0.left)}px`;
+      fitHints(el);
     }
     el.style.maxHeight = `${Math.max(0, Math.floor(area.bottom - area.top - 2 * MARGIN))}px`;
     // From a key, a row too near the pane's foot scrolls up just enough for the menu to open under
@@ -377,6 +405,9 @@ export function RowMenu({
             tabIndex={-1}
             className="row-menu-item"
             data-label={entry.label}
+            // Its whole label, names and all, where the item says it short (round 22).
+            title={entry.full ?? entry.label}
+            aria-description={entry.full}
             onPointerMove={(e) => {
               // The item under the pointer is the active one, as in a native menu.
               if (document.activeElement !== e.currentTarget)
@@ -387,8 +418,9 @@ export function RowMenu({
               run(entry.command);
             }}
           >
-            {/* A long label (a Plugin's, naming a long Host) is cut; its tooltip has it whole. */}
-            <span className="row-menu-label" dir="auto" title={entry.label}>
+            {/* A label too long even alone (a Plugin's without `short`) is cut; the item's tooltip
+                has it whole. */}
+            <span className="row-menu-label" dir="auto">
               {entry.label}
             </span>
             {entry.keys ? (

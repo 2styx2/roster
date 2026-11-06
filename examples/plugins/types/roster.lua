@@ -129,6 +129,7 @@
 --- A button on a row
 ---@class roster.RowAction
 ---@field label string What it does, for its tooltip and screen readers (`"Unpin esx-02"`).
+---@field short? string What it says in the row's menu (a right-click, or the Menu key on the row), which is named after the row: a few words without the row's own names (`"Unpin"`, `"Remove from Folder"`), at most 40 characters; `label` is then its tooltip there. `label` if left out.
 ---@field icon? roster.RowIcon Its icon; `info` if left out.
 ---@field run roster.Run What pressing it runs.
 

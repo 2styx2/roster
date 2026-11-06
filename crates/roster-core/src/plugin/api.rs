@@ -3063,6 +3063,11 @@ pub const TYPES: &[Type] = &[
                 "string",
                 "What it does, for its tooltip and screen readers (`\"Unpin esx-02\"`).",
             ),
+            o(
+                "short",
+                "string",
+                "What it says in the row's menu (a right-click, or the Menu key on the row), which is named after the row: a few words without the row's own names (`\"Unpin\"`, `\"Remove from Folder\"`), at most 40 characters; `label` is then its tooltip there. `label` if left out.",
+            ),
             o("icon", "RowIcon", "Its icon; `info` if left out."),
             f("run", "Run", "What pressing it runs."),
         ],
