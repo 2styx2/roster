@@ -193,6 +193,8 @@ def test_the_pipe_answers_one_exchange_and_times_out_a_silent_client():
 def test_roster_run_hands_over_to_ssh_and_passes_on_its_code(write_config, fakes, monkeypatch):
     write_config("groups:\n  lab:\n    user: ops\n    hosts:\n      box: {ip: 10.0.0.5, enroll: true}\n")
     monkeypatch.setenv("FAKE_SSH_EXIT", "7")
+    subprocess.run([sys.executable, "-m", "roster", "sync", "--no-vault"], capture_output=True, env=os.environ,
+                   timeout=60, check=True)                # T243: `roster run` needs the Host in the ssh config
     r = subprocess.run([sys.executable, "-m", "roster", "run", "box", "--", "true"], capture_output=True, text=True,
                        env=os.environ, timeout=60)
     assert r.returncode == 7 and "not connecting to" in r.stderr

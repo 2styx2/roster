@@ -6,6 +6,7 @@ sync, setup, vault sync and vault unlock end with as their "next" line. Fakes on
 import json
 
 import pytest
+from conftest import WINDOWS
 
 from roster import catchup
 from roster.cli import main
@@ -630,6 +631,7 @@ def test_a_locked_vault_with_no_terminal_says_14_and_vault_unlock(capsys, box, w
     ("sudo: 1 incorrect password attempt", "sudo refused the password from bw:new-01 ssh: is the sudo password there "
                                            "the login's?"),
 ])
+@pytest.mark.skipif(WINDOWS, reason="the stand-in ssh is a .cmd shim on Windows, which won't take sudo's sh line")
 def test_run_sudo_tells_sudo_s_refusals_apart(capsys, box, monkeypatch, sudo_says, told):
     run(capsys, "sync", "--no-vault")
     answered("10.0.0.6")
