@@ -22,6 +22,7 @@ Inventories that share the key file (rotated together, Q204) are reached at thei
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -35,7 +36,7 @@ from . import boxkeys, keyline, sshconfig, winhost
 from .authorized import add_key_script, key_named, remove_key_script
 from .common import die, program_argv, replace_file, ssh_path
 from .config import load_config
-from .context import Context, current
+from .context import WINDOWS, Context, current
 from .errors import NEW_KEY_REFUSED, UNKNOWN_HOST, InventoryError, Problem, tagged
 from .hosts import is_windows
 from .keyline import key_ere
@@ -106,15 +107,59 @@ class Unreached(RuntimeError):
     """ssh itself failed (no answer, refused the key, no host key): nothing ran there."""
 
 
-def one_key_config(m: Member, keys: list[Path]) -> str:
+# T253 item 3: the user's own ssh options a Host may need to be reached at all (an old sshd's algorithms, a jump
+# host), as `ssh -G NAME` says `ssh NAME` uses them. Never the ones that choose the key, the account, the address or
+# the host keys trusted: those stay roster's, so the proof is exactly the key meant.
+CARRIED = {"hostkeyalgorithms": "HostKeyAlgorithms", "pubkeyacceptedalgorithms": "PubkeyAcceptedAlgorithms",
+           "kexalgorithms": "KexAlgorithms", "ciphers": "Ciphers", "macs": "MACs"}
+ALGORITHMS_RE = re.compile(r"[A-Za-z0-9@.,_+^-]+\Z")
+JUMP_RE = re.compile(r"[A-Za-z0-9@.,:_\[\]/=-]+\Z")         # [user@]host[:port] or ssh://… hops, comma-separated
+PRINTABLE_RE = re.compile(r"[^\x00-\x1f\x7f]+\Z")
+
+
+def user_options(name: str) -> dict[str, str]:
+    """What the user's own ssh config gives NAME (`ssh -G NAME`: {option, lowercase: value}); {} when ssh can't say.
+    Nothing connects."""
+    try:
+        r = subprocess.run(program_argv(["ssh", "-G", name]), stdin=subprocess.DEVNULL, capture_output=True,
+                           text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    out: dict[str, str] = {}
+    for line in r.stdout.splitlines() if r.returncode == 0 else []:
+        k, _, v = line.partition(" ")
+        out.setdefault(k.lower(), v.strip())
+    return out
+
+
+def carried(seen: dict[str, str]) -> list[tuple[str, object]]:
+    """The options of SEEN (user_options) the rotation's connection takes on: CARRIED's, when each is an algorithm
+    list; the user's ProxyCommand; a ProxyJump as a ProxyCommand that runs ssh with the user's own config (ssh would
+    look the jump host up in roster's one-Host file, which knows only the Host)."""
+    out: list[tuple[str, object]] = [(kw, seen[k]) for k, kw in CARRIED.items()
+                                     if ALGORITHMS_RE.match(seen.get(k, ""))]
+    command, jump = seen.get("proxycommand", "none"), seen.get("proxyjump", "none")
+    if command.lower() != "none" and PRINTABLE_RE.match(command):
+        out.append(("ProxyCommand", command))
+    elif jump.lower() != "none" and JUMP_RE.match(jump):
+        *via, last = jump.split(",")
+        target = "[%h]:%p" if WINDOWS else "'[%h]:%p'"
+        out.append(("ProxyCommand", "ssh -o BatchMode=yes" + (f" -J {','.join(via)}" if via else "")
+                    + f" -W {target} {last}"))
+    return out
+
+
+def one_key_config(m: Member, keys: list[Path], seen: dict[str, str] | None = None) -> str:
     """A one-Host ssh config for M: its address, user and port, roster's known_hosts for its Inventory (its key must
-    be recorded), and only KEYS, offered in order."""
+    be recorded), only KEYS, offered in order, and the user's own options that reach it (carried(); SEEN: what
+    user_options says, asked when not given)."""
     h = m.h
     opts: list[tuple[str, object]] = [
         ("HostName", h["ip"]), ("User", h["ssh"]["user"]), ("Port", h["ssh"]["port"]),
         ("UserKnownHostsFile", token_path(m.ctx.known_hosts)), ("StrictHostKeyChecking", "yes"),
         ("BatchMode", "yes"), ("ConnectTimeout", 10), ("ControlMaster", "no"), ("ControlPath", "none"),
-        ("IdentitiesOnly", "yes"), *[("IdentityFile", token_path(k)) for k in keys]]
+        ("IdentitiesOnly", "yes"), *[("IdentityFile", token_path(k)) for k in keys],
+        *carried(user_options(m.name) if seen is None else seen)]
     return "\n".join(sshconfig.host_block(h["name"], opts)) + "\n"
 
 
@@ -123,13 +168,16 @@ class Connect:
 
     def __init__(self) -> None:
         self.dir = Path(tempfile.mkdtemp(prefix="roster-rotate-"))
+        self.seen: dict[str, dict[str, str]] = {}          # user_options per Host name, asked once a run
 
     def close(self) -> None:
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def config(self, m: Member, keys: list[Path]) -> Path:
         f = self.dir / "config"
-        f.write_text(one_key_config(m, keys), encoding="utf-8")
+        if m.name not in self.seen:
+            self.seen[m.name] = user_options(m.name)
+        f.write_text(one_key_config(m, keys, self.seen[m.name]), encoding="utf-8")
         os.chmod(f, 0o600)
         return f
 

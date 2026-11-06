@@ -872,3 +872,39 @@ def test_the_lock_covers_every_inventory_on_the_box_shared_key_file_or_not(isola
     with boxlock.held("setup"):
         pass
     context.use(None)
+
+
+def test_the_rotation_carries_the_users_own_ssh_options_for_a_host(lab, capsys, isolated):
+    """T253 item 3: an old Host whose sshd needs the user's own `KexAlgorithms` (from ~/.ssh/config) is rotated, not
+    left pending for good: the rotation's one-Host config carries the options that let `ssh NAME` reach it."""
+    (lab.hosts / "web-02" / "needs").write_text("KexAlgorithms +diffie-hellman-group14-sha1\n")
+    with (isolated["home"] / ".ssh" / "config").open("a") as f:
+        f.write("\nHost web-02\n    KexAlgorithms +diffie-hellman-group14-sha1\n    IdentityFile ~/.ssh/id_own\n")
+    capsys.readouterr()
+    assert main(["setup", "--rotate"]) == 0, capsys.readouterr().out
+    new_pub = pub_key(lab.key)
+    assert all(lab.keys(n) == [new_pub] for n in ("web-01", "web-02", "db-01"))
+
+
+def test_the_one_host_config_pins_one_key_and_turns_a_proxyjump_into_its_own_ssh(lab, monkeypatch):
+    """T253 item 3: the user's algorithms and jump host go in; their IdentityFile, User, HostName and known_hosts
+    never do (the proof is exactly the key meant, at the Host's own address). A ProxyJump becomes a ProxyCommand
+    running ssh with the user's own config, since ssh would look the jump host up in roster's one-Host file."""
+    from roster import rotate
+    from roster.config import load_config
+    from roster.context import current
+    cfg = load_config(current().path)
+    seen = {"proxyjump": "ops@jump-01:2222,bastion", "hostkeyalgorithms": "+ssh-rsa",
+            "pubkeyacceptedalgorithms": "+ssh-rsa", "kexalgorithms": "+diffie-hellman-group14-sha1",
+            "identityfile": "~/.ssh/id_own", "user": "root", "hostname": "10.9.9.9",
+            "userknownhostsfile": "~/.ssh/known_hosts", "ciphers": "aes128-ctr\nHost *"}
+    monkeypatch.setattr(rotate, "user_options", lambda name: dict(seen))
+    m = rotate.Member(current(), cfg, cfg["hosts"]["web-01"], rotate.Slot(rotate.boxkeys.parse("ed25519"), lab.key))
+    text = rotate.one_key_config(m, [lab.key])
+    lines = [ln.strip() for ln in text.splitlines()]
+    assert "HostKeyAlgorithms +ssh-rsa" in lines and "PubkeyAcceptedAlgorithms +ssh-rsa" in lines
+    assert "KexAlgorithms +diffie-hellman-group14-sha1" in lines
+    assert "ProxyCommand ssh -o BatchMode=yes -J ops@jump-01:2222 -W '[%h]:%p' bastion" in lines
+    assert not any(ln.startswith(("ProxyJump", "Ciphers")) for ln in lines)       # a value with a line break: not taken
+    assert [ln for ln in lines if ln.startswith("IdentityFile")] == [f'IdentityFile "{lab.key}"']
+    assert "HostName 10.0.0.4" in lines and "User ops" in lines and "id_own" not in text and "root" not in text
