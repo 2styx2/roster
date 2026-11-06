@@ -57,7 +57,6 @@ export type VaultAction = (typeof VAULT_ACTIONS)[number];
 
 /** A command; `C` is the part of the app it acts through (a feature's commands take their own). */
 export interface CommandDef<C = CommandContext> extends Entry {
-  /** id: the `:` name, and what the keymap binds keys to. */
   area: string;
   /** What it does, for the Key bindings panel and completion. */
   label(arg?: string): string;
@@ -170,7 +169,6 @@ export type CommandRegistry = Registry<CommandDef>;
 /** What the functions below need of the registry. */
 export type Commands = Pick<CommandRegistry, "get" | "list">;
 
-/** A command registry holding the built-in commands. */
 export function builtinCommandRegistry(): CommandRegistry {
   const registry = new Registry<CommandDef>();
   for (const c of builtinCommands) registry.register(c);

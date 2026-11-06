@@ -515,7 +515,6 @@ export class Tabs {
           // The screen gets it unless the shell hooks hold it back; Plugins always get it as it came.
           const shown = hooks.output(data, text);
           if (shown) this.output(entry, shown);
-          // A Quick Connect Session isn't on a Host of the Inventory: no Host to name.
           // Plugins never see the attempt's token: not the echoed hook line (its whole window stays
           // out), nor anything after that prints it.
           const echoed = this.config.outputTap ? pastEchoWindow(run, nonce, data) : null;

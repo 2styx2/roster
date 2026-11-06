@@ -762,7 +762,6 @@ impl KeyContext {
         KeyContext::Global,
     ];
 
-    /// The name in Lua.
     pub fn lua_name(self) -> &'static str {
         match self {
             KeyContext::Leader => "leader",

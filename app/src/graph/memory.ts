@@ -140,7 +140,6 @@ export class GraphPlaces {
     return this.saved?.movedClusters?.includes(id) ?? false;
   }
 
-  /** Whether the user placed node `id`. */
   placedByUser(id: string): boolean {
     return this.saved?.moved?.includes(id) ?? false;
   }

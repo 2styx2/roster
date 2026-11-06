@@ -130,7 +130,6 @@ impl Pin {
         Some(Pin(out))
     }
 
-    /// The fingerprint of a certificate's DER bytes.
     pub fn of(der: &[u8]) -> Pin {
         let digest = ring::digest::digest(&ring::digest::SHA256, der);
         let mut out = [0u8; 32];
@@ -510,7 +509,6 @@ pub fn check_together(sites: &[Site]) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether any of `sites` allows `url`.
 pub fn allowed(sites: &[Site], url: &Url) -> bool {
     site_for(sites, url).is_some()
 }

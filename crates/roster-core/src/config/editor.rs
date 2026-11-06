@@ -83,7 +83,6 @@ pub fn ensure_file(dir: &Path) -> std::io::Result<Ensured> {
     }
 }
 
-/// How to open the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpenWith {
     /// The OS's app for editing the file (Windows: [`windows_open`]'s choice).

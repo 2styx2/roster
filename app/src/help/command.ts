@@ -121,7 +121,6 @@ export class HelpView {
     this.waiting = null;
   }
 
-  /** Why the guides' text couldn't load, or null. */
   textFailed(): string | null {
     return this.text.failed();
   }

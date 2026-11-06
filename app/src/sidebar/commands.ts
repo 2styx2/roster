@@ -13,7 +13,6 @@ export interface SidebarContext {
   list(move: ListMove): void;
   /** Folds or unfolds the Sidebar row (or section heading) `id`, or the one under the cursor. */
   fold(id: string | null, how: FoldHow): void;
-  /** The Sidebar row under the cursor, or null. */
   cursorRow(): SidebarRow | null;
   /** Opens the menu of the Host row under the Sidebar's cursor (T166, Q156). */
   rowMenu(): void;

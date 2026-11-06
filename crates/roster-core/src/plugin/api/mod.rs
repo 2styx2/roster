@@ -449,7 +449,6 @@ pub fn functions() -> impl Iterator<Item = &'static Function> {
     BY_MODULE.iter().flat_map(|m| m.iter())
 }
 
-/// [`functions`] as a list.
 pub static FUNCTIONS: std::sync::LazyLock<Vec<&'static Function>> = std::sync::LazyLock::new(|| functions().collect());
 
 pub const EVENTS: &[Event] = &[

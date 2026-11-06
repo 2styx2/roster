@@ -756,7 +756,6 @@ export interface TermSize {
   rows: number;
 }
 
-/** How a Session ended. */
 export interface SessionExit {
   /** The exit code (ssh's 255 when it couldn't connect); null when a signal ended it. */
   code: number | null;
@@ -1238,8 +1237,6 @@ export interface PluginErrorInfo {
   message: string;
 }
 
-/** What a Plugin answered: its function's result, the UI changes it asked for (untrusted data:
- * plugins/ops.ts checks them), an error, and whether it's now disabled. */
 /** Whose call a Plugin's run is: the user's (true), the user's carried one hop (a command the
  * Plugin's `roster.cmd` ran from the user's call), or the app's (false). Decision Q98, issue #183. */
 export type PluginCaller = boolean | "carried";
@@ -1270,6 +1267,8 @@ export interface PluginLoaded {
   refused?: string[];
 }
 
+/** What a Plugin answered: its function's result, the UI changes it asked for (untrusted data:
+ * plugins/ops.ts checks them), an error, and whether it's now disabled. */
 export interface PluginReply {
   plugin: string;
   result: unknown;

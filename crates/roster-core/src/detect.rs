@@ -112,7 +112,6 @@ pub trait Runner {
         None
     }
 
-    /// Does this file exist?
     fn is_file(&self, _path: &str) -> bool {
         false
     }

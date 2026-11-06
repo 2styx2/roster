@@ -87,7 +87,6 @@ function fitted(scene: Scene, w: number, h: number): Camera {
   return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, k };
 }
 
-/** Whether the user asked for less motion. */
 const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /** --dur-draw in ms (0 under reduced motion). */

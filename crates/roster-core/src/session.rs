@@ -764,7 +764,6 @@ impl SessionManager {
         }
     }
 
-    /// How many Sessions are running.
     pub fn len(&self) -> usize {
         self.sessions.lock().unwrap().len()
     }
@@ -918,7 +917,6 @@ impl<E> FillError<E> {
             FillError::NotInHop => Some("press the key again once roster shows where the Session is"),
             // A reset starts the core's screen over (the last pass on #318).
             FillError::LostTrack { .. } => Some("run `reset` in the Session, then press the key again at the prompt"),
-            // The review of #299, #3.
             FillError::Changed { .. } => Some("press the key again once the Session's screen is still"),
             _ => None,
         }

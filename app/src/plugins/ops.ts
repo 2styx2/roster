@@ -115,7 +115,6 @@ export interface PluginProgress {
   cancel?: Run;
 }
 
-/** The icons a Plugin's toolbar control may have. */
 export const PLUGIN_TOOLBAR_ICONS = ["find", "add", "details", "help", "map"] as const;
 type PluginToolbarIcon = (typeof PLUGIN_TOOLBAR_ICONS)[number];
 

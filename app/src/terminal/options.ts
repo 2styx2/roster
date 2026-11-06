@@ -58,7 +58,6 @@ export interface TerminalOptions {
   /** Bold text in the bright ANSI colours too (Windows Terminal's intenseTextStyle "bright"). */
   boldIsBright: boolean;
   scrollback: number;
-  /** Selecting text copies it. */
   copyOnSelect: boolean;
   /** Right-click copies the selection, or pastes when nothing is selected (as Windows Terminal). */
   rightClickCopyPaste: boolean;

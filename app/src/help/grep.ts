@@ -16,7 +16,6 @@ export interface GrepHit<T extends GrepText> {
   label: string;
 }
 
-/** The words of a query, lower case. */
 export const grepTerms = (query: string): string[] => query.toLowerCase().split(/\s+/).filter(Boolean);
 
 /** Up to `width` characters of `text` around its first match of `term`. */

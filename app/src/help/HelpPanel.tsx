@@ -198,7 +198,6 @@ export function HelpPanel({ view, snapshot, ctx, leader, vim, onFind, onOutline,
     if (searchedPage && query) onSearch?.(searchedPage, query);
   }, [searchedPage, query, onSearch]);
 
-  // Focus on the search field as it appears.
   useEffect(() => {
     if (searching) searchRef.current?.focus();
   }, [searching]);

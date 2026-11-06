@@ -29,7 +29,6 @@ export function inventoryActions(o: {
   say(m: Message): void;
   selectedHost(): string | null;
   openForm(form: Form): void;
-  /** Asks before removing `host`. */
   askRemove(host: Host): void;
   openCommandLine(text: string): void;
 }): InventoryActions {
