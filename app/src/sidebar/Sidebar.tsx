@@ -20,112 +20,17 @@
 // 91 Hosts is a few hundred elements: rows are memoized on their object (sections are rebuilt only
 // when what they show changes), so moving the cursor re-renders two rows, not the tree.
 import { memo, useCallback, useContext, useLayoutEffect, useRef, useState, type DragEvent } from "react";
-import { hopWords, type Breadcrumb } from "../session/breadcrumb";
 import { HopCrumb } from "../session/HopCrumb";
 import type { CommandLine } from "../keymap";
 import { formatCount } from "../ui/format";
 import { HintsShown } from "../ui/hints";
 import { Keys, LEADER, WithKeys } from "../ui/Keys";
-import { DOT_WORDS, StateDot, type Dot } from "../ui/StateDot";
+import { StateDot } from "../ui/StateDot";
+import { RowActionGlyph } from "../ui/icons";
 import type { MenuEntry } from "./hostMenu";
+import { allRows, cursorIn, headingId, rowDomId, rowFacts, rowName, tagName, type OpenMenu, type RowAction, type SidebarRow, type SidebarSection } from "./model";
 import { RowMenu } from "./RowMenu";
-
-export type { Dot } from "../ui/StateDot";
-
-/** A small button on a row or heading (close, rename, delete, new). */
-export interface RowAction {
-  /** The accessible name, e.g. "Close esxi-02". */
-  label: string;
-  icon: "close" | "edit" | "add" | "addGroup" | "review" | "unreview" | "info" | "copy" | "plan" | "apply" | "cut" | "map";
-  command: CommandLine;
-  /** Always shown, not only on the selected row (the Inventory's "Add a Host"). */
-  pinned?: boolean;
-  /** The tooltip, when it should say more than the label (why it can't act). */
-  title?: string;
-  /** Its keys in keymap notation ("␣ +"), added to the tooltip while the hints are shown. */
-  keys?: string;
-}
-
-export interface SidebarRow {
-  /** Unique across all sections; also the fold key in State for a foldable row. */
-  id: string;
-  label: string;
-  /** The Host the row stands for, if any: the on-screen Host's rows are raised or brighter, and
-   * commands such as `folder add` act on the Host under the cursor. */
-  host?: string;
-  dot?: Dot;
-  /** A short status after the label ("connecting…", "ended (code 0)"). */
-  note?: string;
-  /** The end of the label that must stay in view when the rest is cut off (a Session's " (2)"). */
-  tail?: string;
-  /** Right-aligned and faint: an address. It shows whole or not at all: the name comes first. */
-  detail?: string;
-  /** A Session's breadcrumb (ticket 120): the Host a nested ssh took it to, after the name. */
-  hop?: Breadcrumb;
-  /** Right-aligned: how many Hosts a Folder or group holds. Formatted, and never cut off. */
-  count?: number;
-  /** A small badge ("unreviewed"). It gives way to the name: shown raised, selected or under the
-   * cursor, and always in the tooltip. */
-  badge?: string;
-  /** Plugins' badges (`roster.badges.set`): a small chip each, right after the name, never cut
-   * away (a long one is cut short); each named with its Plugin ("recent-alerts: 2"). */
-  tags?: readonly { source: string; text: string }[];
-  /** A glyph before the label: a Folder, an Inventory group. */
-  icon?: "folder" | "group";
-  /** A tooltip (and accessible description), e.g. "password login". */
-  title?: string;
-  /** The item on screen (decision Q31: the raised style). Set by the section, or by
-   * buildSections for the on-screen Host's first row. */
-  raised?: boolean;
-  /** The on-screen Host where it appears again: brighter, not raised (set by buildSections). */
-  also?: boolean;
-  /** The raised row stands for a live Session (connected or connecting, not ended): it gets the
-   * accent bar (decision Q53). Set by the Sessions section, or by buildSections. */
-  live?: boolean;
-  /** Added to roster.yml and not Published yet (ticket 28): dimmed, with a dot. */
-  pending?: boolean;
-  /** A Session's link to its Host (issue #78): an accent edge is drawn from the node toward the
-   * terminal while it connects, fades once it's up, and snaps back when it's down. */
-  link?: "connecting" | "up" | "down";
-  /** Tree depth within its section; rows after a row with a lower level are its children. */
-  level?: number;
-  /** It has children that h/l (or its chevron) fold and unfold. */
-  foldable?: boolean;
-  /** Folded now (set by buildSections from State). */
-  folded?: boolean;
-  /** The row h goes to: its parent row, or the section heading (set by buildSections). */
-  parent?: string;
-  /** Whatever a section wants its commands to find on the cursor row (Folders: the Folder). */
-  data?: Readonly<Record<string, string>>;
-  /** What Enter or a click runs. */
-  command: CommandLine;
-  /** Buttons shown on the selected row (decision Q88); on a `menu` row, items in its menu. */
-  actions?: readonly RowAction[];
-  /** A Host's row (T166, Q156): no buttons; a right-click or the Menu key opens its menu. */
-  menu?: boolean;
-  /** Dragging the row carries this (a Host name). */
-  drag?: string;
-  /** Run when the dragged row is dropped somewhere in the Sidebar that doesn't take it (out of a
-   * Folder: remove it). */
-  dragOut?: CommandLine;
-  /** This row takes a drop: the command line for the dragged payload, or null to ignore it. */
-  drop?(payload: string): CommandLine | null;
-}
-
-export interface SidebarSection {
-  id: string;
-  title: string;
-  count?: number;
-  rows: readonly SidebarRow[];
-  /** Shown when there are no rows. Key sequences in backticks are drawn as keycaps. */
-  empty?: string;
-  /** Buttons on the heading ("+" for a new Folder). */
-  actions?: readonly RowAction[];
-  /** The section (heading or empty space) takes a drop. */
-  drop?(payload: string): CommandLine | null;
-  /** Folded now: the heading shows, the rows don't (set by buildSections from State). */
-  folded?: boolean;
-}
+import { keepFocus } from "../ui/keepFocus";
 
 export interface SidebarProps {
   sections: readonly SidebarSection[];
@@ -140,7 +45,7 @@ export interface SidebarProps {
   /** The Leader as written in the keymap, for the hints. */
   leaderHint: string;
   /** The keys that open the Picker ("␣ f"), if the keymap has them. */
-  findKeys?: string | null;
+  findKeys: string | null;
   /** Runs a command line: for rows, and the buttons at the top and bottom. */
   run(line: CommandLine): void;
   /** Gets the tree element (App focuses it in App mode). */
@@ -157,39 +62,6 @@ export interface SidebarProps {
   rowMenu?(row: SidebarRow): readonly MenuEntry[];
 }
 
-export interface OpenMenu {
-  row: string;
-  at: { x: number; y: number } | null;
-}
-
-/** A row's DOM id, for aria-activedescendant: any row id, made a valid id. */
-export const rowDomId = (id: string) => `sb-${Array.from(id, (c) => (/[\w-]/.test(c) ? c : `_${c.codePointAt(0)}_`)).join("")}`;
-
-const hostsCount = (n: number) => `${formatCount(n)} ${n === 1 ? "Host" : "Hosts"}`;
-
-/** What a row says about itself, beyond its label: its state in words (never only a dot's colour),
- * its note, a badge, its address, its count. */
-export function rowFacts(row: SidebarRow): string[] {
-  const facts: string[] = [];
-  // An ended or connecting Session's note already says it.
-  if (row.dot && !((row.dot === "ended" || row.dot === "connecting") && row.note)) facts.push(DOT_WORDS[row.dot]);
-  if (row.note) facts.push(row.note);
-  // An unreviewed Host's badge is what its dot already said.
-  if (row.badge && row.dot !== "off") facts.push(row.badge);
-  for (const t of row.tags ?? []) facts.push(tagName(t));
-  if (row.hop) facts.push(hopWords(row.hop));
-  if (row.detail) facts.push(row.detail);
-  if (row.count !== undefined) facts.push(hostsCount(row.count));
-  if (row.pending) facts.push("not Published yet");
-  return facts;
-}
-
-/** A Plugin badge's name, for its tooltip and the row's accessible name: "recent-alerts: 2". */
-const tagName = (t: { source: string; text: string }) => `${t.source}: ${t.text}`;
-
-/** The row's accessible name: "esxi-02, password login, 10.0.0.5". */
-export const rowName = (row: SidebarRow) => [row.label, ...rowFacts(row)].join(", ");
-
 const SearchIcon = () => (
   <svg className="sb-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
     <circle cx="7" cy="7" r="4.5" />
@@ -197,11 +69,6 @@ const SearchIcon = () => (
   </svg>
 );
 
-/** The id of a section's heading, as a cursor stop and a fold key. */
-export const headingId = (section: string) => `section:${section}`;
-
-/** Keeps focus where it is (the terminal) when a row or button is clicked. */
-const keepFocus = (e: React.MouseEvent) => e.preventDefault();
 
 
 
@@ -247,36 +114,6 @@ function Actions({ actions, run, leader = "" }: { actions: readonly RowAction[];
     </button>
   ));
 }
-
-const ICONS: Record<RowAction["icon"], string> = {
-  close: "M4 4l8 8M12 4l-8 8",
-  edit: "M3 13l1-3.5L10.5 3 13 5.5 6.5 12z",
-  add: "M8 3v10M3 8h10",
-  // A group (two stacked rows, as the group rows' icon) with a + beside it.
-  addGroup: "M2 3.5h7v3.5H2zM2 9h7v3.5H2zM13 5.5v5M10.5 8h5",
-  review: "M3.5 8.5l3 3 6-7",
-  // Take a review back: an arrow turning back over the line (undo).
-  unreview: "M5.5 3.5L2.5 6.5l3 3M2.5 6.5h7a3.5 3.5 0 010 7H7",
-  // An i in a ring: the Host's details (ticket 18).
-  info: "M8 2.25a5.75 5.75 0 110 11.5 5.75 5.75 0 010-11.5zM8 7.25v3.5M8 5.25v.01",
-  // Two sheets, one over the other: copy (a Plugin's row, ticket 56).
-  copy: "M5.5 5.5h7v7h-7zM3.5 10.5v-7h7",
-  // A dashed arrow: what would change, not changed yet (a Mesh plan, ticket 91).
-  plan: "M2 8h2.5M6.5 8H9M11 8h2.5M10.5 5l3 3-3 3",
-  // A solid arrow into a bar: carry it out (a Mesh apply).
-  apply: "M2 8h9M8 5l3 3-3 3M13.5 3.5v9",
-  // An edge broken by a cross, as a cut edge is drawn in a graph (a Mesh cut).
-  cut: "M1.5 8h3.5M11 8h3.5M6.5 5.5l3 5M9.5 5.5l-3 5",
-  // Three nodes joined, as the toolbar's map: show it on a graph (Topology's section, T99).
-  map: "M3.75 9.75a1.75 1.75 0 110 3.5 1.75 1.75 0 010-3.5zM12.25 9.75a1.75 1.75 0 110 3.5 1.75 1.75 0 010-3.5zM8 2.25a1.75 1.75 0 110 3.5 1.75 1.75 0 010-3.5zM5.5 11.5h5M4.7 10L7.1 5.6M11.3 10L8.9 5.6",
-};
-
-/** A row action's icon (a Sidebar row's, a table's action). */
-export const RowActionGlyph = ({ name }: { name: RowAction["icon"] }) => (
-  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
-    <path d={ICONS[name]} />
-  </svg>
-);
 
 const Chevron = ({ folded }: { folded: boolean }) => (
   <svg className={`sb-chev${folded ? " folded" : ""}`} viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
@@ -487,7 +324,7 @@ export function Sidebar({
   selected = null,
   onSelect,
   leaderHint,
-  findKeys = "␣ f",
+  findKeys,
   run,
   treeRef,
   onTreeFocus,
@@ -665,36 +502,4 @@ export function Sidebar({
       </div>
     </nav>
   );
-}
-
-function cursorIn(section: SidebarSection, cursor: string): boolean {
-  return cursor === headingId(section.id) || section.rows.some((r) => r.id === cursor);
-}
-
-/** A section's heading as a cursor stop. */
-function headingRow(section: SidebarSection): SidebarRow {
-  const id = headingId(section.id);
-  return { id, label: section.title, level: -1, foldable: true, folded: section.folded ?? false, command: `togglefold ${id}` };
-}
-
-/** Every cursor stop, top to bottom (the order j/k walk): each heading, then its shown rows. */
-export function allRows(sections: readonly SidebarSection[]): SidebarRow[] {
-  return sections.flatMap((s) => [headingRow(s), ...(s.folded ? [] : s.rows)]);
-}
-
-/** The cursor after a list action; it stays put at either end. */
-export function moveCursor(
-  rows: readonly SidebarRow[],
-  cursor: string | null,
-  move: "down" | "up" | "top" | "bottom",
-): string | null {
-  if (rows.length === 0) return null;
-  const i = rows.findIndex((r) => r.id === cursor);
-  const last = rows.length - 1;
-  const next =
-    move === "top" ? 0
-    : move === "bottom" ? last
-    : i < 0 ? 0
-    : Math.max(0, Math.min(last, i + (move === "down" ? 1 : -1)));
-  return rows[next]?.id ?? null;
 }

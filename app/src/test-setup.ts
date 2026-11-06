@@ -1,8 +1,12 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, configure } from "@testing-library/react";
 import { afterEach } from "vitest";
+import { realTimeouts } from "./test-timers";
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  realTimeouts();
+});
 
 // How long findBy* and waitFor wait for what they look for before they give up (the default is
 // 1 s). They return as soon as it's there, so this costs nothing when a test passes. Each App test

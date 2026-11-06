@@ -7,9 +7,11 @@ import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useRef,
 import type { CheckStep } from "../backend/types";
 import { problemFromStep, type ErrorRow } from "./catalog";
 import { ProblemBody, type ProblemActions } from "./ErrorPanel";
+import { Announce } from "../ui/Announce";
 import { CloseGlyph } from "../ui/CloseGlyph";
 import { PanelButton } from "../panel/PanelFrame";
 import { liveSteps, stoppedStep, type CheckState, type LiveStatus } from "./checkProgress";
+import { isTyping } from "../ui/typing";
 
 export type { CheckState } from "./checkProgress";
 
@@ -41,7 +43,7 @@ const SAY_AFTER_MS = 600;
 const label = (step: string) => STEP_LABEL[step] ?? step;
 
 /** Stop's own key while the panel has focus (#361), as a view's heading button has one. */
-export const STOP_KEY = "x";
+const STOP_KEY = "x";
 
 export interface CheckPanelProps {
   check: CheckState;
@@ -77,14 +79,13 @@ export function CheckPanel({ check, rows, actions, onClose, onStop }: CheckPanel
   // a held key stops nothing more).
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (stopJob === null || e.key !== STOP_KEY || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
-    if ((e.target as HTMLElement).closest("input, textarea, select, [contenteditable='true']")) return;
+    if (isTyping(e.target)) return;
     e.preventDefault();
     e.stopPropagation();
     if (!e.repeat) onStop?.(stopJob);
   };
   // The step under way, for a screen reader (the summary line below says the outcome itself).
   const said = check.state === "running" && check.at !== null ? `Checking ${label(check.at)}` : "";
-  const spoken = useSaid(said, SAY_AFTER_MS);
   const line =
     check.state === "running"
       ? { className: "check-summary muted", text: check.stopping ? `Stopping the check of ${host}…` : `Checking ${host}…` }
@@ -106,9 +107,7 @@ export function CheckPanel({ check, rows, actions, onClose, onStop }: CheckPanel
           </button>
         </span>
       </header>
-      <span className="visually-hidden" aria-live="polite" aria-atomic="true">
-        {spoken}
-      </span>
+      <Announce text={said} delay={SAY_AFTER_MS} />
       {/* One line, the same element throughout, so its change to the outcome is heard once. */}
       <p className={line.className} aria-live="polite" title={line.text ?? undefined}>
         {line.text}
@@ -150,16 +149,6 @@ function StopButton({ onStop, focusAfter }: { onStop(): void; focusAfter: RefObj
       <StopGlyph />
     </button>
   );
-}
-
-/** `text` for the panel's live region once it has stayed the same for `after` ms (cleared at once). */
-function useSaid(text: string, after: number): string {
-  const [heard, setHeard] = useState("");
-  useEffect(() => {
-    const t = setTimeout(() => setHeard(text), text === "" ? 0 : after);
-    return () => clearTimeout(t);
-  }, [text, after]);
-  return text === "" ? "" : heard;
 }
 
 /** Seconds since `since`, ticking once a second while `on`. */

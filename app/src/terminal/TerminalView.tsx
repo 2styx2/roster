@@ -322,8 +322,8 @@ export function TerminalView({ active, leader, attach, onData, onResize, env, re
     return () => query.removeEventListener("change", onChange);
   }, [dpr]);
 
-  // A view mode change resizes the window (OS fullscreen) after the layout does, so fit again
-  // once it has settled; the ResizeObserver catches most of it, this catches the rest.
+  // A view mode change resizes the window (OS fullscreen) after the layout does: fit again on the
+  // next frame and when the window's resize comes (the ResizeObserver catches most of it).
   const { layout } = env;
   const firstLayout = useRef(true);
   useEffect(() => {
@@ -339,10 +339,10 @@ export function TerminalView({ active, leader, attach, onData, onResize, env, re
       cb.current.onResize({ cols: t.cols, rows: t.rows });
     };
     const frame = requestAnimationFrame(refit);
-    const late = setTimeout(refit, 300);
+    window.addEventListener("resize", refit, { once: true });
     return () => {
       cancelAnimationFrame(frame);
-      clearTimeout(late);
+      window.removeEventListener("resize", refit);
     };
   }, [layout, active]);
 

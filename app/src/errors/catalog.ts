@@ -7,9 +7,12 @@
 // Actions either run a command line (the same command table as keys and the command line) or
 // show a command to copy, when roster serve has no method for it (`roster sync`, `roster setup`).
 // There is never an action that accepts a host key.
-import { BackendCallError, SETUP_HOST_API_VERSION } from "../backend/types";
+import { Code, PATH_NOT_REPEATED } from "../backend/serveContract";
+import type { Capabilities } from "../backend/capabilities";
+import { BackendCallError } from "../backend/types";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import type { Problem, ProblemCode, ProblemData } from "./classify";
+import { errorText } from "../ui/format";
 
 /** Where a problem lives (docs/app/errors.md "Where it lives"). */
 export type Where =
@@ -23,10 +26,10 @@ export type Where =
   | "the infra repo"
   | "init.lua";
 
-/** What a row's words may depend on beyond the Problem: the connected roster's `api_version`.
+/** What a row's words may depend on beyond the Problem: what the connected roster can do.
  * Unknown (`:help`, no roster yet): the words of a roster that has everything. */
 export interface RowContext {
-  api?: number | undefined;
+  caps?: Capabilities | undefined;
 }
 
 export type ErrorAction =
@@ -59,71 +62,69 @@ const copy = (text: (p: Problem, ctx?: RowContext) => string | null): ErrorActio
 const sync = copy(() => "roster sync");
 /** `roster setup` for this one Host: `--host` (that Host alone) on a roster that has it (API 29),
  * else `--only`, which also takes a group, type or product by that name (#461). */
-export const setupHost = (host: string, ctx: RowContext = {}): string =>
-  `roster setup ${ctx.api === undefined || ctx.api >= SETUP_HOST_API_VERSION ? "--host" : "--only"} ${host}`;
+export const setupHost = (host: string, ctx: RowContext = {}): string => `roster setup ${!ctx.caps || ctx.caps.has("setupHost") ? "--host" : "--only"} ${host}`;
 const setupOne: ErrorAction = { ...copy((p, ctx) => setupHost(p.host, ctx)), hostOnly: true };
 /** The first `command` in roster's message (e.g. "run `bw login` once"). */
 const quoted = (p: Problem) => /`([^`]+)`/.exec(p.message)?.[1] ?? null;
 
-/** Row 1's roster.yml path, if roster named one: a -c value shaped like a token comes as HIDDEN_PATH (#484 N3). */
-const HIDDEN_PATH = "(not repeated)";
-const rosterYmlPath = (p: Problem) => (p.data?.path && p.data.path !== HIDDEN_PATH ? String(p.data.path) : null);
+/** Row 1's roster.yml path, if roster named one: a token-shaped -c value comes as PATH_NOT_REPEATED (#484 N3). */
+const rosterYmlPath = (p: Problem) => (p.data?.path && p.data.path !== PATH_NOT_REPEATED ? String(p.data.path) : null);
 
 const row = (id: string, r: Omit<ErrorRow, "id" | "source">): ErrorRow => ({ id, source: BUILTIN, ...r });
 
 export const builtinErrorRows: readonly ErrorRow[] = [
   row("inventory", {
     row: 1,
-    codes: [1],
+    codes: [Code.INVENTORY_ERROR],
     where: ["roster.yml"],
     fix: () => "Fix roster.yml where roster's message says, then retry.",
     actions: [copy(rosterYmlPath), retry],
   }),
   row("not-in-ssh-config", {
     row: 2,
-    codes: [21],
+    codes: [Code.NOT_SET_UP],
     where: ["this Box"],
     fix: () => "Run `roster sync` on this Box (or `roster setup` if it isn't set up yet), then retry.",
     actions: [sync, retry],
   }),
   row("not-reviewed", {
     row: 3,
-    codes: [20],
+    codes: [Code.NOT_REVIEWED],
     where: ["roster.yml"],
     fix: (p) => `Review ${p.host} in roster (reviewed: true once you've checked it), then retry.`,
     actions: [retry],
   }),
   row("no-user", {
     row: 4,
-    codes: [30],
+    codes: [Code.NO_USER],
     where: ["roster.yml"],
     fix: (p) => `Set user: for ${p.host} (or its group) in roster.yml.`,
     actions: [retry, check],
   }),
   row("no-provider", {
     row: 5,
-    codes: [31],
+    codes: [Code.NO_PROVIDER],
     where: ["roster.yml"],
     fix: () => "See `roster vault status` for the ones set up on this Box, then fix auth: in roster.yml.",
     actions: [copy(() => "roster vault status"), retry],
   }),
   row("vault-cli", {
     row: 6,
-    codes: [11, 12],
+    codes: [Code.NOT_LOGGED_IN, Code.CLI_MISSING],
     where: ["this Box"],
     fix: () => "Run the command roster names once on this Box, then retry.",
     actions: [copy(quoted), retry],
   }),
   row("vault-locked", {
     row: 7,
-    codes: [14],
+    codes: [Code.VAULT_LOCKED],
     where: ["the vault"],
     fix: () => "Unlock the vault; the Session opens afterwards.",
     actions: [{ kind: "run", label: "Unlock", line: () => "lock" }],
   }),
   row("item-not-found", {
     row: 8,
-    codes: [32],
+    codes: [Code.ITEM_NOT_FOUND],
     where: ["the vault", "roster.yml"],
     fix: (p) => `Fix the item name in ${p.host}'s auth: in roster.yml, or rename the item in the vault.`,
     actions: [retry, check],
@@ -131,7 +132,7 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   }),
   row("several-items", {
     row: 9,
-    codes: [33],
+    codes: [Code.SEVERAL_ITEMS],
     where: ["the vault"],
     fix: () => "Delete or rename the extra items in the vault, or use the item's id in auth:.",
     actions: [retry],
@@ -139,35 +140,35 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   }),
   row("no-field", {
     row: 10,
-    codes: [34],
+    codes: [Code.NO_FIELD],
     where: ["the vault"],
     fix: () => "Add the password (or field) to the item in the vault, or fix the #FIELD in auth:.",
     actions: [retry],
   }),
   row("lookup-failed", {
     row: null,
-    codes: [35],
+    codes: [Code.LOOKUP_FAILED],
     where: ["the vault"],
     fix: () => "See the provider's message; `roster check --auth` tests every Login.",
     actions: [copy(() => "roster check --auth"), retry],
   }),
   row("password-refused", {
     row: 11,
-    codes: [45],
+    codes: [Code.PASSWORD_REFUSED],
     where: ["the vault", "the Host"],
     fix: () => "Check the vault item: the password may have changed on the Host, or the user is wrong.",
     actions: [retry, check],
   }),
   row("key-refused", {
     row: 12,
-    codes: [46],
+    codes: [Code.KEY_REFUSED],
     where: ["this Box", "the Host"],
     fix: (p, ctx) => `Run \`${setupHost(p.host, ctx)}\` to install this Box's key, or set enroll: false.`,
     actions: [setupOne, check],
   }),
   row("host-key-changed", {
     row: 13,
-    codes: [43],
+    codes: [Code.HOST_KEY_CHANGED],
     where: ["the Host", "the network"],
     fix: (p, ctx) =>
       `Don't accept it blindly: compare the new fingerprint with ${p.host}'s console or its owner. If the change is expected (a reinstall), delete its line in ~/.ssh/roster_known_hosts and run \`${setupHost(p.host, ctx)}\`.`,
@@ -176,7 +177,7 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   }),
   row("host-key-unknown", {
     row: 14,
-    codes: [44],
+    codes: [Code.HOST_KEY_UNKNOWN],
     where: ["this Box"],
     fix: (p, ctx) =>
       `Check ${p.host}'s fingerprint (its console, or its owner), then run \`${setupHost(p.host, ctx)}\` to record it.`,
@@ -185,7 +186,7 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   }),
   row("host-key-changed-while-asked", {
     row: 62,
-    codes: [23],
+    codes: [Code.HOST_KEY_CHANGED_WHILE_ASKED],
     where: ["the Host", "the network"],
     fix: () =>
       "Don't trust it blindly: compare the new fingerprint with the Host's console or its owner, then open the Session again to see it.",
@@ -194,35 +195,35 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   }),
   row("no-dns", {
     row: 15,
-    codes: [40],
+    codes: [Code.NO_DNS],
     where: ["roster.yml", "the network"],
     fix: (p) => `Fix ip: for ${p.host} in roster.yml.`,
     actions: [check, retry],
   }),
   row("refused", {
     row: 16,
-    codes: [41],
+    codes: [Code.REFUSED],
     where: ["roster.yml", "the Host"],
     fix: () => "Check the port in roster.yml; is sshd running on the Host?",
     actions: [check, retry],
   }),
   row("unreachable", {
     row: 17,
-    codes: [42, "closed-early"],
+    codes: [Code.TIMEOUT, "closed-early"],
     where: ["the network"],
     fix: () => "Retry later: is the Host up, and the network path open?",
     actions: [retry, check],
   }),
   row("unexpected-prompt", {
     row: 18,
-    codes: [36],
+    codes: [Code.UNEXPECTED_PROMPT],
     where: ["the Host"],
     fix: () => "Log in by hand once to deal with it (an expired password, a one-time code), then retry.",
     actions: [copy((p) => `ssh ${p.host}`), retry],
   }),
   row("too-many-auth", {
     row: 19,
-    codes: [47],
+    codes: [Code.TOO_MANY_AUTH],
     where: ["this Box"],
     fix: () => "Run `roster sync`: roster's ssh config offers one key, or none, per Host.",
     actions: [sync, retry],
@@ -243,28 +244,28 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   }),
   row("token-spent", {
     row: null,
-    codes: [37],
+    codes: [Code.TOKEN_SPENT],
     where: ["roster"],
     fix: () => "Open the Session again: every try gets a new one-time token.",
     actions: [retry],
   }),
   row("askpass-no-serve", {
     row: null,
-    codes: [38],
+    codes: [Code.NO_SERVE],
     where: ["this Box"],
     fix: () => "ssh's askpass helper couldn't reach roster serve. Retry; if it keeps failing, restart the roster app.",
     actions: [retry],
   }),
   row("unknown-host", {
     row: null,
-    codes: [2],
+    codes: [Code.UNKNOWN_HOST],
     where: ["roster.yml"],
     fix: (p) => `${p.host} isn't in roster.yml (any more): it was renamed or removed. Find it again.`,
     actions: [{ kind: "run", label: "Find a Host", line: () => "find" }],
   }),
   row("login-failed", {
     row: null,
-    codes: [48],
+    codes: [Code.AUTH_FAILED],
     where: ["the Host"],
     fix: () => "See the details: ssh's own message.",
     actions: [retry, check],
@@ -274,28 +275,28 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // step) keeps the sign-in on its step.
   row("sign-in-wrong-password", {
     row: 22,
-    codes: [10],
+    codes: [Code.WRONG_PASSWORD],
     where: ["the vault", "the sign-in form"],
     fix: () => "Check the email, the master password and the server, then try again.",
     actions: [],
   }),
   row("sign-in-no-sign-in-here", {
     row: 23,
-    codes: [13],
+    codes: [Code.UNSUPPORTED],
     where: ["this Box"],
     fix: () => "Set the vault up on this Box the way roster's message says; there's nothing to sign in to here.",
     actions: [],
   }),
   row("sign-in-code-rejected", {
     row: 24,
-    codes: [50],
+    codes: [Code.CODE_REJECTED],
     where: ["the sign-in form"],
     fix: () => "Type the current code: an authenticator's changes every 30 seconds, and an emailed one is the newest.",
     actions: [],
   }),
   row("sign-in-method-unsupported", {
     row: 25,
-    codes: [51],
+    codes: [Code.METHOD_UNSUPPORTED],
     where: ["the vault"],
     fix: () =>
       "Sign in with an API key instead, or add an authenticator app, email or YubiKey OTP as a second method in the web vault.",
@@ -303,7 +304,7 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   }),
   row("sign-in-rate-limited", {
     row: 26,
-    codes: [52],
+    codes: [Code.RATE_LIMITED],
     where: ["the vault"],
     fix: () => "Wait a few minutes before trying again.",
     fixInMessage: true,
@@ -311,49 +312,49 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   }),
   row("sign-in-server-unreachable", {
     row: 27,
-    codes: [53],
+    codes: [Code.SERVER_UNREACHABLE],
     where: ["the network", "the sign-in form"],
     fix: () => "Check the server address and this Box's network, then try again.",
     actions: [],
   }),
   row("sign-in-already-logged-in", {
     row: 28,
-    codes: [54],
+    codes: [Code.ALREADY_LOGGED_IN],
     where: ["this Box"],
     fix: () => "Unlock with the master password instead. To use another account, pick Use a different account under the unlock form, or run :vault signout.",
     actions: [],
   }),
   row("sign-in-expired", {
     row: 29,
-    codes: [55],
+    codes: [Code.NO_SIGN_IN],
     where: ["roster"],
     fix: () => "Start the sign-in again.",
     actions: [],
   }),
   row("sign-in-sso-failed", {
     row: 30,
-    codes: [56],
+    codes: [Code.SSO_FAILED],
     where: ["the vault"],
     fix: () => "Start SSO again and finish it in the browser within 5 minutes.",
     actions: [],
   }),
   row("sign-in-bad-server", {
     row: 31,
-    codes: [57],
+    codes: [Code.BAD_SERVER],
     where: ["the sign-in form"],
     fix: () => "Pick Bitwarden cloud or EU, or type your server's https:// address.",
     actions: [],
   }),
   row("sign-in-api-key-rejected", {
     row: 32,
-    codes: [58],
+    codes: [Code.API_KEY_REJECTED],
     where: ["the sign-in form"],
     fix: () => "Copy client_id and client_secret again from the web vault (Account settings > Security > Keys); only a personal key works.",
     actions: [],
   }),
   row("sign-in-failed", {
     row: 33,
-    codes: [59],
+    codes: [Code.SIGN_IN_FAILED],
     where: ["the vault"],
     fix: () => "See Bitwarden's message under Details; `bw login` in a terminal shows the same.",
     actions: [],
@@ -361,42 +362,42 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // Editing the Inventory (ticket 10): the pull before an edit, the edit itself, Q43's gate.
   row("edit-not-a-repo", {
     row: 38,
-    codes: [70],
+    codes: [Code.NOT_A_REPO],
     where: ["roster.yml", "this Box"],
     fix: () => "Keep roster.yml in the infra repo (a git clone) to edit it here, or edit it by hand.",
     actions: [],
   }),
   row("edit-dirty", {
     row: 39,
-    codes: [71],
+    codes: [Code.DIRTY],
     where: ["the infra repo"],
     fix: () => "Publish or discard the Pending changes; commit or stash any other changed file in a terminal.",
     actions: [{ kind: "run", label: "Show Pending changes", line: () => "changes" }],
   }),
   row("edit-diverged", {
     row: 40,
-    codes: [72],
+    codes: [Code.DIVERGED],
     where: ["the infra repo"],
     fix: () => "Merge or rebase in a terminal (`git pull --rebase`), then edit again.",
     actions: [],
   }),
   row("edit-pull-failed", {
     row: 41,
-    codes: [73],
+    codes: [Code.PULL_FAILED],
     where: ["the network", "the infra repo"],
     fix: () => "Check the network and your access to the infra repo, then try again.",
     actions: [],
   }),
   row("edit-invalid", {
     row: 42,
-    codes: [74],
+    codes: [Code.INVALID_EDIT],
     where: ["roster.yml"],
     fix: () => "Make this edit by hand in roster.yml; nothing was written.",
     actions: [],
   }),
   row("edit-not-verified", {
     row: 43,
-    codes: [75],
+    codes: [Code.NOT_VERIFIED],
     where: ["roster"],
     fix: () => "Test the login with the new values, then save again.",
     actions: [],
@@ -404,28 +405,28 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // Saving a typed password to the vault (ticket 13's vault.create_item, through host.add).
   row("vault-item-exists", {
     row: 34,
-    codes: [60],
+    codes: [Code.ITEM_EXISTS],
     where: ["the vault"],
     fix: () => "Pick the existing item as the Login, or give the new one another name (`<host> <what it opens>`).",
     actions: [],
   }),
   row("vault-cant-write", {
     row: 35,
-    codes: [61],
+    codes: [Code.CANT_WRITE],
     where: ["this Box"],
     fix: () => "Save to Bitwarden (`bw`) or KeePassXC (`kp`), or make the item in the password manager and pick it as the Login.",
     actions: [],
   }),
   row("vault-write-failed", {
     row: 36,
-    codes: [62],
+    codes: [Code.WRITE_FAILED],
     where: ["the vault"],
     fix: () => "See the vault's words under Details; check your rights to the vault or collection.",
     actions: [],
   }),
   row("vault-not-created-here", {
     row: 37,
-    codes: [63],
+    codes: [Code.NOT_CREATED_HERE],
     where: ["roster"],
     fix: () => "Nothing to undo: roster only takes back the items it just saved.",
     actions: [],
@@ -433,14 +434,14 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // Where it goes (ticket 35): the Save to setting or choice.
   row("vault-unknown-target", {
     row: 58,
-    codes: [64],
+    codes: [Code.UNKNOWN_TARGET],
     where: ["roster.yml", "init.lua"],
     fix: () => "Fix the save_to setting roster names, or pick another place in Save to.",
     actions: [],
   }),
   row("vault-read-only-target", {
     row: 59,
-    codes: [65],
+    codes: [Code.READ_ONLY_TARGET],
     where: ["the vault"],
     fix: () => "Pick a place you can write to in Save to, or ask an organization admin for write access.",
     actions: [],
@@ -449,21 +450,21 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // just logged in (Q43), and holds it only so long.
   row("save-not-logged-in", {
     row: 68,
-    codes: [66],
+    codes: [Code.LOGIN_NOT_SEEN],
     where: ["roster"],
     fix: () => "Wait until the Session has logged in. If the box refused the password, nothing is saved: check it and connect again.",
     actions: [],
   }),
   row("save-nothing-held", {
     row: 69,
-    codes: [67],
+    codes: [Code.NOTHING_HELD],
     where: ["roster"],
     fix: () => "Connect again with Save to vault ticked: roster forgets the password once the Session ends, the vault locks, or 10 minutes pass.",
     actions: [],
   }),
   row("save-password-needed", {
     row: 70,
-    codes: [39],
+    codes: [Code.PASSWORD_NEEDED],
     where: ["roster.yml"],
     fix: () => "Type the Host's password when the pane asks; tick Save to vault to keep it in the vault once it has logged in.",
     actions: [],
@@ -472,14 +473,14 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // forgets every secret before it runs the CLI's logout, so both leave nothing behind.
   row("sign-out-already", {
     row: 71,
-    codes: [15],
+    codes: [Code.ALREADY_SIGNED_OUT],
     where: ["this Box"],
     fix: () => "Sign in from the lock screen; the CLI was already signed out (elsewhere, or a moment ago).",
     actions: [],
   }),
   row("sign-out-failed", {
     row: 72,
-    codes: [16],
+    codes: [Code.SIGN_OUT_FAILED],
     where: ["the vault", "this Box"],
     fix: () => "See the details: the CLI's own words. `roster vault bw --write -- logout` in a terminal shows the same.",
     actions: [copy(() => "roster vault bw --write -- logout")],
@@ -488,7 +489,7 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // Link's or a Host's status in the result, not errors.
   row("mesh-not-a-source", {
     row: 73,
-    codes: [110],
+    codes: [Code.NOT_A_SOURCE],
     where: ["roster.yml"],
     fix: () => "Rotate a Host that reaches peers; the Mesh's plan lists them.",
     actions: [],
@@ -496,7 +497,7 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // A Mesh job (API 17, ticket 50) still runs: docs/app/errors.md row 93.
   row("mesh-busy", {
     row: 93,
-    codes: [111],
+    codes: [Code.MESH_BUSY],
     where: ["roster"],
     fix: () => "Wait for the Mesh job (its progress is in the status bar), or stop it with `:cancel mesh`; then run it again.",
     actions: [],
@@ -505,7 +506,7 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // docs/app/errors.md row 113. Nothing was done.
   row("serve-busy", {
     row: 113,
-    codes: [4],
+    codes: [Code.BUSY],
     where: ["roster"],
     fix: () => "Try again once it has finished: nothing was done.",
     actions: [],
@@ -514,7 +515,7 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // started; docs/app/errors.md row 114. Nothing was done.
   row("serve-cancelled", {
     row: 114,
-    codes: [5],
+    codes: [Code.CANCELLED],
     where: ["roster"],
     fix: () => "Nothing was done: do it again if you still want it.",
     actions: [],
@@ -522,7 +523,7 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // host.check_job (API 21, ticket 108): no such check in this serve; docs/app/errors.md row 115.
   row("check-gone", {
     row: 115,
-    codes: [49],
+    codes: [Code.NO_CHECK],
     where: ["roster"],
     fix: () => "Check the Host again.",
     actions: [],
@@ -530,14 +531,14 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // Adding a Host (ticket 11). A failed test login uses the failing step's own row.
   row("add-invalid", {
     row: 44,
-    codes: [80],
+    codes: [Code.INVALID_HOST],
     where: ["roster.yml"],
     fix: () => "Fix the field roster names, then add again; nothing was written.",
     actions: [],
   }),
   row("add-exists", {
     row: 45,
-    codes: [81],
+    codes: [Code.HOST_EXISTS],
     where: ["roster.yml"],
     fix: (p) => `Pick another name, or edit that Host (\`:edit ${p.host}\`).`,
     actions: [],
@@ -546,49 +547,49 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // refusal leaves the Pending changes as they were.
   row("publish-nothing", {
     row: 46,
-    codes: [90],
+    codes: [Code.NOTHING_TO_PUBLISH],
     where: ["roster.yml"],
     fix: () => "Edit a Host first; there's nothing to publish.",
     actions: [],
   }),
   row("publish-other-changes", {
     row: 47,
-    codes: [91],
+    codes: [Code.OTHER_CHANGES],
     where: ["the infra repo"],
     fix: () => "Commit, stash or undo the other changed files in a terminal (`git status` in the infra repo), then publish.",
     actions: [],
   }),
   row("publish-remote-moved", {
     row: 48,
-    codes: [92],
+    codes: [Code.REMOTE_MOVED],
     where: ["the infra repo"],
     fix: () => "Discard your Pending changes, :pull, and make them again; or merge in a terminal (`git stash && git pull --ff-only && git stash pop`).",
     actions: [],
   }),
   row("publish-unpushed", {
     row: 49,
-    codes: [93],
+    codes: [Code.UNPUSHED],
     where: ["the infra repo"],
     fix: () => "Push or drop this Box's own commits in a terminal (`git log @{u}..` in the infra repo), then publish.",
     actions: [],
   }),
   row("publish-no-upstream", {
     row: 50,
-    codes: [94],
+    codes: [Code.NO_UPSTREAM],
     where: ["the infra repo"],
     fix: () => "Give the branch an upstream in a terminal (`git push -u origin main`), then publish.",
     actions: [],
   }),
   row("publish-commit-failed", {
     row: 51,
-    codes: [95],
+    codes: [Code.COMMIT_FAILED],
     where: ["the infra repo", "this Box"],
     fix: () => "See git's words under Details; often the infra repo has no git identity (`git config user.name` and `user.email`).",
     actions: [],
   }),
   row("publish-push-failed", {
     row: 52,
-    codes: [96],
+    codes: [Code.PUSH_FAILED],
     where: ["the network", "the infra repo"],
     fix: () => "Publish again (it fetches first); if git's words under Details name your rights, ask whoever runs the infra repo.",
     actions: [],
@@ -597,28 +598,28 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // A bad name is 80's row, an unknown Host 2's, a result that wouldn't load 74's.
   row("live-name-taken", {
     row: 53,
-    codes: [100],
+    codes: [Code.NAME_TAKEN],
     where: ["roster.yml"],
     fix: () => "Pick another name; nothing was written.",
     actions: [],
   }),
   row("live-unknown-group", {
     row: 54,
-    codes: [101],
+    codes: [Code.UNKNOWN_GROUP],
     where: ["roster.yml"],
     fix: () => "Pick one of the groups roster names, or make it first (`:group new`).",
     actions: [],
   }),
   row("live-group-not-empty", {
     row: 55,
-    codes: [102],
+    codes: [Code.GROUP_NOT_EMPTY],
     where: ["roster.yml"],
     fix: () => "Say which group its Hosts go to (`:group delete GROUP OTHER`), or move them first.",
     actions: [],
   }),
   row("live-would-change", {
     row: 56,
-    codes: [103],
+    codes: [Code.WOULD_CHANGE],
     where: ["roster.yml"],
     fix: () => "Move it by hand in roster.yml, setting what it inherits on the Host itself; nothing was written.",
     actions: [],
@@ -627,14 +628,14 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // on the message line when the fill key is pressed; nothing was looked up or typed.
   row("fill-refused", {
     row: 143,
-    codes: [130],
+    codes: [Code.FILL_REFUSED],
     where: ["the Host"],
     fix: () => "roster fills only sudo's prompt for the Session's own Host's login user: type this password yourself, or reconnect if the Host was edited.",
     actions: [],
   }),
   row("fill-nothing-saved", {
     row: 144,
-    codes: [131],
+    codes: [Code.NOTHING_TO_FILL],
     where: ["roster.yml"],
     fix: () => "Add a sudo: {auth: VAULT-REFERENCE} to the Host in roster.yml for its own sudo password, or type it yourself.",
     actions: [],
@@ -643,7 +644,7 @@ export const builtinErrorRows: readonly ErrorRow[] = [
   // Session's: no row here.
   row("other", {
     row: null,
-    codes: [3, 22],
+    codes: [Code.ROSTER_ERROR, Code.NO_ASKPASS],
     where: ["roster"],
     fix: () => "See roster's message.",
     actions: [retry],
@@ -687,7 +688,7 @@ export function problemFromCallError(host: string, e: unknown): Problem {
     const data = rest as ProblemData;
     const head = e.code === null ? e.message : `[${e.code}] ${e.message}`;
     return {
-      code: e.code ?? 3,
+      code: e.code ?? Code.ROSTER_ERROR,
       host,
       message: e.message,
       ...(typeof fix === "string" ? { fix } : {}),
@@ -696,8 +697,8 @@ export function problemFromCallError(host: string, e: unknown): Problem {
       ...(Object.keys(data).length ? { data } : {}),
     };
   }
-  const message = e instanceof Error ? e.message : String(e);
-  return { code: 3, host, message, details: message };
+  const message = errorText(e);
+  return { code: Code.ROSTER_ERROR, host, message, details: message };
 }
 
 /** A failed `host.check` step as a Problem (the same row, fix and extras as a Session's). */
@@ -706,7 +707,7 @@ export function problemFromStep(
   step: { code?: number; message: string; fix?: string; details?: string; data?: Record<string, unknown> },
 ): Problem {
   return {
-    code: step.code ?? 48,
+    code: step.code ?? Code.AUTH_FAILED,
     host,
     message: step.message,
     ...(step.fix ? { fix: step.fix } : {}),

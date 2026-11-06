@@ -5,7 +5,8 @@ import pytest
 import yaml
 
 from roster.config import load_config
-from roster.discover import _defaults_user, guess_identity, parse_nmap_xml, scan_entry, write_discovered
+from roster.discover import defaults_user, guess_identity, parse_nmap_xml, scan_entry, write_discovered
+from roster.errors import Problem
 from roster.example import EXAMPLE_CONFIG
 
 NMAP_XML = """<?xml version="1.0"?>
@@ -128,7 +129,7 @@ def test_write_into_a_team_repo_is_a_pending_change_with_the_backup_out_of_the_w
 def test_new_group_gets_user_placeholder_when_only_other_groups_have_users(isolated):
     path = isolated["work"] / "roster.yml"
     path.write_text("groups:\n  lab:\n    user: ops\n    hosts:\n      box: { ip: 10.0.9.1 }\n")
-    write_discovered(path, "discovered-20261012", entries(), "n", not _defaults_user(path), "2026-10-12")
+    write_discovered(path, "discovered-20261012", entries(), "n", not defaults_user(path.read_text()), "2026-10-12")
     cfg = load_config(path)
     assert cfg["hosts"]["core-sw"]["user"] == "CHANGE-ME" and cfg["hosts"]["box"]["user"] == "ops"
 
@@ -136,7 +137,7 @@ def test_new_group_gets_user_placeholder_when_only_other_groups_have_users(isola
 def test_inline_groups_are_refused(isolated):
     path = isolated["work"] / "roster.yml"
     path.write_text("groups: {}\n")
-    with pytest.raises(SystemExit, match="inline"):
+    with pytest.raises(Problem, match="inline"):
         write_discovered(path, "g", entries(), "n", True, "2026-10-07")
 
 

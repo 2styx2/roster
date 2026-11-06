@@ -7,8 +7,9 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_HOST_PASSWORD, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeBackend, type FakeScenario } from "./backend/fake";
-import { QUICK_CONNECT_API_VERSION, SAVE_TO_VAULT_API_VERSION } from "./backend/types";
+
 import { StubTerminal } from "./terminal/StubTerminal";
+import { sinceOf } from "./backend/capabilities";
 
 const base = makeHosts(12);
 const prompted = base.hosts.find((h) => h.reviewed)!;
@@ -19,7 +20,7 @@ const hosts = {
 };
 
 function backendWith(extra: Partial<FakeScenario> = {}) {
-  return fakeBackend({ hosts, apiVersion: SAVE_TO_VAULT_API_VERSION, pending: { [base.hosts[1]!.name]: { title: "x" } }, ...extra });
+  return fakeBackend({ hosts, apiVersion: sinceOf("saveToVault"), pending: { [base.hosts[1]!.name]: { title: "x" } }, ...extra });
 }
 
 async function ready(backend: FakeBackend = backendWith()) {
@@ -104,7 +105,7 @@ describe('"Save to vault" for an auth: prompt Host', () => {
   });
 
   it("a roster older than API 13 keeps refusing it as before", async () => {
-    const user = await ready(backendWith({ apiVersion: QUICK_CONNECT_API_VERSION }));
+    const user = await ready(backendWith({ apiVersion: sinceOf("quickConnect") }));
     await user.keyboard(`{Control>} {/Control}:connect ${HOST}{Enter}`);
     expect(await within(pane()).findByRole("heading", { name: /couldn't open a session/i })).toBeInTheDocument();
   });

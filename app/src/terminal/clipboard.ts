@@ -34,6 +34,7 @@ export function copiedText(selection: string, eol: "\r\n" | "\n" = copyLineEnd()
 /** Copies the selection; false (and the clipboard untouched) when nothing is selected. */
 export function copySelection(term: Selectable, clipboard: Clipboard): boolean {
   const text = copiedText(term.getSelection());
+  // A clipboard another program holds refuses it; the selection stays to copy again.
   if (text) void clipboard.writeText(text).catch(() => {});
   return Boolean(text);
 }

@@ -9,8 +9,8 @@ the prompt doesn't echo (crates/roster-core/src/session.rs, `SessionManager::fil
 
 import re
 
-from . import providers
 from .errors import FILL_REFUSED, NOTHING_TO_FILL, Problem
+from .hosts import vault_login
 
 # Only prompts that say whose password they want, and only when that's provably this Host's own Login (decision Q129:
 # refuse whenever in doubt; a refusal is cheap, a leak isn't). sudo's own prompt names the user it runs as; OpenSSH's
@@ -56,18 +56,12 @@ def login_for(h, prompt, sudo=None):
 
 def saved(h, ref, what):
     """REF, when it's a vault reference with a password to fill; else Problem 131."""
-    if not has_password(ref):
+    if not vault_login(ref):
         raise Problem(NOTHING_TO_FILL, f"{h['name']}'s {what} Login has no saved password to fill (auth: "
                                        f"{ref or 'none'})",
                       fix=f"add a sudo: {{auth: VAULT-REFERENCE}} to {h['name']} in roster.yml for its own "
                           "sudo password, or type it yourself")
     return ref
-
-
-def has_password(ref):
-    """Whether REF is a vault reference with a password behind it: not `prompt` or one of providers.NO_PASSWORD."""
-    name = str(ref or "").partition(":")[0].strip()
-    return name not in ("", "prompt", *providers.NO_PASSWORD)
 
 
 def same_login(h, address, port, user, nested=False):

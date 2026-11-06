@@ -10,10 +10,8 @@ import { join, resolve } from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { build, preview, type PreviewServer } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { launch } from "./browser";
+import { launch, unlock } from "./browser";
 
-// The fake Backend's master password (src/backend/fake.ts FAKE_PASSWORD).
-const FAKE_PASSWORD = "correct horse";
 const APP = resolve(import.meta.dirname, "..");
 
 let out = "";
@@ -46,8 +44,7 @@ beforeAll(async () => {
   });
   page = await context.newPage();
   await page.goto(`${origin}/index.html?toggle=off`);
-  await page.getByLabel(/master password/i).fill(FAKE_PASSWORD);
-  await page.keyboard.press("Enter");
+  await unlock(page);
   await page.getByRole("main", { name: /workspace/i }).waitFor();
 }, 120_000);
 

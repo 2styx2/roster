@@ -5,14 +5,16 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
 struct NoServe;
 
 impl Serve for NoServe {
-    fn call(&self, _method: &str, _params: Value) -> Result<Value, String> {
+    fn call(&self, _method: &str, _params: Value) -> Result<Value, CallError> {
         Ok(json!({}))
     }
 }
@@ -77,11 +79,11 @@ fn defer_hands_the_app_a_timer_that_runs_the_function_once_in_the_plugin() {
     let id = timer_id(timers[0]);
     assert_eq!(timers[0]["run"]["handler"], id);
 
-    let fired = host.call("t", id, json!({}));
+    let fired = host.call("t", id, json!({}), By::User);
     assert!(fired.error.is_none(), "{:?}", fired.error);
     assert_eq!(notices(&fired), ["ran 1"]);
     // Once: it's gone after it ran, and running it again isn't the Plugin's fault.
-    let again = host.call("t", id, json!({}));
+    let again = host.call("t", id, json!({}), By::User);
     assert!(again.error.unwrap().message.contains("gone"));
     assert!(host.list()[0].disabled.is_none());
 }
@@ -105,14 +107,14 @@ fn every_repeats_until_cancelled_and_cancel_tells_the_app() {
     assert_eq!(timers[0]["every"], true);
     assert_eq!(timers[0]["ms"], 60000);
     let id = timer_id(timers[0]);
-    assert_eq!(notices(&host.call("t", id, json!({}))), ["tick 1"]);
-    let second = host.call("t", id, json!({}));
+    assert_eq!(notices(&host.call("t", id, json!({}), By::User)), ["tick 1"]);
+    let second = host.call("t", id, json!({}), By::User);
     assert_eq!(notices(&second), ["tick 2"]);
     let removed = ops_of(&second, "remove");
     assert_eq!(removed.len(), 1);
     assert_eq!(removed[0]["kind"], "timer");
     assert_eq!(removed[0]["id"], id.to_string());
-    assert!(host.call("t", id, json!({})).error.is_some());
+    assert!(host.call("t", id, json!({}), By::User).error.is_some());
 }
 
 #[test]
@@ -123,7 +125,7 @@ fn a_timer_isnt_a_call_the_user_started() {
         r#"roster.defer(100, function() roster.clipboard.copy("swapped") end)"#,
     );
     let id = timer_id(ops_of(&reply, "timer")[0]);
-    let fired = host.call("t", id, json!({}));
+    let fired = host.call("t", id, json!({}), By::User);
     assert!(fired.error.unwrap().message.contains("only while the user runs"));
 }
 
@@ -169,7 +171,7 @@ fn a_timer_that_fails_counts_toward_stopping_the_plugin() {
     );
     let id = timer_id(ops_of(&reply, "timer")[0]);
     for _ in 0..3 {
-        let r = host.call("t", id, json!({}));
+        let r = host.call("t", id, json!({}), By::User);
         assert!(r.error.unwrap().message.contains("tick failed"));
     }
     assert!(host.list()[0].disabled.is_some());
@@ -182,7 +184,7 @@ fn reloading_drops_the_old_timers() {
     let grants: Vec<Permission> = Vec::new();
     let folder = plugin_dir("reload", &[], "");
     host.load(&Source::Dir(folder.to_path_buf()), &grants).unwrap();
-    let r = host.call("t", id, json!({}));
+    let r = host.call("t", id, json!({}), By::User);
     assert!(r.error.unwrap().message.contains("gone"));
     assert!(host.list()[0].errors == 0);
 }
@@ -206,10 +208,10 @@ fn a_handler_id_from_before_a_reload_never_reaches_the_new_load() {
     let (_, again) = host.load(&Source::Dir(dir.to_path_buf()), &grants).unwrap();
     let fresh = ops_of(&again, "status")[0]["spec"]["run"]["handler"].as_u64().unwrap();
     assert_ne!(fresh, id, "the new load handed over the old load's number");
-    let r = host.call("t", id, json!({}));
+    let r = host.call("t", id, json!({}), By::User);
     assert!(notices(&r).is_empty(), "{:?}", r.ops);
     assert!(r.error.unwrap().message.contains("gone"));
-    let r = host.call("t", fresh, json!({}));
+    let r = host.call("t", fresh, json!({}), By::User);
     assert_eq!(notices(&r), ["new"]);
 }
 
@@ -330,11 +332,11 @@ fn a_finders_items_can_come_from_a_function_run_when_it_opens() {
     let items = finder["spec"]["items"]["handler"]
         .as_u64()
         .expect("items as a function");
-    let first = host.call("t", items, json!({}));
+    let first = host.call("t", items, json!({}), By::User);
     assert!(first.error.is_none(), "{:?}", first.error);
     assert_eq!(first.result[0]["label"], "item 1");
     let run = first.result[0]["run"]["handler"].as_u64().unwrap();
-    assert_eq!(notices(&host.call("t", run, json!({}))), ["chose 1"]);
-    let second = host.call("t", items, json!({}));
+    assert_eq!(notices(&host.call("t", run, json!({}), By::User)), ["chose 1"]);
+    let second = host.call("t", items, json!({}), By::User);
     assert_eq!(second.result[0]["label"], "item 2");
 }

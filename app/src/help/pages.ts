@@ -15,7 +15,7 @@ import type { Config } from "../config/types";
 import type { ErrorRow } from "../errors/catalog";
 import type { Problem } from "../errors/classify";
 import { searchItems, type FinderSourceDef } from "../finder/sources";
-import type { Keymap, Options } from "../keymap";
+import { keyHint, keysFor, type Keymap, type Options } from "../keymap";
 import { BUILTIN, Registry, type Entry, type Source } from "../registry";
 import type { Theme } from "../theme/theme";
 import { healthSummary, type HealthReport, type HealthSection } from "../health/health";
@@ -23,9 +23,9 @@ import { code, h, keys, link, p, plain, slug, text, type Block, type Inline } fr
 import { blockTags, guideBlocks, headingTag, type PageTag, type Topic } from "./guideBlocks";
 import { guides, PARTS, type Guide } from "./guides";
 import { inline, withoutDevNotes } from "./markdown";
-import { helpText } from "./text";
+import { helpText, type HelpText } from "./text";
 import guideTags from "virtual:help-tags";
-import { optionRows, optionTag, reference, referenceAliases } from "../config/reference";
+import { optionRows, optionTag, reference, referenceAliases } from "./reference";
 import type { StateChoices } from "./options";
 
 /** Everything a page is generated from, read when it's shown. */
@@ -51,6 +51,8 @@ export interface HelpContext {
   /** `:tutor` (ticket 55): the steps done, per tutorial, and the one running on the demo
    * Inventory (null outside it). */
   tutor?: { done(tutorial: string): ReadonlySet<string>; running: string | null };
+  /** The guides' text (T213): the app's, unless a test or the docs build gives its own. */
+  text: HelpText;
 }
 
 export interface HelpPage extends Entry {
@@ -67,6 +69,9 @@ export interface HelpPage extends Entry {
   /** The topics on it, when they're known before its body is (a guide, from the build's tag table:
    * its text loads later, T213). Otherwise they're read off the body. */
   tags?: readonly PageTag[];
+  /** Made from what's in effect (the keymap, the Config, the Registries, this Box's health) rather
+   * than a guide's text: the website, with none of those, shows the defaults and says so. */
+  inEffect?: true;
   body(ctx: HelpContext): Block[];
 }
 
@@ -83,10 +88,11 @@ interface HelpRegistries {
 
 export function helpContext(
   r: HelpRegistries,
-  live: Pick<HelpContext, "keymap" | "options" | "config" | "configPath" | "state" | "activeTheme" | "health" | "tutor">,
+  live: Pick<HelpContext, "keymap" | "options" | "config" | "configPath" | "state" | "activeTheme" | "health" | "tutor"> & { text?: HelpText },
 ): HelpContext {
   return {
     ...live,
+    text: live.text ?? helpText,
     commands: { get: (id) => r.commands.get(id), list: () => r.commands.list() },
     themes: r.themes.list(),
     finders: r.finders.list(),
@@ -223,18 +229,11 @@ function argOf(c: CommandDef): string {
   return c.optionalArg ? ` [${word}]` : ` ${word}`;
 }
 
-/** The keys bound to command `id` (any argument): after the Leader, and global ones. */
-function keysFor(keymap: Keymap, id: string): string[] {
-  const first = (action: string) => action.split(" ")[0];
-  return [
-    ...Object.entries(keymap.leader)
-      .filter(([k, b]) => first(b.action) === id && k !== "Escape")
-      .map(([k]) => `␣ ${k}`),
-    ...Object.entries(keymap.global)
-      .filter(([, b]) => first(b.action) === id)
-      .map(([k]) => k),
-  ];
-}
+/** The keys bound to `line` as keycaps, or the command to type when nothing is bound. */
+const keyOr = (keymap: Keymap, line: string, typed: string): Inline => {
+  const k = keyHint(keymap, line);
+  return k ? keys(k) : code(typed);
+};
 
 const sourceText = (s: Source): Inline => text(s === BUILTIN ? "builtin" : s);
 
@@ -247,7 +246,7 @@ function commandsPage(ctx: HelpContext): Block[] {
       "Every action is a command in one table: a key, a typed ",
       code(":"),
       " line and a button all run the same one. Press ",
-      keys("␣ :"),
+      keyOr(ctx.keymap, "cmdline", ":cmdline"),
       " for the command line; Tab completes. The Config and Plugins add commands here too, so this list is what's registered now.",
     ),
     ...[...byArea].flatMap(([area, list]): Block[] => [
@@ -257,7 +256,7 @@ function commandsPage(ctx: HelpContext): Block[] {
         items: list.map((c) => ({
           anchor: `:${c.id}`,
           term: [code(`:${c.id}${argOf(c)}`)],
-          meta: [...keysFor(ctx.keymap, c.id).map(keys), ...(c.source === BUILTIN ? [] : [sourceText(c.source)])],
+          meta: [...keysFor(ctx.keymap, c.id, { match: "command" }).map(keys), ...(c.source === BUILTIN ? [] : [sourceText(c.source)])],
           body: [text(c.label())],
           ...(c.doc ? { more: inline(withoutDevNotes(c.doc)) } : {}),
         })),
@@ -441,18 +440,11 @@ function findersPage(ctx: HelpContext): Block[] {
       items: ctx.finders.map((f) => ({
         anchor: `finders#${f.id}`,
         term: [code(`:finder ${f.id}`)],
-        meta: [...keysForLine(ctx.keymap, `finder ${f.id}`).map(keys), ...(f.source === BUILTIN ? [] : [sourceText(f.source)])],
+        meta: [...keysFor(ctx.keymap, `finder ${f.id}`, { global: false }).map(keys), ...(f.source === BUILTIN ? [] : [sourceText(f.source)])],
         body: [text(f.title)],
       })),
     },
   ];
-}
-
-/** The keys bound to exactly `line` after the Leader. */
-export function keysForLine(keymap: Keymap, line: string): string[] {
-  return Object.entries(keymap.leader)
-    .filter(([, b]) => b.action === line)
-    .map(([k]) => `␣ ${k}`);
 }
 
 function errorsPage(ctx: HelpContext): Block[] {
@@ -569,7 +561,7 @@ function indexPage(ctx: HelpContext): Block[] {
       ", ",
       link("E13", [code("E13")]),
       "); ",
-      keys("␣ ?"),
+      keyOr(ctx.keymap, "help", ":help"),
       " finds a topic and ",
       code(":helpgrep TEXT"),
       " searches every page. The pages that list commands, keys, options, Themes, finders and errors are made from what the app has now, so they always match it.",
@@ -624,19 +616,6 @@ const QUICKREF: readonly (readonly [string, readonly string[]])[] = [
   ["Help", ["help", "helpgrep"]],
 ];
 
-/** The keys bound to `line`, or to it with an argument (`session` → `␣ 1` … `␣ 9`). */
-function keysForCommandLine(keymap: Keymap, line: string): string[] {
-  const hit = (action: string) => action === line || action.startsWith(`${line} `);
-  return [
-    ...Object.entries(keymap.leader)
-      .filter(([k, b]) => hit(b.action) && k !== "Escape")
-      .map(([k]) => `␣ ${k}`),
-    ...Object.entries(keymap.global)
-      .filter(([, b]) => hit(b.action))
-      .map(([k]) => k),
-  ];
-}
-
 function quickrefPage(ctx: HelpContext): Block[] {
   return [
     h(1, "Quick reference", "quickref"),
@@ -656,7 +635,7 @@ function quickrefPage(ctx: HelpContext): Block[] {
         const id = line.split(" ")[0] as string;
         const c = ctx.commands.get(id);
         if (!c) return [];
-        const bound = keysForCommandLine(ctx.keymap, line);
+        const bound = keysFor(ctx.keymap, line, { match: "args" });
         const shown = bound.length > 3 ? [keys(bound[0] as string), text("…"), keys(bound[bound.length - 1] as string)] : bound.map(keys);
         const arg = line === id ? argOf(c) : "";
         const label = line === id ? c.label() : describeLine(ctx.commands, line).label;
@@ -721,20 +700,18 @@ function allPage(ctx: HelpContext): Block[] {
   ];
 }
 
-const guideCache = new Map<string, Block[]>();
-
 /** A guide's blocks once its text is loaded (none before: HelpView waits for it). */
-function guideBody(guide: Guide): Block[] {
-  const cached = guideCache.get(guide.id);
-  if (cached) return cached;
-  const markdown = helpText.markdown(guide.id);
-  if (markdown === undefined) return [];
-  const blocks = guideBlocks(guide, markdown);
-  guideCache.set(guide.id, blocks);
-  return blocks;
-}
+const guideBody = (guide: Guide, ctx: HelpContext): Block[] => ctx.text.blocks(guide.id, (markdown) => guideBlocks(guide, markdown));
 
-const page = (id: string, order: number, part: string, title: string, summary: string, body: (ctx: HelpContext) => Block[], aliases?: Record<string, string>): HelpPage => ({
+const page = (
+  id: string,
+  order: number,
+  part: string,
+  title: string,
+  summary: string,
+  body: (ctx: HelpContext) => Block[],
+  more: { aliases?: Record<string, string> | undefined; inEffect?: true } = {},
+): HelpPage => ({
   id,
   source: BUILTIN,
   order,
@@ -742,23 +719,27 @@ const page = (id: string, order: number, part: string, title: string, summary: s
   title,
   summary,
   body,
-  ...(aliases ? { aliases } : {}),
+  ...(more.aliases ? { aliases: more.aliases } : {}),
+  ...(more.inEffect ? { inEffect: true } : {}),
 });
 
-export const builtinHelpPages: readonly HelpPage[] = [
+const inEffect = { inEffect: true } as const;
+
+const builtinHelpPages: readonly HelpPage[] = [
   page("index", 0, "Getting started", "roster help", "Where to start", indexPage),
-  page("quickref", 40, "Reference", "Quick reference", "The commands you'll use most, with their keys now", quickrefPage, { qr: "quickref", cheatsheet: "quickref" }),
-  page("commands", 50, "Reference", "Commands", "Every command, with its keys and where it comes from", commandsPage),
-  page("keys", 51, "Reference", "Key bindings", "The keymap in effect, with each binding's option and source", keysPage),
+  page("quickref", 40, "Reference", "Quick reference", "The commands you'll use most, with their keys now", quickrefPage, { ...inEffect, aliases: { qr: "quickref", cheatsheet: "quickref" } }),
+  page("commands", 50, "Reference", "Commands", "Every command, with its keys and where it comes from", commandsPage, inEffect),
+  page("keys", 51, "Reference", "Key bindings", "The keymap in effect, with each binding's option and source", keysPage, inEffect),
   page("options", 52, "Reference", "Options", "Every init.lua option and roster function: type, default, values, example, and its value now", optionsPage, {
-    ...referenceAliases(),
+    ...inEffect,
+    aliases: referenceAliases(),
   }),
-  page("themes", 53, "Reference", "Themes", "The registered Themes, and the one in use", themesPage),
-  page("finders", 54, "Reference", "Finders", "The finder sources: Sessions, Hosts, the tree, Themes, help topics…", findersPage),
-  page("errors", 60, "Reference", "Connection errors", "The error catalog: where each problem lives and its fix", errorsPage),
-  page("health", 61, "Reference", "Health", "This Box's health: the last :check with no Host, with each fix", healthPage, { checkhealth: "health" }),
-  page("all", 90, "Reference", "Every topic", "Every page, command, key, option and error, A to Z", allPage, { "help-index": "all" }),
-  ...guides.map((g) => ({ ...page(g.id, g.order, g.part, g.title, g.summary, () => guideBody(g), g.aliases), tags: guideTags[g.id] ?? [] })),
+  page("themes", 53, "Reference", "Themes", "The registered Themes, and the one in use", themesPage, inEffect),
+  page("finders", 54, "Reference", "Finders", "The finder sources: Sessions, Hosts, the tree, Themes, help topics…", findersPage, inEffect),
+  page("errors", 60, "Reference", "Connection errors", "The error catalog: where each problem lives and its fix", errorsPage, inEffect),
+  page("health", 61, "Reference", "Health", "This Box's health: the last :check with no Host, with each fix", healthPage, { ...inEffect, aliases: { checkhealth: "health" } }),
+  page("all", 90, "Reference", "Every topic", "Every page, command, key, option and error, A to Z", allPage, { aliases: { "help-index": "all" } }),
+  ...guides.map((g) => ({ ...page(g.id, g.order, g.part, g.title, g.summary, (ctx) => guideBody(g, ctx), { aliases: g.aliases }), tags: guideTags[g.id] ?? [] })),
 ];
 
 export function builtinHelpRegistry(): HelpRegistry {

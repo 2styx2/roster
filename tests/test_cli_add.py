@@ -130,8 +130,7 @@ def test_the_write_is_said_before_this_box_syncs(capsys, yml, isolated):
 
 
 def test_setup_runs_setup_then_check_for_the_new_host(capsys, yml, monkeypatch, fakes):
-    import roster.cli as cli
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())     # no network: no host key scan
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: set())     # no network: no host key scan
     monkeypatch.setenv("NAS_PW", "x")
     rc, out, _ = run(capsys, "nas", "--ip", "127.0.0.1", "--port", "1", "--group", "lab", "--auth", "env:NAS_PW",
                      "--no-enroll", "--setup", "--yes")                # port 1 here: nothing answers, nothing leaves
@@ -185,7 +184,8 @@ def bw_items(fakes, monkeypatch, tmp_path):
 
 
 def bw_calls(log):
-    return [json.loads(line) for line in log.read_text().splitlines()]
+    """Every bw call's argv (none when bw never ran)."""
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
 
 def stdout_of(log, what):
@@ -341,10 +341,9 @@ INV_TYPED = YML.replace("esx-02: {ip: 10.0.0.5}", "esx-02: {ip: 10.0.0.5, type: 
 
 def test_setup_sets_up_only_the_new_host_even_when_its_name_is_another_hosts_type(capsys, write_config,
                                                                                   monkeypatch, fakes):
-    import roster.cli as cli
     write_config(INV_TYPED)
     scanned = []
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: scanned.extend(h["name"] for h in hosts) or set())
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: scanned.extend(h["name"] for h in hosts) or set())
     monkeypatch.setenv("NAS_PW", "x")
     run(capsys, "nas", "--ip", "127.0.0.1", "--port", "1", "--group", "lab", "--auth", "env:NAS_PW", "--no-enroll",
         "--setup", "--yes")
@@ -408,7 +407,7 @@ def test_a_name_two_items_match_is_refused_even_when_each_field_narrows_to_one(c
 @pytest.mark.parametrize("item", ["--help", "--session=zzz", "-x"])
 def test_an_item_that_looks_like_an_option_never_reaches_bw(capsys, yml, bw_items, item):
     assert "can't start with '-'" in fails(capsys, "nas", "--auth", f"bw:{item}", "--from-vault", "--yes")
-    assert not any(item in c for c in bw_calls(bw_items)) if bw_items.exists() else True
+    assert not any(item in c for c in bw_calls(bw_items))
 
 
 def test_a_secret_lookup_of_an_item_like_an_option_never_reaches_bw(bw_items):
@@ -416,7 +415,7 @@ def test_a_secret_lookup_of_an_item_like_an_option_never_reaches_bw(bw_items):
     providers.setup_providers(None)
     with pytest.raises(providers.SecretError, match="can't start with '-'"):
         providers.get_secret("bw:--session=zzz", "lab")
-    assert not bw_items.exists() or not any("--session=zzz" in c for c in bw_calls(bw_items))
+    assert not any("--session=zzz" in c for c in bw_calls(bw_items))
 
 
 def test_another_bw_error_with_available_in_it_is_an_error_not_a_missing_field(capsys, yml, bw_items, monkeypatch):
@@ -451,10 +450,11 @@ def test_dry_run_shows_the_line_it_replaces(capsys, write_config):
 
 def test_a_sync_that_exits_after_the_write_is_only_said(write_config):
     from roster import addhost, edit
+    from roster.common import die
     p = write_config(YML)
 
     def dies():
-        raise SystemExit("error: providers didn't load")
+        die("providers didn't load")
     r = addhost.add(p, "lab", "nas", {"ip": edit.check_new("ip", "10.0.0.50")}, sync=dies)
     assert r["sync"]["ok"] is False and "nas" in p.read_text()
 

@@ -38,9 +38,9 @@ local filtered = false -- the view's filter is one :topology GROUP set
 -- Asks roster serve without waiting (roster.serve.request): `done(result)` or `done(nil, why)`
 -- comes later, as a call of its own, so a busy serve (a Publish, a long Mesh run) never holds up
 -- this Plugin or the app.
----@param done fun(result: any, why: string?)
+---@param done fun(result: any, why: roster.ServeError|string?)
 local function ask(method, params, done)
-  local sent_ok, err = pcall(roster.serve.request, method, params or {}, function(r, why) done(r, why) end)
+  local sent_ok, err = pcall(roster.serve.request, method, params or {}, done)
   if not sent_ok then done(nil, tostring(err)) end
 end
 
@@ -281,7 +281,7 @@ local function cut_poll()
       roster.notify("Cut " .. cutting.host .. ": roster serve lost track of it; :topology shows where the Mesh is now.", "warn")
       return cut_over()
     end
-    if j.state == "running" then
+    if j.state == "running" or j.state == "stopping" then
       roster.progress.set("topology-cut", { title = "Cutting " .. cutting.host .. " from the Mesh", done = j.done or 0, total = j.total or 0 })
       if cutting.again then cut_poll() end
       return

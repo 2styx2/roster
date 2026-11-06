@@ -1,13 +1,16 @@
 // The Plugin manager (ticket 23) over the fake Backend's Plugin host: installing asks first,
 // ops become registry entries with the Plugin's name as their source, revoking takes a permission
 // away at once, and only Sessions' output (never what's typed) reaches terminal.read.
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { fakeBackend, makeHosts } from "../backend/fake";
 import type { FakePlugin } from "../backend/fakePlugins";
 import { builtinRegistries } from "../registries";
-import { PluginManager, STATE_KEY, type PluginUi } from "./manager";
-import { parseOp } from "./ops";
-import type { Message } from "../ui/messages";
+import { BUILTIN_GRANTS, PluginManager, STATE_KEY, type PluginUi } from "./manager";
+import { CORE } from "./core.gen";
+import { parseOp } from "./opRegistry";
 
 const ALERTS = "~/plugins/recent-alerts";
 const SIZE = { cols: 80, rows: 24 };
@@ -45,6 +48,18 @@ function setup(
   const manager = new PluginManager(backend, registries, store, ui, now);
   return { manager, registries, state, ran, sent, backend };
 }
+
+describe("the built-in Plugins' grants", () => {
+  it("cover what each built-in's manifest asks, so the core runs it with all of it", () => {
+    const asked = CORE.bundled.flatMap((name) => {
+      const lua = readFileSync(join(dirname(fileURLToPath(import.meta.url)), `../../../crates/roster-core/plugins/${name}/roster-plugin.lua`), "utf8");
+      const list = /permissions\s*=\s*\{([^}]*)\}/.exec(lua)?.[1] ?? "";
+      return [...list.matchAll(/"([^"]+)"/g)].map((m) => `${name}: ${m[1]}`);
+    });
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.filter((a) => !BUILTIN_GRANTS.includes(a.split(": ")[1]!))).toEqual([]);
+  });
+});
 
 describe("installing", () => {
   it("asks first, with each permission's risk; cancelling installs nothing", async () => {
@@ -125,12 +140,16 @@ describe("running", () => {
     const { manager, registries, backend } = setup({ "/p/counter": counter }, installed);
     await manager.start();
     const slow = backend.pluginSessions.bind(backend);
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
     vi.spyOn(backend, "pluginSessions").mockImplementation(async (open) => {
-      await new Promise((r) => setTimeout(r, 20));
+      await held;
       return slow(open);
     });
     manager.sessions([{ session: 4, host: "esx-02" }]);
-    await manager.event("session_open", { session: 4, host: "esx-02" });
+    const heard = manager.event("session_open", { session: 4, host: "esx-02" });
+    release();
+    await heard;
     expect(registries.status.get("n")?.text).toBe("open 1");
   });
 
@@ -320,6 +339,13 @@ describe("running", () => {
     expect(registries.keymap.get("leader a a")).toBeUndefined();
     expect(state[STATE_KEY]).toEqual([]);
     expect(await manager.remove("hosts")).toMatch(/built into roster/);
+  });
+
+  it("removing it says so when its data folder couldn't go", async () => {
+    const { manager, backend } = setup({ [ALERTS]: alerts() }, { ...installed });
+    await manager.start();
+    backend.pluginForget = () => Promise.reject(new Error("the folder is in use"));
+    expect(await manager.remove("recent-alerts")).toBe("Removed recent-alerts. recent-alerts's data folder stays (the folder is in use): one installed again finds it");
   });
 
   it("the Host count is the built-in hosts Plugin, and revoking its permission takes it away", async () => {
@@ -664,60 +690,22 @@ describe("a finder's prompt", () => {
 });
 
 describe("roster's own commands, to the core (issue #184)", () => {
-  it("are sent when the Plugins start and again when one registers later, never taken back", async () => {
+  it("go with every load, call and event, a built-in registered later among them, never taken back", async () => {
     const { manager, registries, backend } = setup();
-    const sent = vi.spyOn(backend, "pluginBuiltins");
+    const loads = vi.spyOn(backend, "pluginLoad");
+    const events = vi.spyOn(backend, "pluginEvent");
     await manager.start();
-    const first = sent.mock.calls.at(-1)?.[0] ?? [];
+    const first = loads.mock.calls.at(-1)?.[3] ?? [];
     expect(first).toContain("publish");
     expect(first).toContain("lock");
     expect(first).not.toContain("late");
-    // A built-in that registers later (App's `:tutor`, `:panel`, …) reaches the core too.
+    // A built-in that registers later (App's `:tutor`, `:panel`, …) goes with the next event.
     const remove = registries.commands.register({ id: "late", source: "builtin", area: "Other", label: () => "Late", run: () => undefined });
-    await vi.waitFor(() => expect(sent.mock.calls.at(-1)?.[0]).toContain("late"));
-    // Taken out again (an effect re-running), the core keeps refusing it.
-    const calls = sent.mock.calls.length;
+    await manager.event("lock");
+    expect(events.mock.calls.at(-1)?.[2]).toContain("late");
+    // Taken out again (an effect re-running), it still goes: the list only grows.
     remove();
-    registries.commands.register({ id: "probe-own", source: "probe", area: "Other", label: () => "", run: () => undefined });
-    expect(sent.mock.calls.length).toBe(calls);
-  });
-
-  it("a send that fails is said once, quietly, retried, and sent whole again before a Plugin loads", async () => {
-    vi.useFakeTimers();
-    try {
-      const said: Message[] = [];
-      const backend = fakeBackend({ hosts: makeHosts(3), plugins: { [ALERTS]: alerts() } });
-      const state: Record<string, unknown> = { [STATE_KEY]: [{ path: ALERTS, name: "recent-alerts", granted: [], asked: ["terminal.read"] }] };
-      const store = { get: (k: string) => state[k], set: (k: string, v: unknown) => void (state[k] = v) };
-      const ui: PluginUi = { run: () => undefined, send: () => undefined, copy: async () => undefined, say: (m) => void said.push(m) };
-      const manager = new PluginManager(backend, builtinRegistries(), store, ui);
-      const real = backend.pluginBuiltins.bind(backend);
-      let down = true;
-      const sent = vi.spyOn(backend, "pluginBuiltins").mockImplementation((names) => (down ? Promise.reject(new Error("no such command")) : real(names)));
-      const loads = vi.spyOn(backend, "pluginLoad");
-      await manager.start();
-      // Every load tried the whole list again first; none got through.
-      expect(sent.mock.calls.length).toBeGreaterThan(loads.mock.calls.length);
-      for (const [i, load] of loads.mock.invocationCallOrder.entries()) {
-        expect(sent.mock.invocationCallOrder.some((c) => c < load && (i === 0 || c > (loads.mock.invocationCallOrder[i - 1] ?? 0)))).toBe(true);
-      }
-      expect(sent.mock.calls.every(([names]) => names.includes("publish") && names.includes("lock"))).toBe(true);
-      // Said once, quietly, and without the ids; unasked, so it keeps a line that shows (#349).
-      expect(said).toHaveLength(1);
-      expect(said[0]).toMatchObject({ kind: "quiet", background: true });
-      expect(JSON.stringify(said[0])).not.toContain("publish");
-      // Retried on its own, and once it's through, not again.
-      down = false;
-      const before = sent.mock.calls.length;
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(sent.mock.calls.length).toBe(before + 1);
-      await vi.advanceTimersByTimeAsync(120_000);
-      expect(sent.mock.calls.length).toBe(before + 1);
-      await manager.reload("recent-alerts");
-      expect(sent.mock.calls.length).toBe(before + 1);
-      manager.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    await manager.event("unlock");
+    expect(events.mock.calls.at(-1)?.[2]).toContain("late");
   });
 });

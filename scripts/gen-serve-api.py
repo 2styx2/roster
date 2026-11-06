@@ -1,4 +1,6 @@
-"""Generate docs/serve-api.md's method tables from serve's handlers' docstrings (ticket 51, decision Q85).
+"""Generate roster serve's contract from serve itself (ticket 51, decision Q85): docs/serve-api.md's method tables
+from its handlers' docstrings, and the facts the app and the Rust core read from roster (docs/serve-contract.json, and
+the same as TypeScript in app/src/backend/serveContract.ts) from serve's method registry and errors.py.
 
 One source of truth: each handler's docstring says what its row says, and the doc's tables are rewritten
 from them, between markers that name the methods in each table:
@@ -9,10 +11,11 @@ from them, between markers that name the methods in each table:
 
 Everything outside the markers is hand-written prose and stays as it is. From a clone:
 
-    uv run python scripts/gen-serve-api.py            # rewrites docs/serve-api.md
-    uv run python scripts/gen-serve-api.py --check    # exits 1 if the committed doc is out of date
+    uv run python scripts/gen-serve-api.py            # rewrites docs/serve-api.md and the contract files
+    uv run python scripts/gen-serve-api.py --check    # exits 1 if a committed one is out of date
 
-tests/test_serve_api_doc.py runs the same comparison, so a stale doc fails the tests.
+tests/test_serve_api_doc.py runs the same comparison, so a stale doc or contract fails the tests (and the Rust core's
+tests read docs/serve-contract.json: its codes, API versions and the deadlines its waits must outlast).
 
 A handler's docstring is prose for whoever reads serve.py, plus these fields, each at the start of a line
 (a field's text may run on over indented lines):
@@ -34,6 +37,11 @@ markers that name the models (from src/roster/models.py and servemodels.py):
     <!-- END generated:models -->
 
 A field with no `description=` is refused, so a field added to a model can't be missing from the doc.
+
+The contract: the API version, every method (the API that added it, each form's, its deadline), every code by its
+errors.py name and JSON-RPC's, and the lists the app switches on (host.check's and host.verify_login's steps, the
+fields an edit needs a test login for, vault.status's words, the Logins with no password behind them, the stand-in
+for a path roster won't repeat).
 """
 
 import argparse
@@ -47,6 +55,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOC = ROOT / "docs" / "serve-api.md"
+CONTRACT = ROOT / "docs" / "serve-contract.json"
+CONTRACT_TS = ROOT / "app" / "src" / "backend" / "serveContract.ts"
 COMMAND = "uv run python scripts/gen-serve-api.py"
 
 BEGIN = re.compile(r"^<!-- BEGIN generated:methods ([^>]*?) -->$", re.M)
@@ -61,11 +71,17 @@ class DocError(Exception):
     """Why the doc can't be generated, saying what to change."""
 
 
+def codes_by_name():
+    """errors.py's codes by name: roster's own, then JSON-RPC's ({name: code}, {name: code})."""
+    from roster import errors
+    every = {k: v for k, v in vars(errors).items() if k.isupper() and type(v) is int}
+    rpc = {k: every.pop(k) for k in errors.JSON_RPC}
+    return dict(sorted(every.items(), key=lambda kv: kv[1])), rpc
+
+
 def known_codes():
-    from roster import errors, serve
-    codes = {v for k, v in vars(errors).items() if k.isupper() and isinstance(v, int)}
-    return codes | {serve.PARSE_ERROR, serve.INVALID_REQUEST, serve.METHOD_NOT_FOUND, serve.INVALID_PARAMS,
-                    serve.INTERNAL_ERROR}
+    roster, rpc = codes_by_name()
+    return set(roster.values()) | set(rpc.values())
 
 
 def api_version():
@@ -178,6 +194,8 @@ def model_table(name, cls):
     intro = " ".join(inspect.cleandoc(text).split("\n\n")[0].split())
     rows = []
     for field, info in cls.model_fields.items():
+        if info.exclude:                    # kept on the model, never in its JSON (models.Host's mesh_dir, sudo)
+            continue
         if not info.description:
             raise DocError(f"{name}.{field} has no description: give it Field(description=...) in {where}")
         key = info.alias or field
@@ -207,7 +225,7 @@ def render_models(doc, models):
 
 
 def render(doc, methods, models=None):
-    """The doc with every generated region rewritten from `methods` (serve.METHODS: name -> handler) and `models`
+    """The doc with every generated region rewritten from `methods` (handlers(): name -> handler) and `models`
     (name -> Pydantic model; models.py's and servemodels.py's when not given)."""
     doc = render_models(doc, doc_models() if models is None else models)
     out, pos, placed = [], 0, {}
@@ -221,7 +239,7 @@ def render(doc, methods, models=None):
         for name in names:
             if name not in methods:
                 raise DocError(f"docs/serve-api.md lists {name!r} in a generated table, but serve has no such "
-                               "method: take it out of the marker (or add the method to serve.METHODS)")
+                               "method: take it out of the marker (or register the method with @method)")
             if name in placed:
                 raise DocError(f"docs/serve-api.md lists {name!r} in two generated tables: keep one")
             placed[name] = True
@@ -236,26 +254,173 @@ def render(doc, methods, models=None):
     return "".join(out)
 
 
+def handlers():
+    """serve's methods by name: name -> handler (its docstring is its rows)."""
+    from roster import serve
+    return {name: m.fn for name, m in serve.METHODS.items()}
+
+
+def contract():
+    """What the app and the Rust core read from roster serve, as data (docs/serve-contract.json)."""
+    from roster import diagnose, edit, errors, jobs, providers, serve
+    roster_codes, rpc_codes = codes_by_name()
+    methods = {}
+    for name, m in sorted(serve.METHODS.items()):
+        since = [int(f["Since"].removeprefix("API ")) for f in forms(name, m.fn)]
+        methods[name] = {"since": min(since), "forms": since, "deadline": m.deadline}
+    return {
+        "generated": f"by scripts/gen-serve-api.py from src/roster/serve.py and errors.py: don't edit, run  {COMMAND}",
+        "api_version": serve.API_VERSION,
+        "after_deadline": serve.AFTER_DEADLINE,
+        "methods": methods,
+        "codes": roster_codes,
+        "json_rpc": rpc_codes,
+        "check_steps": list(diagnose.STEPS),
+        "verify_steps": list(diagnose.VERIFY_STEPS),
+        "login_fields": list(edit.LOGIN_FIELDS),
+        "vault_statuses": list(dict.fromkeys(serve.STATUS_WORDS.values())),
+        "no_password_auths": list(providers.NO_PASSWORD),
+        "path_not_repeated": errors.PATH_NOT_REPEATED,
+        "job_states": {"running": list(jobs.RUNNING), "over": list(jobs.OVER)},
+    }
+
+
+def contract_json(c):
+    """C as JSON, one line per method or code, so a diff shows what changed."""
+    def value(v):
+        if not isinstance(v, dict):
+            return json.dumps(v)
+        rows = ",\n".join(f"    {json.dumps(k)}: {json.dumps(x)}" for k, x in v.items())
+        return "{\n" + rows + "\n  }"
+    return "{\n" + ",\n".join(f"  {json.dumps(k)}: {value(v)}" for k, v in c.items()) + "\n}\n"
+
+
+def ts_value(v):
+    return json.dumps(v)
+
+
+TS_TYPES = {str: "string", int: "number", float: "number", bool: "boolean", type(None): "null", typing.Any: "unknown"}
+
+
+def ts_type(t, generic):
+    """A field's type in TypeScript. A model of models.py's is the type parameter GENERIC names for it (the app
+    keeps its own narrower Host and Group until those move here too)."""
+    origin, args = typing.get_origin(t), typing.get_args(t)
+    if origin is typing.Annotated:
+        return ts_type(args[0], generic)
+    if origin in (typing.Union, types.UnionType):
+        return " | ".join(ts_type(a, generic) for a in args)
+    if origin is typing.Literal:
+        return " | ".join(json.dumps(a) for a in args)
+    if origin in (list, tuple):
+        return f"{ts_type(args[0], generic)}[]"
+    if origin is dict:
+        return f"Record<{ts_type(args[0], generic)}, {ts_type(args[1], generic)}>"
+    if t in TS_TYPES:
+        return TS_TYPES[t]
+    if getattr(t, "__module__", "") == "roster.models":
+        return generic.setdefault(t.__name__, t.__name__)
+    return t.__name__
+
+
+def serve_models_ts():
+    """servemodels.py's params and results as TypeScript interfaces, in the order the module defines them. A field
+    with a default may be left out (params) or is left out when unset (results): it's optional."""
+    from roster import servemodels
+    out = []
+    for name, cls in vars(servemodels).items():
+        if not (isinstance(cls, type) and cls.__module__ == servemodels.__name__ and cls not in
+                (servemodels.Params, servemodels.Result) and issubclass(cls, (servemodels.Params, servemodels.Result))):
+            continue
+        if not cls.model_fields:
+            continue
+        generic = {}
+        rows = []
+        for field, info in cls.model_fields.items():
+            if info.exclude:
+                continue
+            key = info.alias or field
+            doc = f"  /** {info.description} */\n" if info.description else ""
+            optional = "?" if not info.is_required() else ""
+            rows.append(f"{doc}  {key}{optional}: {ts_type(info.annotation, generic)};\n")
+        params = f"<{', '.join(f'{g} = unknown' for g in generic)}>" if generic else ""
+        intro = " ".join(inspect.cleandoc(cls.__doc__ or name).split("\n\n")[0].split())
+        out.append(f"/** {intro} */\nexport interface {name}{params} {{\n{''.join(rows)}}}\n")
+    return out
+
+
+def contract_ts(c):
+    """The contract as a TypeScript module: each fact `as const`, so the app's types follow it."""
+    def record(name, doc, values, typed=None):
+        """An object of VALUES: `as const` (each value its own literal type), or of the type TYPED."""
+        rows = "".join(f"  {json.dumps(k) if not k.isidentifier() else k}: {ts_value(v)},\n"
+                       for k, v in values.items())
+        if typed:
+            return f"/** {doc} */\nexport const {name}: {typed} = {{\n{rows}}};\n"
+        return f"/** {doc} */\nexport const {name} = {{\n{rows}}} as const;\n"
+
+    def array(name, doc, values):
+        return f"/** {doc} */\nexport const {name} = {ts_value(values)} as const;\n"
+    since = {k: m["since"] for k, m in c["methods"].items()}
+    form_since = {k: m["forms"] for k, m in c["methods"].items()}
+    parts = [
+        "// Generated by scripts/gen-serve-api.py from roster serve's method registry (src/roster/serve.py) and its codes\n"
+        f"// (src/roster/errors.py): don't edit, run `{COMMAND}`. docs/serve-contract.json is the\n"
+        "// same data, for the Rust core.\n",
+        f"/** The serve API this roster speaks. */\nexport const SERVE_API_VERSION = {c['api_version']};\n",
+        record("Code", "roster's error codes by their errors.py name (docs/app/errors.md has their rows).", c["codes"]),
+        record("JsonRpcCode", "JSON-RPC's own error codes, which serve answers with too.", c["json_rpc"]),
+        "/** Every serve method's name. */\nexport type ServeMethod =\n"
+        + "".join(f"  | {json.dumps(k)}\n" for k in since).rstrip("\n") + ";\n",
+        record("SINCE", "Every serve method, and the first `api_version` that has it (a number: the app counts down "
+               "from it).", since, typed="Readonly<Record<ServeMethod, number>>"),
+        record("FORMS", "The `api_version` that added each of a method's forms (its rows in docs/serve-api.md), in "
+               "order.", form_since),
+        array("CHECK_STEPS", "`host.check`'s steps, in the order roster runs them.", c["check_steps"]),
+        array("VERIFY_STEPS", "`host.verify_login`'s steps, in order.", c["verify_steps"]),
+        array("LOGIN_FIELDS", "Changing these needs a test login that just succeeded (`host.verify_login`, decision "
+              "Q43).", c["login_fields"]),
+        array("VAULT_STATUSES", "Where a vault stands, in `vault.status`'s words.", c["vault_statuses"]),
+        array("NO_PASSWORD_AUTHS", "Login references with no password behind them (`prompt` has none saved either, "
+              "but it's a provider of its own).", c["no_password_auths"]),
+        record("JOB_STATES", "A job's `state` (`mesh.job`, `discover.status`, `host.check_job`, `job.progress`): "
+               "`running` while it runs, `over` once it's over.", c["job_states"]),
+        f"/** `data.path` for a roster.yml path roster won't repeat (a -c value shaped like a token). */\n"
+        f"export const PATH_NOT_REPEATED = {ts_value(c['path_not_repeated'])};\n",
+        "export type CodeName = keyof typeof Code;\n",
+        "// serve's params and results that are Pydantic models (src/roster/servemodels.py, decision Q113). A model of\n"
+        "// models.py's in one (a Host, a group) is a type parameter: the app names its own.\n",
+        *serve_models_ts(),
+    ]
+    return "\n".join(parts)
+
+
+def outputs():
+    """Every file this script writes, as it should be: {path: text}."""
+    c = contract()
+    return {DOC: render(DOC.read_text(encoding="utf-8"), handlers()), CONTRACT: contract_json(c),
+            CONTRACT_TS: contract_ts(c)}
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Generate docs/serve-api.md's method tables from serve's docstrings.")
-    ap.add_argument("--check", action="store_true", help="exit 1 if the committed doc is out of date")
+    ap = argparse.ArgumentParser(description="Generate roster serve's contract: docs/serve-api.md's method tables, "
+                                             "docs/serve-contract.json and app/src/backend/serveContract.ts.")
+    ap.add_argument("--check", action="store_true", help="exit 1 if a committed one is out of date")
     args = ap.parse_args(argv)
     sys.path.insert(0, str(ROOT / "src"))
-    from roster import serve
-    text = DOC.read_text(encoding="utf-8")
     try:
-        new = render(text, serve.METHODS)
+        files = outputs()
     except DocError as e:
         print(f"gen-serve-api: {e}", file=sys.stderr)
         return 2
+    stale = [path for path, text in files.items() if not path.exists() or path.read_text(encoding="utf-8") != text]
     if args.check:
-        if new != text:
-            print(f"docs/serve-api.md's method tables are out of date: run  {COMMAND}", file=sys.stderr)
-            return 1
-        return 0
-    if new != text:
-        DOC.write_text(new, encoding="utf-8")
-        print("rewrote docs/serve-api.md")
+        for path in stale:
+            print(f"{path.relative_to(ROOT)} is out of date: run  {COMMAND}", file=sys.stderr)
+        return 1 if stale else 0
+    for path in stale:
+        path.write_text(files[path], encoding="utf-8")
+        print(f"rewrote {path.relative_to(ROOT)}")
     return 0
 
 

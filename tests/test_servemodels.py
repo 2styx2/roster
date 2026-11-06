@@ -37,19 +37,25 @@ def call(state, method, params=None):
                                                                                 {"params": params})})
 
 
-def test_hosts_list_is_its_result_model_dumped(state):
-    result = call(state, "hosts.list")["result"]
-    model = HostsListResult.model_validate(result)
-    assert json.dumps(dump(model)) == json.dumps(result)          # the same keys, in the same order
+def test_hosts_list_reads_as_its_result_model(state):
+    model = HostsListResult.model_validate(call(state, "hosts.list")["result"])
     assert [h.name for h in model.hosts] == ["box", "esx"]
     assert model.hosts[0].model_extra == {"rack": "B4"}           # a key roster doesn't know stays on the Host
     assert model.error is None
 
 
-def test_host_get_is_the_host_model_dumped(state):
+def test_host_get_gives_the_host_as_hosts_list_does(state):
     box = call(state, "host.get", {"name": "box"})["result"]
-    assert box == dump(state.inv.hosts["box"]) == state.cfg["hosts"]["box"]
-    assert list(box) == list(state.cfg["hosts"]["box"])
+    login = {"user": "ops", "auth": "cmd:printf s3cret-in-cmd"}
+    assert box == {
+        **login, "port": 22, "enroll": True, "web": "https://10.0.0.5",
+        "services": {"web": {"port": 443, "url": "https://10.0.0.5", "scheme": "https", **login, "verify": True,
+                             "login": "basic", "override": False}},
+        "notes": "", "title": "Lab box", "description": "", "type": "", "product": "", "reviewed": True, "mac": "",
+        "mesh": None, "os": None, "key_type": "ed25519", "key_file": box["key_file"], "ip": "10.0.0.5",
+        "name": "box", "group": "lab", "ssh": {"port": 22, **login}, "login": login, "problems": [], "rack": "B4"}
+    assert box["key_file"].endswith("roster_ed25519")
+    assert box == call(state, "hosts.list")["result"]["hosts"][0]
 
 
 @pytest.mark.parametrize("params, message", [
@@ -97,7 +103,6 @@ def test_the_error_beside_the_last_good_inventory_keeps_its_shape(state):
     call(state, "inventory.reload")
     error = call(state, "hosts.list")["result"]["error"]
     assert list(error) == ["message", "path", "line", "fix"]
-    assert dump(InventoryError.model_validate(error)) == error
     no_line = {"message": "m", "path": None, "fix": "f"}
     assert dump(InventoryError.model_validate(no_line)) == no_line      # `line` only when the error has one
 

@@ -1,7 +1,8 @@
 // What ops.ts makes of a Plugin's views and Host-details sections (ticket 76): checked, cut, and
 // a reason when it can't be used.
 import { describe, expect, it } from "vitest";
-import { parseOp, type PluginOp } from "./ops";
+import type { PluginOp } from "./ops";
+import { parseOp } from "./opRegistry";
 
 const view = (table: Record<string, unknown>) => parseOp({ op: "view", id: "scan", spec: { title: "Scan", table } });
 const columns = [{ id: "name", label: "Host", kind: "data" }];

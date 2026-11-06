@@ -54,6 +54,7 @@ const root = createRoot(document.getElementById("root") as HTMLElement);
 void Promise.all([createBackend(), createPlatform()]).then(async ([{ backend, app }, platform]) => {
   // The Config (init.lua, ticket 21) before the first paint, so its Theme and keys are there
   // from the start.
+  // One that can't be read starts the app with the defaults; useConfigReport asks again once it's up.
   const config = (await platform.config?.load().catch(() => null)) ?? null;
   await fontsLoaded(config);
   root.render(

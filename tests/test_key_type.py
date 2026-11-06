@@ -4,6 +4,7 @@ still log in by key. ed25519 stays the default, with its paths unchanged."""
 import pytest
 
 from roster.config import load_config
+from roster.errors import InventoryError
 
 FIPS_YML = """\
 box_name: ws1
@@ -49,19 +50,19 @@ def test_key_type_spellings(write_config, written, canonical):
 
 @pytest.mark.parametrize("bad", ["dsa", "rsa-2048", "ecdsa-128", "rsa-99999", "true", "[ecdsa]"])
 def test_an_unknown_key_type_fails_at_load_naming_the_allowed_values(write_config, bad):
-    with pytest.raises(SystemExit, match=r"host 'fips-02': key_type: .* \(ed25519, ecdsa .*rsa"):
+    with pytest.raises(InventoryError, match=r"host 'fips-02': key_type: .* \(ed25519, ecdsa .*rsa"):
         load_config(write_config(FIPS_YML.replace("key_type: rsa", f"key_type: {bad}")))
 
 
 def test_a_bad_key_type_on_a_group_without_hosts_or_at_the_top_still_fails(write_config):
-    with pytest.raises(SystemExit, match="group 'empty': key_type"):
+    with pytest.raises(InventoryError, match="group 'empty': key_type"):
         load_config(write_config(FIPS_YML + "  empty:\n    key_type: dsa\n    hosts: {}\n"))
-    with pytest.raises(SystemExit, match="^error: key_type: .dsa."):
+    with pytest.raises(InventoryError, match="^key_type: .dsa."):
         load_config(write_config("key_type: dsa\n" + FIPS_YML))
 
 
 def test_a_host_listed_in_two_groups_names_both(write_config):
-    with pytest.raises(SystemExit, match="listed twice.*'web'.*'fips-lab'"):
+    with pytest.raises(InventoryError, match="listed twice.*'web'.*'fips-lab'"):
         load_config(write_config(FIPS_YML.replace("fips-01: 10.0.0.5", "web-01: 10.0.0.5")))
 
 
@@ -72,7 +73,7 @@ def test_key_path_names_the_boxs_key_and_the_others_sit_beside_it(write_config, 
 
 
 def test_key_path_cant_be_another_types_key_file(write_config):
-    with pytest.raises(SystemExit, match="key_path.*roster_ecdsa.*ecdsa"):
+    with pytest.raises(InventoryError, match="key_path.*roster_ecdsa.*ecdsa"):
         load_config(write_config("key_path: ~/.ssh/roster_ecdsa\n" + FIPS_YML))
 
 
@@ -83,7 +84,7 @@ def test_ensure_key_makes_each_type_once_with_the_boxs_tag(write_config, isolate
     import subprocess
 
     from roster import boxkeys
-    from roster.sshops import ensure_key, public_key_line
+    from roster.boxkeys import ensure_key, public_key_line
     cfg = load_config(write_config(FIPS_YML.replace("key_type: rsa", f"key_type: {name}")))
     key = boxkeys.for_host(cfg["hosts"]["fips-02"])
     ensure_key(key, cfg["tag"])
@@ -100,7 +101,7 @@ def test_ensure_key_makes_each_type_once_with_the_boxs_tag(write_config, isolate
 
 def test_ensure_key_refuses_a_key_of_another_type_at_its_path(write_config, isolated):
     from roster import boxkeys
-    from roster.sshops import ensure_key
+    from roster.boxkeys import ensure_key
     cfg = load_config(write_config(FIPS_YML))
     key = boxkeys.for_host(cfg["hosts"]["fips-01"])
     key.key.parent.mkdir(parents=True)
@@ -145,7 +146,7 @@ def lab(fakes, isolated, write_config, monkeypatch):
 
     from conftest import POSIX_SH, WINDOWS
 
-    from roster import cli, sshops
+    from roster import sshops
     if WINDOWS:
         pytest.skip("the stand-in Hosts' key scripts run in a POSIX sh")
     for f in (fakes / "host").iterdir():
@@ -158,7 +159,7 @@ def lab(fakes, isolated, write_config, monkeypatch):
     (root / "web-01" / "keys").touch()
     monkeypatch.setenv("FAKE_HOSTS", str(root))
     monkeypatch.setenv("FAKE_SH", POSIX_SH)
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: set())
     monkeypatch.setenv("PW", "pw")                              # auth: env:PW (a stand-in: no Host checks it)
     monkeypatch.setattr(sshops, "password_exec", lambda h, command, pw, **k: (
         lambda r: (r.returncode, r.stdout, r.stderr))(subprocess.run(
@@ -360,7 +361,7 @@ def keypair(path, kind="rsa", bits="3072"):
 def test_a_leftover_key_counts_only_when_its_private_key_gives_its_public_key(write_config, isolated):
     """#471's review LOW-3: a roster_<type>.pub beside key_path widens what setup and revoke take only when this Box
     holds its private key (ssh-keygen -y of it gives that key), never a stray .pub or an empty file beside it."""
-    from roster.sshops import box_key_re
+    from roster.authorized import box_key_re
     cfg = load_config(write_config(FIPS_YML))
     ssh = isolated["home"] / ".ssh"
     ssh.mkdir()
@@ -373,13 +374,13 @@ def test_a_leftover_key_counts_only_when_its_private_key_gives_its_public_key(wr
     assert "AAAAothersbox" not in box_key_re(cfg)
     mine = keypair(ssh / "roster_rsa-8192", bits="3072")        # name and size disagree, but it's this Box's
     (ssh / "roster_rsa-8192").chmod(0o600)
-    from roster.sshops import key_ere
+    from roster.keyline import key_ere
     assert key_ere(mine[0], mine[1]) in box_key_re(cfg)
 
 
 def test_ensure_key_refuses_a_public_key_that_isnt_its_private_keys(write_config, isolated):
     from roster import boxkeys
-    from roster.sshops import ensure_key
+    from roster.boxkeys import ensure_key
     cfg = load_config(write_config(FIPS_YML))
     key = boxkeys.for_host(cfg["hosts"]["fips-01"])
     keypair(key.key, "ecdsa", "384")
@@ -393,7 +394,7 @@ def test_ensure_key_refuses_a_public_key_that_isnt_its_private_keys(write_config
 def test_ensure_key_refuses_an_rsa_key_with_fewer_bits_than_its_type(write_config, isolated, want, have_bits):
     """#471's review LOW-2: an existing RSA key's size is checked too, not only its type word."""
     from roster import boxkeys
-    from roster.sshops import ensure_key
+    from roster.boxkeys import ensure_key
     cfg = load_config(write_config(FIPS_YML.replace("key_type: rsa", f"key_type: {want}")))
     key = boxkeys.for_host(cfg["hosts"]["fips-02"])
     keypair(key.key, "rsa", have_bits)
@@ -469,11 +470,11 @@ def test_a_box_wide_key_type_leaves_every_host_in_the_mesh(write_config):
 def test_setup_applies_the_mesh_with_a_member_whose_key_type_isnt_ed25519(write_config, capsys, monkeypatch):
     """T245 (#478 item 11): with no Host left out for its key type, setup's MED-2 guard is gone, so a member of
     another key type (or one with mesh: false as well, NIT-2) never stops setup's Mesh apply."""
-    from roster import cli, mesh
+    from roster import mesh, meshview
     from roster.cli import main
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: {h["name"] for h in hosts})
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: {h["name"] for h in hosts})
     applied = []
-    monkeypatch.setattr(cli, "mesh_apply", lambda cfg: applied.append(1) or {})
+    monkeypatch.setattr(meshview, "apply", lambda cfg: applied.append(1) or {})
     mesh.save_state({**mesh.load_state(), "members": ["a-01", "a-02", "b-01", "fips-01"]})
     write_config(MESH_YML)
     main(["setup"])
@@ -492,7 +493,8 @@ def test_a_key_type_roster_yml_names_widens_the_match_only_with_this_boxs_own_pr
     import os
     import subprocess
 
-    from roster.sshops import box_key_re, key_ere
+    from roster.authorized import box_key_re
+    from roster.keyline import key_ere
     cfg = load_config(write_config(FIPS_YML))
     ssh = isolated["home"] / ".ssh"
     ssh.mkdir()
@@ -602,7 +604,7 @@ def test_the_templates_leave_key_path_out_so_a_later_key_type_just_works(write_c
 
 def test_201_on_a_key_path_naming_the_ed25519_key_says_to_remove_key_path(write_config, isolated):
     from roster import boxkeys
-    from roster.sshops import ensure_key
+    from roster.boxkeys import ensure_key
     cfg = load_config(write_config("key_path: ~/.ssh/roster_ed25519\nkey_type: ecdsa\n" + FIPS_YML))
     keypair(isolated["home"] / ".ssh" / "roster_ed25519", "ed25519", None)
     with pytest.raises(SystemExit, match=r"\[201\] .* remove key_path from roster.yml \(roster then keeps this key at "

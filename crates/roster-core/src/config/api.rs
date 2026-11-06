@@ -13,12 +13,11 @@
 //! A Plugin's `roster` is another table (plugin/runtime.rs); none of these names reaches it.
 
 use super::locate::SourceIndex;
-use super::lua::{Budget, packages_table, source_of, to_json};
+use super::lua::{Budget, packages_table, source_of, to_json, to_lua};
 use super::schema::Location;
 use super::shape::{self, Kind, Opt};
 use super::store::{Names, Store};
 use super::{DEPRECATED_OPTIONS, Env, check_value};
-use crate::plugin::runtime::to_lua;
 use mlua::{Function, Lua, MetaMethod, Table, UserData, UserDataMethods, Value, Variadic};
 use serde_json::Value as Json;
 use std::cell::{Cell, RefCell};
@@ -296,7 +295,7 @@ fn shown_name(list: &str, index: usize, item: &Json) -> Result<String, String> {
         };
     }
     let spec: super::PackageSpec = serde_json::from_value(item.clone()).map_err(|e| format!("{at}: {e}"))?;
-    crate::package::name_of(&spec).map_err(|e| format!("{at}: {e}"))
+    super::package_spec::name_of(&spec).map_err(|e| format!("{at}: {e}"))
 }
 
 /// The name a person gave to find an item by.
@@ -1052,7 +1051,7 @@ pub(crate) fn roster_table(lua: &Lua, env: &Env, dir: &Path, ctx: Rc<Ctx>) -> R<
     add_methods(lua)?;
     let roster = lua.create_table()?;
     roster.raw_set("os", env.os.as_str())?;
-    roster.raw_set("api_version", super::API_VERSION)?;
+    roster.raw_set("api_version", crate::API_VERSION)?;
     roster.raw_set("config_version", super::CONFIG_VERSION)?;
     roster.raw_set("version", env!("CARGO_PKG_VERSION"))?;
     let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());

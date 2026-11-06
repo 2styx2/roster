@@ -8,15 +8,10 @@ import pytest
 from conftest import posix_shell
 
 from roster import boxkeys
+from roster.authorized import add_key_script, box_key_re, remove_key_script, retag_key_script
+from roster.boxkeys import public_key_line
 from roster.config import load_config
-from roster.sshops import (
-    add_key_script,
-    box_key_re,
-    public_key_line,
-    remove_key_script,
-    retag_key_script,
-    write_ssh_config,
-)
+from roster.sshops import write_ssh_config
 
 PUB = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly roster-managed:ws1"
 TAG_RE = " (roster-managed|fleet-managed):ws1$"

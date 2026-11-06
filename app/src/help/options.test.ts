@@ -1,7 +1,7 @@
 // `:help options`: each init.lua option's value in effect and where it came from.
 import { describe, expect, it } from "vitest";
 import { configWith, defaultConfig } from "../config/fixture";
-import { reference } from "../config/reference";
+import { reference } from "./reference";
 import { leafPaths, luaValue, optionSource, optionValue } from "./options";
 
 // The frontend's Config and the core's shape table can't drift apart: every value the core sends

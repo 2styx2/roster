@@ -4,7 +4,7 @@
 //! copies; tests/config_shape.rs fails when one is stale.
 
 use super::{Allowed, ApiItem, Kind, NEOVIM_STYLE, Opt, api, children, methods, options};
-use crate::plugin::api::slug;
+use crate::anchor::slug;
 use serde::Serialize;
 use std::fmt::Write as _;
 
@@ -32,6 +32,8 @@ pub struct Reference {
     /// The bundled Themes' ids ([`super::BUNDLED_THEMES`]); the app's own list is checked
     /// against it.
     pub bundled_themes: Vec<&'static str>,
+    /// Each number option's bounds by its path (`panel.width`), for the frontend's own checks.
+    pub ranges: std::collections::BTreeMap<String, super::Bounds>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -327,6 +329,13 @@ pub fn reference() -> Reference {
         sections,
         aliases,
         bundled_themes: super::BUNDLED_THEMES.to_vec(),
+        ranges: options()
+            .iter()
+            .filter_map(|o| match o.allowed {
+                super::Allowed::Range { min, max, .. } => Some((o.path.clone(), super::Bounds { min, max })),
+                _ => None,
+            })
+            .collect(),
     }
 }
 
@@ -715,7 +724,7 @@ pub fn write_types(dir: &std::path::Path) -> Result<std::path::PathBuf, String> 
     let types = dir.join("types");
     let file = types.join("roster-config.lua");
     for p in [&types, &file] {
-        if std::fs::symlink_metadata(p).is_ok_and(|m| crate::plugin::folder::is_link(&m)) {
+        if std::fs::symlink_metadata(p).is_ok_and(|m| crate::files::is_link(&m)) {
             return Err(format!("{} is a link: roster won't write through it", p.display()));
         }
     }
