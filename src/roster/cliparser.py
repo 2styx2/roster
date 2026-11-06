@@ -5,7 +5,10 @@ its shell completion (completion.py) read. Each argument that takes names is tag
 # pyright: reportPrivateUsage=false
 
 import argparse
+import functools
 import sys
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 from . import __version__, clihelp, jsonout
@@ -29,21 +32,43 @@ def values(action: argparse.Action, *kinds: str, new_after: tuple[str, ...] = ()
 
 
 
+def wants_json(argv: "Sequence[str]") -> bool:
+    """Is --json on the command line ARGV (before a `--`, after which the words are another program's)?"""
+    argv = list(argv)
+    return "--json" in (argv[:argv.index("--")] if "--" in argv else argv)
+
+
+@dataclass
+class Typed:
+    """The command line roster's parsers judge: its WORDS (no usage error repeats one), whether it asks for --json
+    (a usage error is JSON then), and ROOT, roster's own parser (the names that may be repeated)."""
+
+    words: list[str] = field(default_factory=list)
+    json_errors: bool = False
+    root: "Parser | None" = None
+
+
 class Parser(argparse.ArgumentParser):
     """roster's argument parser: with --json on the command line, a usage error is JSON on stderr (exit 2). A
     mistyped command gets the nearest name instead of the whole list, and every usage error says where help is.
-    roster's own --help lists the commands in groups (clihelp.GROUPS) before its options."""
-    json_errors = False
+    roster's own --help lists the commands in groups (clihelp.GROUPS) before its options. Its commands' parsers share
+    its TYPED."""
     commands_text = ""
-    typed: list[str] = []               # the words of this command line (_main): no usage error repeats one
-    root: "Parser | None" = None        # roster's own parser, for the names that may be repeated
+
+    def __init__(self, *args, typed: Typed | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.typed = typed if typed is not None else Typed()
+
+    def add_subparsers(self, **kwargs):
+        kwargs.setdefault("parser_class", functools.partial(Parser, typed=self.typed))
+        return super().add_subparsers(**kwargs)
 
     def error(self, message):
         # a value typed in the wrong place (`roster --session TOKEN vault …`, `vault bw --write=VALUE`) may be a
         # password or a session token: no usage error repeats one
-        root = Parser.root or self
-        message = clihelp.usage_error(message, Parser.typed, root.names(), self.all_options())
-        if Parser.json_errors:
+        root = self.typed.root or self
+        message = clihelp.usage_error(message, self.typed.words, root.names(), self.all_options())
+        if self.typed.json_errors:
             jsonout.fail(ROSTER_ERROR, f"{self.prog}: {message}", f"see `{self.prog} --help`")
             sys.exit(2)
         self.print_usage(sys.stderr)
@@ -80,10 +105,13 @@ class Parser(argparse.ArgumentParser):
         return f"{head}\n{self.commands_text}\n{sep}{tail}" if sep else f"{text}\n{self.commands_text}\n"
 
 
-def build_parser():
-    """Every command and option. The man page (roster.manpage) is generated from this too."""
+def build_parser(argv: "Sequence[str]" = ()) -> Parser:
+    """Every command and option, for the command line ARGV (its usage errors). The man page (roster.manpage) is
+    generated from this too."""
+    typed = Typed(list(argv), wants_json(argv))
     p = Parser(prog="roster", usage=clihelp.USAGE, formatter_class=clihelp.Formatter,
-               description="Give this box (and Claude) access to the hosts in roster.yml.")
+               description="Give this box (and Claude) access to the hosts in roster.yml.", typed=typed)
+    typed.root = p
     p.add_argument("-v", "--version", action="version", version=f"roster {__version__}")
     which = p.add_mutually_exclusive_group()
     values(which.add_argument("-c", "--config", metavar="PATH", help="path to roster.yml (default: $ROSTER_CONFIG, "
@@ -311,6 +339,43 @@ def describe(sub, prefix=""):
             if isinstance(a, argparse._SubParsersAction):
                 describe(a, f"{prefix}{name} ")
     return helps
+
+
+def check(parser, args):
+    """Options a command takes but not together (or not without another): a usage error from PARSER."""
+    if args.cmd == "discover" and args.json and args.write:
+        parser.error("--json goes with discover's preview, not --write: drop one of them")
+    if args.cmd == "inv":
+        takes = {"list": 0, "which": 0, "use": 1, "remove": 1, "add": 2}[args.action]
+        if len([x for x in (args.name, args.path) if x is not None]) != takes:
+            parser.error({0: f"inv {args.action} takes no NAME or PATH", 1: f"usage: roster inv {args.action} NAME",
+                          2: "usage: roster inv add NAME PATH"}[takes])
+        if args.json and args.action not in ("list", "which"):
+            parser.error("--json goes with inv list or inv which")
+    if args.cmd == "mesh" and args.json and args.action != "status" and not (args.dry_run and not args.action):
+        parser.error("--json goes with mesh status or mesh --dry-run: it never applies the Mesh")
+    if args.cmd == "mesh" and args.remove and args.action != "leftovers":
+        parser.error("--remove goes with leftovers: roster mesh leftovers --remove")
+    if args.cmd == "hosts" and args.name:
+        listed = [f for f, on in (("--resources", args.resources), ("--find", args.find), ("--all", args.all),
+                                  ("--long", args.long), ("--only", args.only)) if on]
+        if listed:
+            parser.error(f"hosts NAME shows one Host or resource: {', '.join(listed)} go"
+                         f"{'es' if len(listed) == 1 else ''} with the list (drop NAME or the flag)")
+    if args.cmd == "check" and args.auth and (args.box or args.host):
+        parser.error("check --auth tests the Logins' password sources: it takes no HOST or --box (--only narrows it)")
+    if args.cmd == "check" and args.box and (args.host or args.only):
+        parser.error("check --box takes no HOST or --only: it checks this Box, not its Hosts")
+    if args.cmd == "add" and args.name is None and not args.from_vault:
+        parser.error("roster add needs NAME, the new Host's name")
+    if args.cmd == "add" and args.name is not None:
+        listed = [f for f, on in (("--json", args.json), ("--all", args.all), ("--mark-seen", args.mark_seen),
+                                  ("--no-sync", args.no_sync)) if on]
+        if listed:
+            parser.error(f"{', '.join(listed)} go{'es' if len(listed) == 1 else ''} with --from-vault and no NAME "
+                         "(the list of vault items): drop NAME or the flag")
+    if args.cmd == "revoke" and args.all and (args.only or args.inv or args.config):
+        parser.error("revoke --all revokes every Inventory's Hosts: drop --only, --inv and -c")
 
 
 def command_parser(parser, words):

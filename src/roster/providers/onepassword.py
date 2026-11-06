@@ -189,7 +189,8 @@ def _op_login_fields(name, ctx):
     return {"uri": urls[0] if urls else None, "username": _op_username(ctx, found[0]["id"])}
 
 
-PROVIDERS["op"].update(items=_op_items, ref_item=_op_ref_item, login_fields=_op_login_fields)
+PROVIDERS["op"].update(items=_op_items, ref_item=_op_ref_item, login_fields=_op_login_fields,
+                       manual=lambda ctx: adopt_inherited_session(ctx.state))
 
 PROVIDERS["op"]["login_help"] = (
     "1Password signs in through its desktop app, not here: turn on Settings > Developer > \"Integrate with "

@@ -31,7 +31,7 @@ from . import (
 from .authorized import TAKEN, NameTaken, NoLine, box_key_re, box_public_keys, enroll, key_named, remove_script
 from .boxkeys import ensure_key, public_key_line
 from .claude import write_claude_files
-from .cliparser import Parser, build_parser, command_parser
+from .cliparser import build_parser, check, command_parser, wants_json
 from .common import (
     die,
     find_program,
@@ -68,7 +68,7 @@ from .winhost import clean
 
 # ---------------------------------------------------------------- commands
 
-def cmd_init(args):
+def cmd_init(args, parser):
     """`roster init`: the commented example (the default), or a new Inventory the --inventory way (T212). A file
     that's there already is kept; --name names the new one (`roster inv add`)."""
     from . import newinventory
@@ -81,7 +81,7 @@ def cmd_init(args):
         try:
             how, value = newinventory.parse_how(args.inventory)
         except ValueError as e:
-            build_parser().error(f"--inventory: {e}")
+            parser.error(f"--inventory: {e}")
     try:
         if how is None:
             if path.exists():
@@ -1840,13 +1840,6 @@ def cmd_inv(args):
     from . import inventories, named
     from .config import locate_config
     act = args.action
-    takes = {"list": 0, "which": 0, "use": 1, "remove": 1, "add": 2}[act]
-    given = [x for x in (args.name, args.path) if x is not None]
-    if len(given) != takes:
-        build_parser().error({0: f"inv {act} takes no NAME or PATH", 1: f"usage: roster inv {act} NAME",
-                              2: "usage: roster inv add NAME PATH"}[takes])
-    if args.json and act not in ("list", "which"):
-        build_parser().error("--json goes with inv list or inv which")
     if act == "which":
         path = locate_config(args.config, args.inv)
         name = args.inv or named.name_of(path)
@@ -1917,20 +1910,19 @@ def main(argv=None):
         from . import completion
         return completion.main(argv[1:])
     argv, alias = aliases.rewrite(argv)  # an old name (roster info, roster bw): its new form, said once on stderr
-    words = argv[:argv.index("--")] if "--" in argv else argv
-    Parser.json_errors = "--json" in words
-    providers.JSON_OUTPUT = Parser.json_errors      # a vault's note or question would break the JSON
-    if alias and not alias.silent and not Parser.json_errors:      # with --json, stderr is a JSON error or nothing
+    json_errors = wants_json(argv)
+    providers.set_json_output(json_errors)
+    if alias and not alias.silent and not json_errors:      # with --json, stderr is a JSON error or nothing
         print(aliases.warning(alias), file=sys.stderr, flush=True)
     try:
         return _main(argv) or 0
     except Problem as e:
-        if not Parser.json_errors:
+        if not json_errors:
             raise Exit(e) from None
         jsonout.fail(e.code, e.message, e.fix)
         return 1
     except Exit as e:
-        if not Parser.json_errors:
+        if not json_errors:
             raise
         jsonout.fail(e.problem.code, e.problem.message, e.problem.fix)
         return 1
@@ -1940,21 +1932,19 @@ def main(argv=None):
         sys.stdout = None
         os._exit(0)
     finally:
-        Parser.json_errors = False
-        providers.JSON_OUTPUT = False
-        Parser.typed, Parser.root = [], None
+        providers.set_json_output(False)
 
 
 
 def _main(argv=None):
-    parser = build_parser()
-    Parser.typed, Parser.root = list(argv or []), parser
+    parser = build_parser(argv or [])
     args, extra = parser.parse_known_args(argv)
     passthrough = args.cmd == "vault" and args.vault_cmd in ("bw", "op")
     if extra and passthrough:                  # options before the tool's command are its own: its allowlist judges them, unrepeated
         args.args = [*extra, *args.args]
     elif extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
+    check(parser, args)
 
     if args.cmd is None:                    # plain `roster`: what it can do, not an argparse error
         sys.stdout.write(parser.format_help())
@@ -1964,7 +1954,7 @@ def _main(argv=None):
         return askpass_main([args.prompt])
 
     if args.cmd == "init":
-        return cmd_init(args)
+        return cmd_init(args, parser)
     if args.cmd == "help":
         return cmd_help(parser, args)
     if args.cmd == "vault" and args.vault_cmd is None:     # plain `roster vault`: its actions
@@ -1973,41 +1963,14 @@ def _main(argv=None):
     if args.cmd == "vault" and args.vault_cmd in ("unlock", "lock"):     # this Box's vault: no roster.yml needed
         return cmd_vault_unlock(args) if args.vault_cmd == "unlock" else cmd_vault_lock(args)
     if args.cmd == "discover":
-        if args.json and args.write:
-            build_parser().error("--json goes with discover's preview, not --write: drop one of them")
         return cmd_discover(args)
     if passthrough:
         return cmd_bw(args) if args.vault_cmd == "bw" else cmd_op(args)
     if args.cmd == "inv":
         return cmd_inv(args)
-    if args.cmd == "mesh" and args.json and args.action != "status" and not (args.dry_run and not args.action):
-        build_parser().error("--json goes with mesh status or mesh --dry-run: it never applies the Mesh")
-    if args.cmd == "mesh" and args.remove and args.action != "leftovers":
-        build_parser().error("--remove goes with leftovers: roster mesh leftovers --remove")
-    if args.cmd == "hosts" and args.name:
-        listed = [f for f, on in (("--resources", args.resources), ("--find", args.find), ("--all", args.all),
-                                  ("--long", args.long), ("--only", args.only)) if on]
-        if listed:
-            build_parser().error(f"hosts NAME shows one Host or resource: {', '.join(listed)} go{'es' if len(listed) == 1 else ''} "
-                                 "with the list (drop NAME or the flag)")
-    if args.cmd == "check" and args.auth and (args.box or args.host):
-        build_parser().error("check --auth tests the Logins' password sources: it takes no HOST or --box (--only "
-                             "narrows it)")
-    if args.cmd == "add" and args.name is None and not args.from_vault:
-        build_parser().error("roster add needs NAME, the new Host's name")
-    if args.cmd == "add" and args.name is not None:
-        listed = [f for f, on in (("--json", args.json), ("--all", args.all), ("--mark-seen", args.mark_seen),
-                                  ("--no-sync", args.no_sync)) if on]
-        if listed:
-            build_parser().error(f"{', '.join(listed)} go{'es' if len(listed) == 1 else ''} with --from-vault and no "
-                                 "NAME (the list of vault items): drop NAME or the flag")
     if args.cmd == "revoke" and args.all:
-        if args.only or args.inv or args.config:
-            build_parser().error("revoke --all revokes every Inventory's Hosts: drop --only, --inv and -c")
         return cmd_revoke_all(args)
     if args.cmd == "check" and args.box:
-        if args.host or args.only:
-            build_parser().error("check --box takes no HOST or --only: it checks this Box, not its Hosts")
         return cmd_check_box(args)
     if args.cmd == "check" and args.host:
         return cmd_check_host(args)

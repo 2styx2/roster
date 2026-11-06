@@ -233,7 +233,9 @@ class State:
         self.scan_lock = threading.Lock()   # held while one starts
         self.watch_lock = threading.Lock()  # held while inventory.watch starts the watcher (it's a quick read)
         self.closing = False                # serve's stdin closed: nothing new starts (a sign-in least of all)
-        only_vault_unlock_unlocks()
+        self.item_locks: dict[str, Lock] = {}   # provider -> its items' Lock (item_writes)
+        self.item_locks_lock = threading.Lock()
+        providers.only_unlock_unlocks()
         try:
             self.path = find_config(config_arg, inv)
         except InventoryError as e:
@@ -243,6 +245,10 @@ class State:
             self.error = InventoryError(e.message)
             return
         self.reload()
+
+    def item_lock(self, provider):
+        with self.item_locks_lock:
+            return self.item_locks.setdefault(provider, Lock(f"{provider}'s items"))
 
     def reload(self):
         """Load roster.yml again (after a pull, an edit, a discard, `:source` or an outside edit, so hosts.list shows
@@ -1398,33 +1404,26 @@ def save_held(state, repo, hid, password, item, change, what):
     """Q43's order, once a held password's Session logged in with it: the Vault item (ITEM: make_item's other
     arguments), then CHANGE(path) -> (old_text, new_text) written as a Pending change, the item taken back out if that
     fails (WHAT: what then wasn't done); then the password is forgotten. Returns (the item, the backup's path)."""
-    made = make_item(password=password, **item)
+    made = make_item(state, password=password, **item)
     try:                                        # until roster.yml is written, any failure takes the item back out
         old_text, new_text = change(repo.path)
         backup = repo.save(old_text, new_text)
     except BaseException as e:
-        raise take_back(made, write_failed(what, repo.path, e)) from None
+        raise take_back(state, made, write_failed(what, repo.path, e)) from None
     forget_held(state, hid)
     return made, backup
 
 
-# Making or deleting a Vault item, one at a time per provider: bw keeps its local cache in one data.json
-# and pass commits each insert to a git repo, so neither is known to take two writes at once, and two creations of one
-# name would both pass the "no item by that name" check. Inside the shared vault lock (after roster.yml and the vault in
-# Q112's order); it waits at most what's left of the request's deadline (LOCK_WAIT without one), then 4.
-ITEM_LOCKS = {}
-ITEM_LOCKS_LOCK = threading.Lock()
-
-
-def item_lock(provider):
-    with ITEM_LOCKS_LOCK:
-        return ITEM_LOCKS.setdefault(provider, Lock(f"{provider}'s items"))
-
+# Making or deleting a Vault item, one at a time per provider (State.item_lock): bw keeps its local cache in one
+# data.json and pass commits each insert to a git repo, so neither is known to take two writes at once, and two
+# creations of one name would both pass the "no item by that name" check. Inside the shared vault lock (after
+# roster.yml and the vault in Q112's order); it waits at most what's left of the request's deadline (LOCK_WAIT without
+# one), then 4.
 
 @contextmanager
-def item_writes(provider, floor=0.0):
+def item_writes(state, provider, floor=0.0):
     """Hold PROVIDER's item lock while a Vault item is made or deleted (FLOOR: an undo waits at least that long)."""
-    lock = item_lock(provider)
+    lock = state.item_lock(provider)
     at = current_deadline()
     wait = LOCK_WAIT if at is None else max(floor, at - time.monotonic())
     r = current_request()
@@ -1436,12 +1435,12 @@ def item_writes(provider, floor=0.0):
         lock.release()
 
 
-def make_item(provider, item, password, user, address, port, save_to):
+def make_item(state, provider, item, password, user, address, port, save_to):
     """The Vault item for a password that just logged in: the user in its username field, ssh://address[:port] in
     its URI field. Raises the vault_problem (60-65, 14) when the vault refuses."""
     uri = f"ssh://{address}" + ("" if port == 22 else f":{port}")
     try:
-        with item_writes(provider):
+        with item_writes(state, provider):
             made = providers.create_item(provider, name=item, password=password, username=user, uri=uri,
                                          save_to=save_to)
     except providers.SecretError as e:
@@ -1603,7 +1602,7 @@ def host_add(state, params):
     if typed:
         password, typed["password"] = typed["password"], None
         try:
-            made = make_item(typed["provider"], typed["item"], password, h["ssh"]["user"], h["ip"], h["ssh"]["port"],
+            made = make_item(state, typed["provider"], typed["item"], password, h["ssh"]["user"], h["ip"], h["ssh"]["port"],
                              typed["save_to"])
         finally:
             del password
@@ -1626,7 +1625,7 @@ def host_add(state, params):
     except BaseException as e:
         if written_in:
             raise
-        raise take_back(made, write_failed(f"{name} wasn't added", state.path, e)) from None
+        raise take_back(state, made, write_failed(f"{name} wasn't added", state.path, e)) from None
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": written["backup"], "verify": verify,
             "item": made, "warnings": warnings, "sync": written["sync"]}
 
@@ -1649,12 +1648,12 @@ def verify_failed(name, verify):
                    fix=fail.get("fix"), details=fail.get("details"))
 
 
-def take_back(made, e):
+def take_back(state, made, e):
     """Writing the Host failed after its Vault item was made: delete the item again (Q43), and say so."""
     if made is None:
         return e
     try:
-        with deadline(UNDO_TIME), item_writes(made["provider"], UNDO_TIME):
+        with deadline(UNDO_TIME), item_writes(state, made["provider"], UNDO_TIME):
             providers.delete_item(made["provider"], made["id"])
     except Exception as undo:
         what = str(undo) if isinstance(undo, providers.SecretError) else type(undo).__name__
@@ -2003,18 +2002,6 @@ def vault_status(state, params):
     return {**main, "providers": others}
 
 
-def only_vault_unlock_unlocks():
-    """The app opens locked and only its lock screen unlocks: forget a BW_PASSWORD / BW_SESSION this process
-    inherited, and tell providers not to unlock by themselves (no bw-session file, no prompt). An OP_SESSION_* it
-    inherited moves out of its environment into the op provider's state: only op gets it, and vault.lock forgets it."""
-    from .providers.bitwarden import forget_session
-    from .providers.onepassword import adopt_inherited_session
-    os.environ.pop("BW_PASSWORD", None)
-    forget_session()
-    adopt_inherited_session(providers.PROVIDER_STATE.setdefault("op", {}))
-    providers.MANUAL_UNLOCK = True
-
-
 def vault_provider(state, params):
     """params.provider, or the Inventory's vault (vault.status's "provider")."""
     name = params.get("provider")
@@ -2048,17 +2035,6 @@ def vault_unlock(state, params):
     return {"provider": name, "status": "unlocked", "can_write": providers.can_write(name)}   # no second `bw status`
 
 
-ON_VAULT_LOCK = []          # fn(state) run by vault.lock: whatever else holds secrets (askpass tokens) forgets them
-
-
-def forget_askpass_tokens(state):
-    if state.askpass is not None:
-        state.askpass.forget()
-
-
-ON_VAULT_LOCK.append(forget_askpass_tokens)
-ON_VAULT_LOCK.append(forget_held)
-ON_VAULT_LOCK.append(stop_checks)
 
 
 @method("vault.lock", cancel="never")
@@ -2093,12 +2069,15 @@ def forgotten_for_good(state, signing_out=None, then=None):
 
 
 def forget_everything(state, signing_out=None):
-    """vault.lock's work: end a sign-in, run every ON_VAULT_LOCK hook, and lock every provider (SIGNING_OUT's only
-    in memory: its CLI is about to log out). Returns the providers it locked."""
+    """vault.lock's work: end a sign-in, forget what else holds secrets (askpass tokens, typed passwords held to save,
+    checks under way), and lock every provider (SIGNING_OUT's only in memory: its CLI is about to log out). Returns
+    the providers it locked."""
     names = set(state.unlocked) | (set(health.referenced_providers(state.cfg)) if state.cfg else set())
     end_sign_in(state)
-    for forget in ON_VAULT_LOCK:
-        forget(state)
+    if state.askpass is not None:
+        state.askpass.forget()
+    forget_held(state)
+    stop_checks(state)
     for name in sorted(names | ({signing_out} if signing_out else set())):
         try:
             providers.lock(name, cli=name != signing_out)
@@ -2249,7 +2228,7 @@ def vault_create_item(state, params):
     save_to = save_to_param(params)
     doing(f"saving to {provider}")
     try:
-        with item_writes(provider):
+        with item_writes(state, provider):
             made = providers.create_item(provider, name=name, password=password, save_to=save_to, **extra)
     except providers.SecretError as e:
         raise vault_problem(e) from None
@@ -2273,7 +2252,7 @@ def vault_undo_create(state, params):
                        "undone) - roster only takes back the items it just saved")
     doing(f"deleting from {provider}")
     try:
-        with item_writes(provider, UNDO_TIME):
+        with item_writes(state, provider, UNDO_TIME):
             providers.delete_item(provider, item_id)
     except BaseException as e:
         state.created[item_id] = provider       # not known to be deleted: it can be undone again

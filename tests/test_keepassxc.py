@@ -60,12 +60,11 @@ def test_a_wrong_master_password_says_so_without_echoing_it(kdbx, tmp_path):
 
 
 def test_a_locked_database_is_never_opened_with_a_guess(kdbx, tmp_path, monkeypatch):
-    monkeypatch.setattr(providers, "MANUAL_UNLOCK", True)              # as under `roster serve`
     assert providers.vault_status("kp") == "locked"
-    with pytest.raises(providers.VaultLocked, match="KeePassXC database is locked"):
+    with pytest.raises(providers.VaultLocked, match="no terminal"):   # the CLI with no terminal: 14, not 35 (#437)
         get_secret("kp:esx ssh", "g")
-    monkeypatch.setattr(providers, "MANUAL_UNLOCK", False)             # the CLI with no terminal to ask in
-    with pytest.raises(providers.VaultLocked, match="no terminal"):   # 14, not 35 (#437)
+    providers.only_unlock_unlocks()                                     # as under `roster serve`
+    with pytest.raises(providers.VaultLocked, match="KeePassXC database is locked"):
         get_secret("kp:esx ssh", "g")
     assert argv_log(tmp_path) == ""                                     # keepassxc-cli never ran
 
@@ -76,7 +75,7 @@ def test_lock_forgets_the_master_password_and_every_value(kdbx):
     assert providers.vault_status("kp") == "unlocked"
     providers.lock("kp")
     assert providers.vault_status("kp") == "locked"
-    providers.MANUAL_UNLOCK = True
+    providers.only_unlock_unlocks()
     with pytest.raises(providers.VaultLocked):
         get_secret("kp:esx ssh", "g")
 

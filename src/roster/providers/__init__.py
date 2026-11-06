@@ -99,6 +99,8 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
 #                     roster add --from-vault, and `roster vault sync` (vaultsync.py)
 #             "saved_session": fn(ctx) -> (state, why): a session saved for every run on this Box
 #                              (bw-session): "none", "working", "expired", "ignored" or "unknown" (why: the reason); never in serve
+#             "manual": fn(ctx), only_unlock_unlocks(): forget what this process inherited that would unlock
+#                       it by itself (bw's BW_PASSWORD and BW_SESSION; op's OP_SESSION_*, moved into its state)
 #             "box_paths": settings naming files on this Box (e.g. kp's database); a change to one
 #                          from vault.configure locks the provider (what it holds was for the old one)
 PROVIDER_SETTINGS = {}    # name -> settings dict from roster.yml `providers:`
@@ -422,6 +424,23 @@ def lock(name, cli=True):
         fn = PROVIDERS[name].get("lock" if cli else "forget")
         if fn:
             fn(Ctx(name, None))
+
+
+def only_unlock_unlocks():
+    """`roster serve`: the app opens locked and only its lock screen unlocks (unlock()). Each provider forgets what
+    this process inherited that would unlock it by itself (its "manual"), and none unlocks on its own from now on (no
+    session file, no environment variable, no prompt)."""
+    global MANUAL_UNLOCK
+    MANUAL_UNLOCK = True
+    for name, p in list(PROVIDERS.items()):
+        if p.get("manual"):
+            p["manual"](Ctx(name, None))
+
+
+def set_json_output(on):
+    """ON: this command prints --json, so no provider adds a note or a question on stderr (it would break the JSON)."""
+    global JSON_OUTPUT
+    JSON_OUTPUT = bool(on)
 
 
 def reset():
