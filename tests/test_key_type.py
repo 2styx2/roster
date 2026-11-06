@@ -489,6 +489,7 @@ def test_a_key_type_roster_yml_names_widens_the_match_only_with_this_boxs_own_pr
     """LOW-6: a planted roster_rsa.pub (no private key, or not this Box's) never widens what revoke, re-tag and check
     take, even when roster.yml uses rsa; the Box's own key at key_path still counts with a passphrase on it (Q200
     (c): ssh-keygen -y can't read it then)."""
+    import os
     import subprocess
 
     from roster.sshops import box_key_re, key_ere
@@ -503,8 +504,9 @@ def test_a_key_type_roster_yml_names_widens_the_match_only_with_this_boxs_own_pr
     rsa = keypair(ssh / "roster_rsa")
     (ssh / "roster_rsa").chmod(0o600)
     assert key_ere(rsa[0], rsa[1]) in box_key_re(cfg)
-    (ssh / "roster_rsa").chmod(0o644)                          # others may read it: not this Box's alone
-    assert key_ere(rsa[0], rsa[1]) not in box_key_re(cfg)
+    if os.name != "nt":                                         # (Windows: its ACL isn't read, boxkeys.owned)
+        (ssh / "roster_rsa").chmod(0o644)                      # others may read it: not this Box's alone
+        assert key_ere(rsa[0], rsa[1]) not in box_key_re(cfg)
     subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "secret", "-C", "roster-managed:ws1",
                     "-f", str(ssh / "roster_ed25519")], check=True)
     own = (ssh / "roster_ed25519.pub").read_text().split()
