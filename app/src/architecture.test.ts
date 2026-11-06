@@ -164,7 +164,7 @@ describe("the frontend's import rules", () => {
       }
     };
     for (const v of MODS.keys()) if (!index.has(v)) visit(v);
-    expect(cycles, `${DOC}, "The frontend": modules import each other one way`).toEqual([]);
+    expect(cycles, `${DOC}, "Dependencies between folders": modules import each other one way`).toEqual([]);
   });
 
   it("has no import cycle between feature folders but the known ones", () => {
@@ -188,7 +188,7 @@ describe("the frontend's import rules", () => {
       }
     const fresh = [...found].filter(([pair]) => !(pair in KNOWN_FOLDER_CYCLES)).map(([pair, why]) => `${pair}: ${why}`);
     const gone = Object.keys(KNOWN_FOLDER_CYCLES).filter((pair) => !found.has(pair));
-    expect(fresh, `${DOC}, "The frontend": feature folders depend one way`).toEqual([]);
+    expect(fresh, `${DOC}, "Dependencies between folders": feature folders depend one way`).toEqual([]);
     expect(gone, "these no longer import each other: take them off KNOWN_FOLDER_CYCLES (and the doc's list)").toEqual([]);
   });
 });
