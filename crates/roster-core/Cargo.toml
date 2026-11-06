@@ -49,9 +49,16 @@ libc = "0.2"
 test-hooks = []
 # Derives the TypeScript types (tests/ts_types.rs); never on in the app.
 ts = ["dep:ts-rs"]
+# The end-to-end bridge (shell/bridge.rs, examples/bridge.rs): the app's commands over a local
+# WebSocket for the full-stack tests in app/e2e/fullstack; never on in the app.
+bridge = []
+
+[[example]]
+name = "bridge"
+required-features = ["bridge"]
 
 [dev-dependencies]
 # Its own tests build it with the test hooks and the TypeScript types on.
-roster-core = { path = ".", features = ["test-hooks", "ts"] }
+roster-core = { path = ".", features = ["test-hooks", "ts", "bridge"] }
 # A test's temp folder is deleted when the test ends, even when it panics (tests/common/mod.rs).
 tempfile = "3"
