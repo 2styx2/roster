@@ -630,7 +630,7 @@ def test_a_refused_create_is_a_clean_error_without_the_password(serve, write_con
     s = serve()
     s.call("vault.unlock", {"password": "hunter2"})
     err = s.call("vault.create_item", {"name": "box ssh", "password": NEW_PW})["error"]
-    assert err["code"] == 62 and "You do not have permission" in err["message"]
+    assert err["code"] == 62 and "withheld because it repeated the password" in err["message"]   # #539's review
     code, out, stderr = s.close()
     assert NEW_PW not in json.dumps(s.responses) + out + stderr
 

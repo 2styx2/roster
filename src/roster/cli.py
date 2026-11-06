@@ -62,6 +62,9 @@ from .discover import cmd_discover
 from .errors import (
     KEY_FILE,
     NO_KEY_YET,
+    NO_PROVIDER,
+    NO_TERMINAL_FOR_PASSWORD,
+    PASSWORDS_DIFFER,
     RENAME_HINT,
     ROTATION_PENDING,
     UNKNOWN_HOST,
@@ -70,6 +73,7 @@ from .errors import (
     InventoryError,
     Problem,
     tagged,
+    vault_problem,
 )
 from .example import EXAMPLE_CONFIG
 from .hosts import NO_PASSWORD, PLACEHOLDER_USER, is_windows, placeholder_user, prompted
@@ -779,16 +783,18 @@ def cmd_add(cfg, args):
             if got[k] is None and v is not None:
                 got[k] = v
                 say(f"from vault   {k} {v} ({args.auth})")
+    saving = vault_to_save(cfg, args) if args.save_to_vault else None
     if not add_host(cfg, args.name, got, args.auth, args.group, args.enroll, asking, os=args.os, title=args.title,
-                    type=args.type, dry_run=args.dry_run):
+                    type=args.type, dry_run=args.dry_run, saving=saving):
         return 0
     return set_up(args.name, cfg["path"]) if args.setup else next_steps(args.name)
 
 
-def add_host(cfg, name, got, auth, group, enroll, asking, os=None, title=None, type=None, dry_run=False):
+def add_host(cfg, name, got, auth, group, enroll, asking, os=None, title=None, type=None, dry_run=False, saving=None):
     """Host NAME into roster.yml (addhost.add), asking for what's missing when ASKING: GOT is {ip, user, port} as given,
-    AUTH its Login, GROUP and ENROLL as given (None: asked, or the group's). True once it's written; with DRY_RUN
-    what it would write is said instead (False). Dies on anything wrong."""
+    AUTH its Login, GROUP and ENROLL as given (None: asked, or the group's). SAVING ({provider, save_to}, from
+    vault_to_save): its password saved as a new vault item first, and AUTH that item (addhost.add_saving). True once
+    it's written; with DRY_RUN what it would write is said instead (False). Dies on anything wrong."""
     path = cfg["path"]
     groups = list(cfg["groups"])
     if group is None:
@@ -806,7 +812,7 @@ def add_host(cfg, name, got, auth, group, enroll, asking, os=None, title=None, t
         enroll = base["enroll"] if not answer else answer.lower().startswith("y")
     if not (got["user"] or base["user"]):
         needs("--user", f"no user for {name}: its group and defaults don't set one")
-    if not (auth or base["auth"]):
+    if not (auth or base["auth"] or saving):
         needs("--auth", f"no Login for {name}: its group and defaults don't set auth:")
     wanted = {"ip": got["ip"], "user": got["user"], "port": got["port"], "auth": auth, "enroll": enroll,
               "os": os, "title": title, "type": type, "reviewed": True}
@@ -816,8 +822,14 @@ def add_host(cfg, name, got, auth, group, enroll, asking, os=None, title=None, t
         die(str(e), code=edit.INVALID_HOST)
     where = f"group '{group}'"
     try:
-        r = addhost.add(path, group, name, fields, dry_run=dry_run, new_address=True,
-                        on_write=lambda done: written(cfg, name, where, group, done))
+        if saving:
+            r = addhost.add_saving(path, group, name, fields, saving["provider"],
+                                   lambda: new_password(name, saving["provider"]), saving["save_to"], dry_run=dry_run,
+                                   on_write=lambda done: written(cfg, name, where, group, done),
+                                   before_vault=lambda: unlock_note(saving["provider"]))
+        else:
+            r = addhost.add(path, group, name, fields, dry_run=dry_run, new_address=True,
+                            on_write=lambda done: written(cfg, name, where, group, done))
     except Problem as e:
         refuse(e)
     if dry_run:
@@ -825,14 +837,90 @@ def add_host(cfg, name, got, auth, group, enroll, asking, os=None, title=None, t
         say(f"would add    {name} to {where}{new} in {shown_file(cfg)} (--dry-run: nothing written):")
         for line in r["lines"]:
             say(f"  {line}")
+        if saving:
+            i, t = r["item"], r["item"]["target"]
+            say(f"would save   vault item '{i['name']}' in {i['provider']} ({target_text(t['setting'])}, from "
+                f"{t['from']}): username {i['username']}, URI {i['uri']}; its password is asked first, never shown")
         return False
     boxsync.warn(r["sync"])                    # as after discover --write
+    if saving and not r["vault_sync"]["ok"]:
+        print(f"warning: {r['item']['name']} is saved, but syncing {saving['provider']} afterwards failed "
+             f"({r['vault_sync']['error']}): other Boxes see it after their next roster vault sync", file=sys.stderr, flush=True)
     return True
+
+
+def vault_to_save(cfg, args):
+    """--save-to-vault's {provider, save_to}: --provider, else the vault roster.yml's Logins use most
+    (providers.main_vault, as the app's "Save to vault"); --save-to as that provider's target, else None (its
+    save_to setting). Dies naming the flag when there's none, or for a provider or target it can't be."""
+    from . import health
+    provider = args.provider or providers.main_vault(health.referenced_providers(cfg))
+    if provider is None:
+        needs("--provider", "no Host Login in roster.yml uses a vault roster can save to (bw, kp)")
+    if provider not in PROVIDERS:
+        die(f"no provider '{provider}' on this Box (providers: {', '.join(sorted(PROVIDERS))})", code=NO_PROVIDER,
+            fix="give --provider bw or --provider kp")
+    try:
+        save_to = providers.save_to_text(provider, args.save_to) if args.save_to is not None else None
+    except providers.SecretError as e:
+        refuse(vault_problem(e))
+    return {"provider": provider, "save_to": save_to}
+
+
+def target_text(setting):
+    """A save_to setting as --save-to writes it."""
+    if not isinstance(setting, dict):
+        return str(setting)
+    return setting["group"] if "group" in setting else f"{setting['organization']}/{setting['collection']}"
+
+
+def unlock_note(provider):
+    """Before --save-to-vault's first vault call: T241's note on what a Bitwarden unlock here costs, when it'll ask."""
+    if provider == "bw" and vaultsync.bw_would_ask():
+        providers.tell("note: this terminal has no Bitwarden session (no working saved session or BW_SESSION), so "
+                       "roster asks for the master password once to save the item. As with roster vault unlock, "
+                       f"{vaultsync.UNLOCK_COST}")
+
+
+def new_password(name, provider):
+    """The new vault item's password, typed twice on the controlling terminal and hidden (getpass), never from argv,
+    the environment or a pipe: 223 with no terminal (or one getpass can't hide typing on), 224 when the two differ
+    or none is typed. The password is returned, never shown or kept."""
+    import getpass
+    import warnings
+    with providers.open_tty() as tty:
+        there = tty is not None
+    if not there:
+        die(f"{name}'s password is asked on the terminal, and there's none here: nothing was saved",
+            code=NO_TERMINAL_FOR_PASSWORD, fix="run roster add in a terminal, or make the item in the vault and give "
+            f"--auth {provider}:ITEM")
+    with warnings.catch_warnings():             # getpass would fall back to reading a pipe, echoed: never that
+        warnings.simplefilter("error", getpass.GetPassWarning)
+        try:
+            first = getpass.getpass(f"Password for {name} (saved as the vault item '{addhost.item_name(name)}'): ")
+            again = getpass.getpass(f"The same password again, for {name}: ") if first else ""
+        except getpass.GetPassWarning:
+            die(f"this terminal can't keep what's typed hidden, so {name}'s password isn't asked here: nothing was saved",
+                code=NO_TERMINAL_FOR_PASSWORD, fix="run roster add in a terminal that can hide a password (a real "
+                f"one, not a pipe), or make the item in the vault and give --auth {provider}:ITEM")
+        except EOFError:
+            first = again = ""
+    if not first:
+        die(f"no password typed for {name}: nothing was saved", code=PASSWORDS_DIFFER)
+    if first != again:
+        del first, again
+        die(f"the two passwords typed for {name} don't match: nothing was saved", code=PASSWORDS_DIFFER,
+            fix="run it again and type the same password twice")
+    del again
+    return first
 
 
 def written(cfg, name, where, group, r):
     """What `roster add` wrote into the Inventory CFG's roster.yml, said as `discover --write` says it, before this
-    Box's sync: both files named through shown_file (#506)."""
+    Box's sync: both files named through shown_file (#506). With --save-to-vault, the item saved first."""
+    if r.get("item"):
+        i = r["item"]
+        say(f"saved        vault item '{i['name']}' in {i['provider']} ({i['target'].get('label', 'the vault')})")
     say(f"backup       {shown_file(cfg, r['backup'], 'its backup')}")
     say(f"wrote        {name} into {where}" + (" (a new group)" if r["new_group"] else "") + f" in {shown_file(cfg)}")
     if r["new_group"]:

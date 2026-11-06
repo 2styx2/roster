@@ -176,9 +176,12 @@ def test_undo_moves_the_entry_to_the_recycle_bin(kdbx):
 def test_a_refused_create_or_delete_never_echoes_a_password(kdbx, monkeypatch):
     providers.unlock("kp", MASTER)
     monkeypatch.setenv("FAKE_KP_WRITE_FAIL", f"Writing the database failed: read-only file system {NEW_PW} {MASTER}")
-    with pytest.raises(providers.WriteFailed, match="KeePassXC didn't create 'box ssh': Writing the database") as e:
-        providers.create_item("kp", name="box ssh", password=NEW_PW)
+    with pytest.raises(providers.WriteFailed, match="KeePassXC didn't create 'box ssh': .*withheld") as e:
+        providers.create_item("kp", name="box ssh", password=NEW_PW)       # its words repeat one: withheld whole
     assert NEW_PW not in str(e.value) and MASTER not in str(e.value)
+    monkeypatch.setenv("FAKE_KP_WRITE_FAIL", "Writing the database failed: read-only file system")
+    with pytest.raises(providers.WriteFailed, match="KeePassXC didn't create 'box ssh': Writing the database"):
+        providers.create_item("kp", name="box ssh", password=NEW_PW)
     with pytest.raises(providers.WriteFailed, match="didn't delete"):
         providers.delete_item("kp", "esx ssh")
 

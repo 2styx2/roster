@@ -54,6 +54,8 @@ EXAMPLES: dict[str, list[tuple[str, str]]] = {
     "add": [("roster add nas-01 --ip 10.0.0.50 --group lab --auth bw:nas-01 --no-enroll", "one Host you know"),
             ("roster add nas-01 --auth bw:nas-01 --from-vault --setup", "address and user from the vault item, then "
              "setup and check for it"),
+            ("roster add new-01 --ip 10.0.0.21 --user ops --save-to-vault", "save its password (asked twice) as the "
+             "vault item 'new-01 ssh', then add it pointing at it"),
             ("roster add web-01 --ip 10.0.0.20 --dry-run", "the lines it would add; nothing written")],
     "discover": [("roster discover 10.0.1.0/24", "preview what answers; nothing written"),
                  ("roster discover 10.0.1.0/24 --write --group lab", "add them, unreviewed, to roster.yml")],

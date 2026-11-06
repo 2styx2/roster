@@ -33,9 +33,11 @@ from . import (
     manual_unlock,
     near_names,
     register,
+    repeats_secret,
     resolve_target,
     split_field,
     unlock_fix,
+    withheld,
 )
 from .bw_items_filter import (
     CAP as LIST_CAP,  # bytes of `bw list items` the filter reads; more is refused, not cut short
@@ -773,13 +775,6 @@ def _bitwarden(spec, ctx):
 # `bw encode` makes it, on stdin when no argument is given (bw 2026.9.1's create.command.ts), so the
 # password never goes on a command line. bw prints the new item back, password and all: only its id is kept.
 
-def _scrub(text, *values):
-    for v in values:
-        if v:
-            text = text.replace(v, "…")
-    return text
-
-
 # ---- where it goes: the personal vault, or a collection of an organization you're in. bw 2026.9.1's
 # `bw create item` takes organizationId and collectionIds in the item and creates it there (its SDK create request
 # carries both), so no `bw move` is needed. Its `bw list collections` doesn't say which collections the account may
@@ -848,6 +843,7 @@ def _pick(things, ref, what, field, scope=""):
 
 
 def _bw_resolve(setting, field, ctx):
+    _bw_ready(ctx)                                         # check_target may be the first call: unlocked, once
     if setting == "personal":
         return PERSONAL_TARGET
     if "group" in setting:
@@ -893,7 +889,9 @@ def _bw_create(item, ctx):
     except TimedOut:                                       # bw was stopped: the item may be saved all the same
         r, made = None, _created_anyway(ctx, name)
     if r is not None and r.returncode != 0:                # stderr only: stdout would be the item itself
-        err = _scrub(" ".join(r.stderr.split()), password, encoded)[:160]
+        if repeats_secret(r.stderr, password) or repeats_secret(r.stderr, encoded):
+            raise WriteFailed(f"{withheld('Bitwarden')}: '{name}' wasn't created")
+        err = " ".join(r.stderr.split())[:160]
         if collection and any(w in err.lower() for w in ("permission", "not found", "do not have")):
             ctx.state.setdefault("read_only", set()).add(collection)
             raise _read_only(target, f" (Bitwarden: {err})")
