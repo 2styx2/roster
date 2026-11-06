@@ -240,7 +240,7 @@ groups:
 - **The Mesh follows `key_type:`** (T245): a source's Mesh key is made on it of its own type, so a FIPS Host is meshed like any other, and changing its type replaces its Mesh key at the next `roster mesh` ([The Mesh](mesh.md#hosts-with-another-key-type)). A source on Ed25519 linked to a peer of another type gets a warning (220): a FIPS-mode peer refuses that key.
 - **ECDSA or RSA?** Both pass FIPS. ECDSA P-384 is short and fast, and every FIPS-mode OpenSSH takes it; pick `rsa` only for a Host that takes nothing else.
 
-**Changing a type for good, cleanly:** set `key_type:`, then run `roster setup --rotate`: the new type's key goes on and every other line of this Box's goes ([Rotating the Box key](cli-reference.md#rotating-the-box-key-roster-setup---rotate)).
+**Changing a type for good, cleanly:** set `key_type:`, then run `roster setup --rotate`: the new type's key goes on and every other line of this Box's goes (but a line another Host entry on the same account uses, in this Inventory or another on this Box), and once no Host uses or holds the old type, its key file is deleted ([Rotating the Box key](cli-reference.md#rotating-the-box-key-roster-setup---rotate)).
 
 ## Limits to know about
 

@@ -63,7 +63,7 @@ src/roster/
   revoke.py         `roster revoke` and `revoke --all`: this Box's key off the Hosts, and which key files to delete after
   run.py            `roster run HOST -- COMMAND`: over the key or the Login's password, --sudo with the password on
                     stdin, a Windows Host's under PowerShell; never by a name that reaches another Inventory's Host
-  boxlock.py        the Box-wide lock (run.lock): one run at a time changes an Inventory's Hosts (setup, revoke, Mesh writes);
+  boxlock.py        the Box-wide lock (run.lock, one for every Inventory): one run at a time changes Hosts (setup, revoke, Mesh writes);
                     serve's first-run lock (inventory.create one at a time on this Box)
   boxsync.py        `roster sync` for this Box after roster changed roster.yml: run by store.py's write, serve's and the CLI's
   addhost.py        adding one Host (T220, Q190): the one implementation behind serve's host.add and `roster add`
