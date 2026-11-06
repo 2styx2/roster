@@ -908,3 +908,23 @@ def test_the_one_host_config_pins_one_key_and_turns_a_proxyjump_into_its_own_ssh
     assert not any(ln.startswith(("ProxyJump", "Ciphers")) for ln in lines)       # a value with a line break: not taken
     assert [ln for ln in lines if ln.startswith("IdentityFile")] == [f'IdentityFile "{lab.key}"']
     assert "HostName 10.0.0.4" in lines and "User ops" in lines and "id_own" not in text and "root" not in text
+
+
+@pytest.mark.parametrize("argv", [["setup", "--rotate"], ["setup"]])
+def test_an_old_types_key_file_goes_once_no_host_holds_or_uses_it(lab, capsys, argv):
+    """T253 item 5: roster.yml's key_type: goes ed25519 -> ecdsa. While a Host still holds the Ed25519 line (down
+    for this run), roster_ed25519 stays; once every Host is on ECDSA, roster deletes it, and says so."""
+    ecdsa = lab.key.with_name("roster_ecdsa")
+    lab.write("key_type: ecdsa\n" + LAB_YML)
+    lab.down("db-01")
+    capsys.readouterr()
+    assert main(argv) == 1
+    assert lab.key.exists() and lab.key.with_name("roster_ed25519.pub").exists()
+    assert "retired" not in capsys.readouterr().out
+    lab.down("db-01", False)
+    assert main(argv) == 0, capsys.readouterr().out
+    assert all([ln.split()[0] for ln in lab.lines(n)] == ["ecdsa-sha2-nistp384"] for n in ("web-01", "web-02", "db-01"))
+    assert all(lab.keys(n) == [pub_key(ecdsa)] for n in ("web-01", "web-02", "db-01"))
+    assert not lab.key.exists() and not lab.key.with_name("roster_ed25519.pub").exists()
+    assert f"retired key  {lab.key} (ed25519): no Host of any Inventory on this Box uses or holds it now" \
+        in capsys.readouterr().out

@@ -338,8 +338,44 @@ def swap(slot: Slot, entry: dict[str, Any], keep_old: bool) -> None:
 def delete_old(slot: Slot) -> None:
     """The old private key and its .pub, gone (NIST SP 800-57 Pt 1 r5 §5.5.2: keys destroyed once no longer
     needed; a kept retired key defeats a rotation done because of a leak)."""
-    for f in (old_of(slot.key), pub_of(old_of(slot.key))):
-        f.unlink(missing_ok=True)
+    boxkeys.destroy(old_of(slot.key))
+
+
+def retire_keys(cfg: dict[str, Any], say: Callable[[str], None]) -> list[Path]:
+    """T253 item 5: delete each roster_<type> key of this Box's (boxkeys.all_keys beside key_path:) that nothing needs
+    now: no Inventory on this Box makes it its own key (key_path:) or gives a key Host its type, no Host holds its
+    line as roster last left them (boxkeys.installed, every Inventory's), and no Box key rotation is under way. Only
+    a key this Box vouches for whose comment is a roster tag (a key of the user's own is never deleted), and nothing
+    at all while another Inventory doesn't load or a rotation record can't be read: roster can't tell then. The
+    keys deleted (said)."""
+    users = key_users(cfg)
+    if any(u.cfg is None for u in users):
+        return []
+    inventories = [(current(), cfg), *((u.ctx, u.cfg) for u in users if u.cfg is not None)]
+    needed: set[Path] = set()
+    for ctx, c in inventories:
+        try:
+            if not read(ctx).empty:
+                return []
+        except Unreadable:
+            return []
+        needed.add(c["key"])
+        needed |= {Path(h["key_file"]) for h in c["hosts"].values() if h["enroll"]}
+        for types in boxkeys.installed(ctx).values():
+            needed |= {boxkeys.key_file(c["key"], c["key_type"], t) for t in types}
+    out: list[Path] = []
+    for k in boxkeys.all_keys(cfg):
+        if k.key in needed or k.key.name.endswith((".new", ".old")) or k.key.name != k.type.file_name \
+                or new_of(k.key).exists() or old_of(k.key).exists() or not boxkeys.vouched(k, cfg["key"]):
+            continue
+        words = pub_of(k.key).read_text(encoding="utf-8", errors="replace").split()
+        if len(words) < 3 or not keyline.tag_box(words[2]):
+            continue
+        boxkeys.destroy(k.key)
+        out.append(k.key)
+        say(f"retired key  {k.key} ({k.type.name}): no Host of any Inventory on this Box uses or holds it now, so "
+            "roster deleted it")
+    return out
 
 
 def old_lines_re(m: Member, groups: Groups, new_words: list[str], abandoned: list[str] | None = None,
@@ -630,6 +666,8 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
             del slots[key]
     save_all()
     sync(groups, say)
+    if not held:
+        retire_keys(cfg, say)
     return {"done": [m.label for m in done], "pending": labels(recs, groups), "failed": {}, "notes": notes,
             "groups": groups}
 

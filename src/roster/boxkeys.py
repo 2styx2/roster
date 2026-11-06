@@ -144,6 +144,15 @@ def matches(key: Path) -> bool:
     return have is not None and have == public_words(Path(str(key) + ".pub"))
 
 
+def destroy(key: Path) -> None:
+    """KEY (a private key roster made) and its .pub, deleted. A plain unlink, not an overwrite first (Q204 (m), T253
+    item 6): on an SSD's flash translation layer or a copy-on-write filesystem (btrfs, ZFS, APFS) an overwrite
+    writes new blocks and leaves the old ones, so it would promise what it can't do; full-disk encryption is what
+    protects deleted keys there."""
+    for f in (key, Path(str(key) + ".pub")):
+        f.unlink(missing_ok=True)
+
+
 def owned(key: Path) -> bool:
     """KEY is this user's and no one else's to read or write (POSIX; on Windows its ACL isn't read: True)."""
     if os.name == "nt":

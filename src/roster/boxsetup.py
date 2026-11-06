@@ -297,6 +297,7 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
     if not narrowed and not failed and len(key_hosts) == sum(h["enroll"] for h in hosts):
         if was != cfg["box"]:
             replace_file(current().key_name, f"{cfg['box']}\n")
+        rotate.retire_keys(cfg, say)        # another type's key no Host uses or holds now (T253 item 5)
     write_claude_files(cfg)
     warn_overlaps(cfg)
     failed.update(setup_mesh(cfg, "--only" if only else "--host" if narrowed else None))
