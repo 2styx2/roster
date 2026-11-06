@@ -7,6 +7,7 @@ from typing import Any
 from .common import roster_command, say
 from .config import access_label, load_config
 from .context import Context, current
+from .errors import InventoryError
 from .hosts import vault_login
 from .resources import login, summary
 
@@ -63,7 +64,7 @@ def refresh_roster_md(inv: Any = None, skip: Context | None = None) -> None:
             continue
         try:
             write_roster_md(load_config(path), Context(name, path), only_if_there=True)
-        except (SystemExit, OSError):
+        except (InventoryError, OSError):  # a file that doesn't load keeps the ROSTER.md it has
             continue
 
 

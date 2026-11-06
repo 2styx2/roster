@@ -16,8 +16,9 @@ from pathlib import Path
 import yaml
 
 from . import boxsync, jsonout, store
-from .common import die, die_message, find_program, oneline, program_argv, replace_file, say, tcp_ok
+from .common import die, find_program, oneline, program_argv, replace_file, say, tcp_ok
 from .config import find_config, load_config, load_config_text
+from .errors import ROSTER_ERROR, TOO_MANY_ADDRESSES, InventoryError, Problem
 
 # ---------------------------------------------------------------- discover (network scan)
 
@@ -42,6 +43,10 @@ def nmap_scan(targets, args):
     return (nmap_run(v4, args) if v4 else []) + (nmap_run(v6, args, ["-6"]) if v6 else [])
 
 
+class ScanFailed(Exception):
+    """nmap failed, or its output doesn't read: the message says which."""
+
+
 def nmap_run(targets, args, family=()):
     # no --open, so a Host that answered with none of the ports open is counted (quiet); with -Pn every address
     # counts as up, so there it's left out (--open)
@@ -60,7 +65,10 @@ def nmap_run(targets, args, family=()):
     r = subprocess.run(program_argv(cmd), capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
         die(f"nmap failed: {(r.stderr or r.stdout).strip()[:400]}")
-    return parse_nmap_xml(r.stdout)
+    try:
+        return parse_nmap_xml(r.stdout)
+    except ScanFailed as e:
+        die(str(e))
 
 
 def parse_nmap_xml(text):
@@ -71,7 +79,7 @@ def parse_nmap_xml(text):
         # ElementTree never fetches external entities
         root = ET.fromstring(text)  # noqa: S314
     except ET.ParseError as e:
-        die(f"couldn't read nmap's output: {e}")
+        raise ScanFailed(f"couldn't read nmap's output: {e}") from None
     found = []
     for host in root.findall("host"):
         status = host.find("status")
@@ -276,8 +284,6 @@ def render_group(group, entries, note, needs_user, indent):
 def cmd_discover(args):
     """`roster discover`: scan, then preview (or --write) the new Hosts as a group. With --json, the preview is one
     JSON document (discover.plan's numbers and discover.status's Found records) and say()'s lines are dropped."""
-    from .config import inventory_problem
-    from .errors import TOO_MANY_ADDRESSES, Problem
     if args.ports is None:
         args.ports = DEFAULT_SCAN_PORTS
     nets = []
@@ -302,13 +308,12 @@ def cmd_discover(args):
         try:
             cfg_path = find_config(args.config, getattr(args, "inv", None))
             cfg = load_config(cfg_path)
-        except SystemExit as e:
-            # a roster.yml that's there but broken is error 1 under --json, found by -c or not; none at all (nothing
-            # found, or ROSTER_CONFIG naming no file) is fine: a scan needs no Inventory
-            if args.json and (args.config or (cfg_path is not None and cfg_path.expanduser().exists())):
-                raise inventory_problem(die_message(e), cfg_path) from None
-            if args.config:
+        except InventoryError:
+            # -c's roster.yml must load; under --json, so must one found otherwise that's there. None at all
+            # (nothing found, or ROSTER_CONFIG naming no file) is fine: a scan needs no Inventory
+            if args.config or (args.json and cfg_path is not None and cfg_path.expanduser().exists()):
                 raise
+
     known = {h["ip"]: h["name"] for h in cfg["hosts"].values()} if cfg else {}
     taken = set(cfg["hosts"]) if cfg else set()
 
@@ -361,7 +366,8 @@ def with_group(text, group, entries, note, needs_user):
     m = re.search(r"(?m)^groups:[ \t]*(#.*)?$", text)
     if not m:
         if re.search(r"(?m)^groups:", text):
-            die("roster.yml has `groups:` written inline (e.g. groups: {}); switch it to block style first")
+            raise Problem(ROSTER_ERROR, "roster.yml has `groups:` written inline (e.g. groups: {}); switch it to "
+                                        "block style first")
         text = text.rstrip("\n") + "\n\ngroups:\n"
         m = re.search(r"(?m)^groups:[ \t]*(#.*)?$", text)
         if m is None:
@@ -387,8 +393,8 @@ def write_discovered(cfg_path, group, entries, note, needs_user, today):
 
     try:
         load_config_text(new_text, path)          # refuse to write a file roster can't read back (checked in memory)
-    except SystemExit as e:
-        die(f"the merged roster.yml didn't validate, nothing written ({e})")
+    except InventoryError as e:
+        die(f"the merged roster.yml didn't validate, nothing written ({e.message})")
     def wrote(backup=None):
         if backup is not None:
             say(f"backup       {backup}")
@@ -491,9 +497,6 @@ def batches(ips, step):
         yield from (some[i:i + step] for i in range(0, len(some), step))
 
 
-class ScanFailed(Exception):
-    pass
-
 
 def unique(base, taken):
     name, n = base, 2
@@ -538,8 +541,6 @@ class Scan:
                     self.on_progress(self.done, self.total)
         except ScanFailed as e:
             self.error = str(e)
-        except SystemExit as e:                 # parse_nmap_xml's die()
-            self.error = die_message(e)
         except Exception as e:
             self.error = f"{type(e).__name__}: {e}"
         with self.lock:

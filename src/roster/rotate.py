@@ -32,10 +32,10 @@ from typing import Any
 
 from . import boxkeys, keyline, sshconfig, winhost
 from .authorized import add_key_script, remove_key_script
-from .common import die, die_message, program_argv, replace_file, ssh_path
+from .common import die, program_argv, replace_file, ssh_path
 from .config import load_config
 from .context import Context, current
-from .errors import NEW_KEY_REFUSED
+from .errors import NEW_KEY_REFUSED, InventoryError
 from .hosts import is_windows
 from .keyline import key_ere
 from .rotation import (
@@ -184,8 +184,8 @@ def group(cfg: dict[str, Any]) -> list[tuple[Context, dict[str, Any]]]:
         label = name or f"unnamed ({path})"
         try:
             other = load_config(path)
-        except SystemExit as e:
-            die(f"the Inventory {label}'s roster.yml doesn't load ({die_message(e)}): its "
+        except InventoryError as e:
+            die(f"the Inventory {label}'s roster.yml doesn't load ({e.message}): its "
                 "Hosts may hold this Box's key too, and a rotation does every Inventory that shares the key at once. "
                 "Fix it, then run roster setup --rotate")
         theirs = {Path(h["key_file"]) for h in other["hosts"].values() if h["enroll"]} | {other["key"]}

@@ -12,6 +12,7 @@ import pytest
 from roster import inventories, named
 from roster.cli import main
 from roster.config import load_config
+from roster.errors import InventoryError
 from roster.example import EXAMPLE_CONFIG
 
 SSH_CONFIG = """\
@@ -303,9 +304,9 @@ def test_no_hosts_loads_only_in_the_blank_shape(write_config, text):
     """C2: 0 Hosts is valid only as `roster init --blank` writes it (groups:, each group with hosts:, no unknown
     keys), so a typo, an empty file or another YAML file still fails to load, and sync keeps this Box's ssh config."""
     path = write_config(text)
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(path)
-    assert "defines no hosts" in str(e.value.code)
+    assert "defines no hosts" in e.value.message
 
 
 @pytest.mark.parametrize("text", ["groups:\n  servers:\n    hosts:\n", "groups:\n  a:\n    hosts: {}\n  b:\n    hosts:\n",
@@ -317,9 +318,9 @@ def test_the_blank_shape_loads(write_config, text):
 
 @pytest.mark.parametrize("text", ["- a\n- b\n", "just text\n", "42\n"])
 def test_a_roster_yml_that_isnt_a_mapping_is_a_clean_error(write_config, text):
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(write_config(text))
-    assert "isn't a mapping" in str(e.value.code)
+    assert "isn't a mapping" in e.value.message
 
 
 def test_sync_keeps_this_boxs_ssh_config_when_a_pull_brings_an_empty_looking_file(write_config, isolated, capsys):
@@ -372,7 +373,7 @@ def test_serve_says_why_it_cannot_make_one(serve, isolated, tmp_path):
                          ({"how": "blank", "folder": "relative/dir"}, -32602),
                          ({"how": "blank"}, -32602),
                          ({"how": "file", "folder": folder}, -32602),
-                         ({"how": "blank", "folder": folder, "name": "bad name"}, -32602),
+                         ({"how": "blank", "folder": folder, "name": "bad name"}, 142),
                          ({"how": "blank", "folder": folder + "\nkey_path: x"}, -32602),
                          ({"how": "file", "source": str(bad) + "\n", "folder": folder}, -32602)]:
         err = s.call("inventory.create", params)["error"]
@@ -533,17 +534,14 @@ def test_a_clone_under_way_stops_on_cancel_and_leaves_nothing(serve, isolated, t
 
 
 def test_two_first_runs_at_once_make_one(serve, isolated):
-    """L3: a lock in roster's config folder: while one inventory.create is under way (any serve), another is 170."""
-    from roster.common import user_config_dir
-    lock = user_config_dir() / "inventory.create.lock"
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text("4242\n")
-    err = serve().call("inventory.create", {"how": "blank", "folder": str(isolated["home"] / "infra")})["error"]
+    """L3: while one inventory.create is under way (any serve: here this process holds the first-run lock), another
+    is 170."""
+    from roster import boxlock
+    with boxlock.first_run():
+        err = serve().call("inventory.create", {"how": "blank", "folder": str(isolated["home"] / "infra")})["error"]
     assert err["code"] == 170 and "another" in err["message"]
     assert not (isolated["home"] / "infra").exists()
-    lock.unlink()
     assert "result" in serve().call("inventory.create", {"how": "blank", "folder": str(isolated["home"] / "infra")})
-    assert not lock.exists()
 
 
 def test_a_taken_name_says_how_out(serve, isolated, write_config):
@@ -560,5 +558,6 @@ def test_a_taken_name_says_how_out(serve, isolated, write_config):
     s = serve()
     folder = str(isolated["home"] / "infra")
     err = s.call("inventory.create", {"how": "blank", "folder": folder})["error"]
-    assert err["code"] == -32602 and err["data"]["field"] == "name" and "another name" in err["data"]["fix"]
+    assert err["code"] == 141 and err["data"]["field"] == "name" and "another name" in err["data"]["fix"]
+
     assert s.call("inventory.create", {"how": "blank", "folder": folder, "name": "infra2"})["result"]["name"] == "infra2"

@@ -452,10 +452,11 @@ def test_dry_run_shows_the_line_it_replaces(capsys, write_config):
 
 def test_a_sync_that_exits_after_the_write_is_only_said(write_config):
     from roster import addhost, edit
+    from roster.common import die
     p = write_config(YML)
 
     def dies():
-        raise SystemExit("error: providers didn't load")
+        die("providers didn't load")
     r = addhost.add(p, "lab", "nas", {"ip": edit.check_new("ip", "10.0.0.50")}, sync=dies)
     assert r["sync"]["ok"] is False and "nas" in p.read_text()
 

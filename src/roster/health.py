@@ -10,7 +10,7 @@ from typing import Any, NamedTuple, cast
 
 from . import __version__, boxkeys, changes, named, providers, rotation, store
 from .common import find_program
-from .config import inventory_problem, load_config
+from .config import load_config
 from .context import Context, current, ssh_index_file
 from .errors import (
     KEY_TOO_OLD,
@@ -19,6 +19,7 @@ from .errors import (
     SAME_ADDRESS,
     SAME_HOST_NAME,
     SAME_MACHINE,
+    InventoryError,
     Problem,
 )
 from .hosts import placeholder_user
@@ -67,19 +68,18 @@ def askpass_state(channel, error=None):
     return True, "the askpass channel is open"
 
 
-def check_box(path, cfg, error, askpass, api_version=None):
-    """Every check, in SECTIONS order. PATH: roster.yml's path (None when none was found); CFG: the loaded Inventory
-    (serve's last good one even while the file doesn't load), or None; ERROR: why roster.yml doesn't load now, or
-    None; ASKPASS: (ok, message) for the askpass channel (askpass_state). API_VERSION: serve's, for the roster
-    line."""
+def check_box(cfg, error, askpass, api_version=None):
+    """Every check, in SECTIONS order. CFG: the loaded Inventory (serve's last good one even while the file doesn't
+    load), or None; ERROR: the InventoryError roster.yml doesn't load with now, or None; ASKPASS: (ok, message) for
+    the askpass channel (askpass_state). API_VERSION: serve's, for the roster line."""
     out = [roster_version(api_version)]
-    out += inventory(path, cfg, error)
+    out += inventory(cfg, error)
     out += ssh(cfg)
     out += vault(cfg)
     out.append(check("askpass", "ok" if askpass[0] else "error", askpass[1],
                      None if askpass[0] else "restart `roster serve` (the app's :source does not); if it fails "
                                              "again, its stderr says why"))
-    out += repo(path if cfg or error is None else None)
+    out += repo(cfg["path"] if cfg else None)
     return out
 
 
@@ -90,12 +90,11 @@ def roster_version(api_version):
 
 # ---------------------------------------------------------------- Inventory
 
-def inventory(path, cfg, error):
+def inventory(cfg, error):
     out = []
     if error is not None:
-        p = inventory_problem(error, path)
         last = "; the app shows the last good one" if cfg else ""
-        out.append(check("inventory", "error", f"roster.yml doesn't load: {error}{last}", p.fix, "E1"))
+        out.append(check("inventory", "error", f"roster.yml doesn't load: {error.message}{last}", error.fix, "E1"))
     if cfg is None:
         return out
     hosts = list(cfg["hosts"].values())
@@ -422,7 +421,7 @@ def overlaps(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     for x in others:
         try:
             theirs = machines(x.name, load_config(x.path))
-        except SystemExit:                  # its words could quote a line of that file: they stay with it
+        except InventoryError:              # its words could quote a line of that file: they stay with it
             out.append(warning("doesnt_load", f"{x.name}'s roster.yml doesn't load, so it isn't compared with this one",
                                other=x.name))
             continue

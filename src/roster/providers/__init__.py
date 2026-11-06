@@ -10,7 +10,8 @@ import sys
 import threading
 from pathlib import Path
 
-from ..common import die, filter_env, program_argv, run, run_filtered, say, time_left, user_config_dir
+from ..common import filter_env, program_argv, run, run_filtered, say, time_left, user_config_dir
+from ..errors import InventoryError
 from ..hosts import NO_PASSWORD  # noqa: F401 (providers.NO_PASSWORD: what its callers read)
 from .problems import (  # noqa: F401 (what a provider or plugin raises: providers.ItemNotFound, ...)
     AlreadyLoggedIn,
@@ -704,11 +705,11 @@ def setup_providers(cfg):
     for name, conf in ((cfg or {}).get("providers") or {}).items():
         conf = conf or {}
         if not isinstance(conf, dict):
-            die(f"providers.{name} in roster.yml must be a mapping")
+            raise InventoryError(f"providers.{name} in roster.yml must be a mapping")
         PROVIDER_SETTINGS[name] = {**conf, "_base": base}     # _base: where relative paths in it start
         if conf.get("command"):
             if why := bad_name(name):
-                die(why)
+                raise InventoryError(why)
             add_template_provider(name, conf)
 
 

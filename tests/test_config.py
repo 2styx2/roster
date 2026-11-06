@@ -4,6 +4,7 @@ import pytest
 
 from roster.common import user_config_dir
 from roster.config import find_config, load_config, matches, selected
+from roster.errors import InventoryError
 from roster.example import EXAMPLE_CONFIG
 
 
@@ -25,12 +26,12 @@ def test_example_config_loads_and_cascades(write_config):
 
 def test_duplicate_host_is_an_error(write_config):
     p = write_config("groups:\n  a: {user: u, hosts: {h1: 10.0.0.1}}\n  b: {user: u, hosts: {h1: 10.0.0.2}}\n")
-    with pytest.raises(SystemExit, match="listed twice"):
+    with pytest.raises(InventoryError, match="listed twice"):
         load_config(p)
 
 
 def test_missing_user_is_an_error(write_config):
-    with pytest.raises(SystemExit, match="no user"):
+    with pytest.raises(InventoryError, match="no user"):
         load_config(write_config("groups:\n  a:\n    hosts:\n      h1: 10.0.0.1\n"))
 
 
@@ -86,6 +87,6 @@ def test_shell_hooks_is_passed_through_as_set_on_a_host_group_or_defaults(write_
 
 
 def test_shell_hooks_must_be_true_or_false(write_config):
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(write_config("groups:\n  lab: {shell_hooks: yes-please, user: u, hosts: {a1: 10.0.0.1}}\n"))
     assert "shell_hooks: must be true or false" in str(e.value)

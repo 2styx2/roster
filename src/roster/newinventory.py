@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from .common import NAME_RE, die_message, end_group, find_program, git_program, program_argv
+from .common import NAME_RE, end_group, find_program, git_program, program_argv
 from .config import HIDDEN_PATH, load_config_text, shown_path
 from .errors import (
     CLONE_FAILED,
@@ -25,6 +25,7 @@ from .errors import (
     NOT_AN_INVENTORY,
     ROSTER_ERROR,
     SSH_CONFIG_UNREADABLE,
+    InventoryError,
     Problem,
 )
 
@@ -85,8 +86,8 @@ def name_new(path, name, use=False):
         inventories.add(name, path)
         if use:
             inventories.use(name)
-    except SystemExit as e:
-        raise Problem(ROSTER_ERROR, f"{path} was made, but couldn't be named {name}: {die_message(e)}",
+    except Problem as e:
+        raise Problem(ROSTER_ERROR, f"{path} was made, but couldn't be named {name}: {e.message}",
                       {"path": str(path)}, fix=f"`roster inv add NAME {path}` in a terminal") from None
 
 
@@ -154,9 +155,9 @@ def read_source(src, what, limit, code, fix):
 def checked(path, text, what):
     try:
         load_config_text(text, path)
-    except SystemExit as e:
+    except InventoryError as e:
         raise Problem(NOT_AN_INVENTORY, f"{what} doesn't load, so nothing was written: "
-                                        f"{die_message(e)}", {"path": str(path)},
+                                        f"{e.message}", {"path": str(path)},
                       fix=f"fix {what} first (`roster -c {what} check --box` says why)") from None
 
 
@@ -431,9 +432,9 @@ def imported(path, source):
         line = host_line(n, h)
         try:
             load_config_text("\n".join([*head, line]) + "\n", path)
-        except SystemExit as e:
-            why = die_message(e).replace(f"host {n!r}", "").strip(" :")
-            skipped.append(f"{n} ({why})")
+        except InventoryError as e:
+            skipped.append(f"{n} ({e.why if e.host == n else e.message})")
+
             continue
         lines.append(line)
         kept.append(n)

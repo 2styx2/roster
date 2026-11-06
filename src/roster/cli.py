@@ -34,7 +34,6 @@ from .claude import write_claude_files
 from .cliparser import Parser, build_parser, command_parser
 from .common import (
     die,
-    die_message,
     find_program,
     never_look_in_the_current_folder,
     not_reviewed,
@@ -49,16 +48,15 @@ from .common import (
 from .config import (
     HIDDEN_PATH,
     access_label,
-    find_config,
-    inventory_problem,
     load_config,
     matches,
+    open_inventory,
     selected,
     shown_path,
 )
 from .context import Context, current, ssh_index_file
 from .discover import cmd_discover
-from .errors import KEY_FILE, ROSTER_ERROR, UNKNOWN_HOST, Exit, Problem, problem_of
+from .errors import KEY_FILE, UNKNOWN_HOST, Exit, InventoryError, Problem
 from .example import EXAMPLE_CONFIG
 from .hosts import PLACEHOLDER_USER, is_windows, placeholder_user
 from .keyline import key_ere
@@ -94,13 +92,13 @@ def cmd_init(args):
             made = newinventory.create(path, how, value)
             say_made(made, value)
     except Problem as e:
-        refuse(e, tag=False)
+        refuse(e)
     if args.name:
         from . import named
         try:
             newinventory.name_new(path, args.name)
         except Problem as e:
-            refuse(e, tag=False)
+            refuse(e)
         say(f"named {args.name}: {named.path_of(args.name)} (`roster --inv {args.name} setup` sets this Box up "
             f"for it; `roster inv use {args.name}` makes it the active one)")
     return 0
@@ -176,7 +174,7 @@ def locked(what, contexts=None):
     try:
         held.__enter__()
     except Problem as e:
-        raise Exit(e, tag=False) from None     # busy's message has its [205]
+        raise Exit(e) from None
     try:
         yield
     finally:
@@ -643,7 +641,7 @@ def cmd_mesh(cfg, args):
     try:
         r = mesh.run(cfg, apply=not args.dry_run, rotate=args.rotate or (), say=say)
     except Problem as e:
-        raise Exit(e, tag=False) from None
+        raise Exit(e) from None
     show_mesh(r)
     if args.dry_run:
         say("dry run: nothing was changed")
@@ -752,18 +750,8 @@ def check_host(name, config=None, inv=None, as_json=False):
     exit."""
     from . import askpass, diagnose
 
-    def inventory():
-        path = None
-        try:
-            path = find_config(config, inv)
-            cfg = load_config(path)
-            setup_providers(cfg)
-            return cfg
-        except SystemExit as e:
-            raise inventory_problem(die_message(e), path) from None
-
     with askpass.Channel(diagnose.askpass_lookup) as channel:
-        result = diagnose.check_host(name, inventory, channel)
+        result = diagnose.check_host(name, lambda: open_inventory(config, inv), channel)
     if as_json:
         from . import jsondocs
         jsonout.emit(jsondocs.CheckHostDoc.model_validate(result))
@@ -784,19 +772,17 @@ def cmd_check_box(args):
     """`roster check --box`: this Box's health, a section at a time (as serve's box.check). Nothing connects."""
     from . import askpass, diagnose, health
 
-    path = cfg = error = None
+    cfg = error = None
     try:
-        path = find_config(args.config, args.inv)
-        cfg = load_config(path)
-        setup_providers(cfg)
-    except SystemExit as e:
-        error = die_message(e)
+        cfg = open_inventory(args.config, args.inv)
+    except InventoryError as e:
+        error = e
     try:
         with askpass.Channel(diagnose.askpass_lookup) as ch:
             channel = health.askpass_state(ch)
     except OSError as e:
         channel = health.askpass_state(None, e)
-    checks = health.check_box(path, cfg, error, channel)
+    checks = health.check_box(cfg, error, channel)
     errors = sum(c["level"] == "error" for c in checks)
     if args.json:
         from . import jsondocs
@@ -1241,7 +1227,7 @@ def cmd_revoke_all(args):
         again = f"roster --inv {name}" if name else f"roster -c {shlex.quote(str(path))}"
         try:
             cfg = load_config(path)
-        except SystemExit:                  # its words could quote a line of that file: they stay with it
+        except InventoryError:              # its words could quote a line of that file: they stay with it
             say(f"  {label}: its roster.yml doesn't load or isn't there ({path}) - not revoked (`{again} check "
                 "--box` says why)")
             problems += 1
@@ -1534,9 +1520,9 @@ def walk_vault(cfg, args, listed, seen):
                             dry_run=args.dry_run):
                 continue
             next_steps(name)
-        except SystemExit as e:
+        except (Problem, Exit) as e:            # said, and the walk goes on to the next item
             failed += 1
-            print(str(e.code), file=sys.stderr, flush=True)
+            print(str((Exit(e) if isinstance(e, Problem) else e).code), file=sys.stderr, flush=True)
             continue
         seen["items"].setdefault(r["provider"], {})[r["id"]] = r["name"]
         if args.setup or (ask(f"Set {name} up now (setup for it alone, then check)? [y/N] ") or "").lower() \
@@ -1936,16 +1922,15 @@ def main(argv=None):
         print(aliases.warning(alias), file=sys.stderr, flush=True)
     try:
         return _main(argv) or 0
-    except Problem as e:                 # inventory() raises one with --json: the error as JSON on stderr
+    except Problem as e:
         if not Parser.json_errors:
-            raise Exit(e, tag=False) from None     # a clean error, as die's (the Box-wide lock's 205 from the Mesh)
+            raise Exit(e) from None
         jsonout.fail(e.code, e.message, e.fix)
         return 1
-    except SystemExit as e:
-        if not (Parser.json_errors and isinstance(e.code, str)):
+    except Exit as e:
+        if not Parser.json_errors:
             raise
-        p = problem_of(e)
-        jsonout.fail(p.code, p.message, p.fix)
+        jsonout.fail(e.problem.code, e.problem.message, e.problem.fix)
         return 1
     except KeyboardInterrupt:
         return 130
@@ -1957,18 +1942,6 @@ def main(argv=None):
         providers.JSON_OUTPUT = False
         Parser.typed, Parser.root = [], None
 
-
-def inventory(args):
-    """roster.yml, loaded. With --json, one that isn't found or doesn't load is a Problem (code 1, with its fix)."""
-    path = None
-    try:
-        path = find_config(args.config, args.inv)
-        return load_config(path)
-    except SystemExit as e:
-        if not getattr(args, "json", False):
-            raise
-        p = problem_of(e)                           # an unknown --inv is 140; anything else, a roster.yml that won't load
-        raise (p if p.code != ROSTER_ERROR else inventory_problem(p.message, path)) from None
 
 
 def _main(argv=None):
@@ -2041,13 +2014,13 @@ def _main(argv=None):
         return serve(args.config, args.inv)  # loads roster.yml itself, so a bad one becomes an API error
     if args.cmd == "vault" and args.vault_cmd == "status":
         try:
-            cfg = load_config(find_config(args.config, args.inv))
-        except SystemExit:
+            cfg = open_inventory(args.config, args.inv)
+        except InventoryError:
             cfg = None                              # no roster.yml yet: still list what's available
-        setup_providers(cfg)
+            setup_providers(cfg)
         return cmd_vault_status(cfg, args)
-    cfg = inventory(args)
-    setup_providers(cfg)
+    cfg = open_inventory(args.config, args.inv)
+
     if args.cmd == "vault":
         return {"reveal": cmd_reveal, "sync": cmd_vault_sync}[args.vault_cmd](cfg, args)
     if args.cmd == "check" and args.auth:

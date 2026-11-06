@@ -37,6 +37,7 @@ from . import (
     __version__,
     addhost,
     askpass,
+    boxlock,
     boxsync,
     diagnose,
     discover,
@@ -60,7 +61,7 @@ from .common import (
     not_reviewed,
     ssh_path,
 )
-from .config import find_config, inventory_problem, load_config, load_inventory, locate_config
+from .config import find_config, load_config, load_inventory, locate_config
 from .context import current
 from .errors import (
     ALREADY_SIGNED_OUT,
@@ -96,14 +97,16 @@ from .errors import (
     UNKNOWN_HOST,
     UNKNOWN_INVENTORY,
     UNSUPPORTED,
+    Exit,
+    InventoryError,
     Problem,
-    die_message,
     problem_of,
     sign_in_problem,
     vault_problem,
 )
 from .providers import PROVIDERS, setup_providers
-from .servemodels import HostGetParams, HostsListResult, InventoryError, NoParams, dump
+from .servemodels import HostGetParams, HostsListResult, NoParams, dump
+from .servemodels import InventoryError as InventoryErrorDoc
 from .sshops import (
     fingerprint,
     not_in_ssh_config,
@@ -232,8 +235,11 @@ class State:
         only_vault_unlock_unlocks()
         try:
             self.path = find_config(config_arg, inv)
-        except SystemExit as e:
-            self.error = die_message(e)
+        except InventoryError as e:
+            self.error = e
+            return
+        except Problem as e:                # an unknown --inv, or inventories.json that doesn't load: no roster.yml
+            self.error = InventoryError(e.message)
             return
         self.reload()
 
@@ -244,8 +250,8 @@ class State:
             self.digest, self.noticed = file_digest(self.path), None
             try:
                 inv = load_inventory(self.path)
-            except SystemExit as e:
-                self.error = die_message(e)
+            except InventoryError as e:
+                self.error = e
                 return
             cfg = inv.as_config()
             self.inv, self.cfg, self.path, self.error = inv, cfg, cfg["path"], None
@@ -255,7 +261,7 @@ class State:
         """Why roster.yml doesn't load right now (code 1, with its line), or None."""
         if self.error is None:
             return None
-        p = inventory_problem(self.error, self.path)
+        p = InventoryError(self.error.message, self.error.path, self.error.line)
         p.data = {**(p.data or {}), **versions()}
         return p
 
@@ -337,7 +343,8 @@ def hosts_list(state, params):
     state.inventory()
     inv, error = state.inv, broken(state)
     return dump(HostsListResult(hosts=list(inv.hosts.values()), groups=dict(inv.groups),
-                                error=None if error is None else InventoryError.model_validate(error)))
+                                error=None if error is None else InventoryErrorDoc.model_validate(error)))
+
 
 
 @method("host.get", locks=settled_waits, lane="quick")
@@ -686,9 +693,9 @@ def box_check(state, params):
     if state.path is not None and error is None:
         try:
             load_config(state.path)
-        except SystemExit as e:
-            error = die_message(e)
-    checks = health.check_box(state.path, state.cfg, error, health.askpass_state(state.askpass), API_VERSION)
+        except InventoryError as e:
+            error = e
+    checks = health.check_box(state.cfg, error, health.askpass_state(state.askpass), API_VERSION)
     return {"checks": checks, "ok": not any(c["level"] == "error" for c in checks), **versions()}
 
 
@@ -745,11 +752,12 @@ def inventory_create(state, params):
     and the answer is `5`.
 
     Params: `{how: blank|file|repo, folder, source?, name?}`: `folder` absolute (or `~/...`); `source` the
-        `roster.yml` to copy (`file`) or the git URL (`repo`); `name` when the folder's name is taken (`-32602` with
-        `data.field: "name"`)
+        `roster.yml` to copy (`file`) or the git URL (`repo`); `name` when the folder's name is taken (`141` with
+        `data.field: "name"`) or isn't one (`142`, as `roster inv add` refuses it)
     Result: `{path, name, how, hosts, restart: true}`: `path` the new `roster.yml`, `hosts` how many it has; the
         app restarts serve (as after `inventories.use`)
-    Errors: 5, 140, 143, 170-172, 174
+    Errors: 5, 140-143, 170-172, 174
+
     Since: API 28
     """
     from . import newinventory
@@ -780,21 +788,17 @@ def inventory_create(state, params):
         except ValueError as e:
             raise Problem(INVALID_PARAMS, f"params.source: {e}") from None
     name = params.get("name") or folder.name
-    if not isinstance(name, str) or named.name_problem(name):
-        raise Problem(INVALID_PARAMS, f"params.name: {named.name_problem(str(name))}")
-    inv = named.load()
-    taken = [x.name for x in inv.inventories if named.same_name(x.name, name)]
-    if taken:                                       # the field to change, for the app's form
-        raise Problem(INVALID_PARAMS, f"params.name: there's already an Inventory named '{taken[0]}'",
-                       {"field": "name", "name": taken[0]},
-                       fix="give it another name, or pick another folder (its name names the Inventory); "
-                           f"`roster inv remove {taken[0]}` forgets the other one")
+    if not isinstance(name, str):
+        raise Problem(INVALID_PARAMS, "params.name must be a string")
     target = folder / "roster.yml"
+    inventories.check_new(name, target, exists=False)   # data.field: the app's form asks for another name
+
     stop = threading.Event()
     on_cancel(stop.set)                             # the app's Cancel: a clone under way stops
-    with state.lock, first_run_lock():              # one at a time on this Box, whichever serve
+    with state.lock, boxlock.first_run():
         if state.path is not None:                  # another create got here first
             raise Problem(INVENTORY_THERE, f"this roster serve made {state.path} already", {"path": str(state.path)})
+        made_meanwhile()
         made = newinventory.create(target, how, source, interactive=False, stop=stop)
         state.path = made.path.resolve()            # this serve makes no other
         newinventory.name_new(made.path, name, use=True)
@@ -803,48 +807,15 @@ def inventory_create(state, params):
             "restart": True}
 
 
-FIRST_RUN_STALE = 600       # s: a lock older than this is a serve that died making one, and is taken over
-
-
-@contextmanager
-def first_run_lock():
-    """inventory.create one at a time on this Box: a lock file in roster's config folder (O_EXCL), so two app windows
-    (or two serves) can't both make and name one (#417 L3). After it's taken, an Inventory found now means one was
-    made meanwhile: 170."""
-    from .common import user_config_dir
-    lock = user_config_dir() / "inventory.create.lock"
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    for _ in range(2):
-        try:
-            fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            break
-        except FileExistsError:
-            try:
-                old = time.time() - lock.stat().st_mtime > FIRST_RUN_STALE
-            except OSError:
-                old = True
-            if not old:
-                raise Problem(INVENTORY_THERE, "another first run is making an Inventory on this Box right now",
-                               {"lock": str(lock)}, fix="wait for it, then Retry") from None
-            lock.unlink(missing_ok=True)
-    else:
-        raise Problem(INVENTORY_THERE, "another first run is making an Inventory on this Box right now",
-                       {"lock": str(lock)}, fix="wait for it, then Retry")
+def made_meanwhile():
+    """inventory.create, holding the first-run lock: an Inventory found now was made meanwhile (170)."""
     try:
-        os.write(fd, f"{os.getpid()}\n".encode())
-        os.close(fd)
-        try:
-            found = locate_config(None, None)
-        except SystemExit:
-            found = None
-        if found is not None and Path(found).exists():
-            raise Problem(INVENTORY_THERE, f"an Inventory was made meanwhile: {found}", {"path": str(found)},
-                           fix="Retry: roster starts on it")
-        yield
-    finally:
-        lock.unlink(missing_ok=True)
-
-
+        found = locate_config(None, None)
+    except Problem:                         # none found (or inventories.json doesn't load): nothing was made
+        return
+    if found.exists():
+        raise Problem(INVENTORY_THERE, f"an Inventory was made meanwhile: {found}", {"path": str(found)},
+                      fix="Retry: roster starts on it")
 
 
 # ---------------------------------------------------------------- editing: Pending changes
@@ -1045,7 +1016,7 @@ def sync_box(state):
     same way (boxsync.py, T153)."""
     def loaded():
         if state.error is not None:
-            raise Problem(ROSTER_ERROR, f"roster.yml doesn't load ({state.error})")
+            raise Problem(ROSTER_ERROR, f"roster.yml doesn't load ({state.error.message})")
         return state.inventory()
     with state.lock:                        # one writer of the ssh config at a time; a write already holds it
         return boxsync.sync(loaded)
@@ -1663,8 +1634,8 @@ def write_failed(what, path, e):
     words)."""
     if isinstance(e, Problem):
         return e
-    if isinstance(e, SystemExit):
-        return Problem(ROSTER_ERROR, f"{what}: {die_message(e)}")
+    if isinstance(e, Exit):
+        return Problem(ROSTER_ERROR, f"{what}: {e.problem.message}")
     return Problem(ROSTER_ERROR, f"{what}: couldn't write {path} ({failure_text(e)})")
 
 
@@ -2887,8 +2858,8 @@ def discover_add(state, params):
     old_text = edit.read_text(repo.path)
     try:
         new_text, added = discover.added_text(old_text, group, picked, scan.targets, today, set(cfg["hosts"]))
-    except SystemExit as e:
-        raise Problem(INVALID_EDIT, die_message(e)) from None
+    except Problem as e:
+        raise Problem(INVALID_EDIT, e.message) from None
     after = edit.load_text(repo.path, new_text)
     names = [a["name"] for a in added]
     if any(after["hosts"].get(n) != cfg["hosts"].get(n) for n in cfg["hosts"]) or \
@@ -3196,7 +3167,7 @@ def respond(state, req):
             with claimed(state, spec.claims(params), method):
                 started_running()
                 result = {"jsonrpc": "2.0", "id": rid, "result": spec.fn(state, params)}
-    except (Problem, SystemExit) as e:          # a die() inside roster: its message (and code) is the answer
+    except (Problem, Exit) as e:                # a die() inside roster: its message (and code) is the answer
         result = error_response(rid, problem_of(e))
     except Exception as e:
         if _doing.what:                         # never its words: they might hold the password

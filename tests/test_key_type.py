@@ -4,6 +4,7 @@ still log in by key. ed25519 stays the default, with its paths unchanged."""
 import pytest
 
 from roster.config import load_config
+from roster.errors import InventoryError
 
 FIPS_YML = """\
 box_name: ws1
@@ -49,19 +50,19 @@ def test_key_type_spellings(write_config, written, canonical):
 
 @pytest.mark.parametrize("bad", ["dsa", "rsa-2048", "ecdsa-128", "rsa-99999", "true", "[ecdsa]"])
 def test_an_unknown_key_type_fails_at_load_naming_the_allowed_values(write_config, bad):
-    with pytest.raises(SystemExit, match=r"host 'fips-02': key_type: .* \(ed25519, ecdsa .*rsa"):
+    with pytest.raises(InventoryError, match=r"host 'fips-02': key_type: .* \(ed25519, ecdsa .*rsa"):
         load_config(write_config(FIPS_YML.replace("key_type: rsa", f"key_type: {bad}")))
 
 
 def test_a_bad_key_type_on_a_group_without_hosts_or_at_the_top_still_fails(write_config):
-    with pytest.raises(SystemExit, match="group 'empty': key_type"):
+    with pytest.raises(InventoryError, match="group 'empty': key_type"):
         load_config(write_config(FIPS_YML + "  empty:\n    key_type: dsa\n    hosts: {}\n"))
-    with pytest.raises(SystemExit, match="^error: key_type: .dsa."):
+    with pytest.raises(InventoryError, match="^key_type: .dsa."):
         load_config(write_config("key_type: dsa\n" + FIPS_YML))
 
 
 def test_a_host_listed_in_two_groups_names_both(write_config):
-    with pytest.raises(SystemExit, match="listed twice.*'web'.*'fips-lab'"):
+    with pytest.raises(InventoryError, match="listed twice.*'web'.*'fips-lab'"):
         load_config(write_config(FIPS_YML.replace("fips-01: 10.0.0.5", "web-01: 10.0.0.5")))
 
 
@@ -72,7 +73,7 @@ def test_key_path_names_the_boxs_key_and_the_others_sit_beside_it(write_config, 
 
 
 def test_key_path_cant_be_another_types_key_file(write_config):
-    with pytest.raises(SystemExit, match="key_path.*roster_ecdsa.*ecdsa"):
+    with pytest.raises(InventoryError, match="key_path.*roster_ecdsa.*ecdsa"):
         load_config(write_config("key_path: ~/.ssh/roster_ecdsa\n" + FIPS_YML))
 
 

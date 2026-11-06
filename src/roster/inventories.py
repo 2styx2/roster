@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any, NamedTuple, cast
 
 from . import sshconfig
-from .common import die
 from .context import FILES, Context
+from .errors import BAD_INVENTORY, INVENTORY_TAKEN, InventoryError, Problem
 from .named import (
     Inventories,
     Named,
@@ -38,28 +38,41 @@ class Added(NamedTuple):
     mesh_kept: str | None = None    # why the Box's mesh.json stayed with the unnamed Inventory (when it's there)
 
 
-def add(name: str, path: str | Path) -> Added:
-    """Name the roster.yml at PATH. The first one named becomes the active one. Its known_hosts starts as the one every
-    roster.yml on this Box shared before named Inventories, so no host key the Box trusted is trusted anew; the Box's
-    unnamed Mesh state moves to it when it's this file's (take_mesh_state)."""
+def check_new(name: str, path: str | Path, exists: bool = True) -> Path:
+    """Why NAME can't name the roster.yml at PATH (with EXISTS false, one that isn't there yet): Problem BAD_INVENTORY
+    (a bad name or path) or INVENTORY_TAKEN (the name, the file or its folder is another named Inventory's), with
+    data.field: name or path. Returns PATH, resolved."""
     why = name_problem(name or "")
     if why:
-        die(why)
+        raise Problem(BAD_INVENTORY, why, {"field": "name"})
     path = Path(path).expanduser().resolve()
     if SSH_UNSAFE.search(str(path)):
-        die(f"{path!r} has a quote or a control character in it - move or rename the file")
-    if not path.is_file():
-        die(f"no file at {path} - give the path of the Inventory's roster.yml")
-    inv = load()
-    for x in inv.inventories:
+        raise Problem(BAD_INVENTORY, f"{path!r} has a quote or a control character in it - move or rename the file",
+                      {"field": "path"})
+    if exists and not path.is_file():
+        raise Problem(BAD_INVENTORY, f"no file at {path} - give the path of the Inventory's roster.yml",
+                      {"field": "path"})
+    for x in load().inventories:
         if same_name(x.name, name):
-            die(f"there's already an Inventory named '{x.name}' ({x.path}) - pick another name, or "
-                f"`roster inv remove {x.name}` first")
+            raise Problem(INVENTORY_TAKEN, f"there's already an Inventory named '{x.name}' ({x.path}) - pick another "
+                                           f"name, or `roster inv remove {x.name}` first", {"field": "name"},
+                          fix=f"give it another name, or `roster inv remove {x.name}` first")
         if same_file(x.path, path):
-            die(f"{path} is already the Inventory '{x.name}'")
+            raise Problem(INVENTORY_TAKEN, f"{path} is already the Inventory '{x.name}'", {"field": "path"})
         if same_file(x.path.parent, path.parent):
-            die(f"{path.parent} already holds the Inventory '{x.name}', and ROSTER.md is written next to each "
-                "roster.yml: keep each Inventory in its own folder")
+            raise Problem(INVENTORY_TAKEN, f"{path.parent} already holds the Inventory '{x.name}', and ROSTER.md is "
+                                           "written next to each roster.yml: keep each Inventory in its own folder",
+                          {"field": "path"})
+    return path
+
+
+def add(name: str, path: str | Path) -> Added:
+    """Name the roster.yml at PATH (check_new's Problems). The first one named becomes the active one. Its known_hosts
+    starts as the one every roster.yml on this Box shared before named Inventories, so no host key the Box trusted is
+    trusted anew; the Box's unnamed Mesh state moves to it when it's this file's (take_mesh_state)."""
+    path = check_new(name, path)
+    inv = load()
+
     first = inv.active is None
     inv = Inventories(active=name if first else inv.active, inventories=(*inv.inventories, Named(name=name, path=path)))
     save(inv)
@@ -96,7 +109,7 @@ def take_mesh_state(name: str, path: Path) -> tuple[Path | None, str | None]:
     from .config import load_config
     try:
         cfg = load_config(path)
-    except SystemExit:
+    except InventoryError:
         return None, "this file doesn't load, so it can't be compared with the Mesh state"
     m = cast("Any", mesh)                       # mesh.py has no types yet
     st = m.read_state(Context())

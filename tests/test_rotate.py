@@ -9,6 +9,7 @@ import sys
 import pytest
 
 from roster.cli import main
+from roster.errors import InventoryError
 
 LAB_YML = """\
 box_name: ws1
@@ -417,7 +418,7 @@ def test_key_max_age_is_on_by_default_and_takes_days_weeks_years_or_off(write_co
 @pytest.mark.parametrize("bad", ["soon", "0d", "-5", "1.5y", "[1]"])
 def test_a_bad_key_max_age_stops_the_load(write_config, bad):
     from roster.config import load_config
-    with pytest.raises(SystemExit, match="key_max_age: .* isn't an age"):
+    with pytest.raises(InventoryError, match="key_max_age: .* isn't an age"):
         load_config(write_config(f"key_max_age: {bad}\n" + LAB_YML))
 
 
@@ -688,9 +689,10 @@ def test_the_lock_holds_across_processes_and_a_dead_ones_is_free(isolated, tmp_p
         assert p.stdout is not None
         said = p.stdout.readline().split()
         assert said[:1] == ["held"]
-        with pytest.raises(Problem, match=rf"\[205\] another roster run \(setup --rotate, pid {said[1]}\)"):
+        with pytest.raises(Problem, match=rf"^another roster run \(setup --rotate, pid {said[1]}\)") as e:
             with boxlock.held("setup"):
                 pass
+        assert e.value.code == 205
     finally:
         go.touch()                                  # it ends holding the lock: the OS lets go of it
         p.wait(timeout=30)
@@ -702,7 +704,7 @@ def test_the_lock_holds_across_processes_and_a_dead_ones_is_free(isolated, tmp_p
 @pytest.mark.parametrize("bad", ["11y", "3651d", "99999999999y"])
 def test_key_max_age_is_at_most_ten_years(write_config, bad):
     from roster.config import load_config
-    with pytest.raises(SystemExit, match="key_max_age: .*(isn't an age|at most 10y)"):
+    with pytest.raises(InventoryError, match="key_max_age: .*(isn't an age|at most 10y)"):
         load_config(write_config(f"key_max_age: {bad}\n" + LAB_YML))
 
 

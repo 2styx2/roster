@@ -5,13 +5,14 @@ import os
 import re
 import socket
 from pathlib import Path
-from typing import Any, Literal, overload
+from typing import Any, Literal, NoReturn, overload
 from urllib.parse import urlparse
 
 import yaml
 
 from . import boxkeys, context, keyline
 from .common import NAME_RE, die, oneline, typed_token, user_config_dir
+from .errors import PATH_NOT_REPEATED, InventoryError
 from .hosts import vault_login
 from .resources import load_resources
 from .sshconfig import SSH_UNSAFE
@@ -32,6 +33,30 @@ HTTPS_PORTS, HTTP_PORTS = (443, 8443), (80, 8000, 8008, 8080, 8888)
 
 
 # ---------------------------------------------------------------- config
+
+def bad(message: str) -> NoReturn:
+    """Stop loading roster.yml: MESSAGE names the key; parse_inventory adds the file."""
+    raise InventoryError(message)
+
+
+def bad_host(name: str, why: str, sep: str = ": ") -> NoReturn:
+    """bad() for Host NAME: `host 'NAME'` SEP WHY, with WHY on its own as the error's `why`."""
+    raise InventoryError(f"host {name!r}{sep}{why}", host=name, why=why)
+
+
+
+def open_inventory(config: Any = None, inv: str | None = None) -> dict[str, Any]:
+    """The roster.yml this run uses (find_config: CONFIG is -c, INV --inv), loaded, its vault providers set up.
+    InventoryError when it isn't found or doesn't load; an unknown INV is named.unknown's error."""
+    from .providers import setup_providers
+    path = find_config(config, inv)
+    cfg = load_config(path)
+    try:
+        setup_providers(cfg)
+    except InventoryError as e:
+        raise e.at(shown_or_hidden(path)) from None
+    return cfg
+
 
 def find_config(arg, inv=None):
     """The roster.yml this run uses: `-c PATH` (ARG), `--inv NAME` (INV), $ROSTER_CONFIG, ./roster.yml, the active named
@@ -61,7 +86,7 @@ def locate_config(arg: Any, inv: str | None = None) -> Path:
         return active
     if (user_config_dir() / "roster.yml").exists():
         return user_config_dir() / "roster.yml"
-    die("no roster.yml found here or in ~/.config/roster/ - make one (`roster init --blank`, or `roster init "
+    bad("no roster.yml found here or in ~/.config/roster/ - make one (`roster init --blank`, or `roster init "
         "--inventory file:PATH|repo:URL|ssh-config`), or pass -c PATH / set ROSTER_CONFIG")
 
 
@@ -93,16 +118,9 @@ def shown_path(path) -> str | None:
     return None
 
 
-def inventory_problem(message, path=None):
-    """roster.yml at PATH didn't load (catalog row 1), as a Problem. data: path (or None) and, for a YAML error, the
-    line it's at."""
-    from .errors import INVENTORY_ERROR, PATH_NOT_REPEATED, Problem
-    m = re.search(r"line (\d+)", message)
-    shown = shown_path(path) if path else None      # a token typed as -c PATH is never repeated
-    data = {"path": (shown or PATH_NOT_REPEATED) if path else None} | ({"line": int(m.group(1))} if m else {})
-    where = (shown or f"the roster.yml at {HIDDEN_PATH}" if path else "roster.yml") + (f" at line {data['line']}" if m else "")
-    return Problem(INVENTORY_ERROR, message, data, fix=f"fix {where}, or make one if there's none yet: "
-                                                     "`roster init --blank` (`roster init --help`: the others)")
+def shown_or_hidden(path) -> str:
+    """PATH as an InventoryError carries it: shown_path's, or PATH_NOT_REPEATED."""
+    return shown_path(path) or PATH_NOT_REPEATED
 
 
 def load_inventory(path):
@@ -111,9 +129,11 @@ def load_inventory(path):
     path = Path(path).expanduser().resolve()
     if not path.exists():
         if shown is None:
-            die(f"no config file at {HIDDEN_PATH} - check -c PATH (or $ROSTER_CONFIG); make one: "
-                "roster -c PATH init --blank (or --inventory file:PATH|repo:URL|ssh-config)")
-        die(f"{shown} not found - make one: roster -c {shown} init --blank (or --inventory file:PATH|repo:URL|ssh-config)")
+            raise InventoryError(f"no config file at {HIDDEN_PATH} - check -c PATH (or $ROSTER_CONFIG); make one: "
+                                 "roster -c PATH init --blank (or --inventory file:PATH|repo:URL|ssh-config)",
+                                 PATH_NOT_REPEATED)
+        raise InventoryError(f"{shown} not found - make one: roster -c {shown} init --blank (or --inventory "
+                             "file:PATH|repo:URL|ssh-config)", shown)
     return parse_inventory(path.read_text(), path)
 
 
@@ -123,24 +143,43 @@ def load_config(path: Any) -> dict[str, Any]:
     return load_inventory(path).as_config()
 
 
-def load_config_text(text, path):
-    """load_config of TEXT as if it were PATH's (an edit checked before it's written): no file is read or written."""
+def load_config_text(text, path, named=None):
+    """load_config of TEXT as if it were PATH's (an edit checked before it's written): no file is read or written.
+    NAMED: what its messages call the file (PATH)."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    return parse_inventory(text, Path(path).expanduser().resolve()).as_config()
+    return parse_inventory(text, Path(path).expanduser().resolve(), named).as_config()
 
 
-def parse_inventory(text, path):
-    """roster.yml's TEXT (read from PATH, or as it would be there), loaded and checked into an Inventory. A check
-    the code below doesn't make the models do, and their error is roster's own (die), naming the key."""
+def parse_inventory(text, path, named=None):
+    """roster.yml's TEXT (read from PATH, or as it would be there), loaded and checked into an Inventory;
+    InventoryError naming the key, the file (as NAMED, else PATH) and, for bad YAML, the line otherwise."""
+    try:
+        return checked_inventory(text, path, named or path)
+    except InventoryError as e:
+        raise e.at(shown_or_hidden(path)) from None
+
+
+def yaml_line(e: yaml.YAMLError) -> int | None:
+    """The line PyYAML's message for E names first (its context's, when it prints that one), counted from 1."""
+    if not isinstance(e, yaml.MarkedYAMLError):
+        return None
+    context_shown = e.context_mark is not None and (
+        e.problem is None or e.problem_mark is None or str(e.context_mark) != str(e.problem_mark))
+    mark = e.context_mark if context_shown else e.problem_mark
+    return None if mark is None else mark.line + 1
+
+
+def checked_inventory(text, path, named):
+
     from pydantic import ValidationError  # only when roster.yml is loaded: it costs more than roster's start
 
     from .models import Inventory, problem
     try:
         raw = yaml.safe_load(text)
     except yaml.YAMLError as e:
-        die(f"{path} is not valid YAML:\n{e}")
+        raise InventoryError(f"{named} is not valid YAML:\n{e}", line=yaml_line(e)) from None
     if raw is not None and not isinstance(raw, dict):
-        die(f"{path} isn't a mapping of settings and groups: at its top level, so it isn't a roster.yml")
+        bad(f"{named} isn't a mapping of settings and groups: at its top level, so it isn't a roster.yml")
     raw = raw or {}
     defaults = {**HOST_DEFAULTS, **(raw.get("defaults") or {})}
     names = web_login_names(raw)
@@ -153,7 +192,7 @@ def parse_inventory(text, path):
     for where, layer in (("defaults", raw.get("defaults") or {}),
                          *((f"group {g!r}", x or {}) for g, x in (raw.get("groups") or {}).items())):
         if isinstance(layer, dict) and "seen_as" in layer:
-            die(f"{where}: seen_as: goes on a Host (the addresses it connects from), not on a group or defaults")
+            bad(f"{where}: seen_as: goes on a Host (the addresses it connects from), not on a group or defaults")
     for gname, group in (raw.get("groups") or {}).items():
         group = group or {}
         gset = {k: v for k, v in group.items() if k not in GROUP_ONLY}
@@ -162,28 +201,28 @@ def parse_inventory(text, path):
             hname = str(hname)
             h = {"ip": h} if isinstance(h, str) else (h or {})
             if not NAME_RE.match(hname):
-                die(f"bad host name {hname!r} (use letters, digits, . _ -)")
+                bad(f"bad host name {hname!r} (use letters, digits, . _ -)")
             if hname in hosts:
-                die(f"host {hname!r} is listed twice (in groups {hosts[hname]['group']!r} and {str(gname)!r}): a Host "
-                    "is in one group")
+                bad_host(hname, f"is listed twice (in groups {hosts[hname]['group']!r} and {str(gname)!r}): a Host "
+                         "is in one group", " ")
             m = {**defaults, **gset, **h, "name": hname, "group": str(gname)}
             if not m.get("ip"):
-                die(f"host {hname!r} has no ip")
+                bad_host(hname, "has no ip", " ")
             m["ip"] = str(m["ip"]).strip()
             layers = [h, gset, raw.get("defaults") or {}]        # most specific first
             m["ssh"] = resolve_ssh(hname, layers)
             if not m["ssh"]["user"]:
-                die(f"host {hname!r} has no user (set it on the host, its group, or defaults)")
+                bad_host(hname, "has no user (set it on the host, its group, or defaults)", " ")
             if re.search(r"\s", m["ip"] + m["ssh"]["user"]):
-                die(f"host {hname!r}: ip/user can't contain spaces")
+                bad_host(hname, "ip/user can't contain spaces")
             for field, value in (("ip", m["ip"]), ("user", m["ssh"]["user"])):
                 if SSH_UNSAFE.search(str(value)):   # written into the ssh config: a quote or newline would break it
-                    die(f"host {hname!r}: {field} can't hold a quote or a control character (it goes into this "
+                    bad_host(hname, f"{field} can't hold a quote or a control character (it goes into this "
                         "Box's ssh config)")
             if "%" in str(m["ssh"]["user"]):     # older OpenSSH (Windows' own) takes a %% in User literally
-                die(f"host {hname!r}: user can't hold a % (it goes into this Box's ssh config)")
+                bad_host(hname, "user can't hold a % (it goes into this Box's ssh config)")
             if "%" in m["ip"] and not IPV6_ZONE.match(m["ip"]):     # a % is an IPv6 zone's, or none (written %%)
-                die(f"host {hname!r}: ip can't hold a % except as an IPv6 address's zone (fe80::1%eth0)")
+                bad_host(hname, "ip can't hold a % except as an IPv6 address's zone (fe80::1%eth0)")
             # user/port/auth stay as the resolved SSH login, so code that predates ssh: blocks keeps working
             m["user"], m["port"], m["auth"] = m["ssh"]["user"], m["ssh"]["port"], m["ssh"]["auth"]
             m["login"] = {"user": as_user(first(layers, "user")), "auth": as_auth(first(layers, "auth"))}  # for services
@@ -192,12 +231,12 @@ def parse_inventory(text, path):
             m["reviewed"] = bool(m["reviewed"])
             m["mesh"] = first(layers, "mesh")
             if m["mesh"] is not None and not isinstance(m["mesh"], bool):
-                die(f"host {hname!r}: mesh: must be true or false")
+                bad_host(hname, "mesh: must be true or false")
             m["os"] = host_os(hname, first(layers, "os"))
-            m["key_type"] = key_type(f"host {hname!r}: key_type", first(layers, "key_type")) or box_type
+            m["key_type"] = key_type("key_type", first(layers, "key_type"), hname) or box_type
             # The app sends this Host's shell its hook line; roster only checks it.
             if m.get("shell_hooks") is not None and not isinstance(m["shell_hooks"], bool):
-                die(f"host {hname!r}: shell_hooks: must be true or false")
+                bad_host(hname, "shell_hooks: must be true or false")
             m["mesh_dir"] = mesh_dir(hname, first(layers, "mesh_dir"))
             m["sudo"] = sudo_auth(hname, layers)
             m["seen_as"] = addresses_seen(hname, h.get("seen_as"))
@@ -206,21 +245,21 @@ def parse_inventory(text, path):
             m["description"] = m["description"] or oneline(m.get("notes"))   # old name for it
             hosts[hname] = m
     if not hosts and not blank_shape(raw):
-        die(f"{path} defines no hosts")
+        bad(f"{named} defines no hosts")
     box = keyline.box_name(str(raw.get("box_name") or socket.gethostname().split(".")[0]))
     key_path = str(raw.get("key_path") or f"~/.ssh/{boxkeys.parse(box_type).file_name}")
     if SSH_UNSAFE.search(key_path):         # it goes into the ssh config: a quote or newline would add directives
-        die(f"{path}: key_path can't hold a quote or a control character (a newline, a tab)")
+        bad(f"{named}: key_path can't hold a quote or a control character (a newline, a tab)")
     key = Path(os.path.expanduser(key_path))
     for m in hosts.values():                # each Host's key file, for its own key type (boxkeys)
         m["key_file"] = str(boxkeys.key_file(key, box_type, m["key_type"]))
         if m["key_type"] != box_type and Path(m["key_file"]) == key:
-            die(f"{path}: key_path ({key_path}) is where roster keeps the {m['key_type']} key that {m['name']} uses "
+            bad(f"{named}: key_path ({key_path}) is where roster keeps the {m['key_type']} key that {m['name']} uses "
                 f"(key_type: {m['key_type']}): point key_path at another file")
     try:                                    # how old this Box's key may get before check --box warns
         max_age = boxkeys.parse_age(raw.get("key_max_age", boxkeys.MAX_AGE))
     except ValueError as e:
-        die(f"{path}: key_max_age: {e}")
+        bad(f"{named}: key_max_age: {e}")
     try:
         return Inventory.model_validate(
             {"path": path, "box": box, "tag": keyline.tag(box), "tag_re": keyline.tag_re(box), "key": key,
@@ -231,18 +270,20 @@ def parse_inventory(text, path):
              "providers": providers_conf(raw), "provider_dirs": list(raw.get("provider_dirs") or []),
              "rate_limited": rate_limited(raw.get("rate_limited")), "key_max_age": max_age})
     except ValidationError as e:
-        die(f"{path}: {problem(e)}")
+        bad(f"{named}: {problem(e)}")
 
 
-def key_type(where, v):
+def key_type(where, v, host=None):
     """A `key_type:` (T239, decision Q200) as its canonical name (boxkeys), or None when nothing sets it. An unknown
-    one stops the load, naming WHERE and the allowed values."""
+    one stops the load, naming WHERE (of Host HOST) and the allowed values."""
     if v is None:
         return None
     try:
         return boxkeys.parse(v).name
     except ValueError as e:
-        die(f"{where}: {e}")
+        if host is not None:
+            bad_host(host, f"{where}: {e}")
+        bad(f"{where}: {e}")
 
 
 OS_VALUES = ("windows", "posix")
@@ -254,7 +295,7 @@ def host_os(hname, v):
     if v is None:
         return None
     if not isinstance(v, str) or v.strip().lower() not in OS_VALUES:
-        die(f"host {hname!r}: os: must be windows or posix (unset is posix), not {oneline(v)!r}")
+        bad_host(hname, f"os: must be windows or posix (unset is posix), not {oneline(v)!r}")
     return v.strip().lower()
 
 
@@ -265,7 +306,7 @@ def rate_limited(v):
     if v is None:
         return []
     if not isinstance(v, list):
-        die("rate_limited: must be a list of networks, e.g. [10.0.0.0/8, 192.0.2.7]")
+        bad("rate_limited: must be a list of networks, e.g. [10.0.0.0/8, 192.0.2.7]")
     nets = []
     for entry in v:
         text = str(entry).strip()
@@ -283,7 +324,7 @@ def rate_limited(v):
                 why += f"; a network's address has no host bits set ({net}, not {text})"
             except ValueError:
                 pass
-        die(why)
+        bad(why)
     return nets
 
 
@@ -299,7 +340,7 @@ def mesh_dir(hname, v):
         return None
     v = str(v).strip()
     if not MESH_DIR_RE.match(v) or "/../" in v + "/" or "/./" in v + "/":
-        die(f"host {hname!r}: mesh_dir: must be an absolute path of letters, digits and . _ - / (it goes into ssh's "
+        bad_host(hname, f"mesh_dir: must be an absolute path of letters, digits and . _ - / (it goes into ssh's "
             f"config as it is), not {v!r}")
     return v.rstrip("/")
 
@@ -313,7 +354,7 @@ def addresses_seen(hname, v):
         try:
             ipaddress.ip_network(str(x).strip(), strict=False)
         except ValueError:
-            die(f"host {hname!r}: seen_as: must be IP addresses or networks (10.0.9.1, 10.0.9.0/24), one or a list, "
+            bad_host(hname, f"seen_as: must be IP addresses or networks (10.0.9.1, 10.0.9.0/24), one or a list, "
                 f"not {x!r}")
         out.append(str(x).strip())
     return out
@@ -331,7 +372,7 @@ def load_links(raw, hosts, groups):
     if links is None:
         return []
     if not isinstance(links, list):
-        die("links: must be a list of { from: HOST-OR-GROUP, to: HOST-OR-GROUP, both: true|false, via: HOST }")
+        bad("links: must be a list of { from: HOST-OR-GROUP, to: HOST-OR-GROUP, both: true|false, via: HOST }")
     out, hops = [], {}                         # hops: (source, peer) -> (entry, the Host it goes through)
 
     def members(name):
@@ -339,31 +380,31 @@ def load_links(raw, hosts, groups):
     for n, link in enumerate(links, 1):
         where = f"links: entry {n}"
         if not isinstance(link, dict) or set(map(str, link)) - set(LINK_KEYS) or not {"from", "to"} <= set(link):
-            die(f"{where} must be a mapping with from: and to: (and both: true for two-way, via: HOST for a hop), "
+            bad(f"{where} must be a mapping with from: and to: (and both: true for two-way, via: HOST for a hop), "
                 "nothing else")
         ends = {}
         for k in ("from", "to"):
             name = str(link[k]) if link[k] is not None else ""
             if name in hosts and name in groups:
-                die(f"{where}: {name!r} is both a Host and a group - rename one of them")
+                bad(f"{where}: {name!r} is both a Host and a group - rename one of them")
             if name not in hosts and name not in groups:
                 near = sorted(x for x in (*hosts, *groups) if name and (name in x or x in name))[:5]
-                die(f"{where}: {k}: {name!r} isn't a Host or a group in roster.yml"
+                bad(f"{where}: {k}: {name!r} isn't a Host or a group in roster.yml"
                     + (f" (did you mean: {', '.join(near)})" if near else ""))
             ends[k] = name
         if ends["from"] == ends["to"]:
-            die(f"{where} links {ends['from']!r} to itself - a group's Hosts reach each other with mesh: true")
+            bad(f"{where} links {ends['from']!r} to itself - a group's Hosts reach each other with mesh: true")
         both = link.get("both", False)
         if not isinstance(both, bool):
-            die(f"{where}: both: must be true or false")
+            bad(f"{where}: both: must be true or false")
         via = None if link.get("via") is None else str(link["via"])
         if via is not None:
             if via in groups and via not in hosts:
-                die(f"{where}: via: {via!r} is a group: a Link goes through one Host")
+                bad(f"{where}: via: {via!r} is a group: a Link goes through one Host")
             if via not in hosts:
-                die(f"{where}: via: {via!r} isn't a Host in roster.yml")
+                bad(f"{where}: via: {via!r} isn't a Host in roster.yml")
             if via in (ends["from"], ends["to"]):
-                die(f"{where}: via: {via!r} is an end of the Link itself")
+                bad(f"{where}: via: {via!r} is an end of the Link itself")
             for a in members(ends["from"]):
                 for b in members(ends["to"]):
                     for pair in {(a, b), (b, a)} if both else {(a, b)}:
@@ -371,7 +412,7 @@ def load_links(raw, hosts, groups):
                             continue
                         seen = hops.setdefault(pair, (n, via))
                         if seen[1] != via:
-                            die(f"links: entries {seen[0]} and {n} send {pair[0]} -> {pair[1]} through different "
+                            bad(f"links: entries {seen[0]} and {n} send {pair[0]} -> {pair[1]} through different "
                                 f"Hosts ({seen[1]}, {via})")
         out.append({"from": ends["from"], "to": ends["to"], "both": both, "via": via})
     return out
@@ -407,11 +448,6 @@ def port_number(v):
     return int(v)
 
 
-def check_port(where, v):
-    if port_number(v) is None:
-        die(f"{where}: bad port {v!r} (use a number from 1 to 65535)")
-    return int(v)
-
 
 def service_port(v):
     if port_number(v) is None:
@@ -424,15 +460,18 @@ def ssh_block(hname, layer):
     if blk is None:
         return {}
     if not isinstance(blk, dict) or set(blk) - set(SSH_KEYS):
-        die(f"host {hname!r}: ssh: must be a mapping with only {', '.join(SSH_KEYS)}")
+        bad_host(hname, f"ssh: must be a mapping with only {', '.join(SSH_KEYS)}")
     return blk
 
 
 def resolve_ssh(hname, layers):
     """SSH login. Per layer (host, group, defaults) its ssh: block beats its plain user/auth/port."""
     flat = [x for layer in layers for x in (ssh_block(hname, layer), layer)] + [HOST_DEFAULTS]
-    return {"port": check_port(f"host {hname!r} ssh", first(flat, "port")),
-            "user": as_user(first(flat, "user")), "auth": as_auth(first(flat, "auth"))}
+    given = first(flat, "port")
+    port = port_number(given)
+    if port is None:
+        bad_host(hname, f"ssh: bad port {given!r} (use a number from 1 to 65535)", " ")
+    return {"port": port, "user": as_user(first(flat, "user")), "auth": as_auth(first(flat, "auth"))}
 
 
 def sudo_auth(hname, layers):
@@ -443,11 +482,11 @@ def sudo_auth(hname, layers):
     if blk is None:
         return None
     if not isinstance(blk, dict) or set(map(str, blk)) != {"auth"}:
-        die(f"host {hname!r}: sudo: must be a mapping with only auth (a vault reference, e.g. "
+        bad_host(hname, "sudo: must be a mapping with only auth (a vault reference, e.g. "
             "sudo: {auth: \"bw:esx-02 sudo\"})")
     ref = as_auth(blk["auth"]) or ""
     if not vault_login(ref):
-        die(f"host {hname!r}: sudo: auth must be a vault reference (bw:ITEM, op:ITEM, ...), not {ref!r}")
+        bad_host(hname, f"sudo: auth must be a vault reference (bw:ITEM, op:ITEM, ...), not {ref!r}")
     return ref
 
 
@@ -472,7 +511,7 @@ def resolve_services(hname, m, layers, names=None):
     for layer in reversed(layers):
         svcs = layer.get("services") or {}
         if not isinstance(svcs, dict):
-            die(f"host {hname!r}: services: must be a mapping of name: port or name: {{port, url, user, auth}}")
+            bad_host(hname, "services: must be a mapping of name: port or name: {port, url, user, auth}")
         for name, v in svcs.items():
             name = str(name)
             try:
@@ -555,14 +594,14 @@ def web_login_names(raw):
     """roster.yml's `web_login_names:`, a team's own names for roster's login types: {own name: type}."""
     names = raw.get("web_login_names") or {}
     if not isinstance(names, dict):
-        die("web_login_names: must be a mapping of your own name: one of " + ", ".join(WEB_LOGINS))
+        bad("web_login_names: must be a mapping of your own name: one of " + ", ".join(WEB_LOGINS))
     out = {}
     for k, v in names.items():
         k = str(k)
         if k in WEB_LOGINS:
-            die(f"web_login_names: {k!r} is already one of roster's login types - pick another name for it")
+            bad(f"web_login_names: {k!r} is already one of roster's login types - pick another name for it")
         if str(v) not in WEB_LOGINS:
-            die(f"web_login_names: {k!r} maps to {v!r}, which isn't a login type - use one of {', '.join(WEB_LOGINS)}")
+            bad(f"web_login_names: {k!r} maps to {v!r}, which isn't a login type - use one of {', '.join(WEB_LOGINS)}")
         out[k] = str(v)
     return out
 

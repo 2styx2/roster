@@ -22,8 +22,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from .context import Context, current
-from .errors import BOX_BUSY, Problem
+from .context import Context, current, user_config_dir
+from .errors import BOX_BUSY, INVENTORY_THERE, Problem
 
 WAIT = 5.0                  # seconds a second run waits before it refuses
 POLL = 0.1
@@ -69,9 +69,24 @@ def holder(path: Path) -> str:
 
 
 def busy(path: Path) -> Problem:
-    return Problem(BOX_BUSY, f"[{BOX_BUSY}] another roster run ({holder(path)}) is changing Hosts: wait for it",
+    return Problem(BOX_BUSY, f"another roster run ({holder(path)}) is changing Hosts: wait for it",
                    fix="wait for that run to finish, then run this again (one run at a time changes this Box's "
                        "keys and Mesh entries on the Hosts)")
+
+
+@contextmanager
+def first_run():
+    """serve's inventory.create one at a time on this Box, whichever serve (#417 L3), so two app windows can't both
+    make and name one: a lock file in roster's config folder, as the Inventories' own. Refuses at once (170) while
+    another holds it."""
+    path = user_config_dir() / "inventory.create.lock"
+    _take(path, "inventory.create", 0, lambda _: Problem(
+        INVENTORY_THERE, "another first run is making an Inventory on this Box right now", {"lock": str(path)},
+        fix="wait for it, then Retry"))
+    try:
+        yield
+    finally:
+        _release(str(path))
 
 
 @contextmanager
@@ -104,7 +119,7 @@ def locking(what: str, unless=None):
     return wrap
 
 
-def _take(path: Path, what: str, wait: float) -> None:
+def _take(path: Path, what: str, wait: float, refused=busy) -> None:
     me = threading.get_ident()
     key = str(path)
     deadline = time.monotonic() + wait
@@ -125,7 +140,8 @@ def _take(path: Path, what: str, wait: float) -> None:
                     return
                 f.close()
         if time.monotonic() >= deadline:
-            raise busy(path)
+            raise refused(path)
+
         time.sleep(POLL)
 
 

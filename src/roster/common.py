@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import IO, Any, NoReturn, cast
 
 from .context import WINDOWS, current, ssh_dir, user_config_dir  # noqa: F401 (others import these from here)
-from .errors import ROSTER_ERROR, Exit, Problem, die_message  # noqa: F401 (die_message: common's callers use it)
+from .errors import ROSTER_ERROR, Exit, Problem
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")   # \Z: a trailing newline is not part of a name
 
@@ -343,17 +343,17 @@ def roster_command():
     return f"{shlex.quote(sys.executable)} -m roster"     # e.g. inside a uv venv that isn't on PATH
 
 
-def die(msg: str, code: int = ROSTER_ERROR, fix: str | None = None, data: dict[str, Any] | None = None,
-        tag: bool = True) -> NoReturn:
-    """Refuse: `error: MSG` on stderr and exit 1 (`error: [CODE] MSG` for a CODE of its own, unless not TAG:
-    errors.Exit). serve and --json answer with CODE, MSG, FIX and DATA."""
-    raise Exit(Problem(code, msg, data, fix=fix), tag)
+def die(msg: str, code: int = ROSTER_ERROR, fix: str | None = None, data: dict[str, Any] | None = None) -> NoReturn:
+    """Refuse: `error: MSG` on stderr and exit 1 (`error: [CODE] MSG` for a CODE of its own: errors.Exit). serve and
+    --json answer with CODE, MSG, FIX and DATA."""
+    raise Exit(Problem(code, msg, data, fix=fix))
 
 
-def refuse(problem: Problem, tag: bool = True) -> NoReturn:
-    """Refuse with a library's PROBLEM: `error: [CODE] MESSAGE (DETAILS) - FIX` on stderr (no `[CODE] ` unless TAG)
-    and exit 1; serve and --json answer with the Problem as it is."""
-    raise Exit(problem, tag, full=True)
+def refuse(problem: Problem) -> NoReturn:
+    """Refuse with a library's PROBLEM: `error: [CODE] MESSAGE (DETAILS) - FIX` on stderr and exit 1; serve and
+    --json answer with the Problem as it is."""
+    raise Exit(problem, full=True)
+
 
 
 # ---------------------------------------------------------------- what looks like a token, not a name

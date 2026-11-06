@@ -13,6 +13,7 @@ from conftest import FAKES, WINDOWS, stand_in_hosts
 from roster import sshops
 from roster.cli import main
 from roster.config import load_config
+from roster.errors import InventoryError
 
 CASCADE = """\
 defaults: { user: admin }
@@ -39,7 +40,7 @@ def test_os_cascades_from_defaults_to_group_to_host(write_config):
 
 @pytest.mark.parametrize("value", ["linux", "win", "true", "''"])
 def test_os_takes_only_windows_or_posix(write_config, value):
-    with pytest.raises(SystemExit, match="os: must be windows or posix"):
+    with pytest.raises(InventoryError, match="os: must be windows or posix"):
         load_config(write_config(f"defaults: {{ user: admin }}\ngroups:\n  a:\n    hosts:\n"
                                  f"      h1: {{ ip: 10.0.0.5, os: {value} }}\n"))
 
