@@ -77,20 +77,23 @@ AK_FILE = ('if [ "$(uname -s 2>/dev/null)" = VMkernel ]; then ESXI=1; f=/etc/ssh
            '>&2; exit 1; }; '
            'else ESXI=; f=$HOME/.ssh/authorized_keys; F="~/.ssh/authorized_keys"; fi; ')
 # All three rewrite authorized_keys as a new file next to it, then mv it into place: a run cut short leaves the old
-# file whole (rewritten in place, it could be left empty and lock everyone out). cp -p first keeps its mode and owner
-# (and ESXi's sticky bit, without which ESXi drops a file under /etc at the next boot).
+# file whole (rewritten in place, it could be left empty and lock everyone out). The new file's name is its own
+# (mktemp, in the same folder so the mv is a rename), removed if the run stops before the mv (a dropped link's HUP
+# too): two runs on one account at once (two Host entries for it, T258) never rename each other's file away. cp -p
+# first keeps its mode and owner (and ESXi's sticky bit, without which ESXi drops a file under /etc at the next boot).
 # The new file is a new inode: on an SELinux-enforcing Host it may lack the old one's label (ssh_home_t) and sshd
 # would refuse it. So the old file's context is copied (chcon --reference) before the mv, and restorecon sets the
 # policy's after it. Both only where they exist, and never fatal (ESXi's busybox, macOS, Alpine have neither).
 REPLACE_AK = ("[ -L \"$f\" ] && f=$(readlink -f \"$f\"); "
-              "rm -f \"$f.roster\"; cp -p \"$f\" \"$f.roster\"; ")
-KEEP_LABEL = ("{ command -v chcon >/dev/null 2>&1 && chcon --reference=\"$f\" \"$f.roster\" 2>/dev/null; } "
+              "t=$(mktemp \"$f.roster.XXXXXX\"); trap 'rm -f \"$t\"' EXIT; trap 'exit 1' HUP INT TERM; "
+              "cp -p \"$f\" \"$t\"; ")
+KEEP_LABEL = ("{ command -v chcon >/dev/null 2>&1 && chcon --reference=\"$f\" \"$t\" 2>/dev/null; } "
               "|| true; ")
 RELABEL = "{ command -v restorecon >/dev/null 2>&1 && restorecon -F \"$f\" 2>/dev/null; } || true; "
 # 600, as sshd wants it; on ESXi a file roster makes gets 1600 (its own keys file's mode) and an existing one keeps
 # its mode (cp -p), sticky bit and all
-KEY_MODE = ("if [ -z \"$ESXI\" ]; then chmod 600 \"$f.roster\"; "
-            "elif [ -n \"$NEW\" ]; then chmod 1600 \"$f.roster\"; fi; ")
+KEY_MODE = ("if [ -z \"$ESXI\" ]; then chmod 600 \"$t\"; "
+            "elif [ -n \"$NEW\" ]; then chmod 1600 \"$t\"; fi; ")
 # ESXi saves /etc to its boot bank hourly: saved now, so a reboot before then keeps the change
 BACKUP = "if [ -n \"$ESXI\" ] && [ -x /sbin/auto-backup.sh ]; then /sbin/auto-backup.sh >/dev/null 2>&1 || true; fi; "
 
@@ -119,9 +122,9 @@ def add_key_script(pub: str, tag_re: str, user: str, taken: str | None = None, o
              f"echo {keyline.OTHERS}; fi; ") if others else ""
     return (key_script_head(user) + "umask 077; d=${f%/*}; mkdir -p \"$d\"; NEW=; [ -f \"$f\" ] || NEW=1; "
             "touch \"$f\"; " + taken_guard(taken, own or this) + REPLACE_AK +
-            f"grep -v -E -- {shlex.quote(tag_re)} \"$f\" > \"$f.roster\" || true; "
-            f"printf '%s\\n' {shlex.quote(pub)} >> \"$f.roster\"; " + KEY_MODE + KEEP_LABEL +
-            "mv -f \"$f.roster\" \"$f\"; " + RELABEL + BACKUP +
+            f"grep -v -E -- {shlex.quote(tag_re)} \"$f\" > \"$t\" || true; "
+            f"printf '%s\\n' {shlex.quote(pub)} >> \"$t\"; " + KEY_MODE + KEEP_LABEL +
+            "mv -f \"$t\" \"$f\"; " + RELABEL + BACKUP +
             "[ -n \"$ESXI\" ] || chmod 700 \"$d\"; " + later + f"echo {keyline.OK}")
 
 
@@ -150,16 +153,16 @@ def retag_key_script(pub: str, user: str, taken: str | None = None, own: str | N
             # the tag is what changes; whatever follows it (a CR, a space) stays
             f"(\" \" $0) ~ re {{ s = $0; sub(/{keyline.AWK_TRAIL_LITERAL}/, \"\", s); w = substr($0, length(s) + 1); "
             f"sub(/ {keyline.ANY_TAG}$/, \" \" t, s); if (seen[s]++) next; $0 = s w }} {{ print }}' "
-            "\"$f\" > \"$f.roster\"; " +
-            KEY_MODE + KEEP_LABEL + "mv -f \"$f.roster\" \"$f\"; " + RELABEL + BACKUP + f"echo {keyline.OK}")
+            "\"$f\" > \"$t\"; " +
+            KEY_MODE + KEEP_LABEL + "mv -f \"$t\" \"$f\"; " + RELABEL + BACKUP + f"echo {keyline.OK}")
 
 
 def remove_key_script(tag_re: str, user: str) -> str:
     # each line it takes says its tag's name first (ROSTER_TAG NAME), so revoke can say when one had another name
     return (key_script_head(user) + f"[ -f \"$f\" ] || {{ echo {keyline.OK}; exit 0; }}; " + REPLACE_AK +
             f"grep -E -- {shlex.quote(tag_re)} \"$f\" | sed -n '{keyline.SED_NAMES}' || true; "
-            f"grep -v -E -- {shlex.quote(tag_re)} \"$f\" > \"$f.roster\" || true; " +
-            KEEP_LABEL + "mv -f \"$f.roster\" \"$f\"; " + RELABEL + BACKUP + f"echo {keyline.OK}")
+            f"grep -v -E -- {shlex.quote(tag_re)} \"$f\" > \"$t\" || true; " +
+            KEEP_LABEL + "mv -f \"$t\" \"$f\"; " + RELABEL + BACKUP + f"echo {keyline.OK}")
 
 
 def remove_script(tag_re: str, user: str) -> str:

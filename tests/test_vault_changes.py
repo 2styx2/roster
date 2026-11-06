@@ -400,6 +400,53 @@ def test_a_connection_dropped_before_ssh_spoke_is_the_rate_limiter(box, stderr):
     assert "wait about 4 minutes" in p.fix
 
 
+def test_a_dropped_connection_names_sshds_per_source_penalties_too(box):
+    """T258: OpenSSH 9.8+ shuts out an address its logins failed from (PerSourcePenalties) the same way: it closes
+    the connection before its banner. roster can't tell which it was, so 215 names both, and never says to retry."""
+    from roster import errors
+    answered("10.0.0.6")
+    p = explained(box, "new-01", "kex_exchange_identification: Connection closed by remote host")
+    assert p.code == errors.SSH_RATE_LIMITED
+    assert "PerSourcePenalties" in p.message + p.fix and "failed logins" in p.message
+    assert "new-01's admin" in p.fix
+
+
+def test_setups_password_login_to_a_host_that_closes_before_its_banner_is_215_after_one_try(box, write_config):
+    """T258: what setup's password login (paramiko) says when sshd penalises this Box ("Error reading SSH protocol
+    banner", seen on Fedora 43's OpenSSH): 215 with its fix, after one connection, never a loop of them."""
+    import socket
+    import threading
+
+    from roster import errors
+    from roster.sshops import password_exec
+    lsock = socket.create_server(("127.0.0.1", 0))
+    port = lsock.getsockname()[1]
+    accepted: list[int] = []
+
+    def penalise():                     # what a penalised source gets: accepted, then closed with no banner
+        lsock.settimeout(10)
+        try:
+            while True:
+                conn, _ = lsock.accept()
+                accepted.append(1)
+                conn.close()
+        except OSError:
+            pass
+    threading.Thread(target=penalise, daemon=True).start()
+    write_config(MAP.replace("{ip: 10.0.0.6,", f"{{ip: 127.0.0.1, port: {port},"))
+    f = current().known_hosts
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(f"[127.0.0.1]:{port} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOaS3dl0AXL2dbMfzMrfMRRr6sEqBkmvmbGqp2vRqtRH\n")
+    cfg = load_config(box["path"])
+    with pytest.raises(RuntimeError) as e:
+        password_exec(cfg["hosts"]["new-01"], "true", "pw", timeout=5)
+    lsock.close()
+    line = catchup.setup_failure(cfg, cfg["hosts"]["new-01"], str(e.value))
+    assert line.startswith(f"[{errors.SSH_RATE_LIMITED}] new-01 dropped the connection before ssh spoke"), line
+    assert "PerSourcePenalties" in line
+    assert len(accepted) == 1
+
+
 # ---------------------------------------------------------------- roster check: each FAIL's cause and its one fix
 
 @pytest.fixture

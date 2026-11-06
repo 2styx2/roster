@@ -35,7 +35,7 @@ from .common import (
 )
 from .context import current
 from .errors import MESH_KEY_PEER, MESH_WINDOWS, NOT_A_SOURCE, Problem
-from .hosts import is_windows
+from .hosts import AccountLocks, is_windows
 from .sshops import hk_name, not_reached, recorded_host_keys
 
 TAG = "roster-mesh"
@@ -421,15 +421,16 @@ replace() {  # replace PATH < content: a temp file next to it, then mv, so a run
              # its SELinux label (a new inode may lack ssh_home_t, and sshd refuses it): chcon --reference before
              # the mv, restorecon after, where they exist (never fatal: busybox, macOS, Alpine have neither)
   f=$1; [ -L "$f" ] && f=$(readlink -f "$f" 2>/dev/null || echo "$f")
-  n=$f.roster-new; rm -f "$n"
-  if { [ ! -f "$f" ] || cp -p "$f" "$n"; } && cat > "$n"; then
+  # the temp file's name is this run's own (mktemp beside PATH, so the mv is a rename): two runs on one account at once
+  # (two Host entries for it, T258) never rename each other's away
+  if n=$(mktemp "$f.roster-new.XXXXXX") && { [ ! -f "$f" ] || cp -p "$f" "$n"; } && cat > "$n"; then
     [ -f "$f" ] && command -v chcon >/dev/null 2>&1 && chcon --reference="$f" "$n" 2>/dev/null
     if mv -f "$n" "$f"; then
       command -v restorecon >/dev/null 2>&1 && restorecon -F "$f" 2>/dev/null
       return 0
     fi
   fi
-  rm -f "$n"; echo "ERROR couldn't rewrite $1"; return 1
+  [ -n "$n" ] && rm -f "$n"; echo "ERROR couldn't rewrite $1"; return 1
 }
 put() {  # put PATH LABEL < content: write it when it differs
   t=$(mktemp) || { echo "ERROR mktemp failed"; exit 1; }; cat > "$t"
@@ -1232,9 +1233,11 @@ def cut(cfg, name, workers=16, progress=None, stopped=None):
     st = load_state()
     owner, was, proven = owner_of(cfg), earlier_owner(cfg, st), set(st["members"])
 
+    turn = AccountLocks()                       # Host entries that share an account take turns (T258)
+
     def one(item):
         n, own = item
-        with deadline_at(at):
+        with deadline_at(at), turn(hosts[n]):
             if why := not_now(stopped):
                 return n, None, why
             lines, err = on_host(hosts[n], cut_script(hosts[n], name, own, owner, was if n in proven else ()),
@@ -1284,8 +1287,10 @@ def cut_all(cfg, workers=16, progress=None, stopped=None):
     at = current_deadline()
     owner, was = owner_of(cfg), earlier_owner(cfg, load_state())
 
+    turn = AccountLocks()                       # Host entries that share an account take turns (T258)
+
     def one(n):
-        with deadline_at(at):
+        with deadline_at(at), turn(hosts[n]):
             if why := not_now(stopped):
                 return n, None, why
             lines, err = on_host(hosts[n], cut_script(hosts[n], n, True, owner, was, everything=True), timeout=CUT_TIMEOUT)

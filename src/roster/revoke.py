@@ -16,7 +16,7 @@ from .common import die, program_argv, say
 from .config import load_config, selected
 from .context import Context, current, ssh_index_file
 from .errors import KEY_FILE, KEY_FILE_SHARED, InventoryError, Problem, tagged
-from .hosts import is_windows
+from .hosts import AccountLocks, account, is_windows
 
 
 def revoke_on(h: dict[str, Any], tag_re: str) -> object:
@@ -30,6 +30,25 @@ def revoke_on(h: dict[str, Any], tag_re: str) -> object:
     if done.why is None:
         other_names(h, tag_re, done.names)
     return done.why
+
+
+def in_turn(turn: AccountLocks) -> Any:
+    """revoke_on, with Host entries that share an account (TURN's locks) taking turns (T258). Once one took TAG_RE's
+    lines off that account, the others are done too: nothing of TAG_RE's is left there, and this Box's key no longer
+    logs in to try."""
+    done: dict[tuple[tuple[str, str], str], str] = {}
+
+    def run(h: dict[str, Any], tag_re: str) -> object:
+        with turn(h):
+            if first := done.get((account(h), tag_re)):
+                print(f"note: {h['name']}: the same account as {first} (its address and user), whose revoke took this "
+                      "Box's key lines there", file=sys.stderr, flush=True)
+                return None
+            why = revoke_on(h, tag_re)
+            if why is None:
+                done[(account(h), tag_re)] = h["name"]
+            return why
+    return run
 
 
 def other_names(h: dict[str, Any], tag_re: str, names: Iterable[str]) -> None:
@@ -108,7 +127,7 @@ def revoke_run(cfg: dict[str, Any], only: str | None, yes: bool) -> int:
     bad = 0
     gone: list[str] = []
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-        for h, why in zip(hosts, ex.map(revoke_on, hosts, [mine] * len(hosts)), strict=True):
+        for h, why in zip(hosts, ex.map(in_turn(AccountLocks()), hosts, [mine] * len(hosts)), strict=True):
             bad += why is not None
             revoke_line("", h, why)
             if why is None:
@@ -217,7 +236,8 @@ def revoke_all(yes: bool = False) -> int:
     bad = 0
     with locked("revoke --all", [Context(name) for _, name, _ in targets]), \
             cf.ThreadPoolExecutor(max([cfg["workers"] for _, cfg, _ in plan] or [1])) as ex:
-        whys = ex.map(revoke_on, [h for _, h, _ in jobs], [r for _, _, r in jobs])
+        # one account may be in two Inventories: one set of locks for them all
+        whys = ex.map(in_turn(AccountLocks()), [h for _, h, _ in jobs], [r for _, _, r in jobs])
         for (label, h, _), why in zip(jobs, whys, strict=True):
             bad += why is not None
             revoke_line(f"{label}: ", h, why)

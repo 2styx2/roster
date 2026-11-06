@@ -824,7 +824,7 @@ def test_rewriting_a_file_keeps_its_mode(net):
     mesh.run(net.cfg(), apply=True)
     assert "roster-mesh:orion-3" in ak.read_text()
     assert ak.stat().st_mode & 0o7777 == 0o640
-    assert not list(net.host("orion-2").rglob("*.roster-new"))
+    assert not list(net.host("orion-2").rglob("*.roster-new*"))
 
 
 def test_every_rewrite_on_a_host_is_relabelled_after_the_move():

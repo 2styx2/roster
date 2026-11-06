@@ -117,7 +117,7 @@ def test_an_interrupted_key_change_never_truncates_authorized_keys(tmp_path):
         subprocess.run(["sh", "-c", script], env={**os.environ, "HOME": str(tmp_path),
                                                   "PATH": f"{bin_}:{os.environ['PATH']}"}, capture_output=True)
         assert ak.read_text().startswith("ssh-rsa AAAAother someone@laptop\n")
-        assert not list(ak.parent.glob("*.roster"))
+        assert not list(ak.parent.glob("*.roster*"))
 
 
 @posix_shell
@@ -142,7 +142,7 @@ def selinux_tools(tmp_path, ok):
 
 def test_the_key_scripts_relabel_authorized_keys_after_the_move():
     for script in (add_key_script(PUB, TAG_RE, "admin"), remove_key_script(TAG_RE, "admin")):
-        mv = script.index('mv -f "$f.roster" "$f"')
+        mv = script.index('mv -f "$t" "$f"')
         assert script.index("chcon --reference=") < mv < script.index('restorecon -F "$f"')
 
 
@@ -159,7 +159,7 @@ def test_the_key_scripts_finish_with_or_without_selinux_tools(tmp_path, tools):
                                                               for t in ("chcon", "restorecon")))
         path = f"{tmp_path / 'bin'}:{path}"
         (tmp_path / "bin").mkdir()
-        for tool in ("sh", "grep", "cp", "mv", "rm", "mkdir", "touch", "chmod", "readlink", "printf"):
+        for tool in ("sh", "grep", "cp", "mv", "rm", "mkdir", "touch", "chmod", "readlink", "printf", "mktemp"):
             real = shutil.which(tool)
             if real and not os.path.exists(tmp_path / "bin" / tool):
                 os.symlink(real, tmp_path / "bin" / tool)

@@ -3,6 +3,7 @@ Kept apart from models.py, whose Pydantic roster's start never imports."""
 
 import ipaddress
 import re
+import threading
 from typing import Any
 
 NO_PASSWORD = ("agent", "key", "none")      # Logins with no password behind them (auth: agent, key, none)
@@ -43,6 +44,27 @@ def vault_login(ref: object) -> bool:
 def placeholder_user(h: dict[str, Any]) -> bool:
     """Has Host H no SSH user yet (discover's placeholder, or none)?"""
     return h["ssh"]["user"] in ("", PLACEHOLDER_USER)
+
+
+def account(h: dict[str, Any]) -> tuple[str, str]:
+    """The account Host H logs in to: its address and user, as roster.yml writes them (case aside). Two Host entries
+    with one account share its authorized_keys: two names for one machine, or a user several entries share (T258).
+    Not resolved: a name and an IP address of one machine are two accounts here."""
+    address = ip_of(h["ip"])
+    return (str(address) if address is not None else str(h["ip"]).casefold(), str(h["ssh"]["user"]).casefold())
+
+
+class AccountLocks:
+    """One lock per account (account()): threads that edit Hosts' authorized_keys at once take turns on Host entries
+    that share one, so neither's rewrite drops the other's line (T258). Hosts with their own accounts never wait."""
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._locks: dict[tuple[str, str], threading.Lock] = {}
+
+    def __call__(self, h: dict[str, Any]) -> threading.Lock:
+        with self._guard:
+            return self._locks.setdefault(account(h), threading.Lock())
 
 
 ZONE_RE = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,31}\Z")

@@ -17,7 +17,7 @@ from .common import die, plural, replace_file, say
 from .config import selected
 from .context import Context, current
 from .errors import KEY_FILE, UNKNOWN_HOST, VAULT_LOCKED_DURING_RUN, Exit, Problem, tagged
-from .hosts import provider_of
+from .hosts import AccountLocks, account, provider_of
 from .keyline import key_ere
 from .providers import get_secret
 from .sshops import record_fingerprints, ssh_ok, write_ssh_config
@@ -114,6 +114,8 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
     write_ssh_config(cfg)
 
     key_hosts = skip_left_out([h for h in hosts if h["enroll"] and h["name"] not in no_answer])
+    # T258: Host entries that share an account (one authorized_keys) take turns at every write below
+    turn = AccountLocks()
     pw_hosts = [h for h in hosts if not h["enroll"]]
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
         works = dict(zip([h["name"] for h in key_hosts], ex.map(ssh_ok, [h["name"] for h in key_hosts]), strict=True))
@@ -172,7 +174,8 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
     taken = cfg["tag_re"] if was not in (None, cfg["box"]) and not force else None
     if retag:
         def retag_one(h: dict[str, Any]) -> authorized.Done:
-            return authorized.retag(h, pub(h), taken, own)
+            with turn(h):
+                return authorized.retag(h, pub(h), taken, own)
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
             for h, done in zip(retag, ex.map(retag_one, retag), strict=True):
                 for w in done.warnings:
@@ -196,10 +199,13 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
 
         def tidy_on(name: str) -> list[str]:
             h = by_name[name]
-            if not override:
-                return authorized.drop_others(h, pub(h), box_key_re(cfg), why="the key works")
-            drop_re, unmatched[name] = cleanup_re(cfg, pub(h), tidy[name])
-            return authorized.drop_others(h, pub(h), drop_re, why="the key works")
+            with turn(h):
+                if not override:
+                    return authorized.drop_others(h, pub(h), mine_on(cfg, h, pub(h), box_key_re(cfg)),
+                                                  why="the key works")
+                drop_re, unmatched[name] = cleanup_re(cfg, pub(h), tidy[name])
+                return authorized.drop_others(h, pub(h), mine_on(cfg, h, pub(h), drop_re, tidy[name]),
+                                              why="the key works")
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
             futs = {ex.submit(tidy_on, n): n for n in tidy if n not in failed}
             for f in cf.as_completed(futs):
@@ -251,10 +257,13 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
     installed: list[str] = []
     if todo:
         say(f"installing   key on {len(todo)} hosts...")
+        def enroll_one(h: dict[str, Any]) -> list[str]:
+            with turn(h):
+                return enroll(h, pub(h), mine_on(cfg, h, pub(h), mine), taken, own, bool(override))
+        mine = box_key_re(cfg)
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-            mine = box_key_re(cfg)
             # --key-type: this run's line goes in beside roster.yml's type's, which the next sync offers again
-            futs = {ex.submit(enroll, h, pub(h), mine, taken, own, bool(override)): h for h in todo}
+            futs = {ex.submit(enroll_one, h): h for h in todo}
             for f in cf.as_completed(futs):
                 h = futs[f]
                 try:
@@ -265,7 +274,9 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                         left: list[str] = []
                         if extra := sorted(have - keep(h)):
                             drop_re, left = cleanup_re(cfg, pub(h), extra)
-                            notes = [*(notes or []), *authorized.drop_others(h, pub(h), drop_re)]
+                            with turn(h):
+                                notes = [*(notes or []), *authorized.drop_others(
+                                    h, pub(h), mine_on(cfg, h, pub(h), drop_re, extra))]
                             if left:        # #509 item 3: said as left, as the tidy says it
                                 notes.append(f"left this Box's {' and '.join(left)} key line: {unmatched_words(left)}")
                         boxkeys.record({h["name"]: keep(h) | set(left)})      # a line it couldn't match stays
@@ -317,6 +328,25 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
 def unmatched_words(types: list[str]) -> str:
     """Why setup --key-type's tidy leaves this Box's lines of TYPES (cleanup_re's second half): #509 item 3."""
     return f"no {' or '.join(types)} key on this Box to match it by; roster revoke takes it"
+
+
+def shared_types(cfg: dict[str, Any], h: dict[str, Any]) -> set[str]:
+    """T258: the key types the other key Host entries on Host H's account (hosts.account: its authorized_keys) use,
+    other than H's own: their lines there are theirs, so H's cleanup never takes them."""
+    return {o["key_type"] for o in cfg["hosts"].values()
+            if o["enroll"] and o["name"] != h["name"] and account(o) == account(h)} - {h["key_type"]}
+
+
+def mine_on(cfg: dict[str, Any], h: dict[str, Any], pub: str, mine: str, types: list[str] | None = None) -> str:
+    """What Host H's cleanup takes after PUB's line went in (drop_others): MINE (every line of this Box's), or with
+    TYPES only PUB's line and those types' (cleanup_re); either way, never the line of a key type another Host entry
+    on H's account uses (T258)."""
+    shared = shared_types(cfg, h)
+    if types is None:
+        if not shared:
+            return mine
+        types = [k.type.name for k in boxkeys.all_keys(cfg)]
+    return cleanup_re(cfg, pub, [t for t in types if t not in shared and t != h["key_type"]])[0]
 
 
 def cleanup_re(cfg: dict[str, Any], pub: str, types: list[str]) -> tuple[str, list[str]]:
