@@ -11,6 +11,8 @@
 #   CLI  (repo root): ruff (with its security rules), pyright, pytest on every supported Python and on Windows
 #        (in 3 shards balanced by time, tests/durations-windows.json), build the wheel.
 #        Tests need no network, SSH server or password manager (stand-in bw/op/pass/ssh in tests/fakes).
+#        The end-to-end suite (tests/e2e: the real CLI and serve against sshd in containers) runs nightly and by
+#        hand only, and the CI job doesn't wait for it.
 #   App  (app/, crates/roster-core, app/src-tauri): tsc + ESLint + Vitest, copy and paste and the Host menu end to end in
 #        headless Chromium (app/e2e); rustfmt, clippy and
 #        cargo test on Linux (with the WebKitGTK/D-Bus dev packages, so clippy covers the Tauri
@@ -445,6 +447,35 @@ jobs:
       - uses: actions/checkout@v7
       - run: podman --version
       - run: scripts/test-install.sh ${{ matrix.distro }}
+
+  # The end-to-end suite (tests/e2e, scripts/e2e.sh, docs/development.md, "End-to-end suite"): the real CLI and `roster serve` against
+  # stand-in Hosts that are real sshd in containers (podman, on the host's network). It pulls an image (alpine +
+  # openssh), so it runs on the nightly schedule and by hand only, and it's optional: the `CI` job doesn't need it,
+  # so a failure here never blocks a merge.
+  e2e:
+    name: End-to-end (real sshd)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: podman --version && ssh -V
+      - run: uv sync --frozen
+      - run: scripts/e2e.sh --junitxml=e2e-report.xml
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: e2e-report
+          path: e2e-report.xml
+          retention-days: 7
 
   # One check that always reports, under one name: green when every job that ran passed (a job the change didn't
   # need is skipped, and that's fine), red when one failed or was cancelled. Branch protection can require "CI".
