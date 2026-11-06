@@ -157,8 +157,13 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                 f"{h['key_type']} key)")
         for h in retag:
             say(f"  would re-tag key on {h['name']}")
+        hosts_by_name = {h["name"]: h for h in key_hosts}
         for name, types in tidy.items():
-            say(f"  would take this Box's {' and '.join(types)} key line off {name}")
+            left = cleanup_re(cfg, pub(hosts_by_name[name]), types)[1] if override else []
+            if took := [t for t in types if t not in left]:
+                say(f"  would take this Box's {' and '.join(took)} key line off {name}")
+            if left:
+                say(f"  would leave this Box's {' and '.join(left)} key line on {name}: {unmatched_words(left)}")
         return 0
 
     # renamed onto a name another Box's key line has on a Host: the same-name rule (this Box's revoke
@@ -201,7 +206,13 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                 try:
                     notes = f.result()
                     boxkeys.record({name: (set(held.get(name, [])) - set(tidy[name])) | set(unmatched.get(name, ()))})
-                    say(f"  ok    {name} (took this Box's {' and '.join(tidy[name])} key line off)")
+                    left = unmatched.get(name) or []
+                    took = [t for t in tidy[name] if t not in left]
+                    # #509 item 3: a type with no key here to match its line by stays (#505's L2), said as left
+                    say(f"  ok    {name} (" + "; ".join(
+                        ([f"took this Box's {' and '.join(took)} key line off"] if took else [])
+                        + ([f"left this Box's {' and '.join(left)} key line: {unmatched_words(left)}"] if left else []))
+                        + ")")
                     for note in notes:
                         say(f"        {note}")
                 except Exception as e:
@@ -244,6 +255,8 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                         if extra := sorted(have - keep(h)):
                             drop_re, left = cleanup_re(cfg, pub(h), extra)
                             notes = [*(notes or []), *authorized.drop_others(h, pub(h), drop_re)]
+                            if left:        # #509 item 3: said as left, as the tidy says it
+                                notes.append(f"left this Box's {' and '.join(left)} key line: {unmatched_words(left)}")
                         boxkeys.record({h["name"]: keep(h) | set(left)})      # a line it couldn't match stays
                     else:
                         boxkeys.record({h["name"]: [h["key_type"]]})
@@ -288,6 +301,11 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
     if line := catchup.setup_next_line(sorted(installed), locked_vaults):
         say(line)
     return rc
+
+
+def unmatched_words(types: list[str]) -> str:
+    """Why setup --key-type's tidy leaves this Box's lines of TYPES (cleanup_re's second half): #509 item 3."""
+    return f"no {' or '.join(types)} key on this Box to match it by; roster revoke takes it"
 
 
 def cleanup_re(cfg: dict[str, Any], pub: str, types: list[str]) -> tuple[str, list[str]]:

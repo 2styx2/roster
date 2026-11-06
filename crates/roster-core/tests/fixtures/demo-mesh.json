@@ -16,7 +16,8 @@
     "members": ["demo-01", "demo-02", "demo-03", "demo-05"],
     "pending": { "demo-05": "no answer: ssh: connect to host 10.0.0.15 port 22: Connection timed out" },
     "cut_pending": {},
-    "out_of_date": false
+    "out_of_date": false,
+    "warnings": []
   },
   "grouped": {
     "links": [{ "from": "demo-01", "to": "demo-05", "kind": "key" }],

@@ -114,6 +114,7 @@ class MeshStatusDoc(Part, frozen=True):
     pending: dict[str, str] = Field(repr=False)
     cut_pending: dict[str, list[str]]
     out_of_date: bool
+    warnings: list[str]
 
 
 class HostCheck(Part, frozen=True):
