@@ -1,6 +1,8 @@
 // The health sections (ticket 49): order, a section a newer roster sends, a section that throws.
 import { describe, expect, it } from "vitest";
 import { builtinHealthSections, healthSummary, runHealth, type HealthContext, type HealthSection } from "./health";
+import { capabilities } from "../backend/capabilities";
+import { SERVE_API_VERSION } from "../backend/serveContract";
 
 const ctx = (more: Partial<HealthContext> = {}): HealthContext => ({
   box: {
@@ -13,7 +15,7 @@ const ctx = (more: Partial<HealthContext> = {}): HealthContext => ({
     api_version: 16,
   },
   boxProblem: null,
-  backend: { name: "WSL: FedoraLinux-44", rosterVersion: "0.1.0", apiVersion: 16 },
+  backend: { name: "WSL: FedoraLinux-44", rosterVersion: "0.1.0", caps: capabilities({ api_version: 16 }) },
   config: { path: null, error: null, warnings: [] },
   font: { families: ["Iosevka"], inUse: "Iosevka" },
   ...more,
@@ -28,6 +30,14 @@ describe("runHealth", () => {
   it("says the WSL distro answers when serve runs in one", async () => {
     const app = (await runHealth(builtinHealthSections, ctx()))[0]!;
     expect(app.checks.map((c) => c.message)).toContain("the WSL distro answers (FedoraLinux-44)");
+  });
+
+  it("says what an older roster leaves off against the API the app was built for", async () => {
+    const backend = { name: "Local", rosterVersion: "0.1.0", caps: capabilities({ api_version: 15 }) };
+    const app = (await runHealth(builtinHealthSections, ctx({ backend })))[0]!;
+    expect(app.checks.map((c) => c.message)).toContain(
+      `this roster speaks API 15; the app has features up to API ${SERVE_API_VERSION}, so some are off (roster's own checks below among them)`,
+    );
   });
 
   it("a section that throws is an error in that section only", async () => {

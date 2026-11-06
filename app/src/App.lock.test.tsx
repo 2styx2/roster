@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_PASSWORD, fakeBackend, fixtures, makeHosts, type FakeScenario } from "./backend/fake";
 import { defaultOptions } from "./keymap";
-import { manualClock } from "./lock/manualClock";
+import { manualClock } from "./ui/manualClock";
 import { advanceTimers, fakeTimeouts, pass, realTimeouts } from "./test-timers";
 
 const MIN = 60_000;
@@ -84,6 +84,22 @@ describe("the Lock", () => {
     await unlock(user);
     await screen.findByRole("main", { name: /workspace/i });
     expect((await backend.vaultStatus()).status).toBe("unlocked");
+  });
+
+  it("says so when that lock fails, rather than leaving serve unlocked unsaid", async () => {
+    const scenario: FakeScenario = { hosts: makeHosts(12), slowUnlock: { failAfterMs: 20, completesAfterMs: 80 } };
+    fakeTimeouts();
+    const real = fakeBackend(scenario);
+    const backend = { ...real, lockVault: () => Promise.reject(new Error("serve didn't answer")) };
+    const user = userEvent.setup({ advanceTimers });
+    render(<App backend={backend} clock={manualClock()} />);
+    await screen.findByText(/12 hosts/i);
+    await unlock(user);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/didn't answer in time/i);
+    await pass(1_000);
+    realTimeouts();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Locking the vault failed: serve didn't answer");
+    expect(lockScreen()).not.toBeNull();
   });
 
   it("explains a vault CLI that isn't logged in, with the command to run", async () => {

@@ -5,6 +5,7 @@
 // init.lua names) are ever cloned, pinned or loaded, as in the core.
 import type { FakePlugin } from "./fakePlugins";
 import { BackendCallError, type PackageChecked, type PackageStatus, type PluginManifest } from "./types";
+import { errorText } from "../ui/format";
 
 export interface FakePackageVersion {
   /** A full commit id (40 hex digits). */
@@ -84,7 +85,7 @@ export function fakePackageHost(
     try {
       return { manifest: describe(m), manifestError: null };
     } catch (e) {
-      return { manifest: null, manifestError: e instanceof Error ? e.message : String(e) };
+      return { manifest: null, manifestError: errorText(e) };
     }
   };
 

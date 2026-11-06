@@ -3,8 +3,8 @@
 // unlocked again; Plugins hear every Session's output; a new Host's key is asked about; shell hooks
 // (ticket 121); and prompt fills (ticket 119), a nested ssh's (ticket 120) read at the shell's C
 // mark against the Inventory as it is then.
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { Latest } from "../ui/latest";
+import { useEffect, useMemo } from "react";
+import { useLatest } from "../ui/latest";
 import type { Capabilities } from "../backend/capabilities";
 import type { Host } from "../backend/types";
 import type { Config } from "../config/types";
@@ -27,8 +27,7 @@ export function useTabsConfig(opts: {
   const canFill = caps.has("fill");
   const refuseFill = useMemo(() => (caps.has("nestedFill") ? null : (what: string) => caps.needsNewer("nestedFill", what)), [caps]);
   const shellHooksInit = opts.config?.terminal.shellHooks ?? null;
-  const [inventoryNow] = useState(() => new Latest<readonly Host[]>([]));
-  useLayoutEffect(() => inventoryNow.set(opts.hosts));
+  const inventoryNow = useLatest<readonly Host[]>(opts.hosts);
   useEffect(() => {
     tabs.configure({
       onVaultLocked: lockVault,

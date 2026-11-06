@@ -346,3 +346,33 @@ export const NO_PASSWORD_AUTHS = ["agent", "key", "none"] as const;
 export const PATH_NOT_REPEATED = "(not repeated)";
 
 export type CodeName = keyof typeof Code;
+
+// serve's params and results that are Pydantic models (src/roster/servemodels.py, decision Q113). A model of
+// models.py's in one (a Host, a group) is a type parameter: the app names its own.
+
+/** host.get's: `{name}`, or `{name, settled: true}` (API 20). */
+export interface HostGetParams {
+  /** The Host's exact name. */
+  name: string;
+  /** Wait for a write to roster.yml under way first. */
+  settled?: boolean;
+}
+
+/** `hosts.list`'s `error` (API 8): why roster.yml as it is now doesn't load, while the last good Inventory is shown (catalog row 1). */
+export interface InventoryError {
+  /** What's wrong, with the line for a YAML error. */
+  message: string;
+  /** The `roster.yml` that doesn't load. */
+  path: string | null;
+  /** The line a YAML error is at; left out when there's none. */
+  line?: number | null;
+  /** What to do about it. */
+  fix: string | null;
+}
+
+/** hosts.list's: every Host in roster.yml order, the groups, and `error` (API 8). */
+export interface HostsListResult<Host = unknown, Group = unknown> {
+  hosts: Host[];
+  groups: Record<string, Group>;
+  error: InventoryError | null;
+}

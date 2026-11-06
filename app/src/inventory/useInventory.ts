@@ -7,7 +7,7 @@ import type { Capabilities } from "../backend/capabilities";
 import type { Backend, BackendInfo } from "../backend/types";
 import type { ChangesState } from "../edit/ChangesPanel";
 import { pullGate, syncFailed, type PullGate } from "../edit/pull";
-import { realClock, type Clock } from "../lock/idle";
+import { realClock, type Clock } from "../ui/clock";
 import type { Registries } from "../registries";
 import { BUILTIN } from "../registry";
 import { countOf, errorText } from "../ui/format";

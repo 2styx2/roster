@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Capabilities } from "../backend/capabilities";
 import type { Backend, BackendInfo, Inventories } from "../backend/types";
-import { usePanelState, type PanelState } from "../panel/stack";
+import { usePanelState, type Layer, type PanelState } from "../panel/stack";
 import { isLive } from "../session/status";
 import type { Tabs, TabsSnapshot } from "../session/tabs";
 import { errorText } from "../ui/format";
@@ -19,6 +19,8 @@ export interface InventoriesState {
   inventories: Inventories | null;
   /** `:inventory NAME`'s question while it's up. */
   question: PanelState<Confirm>;
+  /** The question's place in the stack: held while a confirmed switch runs. */
+  layer: Layer;
   /** A confirmed switch is running (its step can't be closed). */
   switching(): boolean;
   /** `:inventory NAME`: asks before switching, or says why it can't; null starts the command line. */
@@ -80,7 +82,7 @@ export function useInventories(opts: {
     );
   }, [inventories, say]);
 
-  const question = usePanelState<Confirm>(opts.focus);
+  const question = usePanelState<Confirm>(opts.focus, "switch");
   /** The Inventory a confirmed switch is going to, while it runs: a second `:inventory` waits. */
   const goingTo = useRef<string | null>(null);
   const [startNote, setStartNote] = useState<string | null>(null);
@@ -154,5 +156,6 @@ export function useInventories(opts: {
     }
   };
 
-  return { inventories, question, switching: () => goingTo.current !== null, ask, confirm, startNote };
+  const switching = () => goingTo.current !== null;
+  return { inventories, question, layer: { ...question.layer, held: switching }, switching, ask, confirm, startNote };
 }

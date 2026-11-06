@@ -11,6 +11,7 @@ import { Logo } from "../chrome/Logo";
 import { CopyCommand } from "../errors/ErrorPanel";
 import { withCode } from "../ui/withCode";
 import { Keys } from "../ui/Keys";
+import { errorText } from "../ui/format";
 
 const WAYS: { how: NewInventoryHow; label: string; about: string }[] = [
   { how: "blank", label: "A blank one", about: "A short roster.yml to add Hosts to." },
@@ -89,7 +90,7 @@ export function FirstRun({
         if (tooOld(err)) return setOld(true);
         if (err instanceof BackendCallError && err.code === Code.CANCELLED) return setStopped(true);
         if (err instanceof BackendCallError && err.data?.field === "name") setAskName(true);
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorText(err);
         const fix = err instanceof BackendCallError && typeof err.data?.fix === "string" ? err.data.fix : null;
         setRefusal({ message, fix });
       },

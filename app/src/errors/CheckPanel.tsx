@@ -11,6 +11,7 @@ import { Announce } from "../ui/Announce";
 import { CloseGlyph } from "../ui/CloseGlyph";
 import { PanelButton } from "../panel/PanelFrame";
 import { liveSteps, stoppedStep, type CheckState, type LiveStatus } from "./checkProgress";
+import { isTyping } from "../ui/typing";
 
 export type { CheckState } from "./checkProgress";
 
@@ -78,7 +79,7 @@ export function CheckPanel({ check, rows, actions, onClose, onStop }: CheckPanel
   // a held key stops nothing more).
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (stopJob === null || e.key !== STOP_KEY || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
-    if ((e.target as HTMLElement).closest("input, textarea, select, [contenteditable='true']")) return;
+    if (isTyping(e.target)) return;
     e.preventDefault();
     e.stopPropagation();
     if (!e.repeat) onStop?.(stopJob);

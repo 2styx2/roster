@@ -23,7 +23,7 @@ import { code, h, keys, link, p, plain, slug, text, type Block, type Inline } fr
 import { blockTags, guideBlocks, headingTag, type PageTag, type Topic } from "./guideBlocks";
 import { guides, PARTS, type Guide } from "./guides";
 import { inline, withoutDevNotes } from "./markdown";
-import { helpText } from "./text";
+import { helpText, type HelpText } from "./text";
 import guideTags from "virtual:help-tags";
 import { optionRows, optionTag, reference, referenceAliases } from "./reference";
 import type { StateChoices } from "./options";
@@ -51,6 +51,8 @@ export interface HelpContext {
   /** `:tutor` (ticket 55): the steps done, per tutorial, and the one running on the demo
    * Inventory (null outside it). */
   tutor?: { done(tutorial: string): ReadonlySet<string>; running: string | null };
+  /** The guides' text (T213): the app's, unless a test or the docs build gives its own. */
+  text: HelpText;
 }
 
 export interface HelpPage extends Entry {
@@ -67,6 +69,9 @@ export interface HelpPage extends Entry {
   /** The topics on it, when they're known before its body is (a guide, from the build's tag table:
    * its text loads later, T213). Otherwise they're read off the body. */
   tags?: readonly PageTag[];
+  /** Made from what's in effect (the keymap, the Config, the Registries, this Box's health) rather
+   * than a guide's text: the website, with none of those, shows the defaults and says so. */
+  inEffect?: true;
   body(ctx: HelpContext): Block[];
 }
 
@@ -83,10 +88,11 @@ interface HelpRegistries {
 
 export function helpContext(
   r: HelpRegistries,
-  live: Pick<HelpContext, "keymap" | "options" | "config" | "configPath" | "state" | "activeTheme" | "health" | "tutor">,
+  live: Pick<HelpContext, "keymap" | "options" | "config" | "configPath" | "state" | "activeTheme" | "health" | "tutor"> & { text?: HelpText },
 ): HelpContext {
   return {
     ...live,
+    text: live.text ?? helpText,
     commands: { get: (id) => r.commands.get(id), list: () => r.commands.list() },
     themes: r.themes.list(),
     finders: r.finders.list(),
@@ -694,20 +700,18 @@ function allPage(ctx: HelpContext): Block[] {
   ];
 }
 
-const guideCache = new Map<string, Block[]>();
-
 /** A guide's blocks once its text is loaded (none before: HelpView waits for it). */
-function guideBody(guide: Guide): Block[] {
-  const cached = guideCache.get(guide.id);
-  if (cached) return cached;
-  const markdown = helpText.markdown(guide.id);
-  if (markdown === undefined) return [];
-  const blocks = guideBlocks(guide, markdown);
-  guideCache.set(guide.id, blocks);
-  return blocks;
-}
+const guideBody = (guide: Guide, ctx: HelpContext): Block[] => ctx.text.blocks(guide.id, (markdown) => guideBlocks(guide, markdown));
 
-const page = (id: string, order: number, part: string, title: string, summary: string, body: (ctx: HelpContext) => Block[], aliases?: Record<string, string>): HelpPage => ({
+const page = (
+  id: string,
+  order: number,
+  part: string,
+  title: string,
+  summary: string,
+  body: (ctx: HelpContext) => Block[],
+  more: { aliases?: Record<string, string> | undefined; inEffect?: true } = {},
+): HelpPage => ({
   id,
   source: BUILTIN,
   order,
@@ -715,23 +719,27 @@ const page = (id: string, order: number, part: string, title: string, summary: s
   title,
   summary,
   body,
-  ...(aliases ? { aliases } : {}),
+  ...(more.aliases ? { aliases: more.aliases } : {}),
+  ...(more.inEffect ? { inEffect: true } : {}),
 });
+
+const inEffect = { inEffect: true } as const;
 
 const builtinHelpPages: readonly HelpPage[] = [
   page("index", 0, "Getting started", "roster help", "Where to start", indexPage),
-  page("quickref", 40, "Reference", "Quick reference", "The commands you'll use most, with their keys now", quickrefPage, { qr: "quickref", cheatsheet: "quickref" }),
-  page("commands", 50, "Reference", "Commands", "Every command, with its keys and where it comes from", commandsPage),
-  page("keys", 51, "Reference", "Key bindings", "The keymap in effect, with each binding's option and source", keysPage),
+  page("quickref", 40, "Reference", "Quick reference", "The commands you'll use most, with their keys now", quickrefPage, { ...inEffect, aliases: { qr: "quickref", cheatsheet: "quickref" } }),
+  page("commands", 50, "Reference", "Commands", "Every command, with its keys and where it comes from", commandsPage, inEffect),
+  page("keys", 51, "Reference", "Key bindings", "The keymap in effect, with each binding's option and source", keysPage, inEffect),
   page("options", 52, "Reference", "Options", "Every init.lua option and roster function: type, default, values, example, and its value now", optionsPage, {
-    ...referenceAliases(),
+    ...inEffect,
+    aliases: referenceAliases(),
   }),
-  page("themes", 53, "Reference", "Themes", "The registered Themes, and the one in use", themesPage),
-  page("finders", 54, "Reference", "Finders", "The finder sources: Sessions, Hosts, the tree, Themes, help topics…", findersPage),
-  page("errors", 60, "Reference", "Connection errors", "The error catalog: where each problem lives and its fix", errorsPage),
-  page("health", 61, "Reference", "Health", "This Box's health: the last :check with no Host, with each fix", healthPage, { checkhealth: "health" }),
-  page("all", 90, "Reference", "Every topic", "Every page, command, key, option and error, A to Z", allPage, { "help-index": "all" }),
-  ...guides.map((g) => ({ ...page(g.id, g.order, g.part, g.title, g.summary, () => guideBody(g), g.aliases), tags: guideTags[g.id] ?? [] })),
+  page("themes", 53, "Reference", "Themes", "The registered Themes, and the one in use", themesPage, inEffect),
+  page("finders", 54, "Reference", "Finders", "The finder sources: Sessions, Hosts, the tree, Themes, help topics…", findersPage, inEffect),
+  page("errors", 60, "Reference", "Connection errors", "The error catalog: where each problem lives and its fix", errorsPage, inEffect),
+  page("health", 61, "Reference", "Health", "This Box's health: the last :check with no Host, with each fix", healthPage, { ...inEffect, aliases: { checkhealth: "health" } }),
+  page("all", 90, "Reference", "Every topic", "Every page, command, key, option and error, A to Z", allPage, { aliases: { "help-index": "all" } }),
+  ...guides.map((g) => ({ ...page(g.id, g.order, g.part, g.title, g.summary, (ctx) => guideBody(g, ctx), { aliases: g.aliases }), tags: guideTags[g.id] ?? [] })),
 ];
 
 export function builtinHelpRegistry(): HelpRegistry {

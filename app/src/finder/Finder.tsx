@@ -119,7 +119,7 @@ export function Finder({ source, ctx, keymap, vim, initialQuery = "", onChoose, 
   const activeId = shown[current] ? `${listId}-${current}` : undefined;
 
   return (
-    <div className="picker-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="picker-backdrop" data-panel="finder" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`picker finder${source.prose ? " prose" : ""}`} role="dialog" aria-label={source.title}>
         <div className="finder-query">
           <span className="finder-prompt">{source.prompt} ›</span>

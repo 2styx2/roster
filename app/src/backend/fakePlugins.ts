@@ -4,10 +4,12 @@
 // as `{ handler: N }`. Errors name the Plugin and `init.lua`, a load error or a third error
 // disables it, as in the core. The built-in `hosts` Plugin is here as the core's Lua is.
 import { PLUGIN_COMMANDS, ROSTER_ONLY } from "../plugins/cmd";
+import { api_version as pluginApiVersion } from "../../../crates/roster-core/tests/fixtures/plugin-api.json?pick=api_version,commands,roster_only,tags";
 import { CORE } from "../plugins/core.gen";
 import { fakeFoldersPlugin } from "./fakeFolders";
 import { redact, redactError } from "./redact";
-import { BackendCallError, PLUGIN_EVENTS, type Host, type OpenSession, type PluginEventName, type PluginCaller, type PluginData, type PluginLoaded, type PluginManifest, type PluginReply } from "./types";
+import { BackendCallError, type Host, type OpenSession, type PluginEventName, type PluginCaller, type PluginData, type PluginLoaded, type PluginManifest, type PluginReply } from "./types";
+import { errorText } from "../ui/format";
 
 type Fn = (arg: Record<string, unknown>) => unknown;
 type Spec = Record<string, unknown>;
@@ -555,7 +557,7 @@ export function fakePluginHost(
     const detailsIds = () =>
       [...r.own].filter(([k, m]) => k.startsWith("details:") && m.size > 0).map(([k]) => k.slice("details:".length)).sort();
     const m: FakeRoster = {
-      api_version: 6,
+      api_version: pluginApiVersion,
       plugin: { name: r.manifest.name, version: r.manifest.version, permissions: [...r.grants], config },
       commands: {
         add: (name, spec) => {
@@ -781,8 +783,8 @@ export function fakePluginHost(
     // As runtime.rs: `roster.serve` with any serve: grant, each call checked against its own.
     if ([...r.grants].some((g) => g.startsWith("serve:"))) {
       // serve's answers and errors with their cmd:/env: references cut, as runtime.rs's redacted (Q92).
-      const errorText = (e: unknown) =>
-        redactError(e instanceof BackendCallError && e.code !== null ? `${e.message} (code ${e.code})` : e instanceof Error ? e.message : String(e));
+      const servedError = (e: unknown) =>
+        redactError(e instanceof BackendCallError && e.code !== null ? `${e.message} (code ${e.code})` : errorText(e));
       m.serve = {
         call: (method, params = {}) => {
           if (!r.grants.has(`serve:${method}`)) throw new Error(`roster.serve.call: not granted (serve:${method})`);
@@ -792,7 +794,7 @@ export function fakePluginHost(
           } catch (e) {
             // No `cause`: serve's own error is uncut, and a Plugin could read it there (Q92).
             // eslint-disable-next-line preserve-caught-error -- the cut message is all a Plugin gets
-            throw new Error(`roster.serve.call ${method}: ${errorText(e)}`);
+            throw new Error(`roster.serve.call ${method}: ${servedError(e)}`);
           }
         },
         // serve is asked now (the core's thread asks at once); `done` runs later, as a call of its
@@ -809,7 +811,7 @@ export function fakePluginHost(
             const result = redact(serve(method, params ?? {}));
             answer = () => done(result ?? undefined);
           } catch (e) {
-            answer = () => done(undefined, `${what}: ${errorText(e)}`);
+            answer = () => done(undefined, `${what}: ${servedError(e)}`);
           }
           later(r, answer);
         },
@@ -855,7 +857,7 @@ export function fakePluginHost(
     const before = new Map([...r.own].map(([k, m]) => [k, new Map(m)]));
     // As mod.rs's settle: which events it listens for, when that's news (always at load).
     const listens = (): PluginEventName[] | null => {
-      const now = PLUGIN_EVENTS.filter((e) => (r.listeners.get(e)?.length ?? 0) > 0);
+      const now = CORE.events.map((e) => e.name).filter((e) => (r.listeners.get(e)?.length ?? 0) > 0);
       if (!loading && now.join() === r.told) return null;
       r.told = now.join();
       return now;
@@ -865,7 +867,7 @@ export function fakePluginHost(
       return { plugin: name, result: data(r, result) ?? null, ops, error: null, disabled: null, listens: listens() };
     } catch (e) {
       r.own = before;
-      const message = e instanceof Error ? e.message : String(e);
+      const message = errorText(e);
       r.errors += loading ? LIMITS.strikes : 1;
       if (r.errors >= LIMITS.strikes) r.disabled = loading ? `it failed to load: ${name}: init.lua: ${message}` : `it failed ${r.errors} times`;
       return { plugin: name, result: null, ops: [], error: { plugin: name, file: "init.lua", line: null, message }, disabled: r.disabled, listens: loading ? null : listens() };

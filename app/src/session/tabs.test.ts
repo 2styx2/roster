@@ -1,24 +1,23 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { XtermPromptScreen } from "./promptScreen";
 import { FAKE_FINGERPRINT, FAKE_HOST_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "../backend/fake";
-import { BackendCallError, FillRefusal, QUICK_CONNECT_API_VERSION, SAVE_TO_VAULT_API_VERSION, SessionRefusal, type SessionEvents } from "../backend/types";
+import { BackendCallError, FillRefusal, SessionRefusal, type SessionEvents } from "../backend/types";
 import { IDLE_MS, hookLine } from "./shellHooks";
 import { PromptWatch } from "./prompt";
 import { Tabs, type TabStatus } from "./tabs";
+import { sinceOf } from "../backend/capabilities";
 
 const hosts = makeHosts(12);
 const reviewed = hosts.hosts.filter((h) => h.reviewed).map((h) => h.name);
 const unreviewed = hosts.hosts.find((h) => !h.reviewed)!.name;
 
 const text = (chunks: Uint8Array[]) => chunks.map((c) => new TextDecoder().decode(c)).join("");
-/** Lets the fake Backend's work run out: its steps are 0 ms timers, one after another. Each turn
- * here is a timer set after theirs, so it runs after the step that's due, however late a busy
- * machine runs them. 10 ms alone wasn't: woken late, it was due before their next step (T146). */
-const settle = async () => {
-  if (vi.isFakeTimers()) return void (await vi.advanceTimersByTimeAsync(10));
-  await new Promise((r) => setTimeout(r, 10));
-  for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
-};
+// The fake Backend's steps are timers: the tests move fake time on, so nothing depends on how
+// fast the machine runs them (T146).
+beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
+afterEach(() => vi.useRealTimers());
+/** Lets the fake Backend's work that's due run out (its steps, and what each sets off). */
+const settle = () => vi.advanceTimersByTimeAsync(10);
 /** serve's vault unlocked, as behind an unlocked lock screen (password Hosts need it). */
 const unlocked = { vault: { status: "unlocked" } } as const;
 
@@ -732,7 +731,7 @@ describe("Quick Connect (ticket 14)", () => {
   const to = { user: "root", address: "10.0.0.5", port: 22 };
   const PASSWORD = FAKE_HOST_PASSWORD;
   function quick(extra: Partial<FakeScenario> = {}) {
-    const backend = fakeBackend({ ...unlocked, hosts, apiVersion: QUICK_CONNECT_API_VERSION, ...extra });
+    const backend = fakeBackend({ ...unlocked, hosts, apiVersion: sinceOf("quickConnect"), ...extra });
     return { backend, tabs: new Tabs(backend) };
   }
   const status = (tabs: Tabs) => tabs.snapshot().tabs[0]?.status;
@@ -854,7 +853,7 @@ describe('"Save to vault" on Quick Connect (ticket 15)', () => {
     const backend = fakeBackend({
       ...unlocked,
       hosts,
-      apiVersion: SAVE_TO_VAULT_API_VERSION,
+      apiVersion: sinceOf("saveToVault"),
       quickBoxes: { "10.0.0.5": { hostname: "nas-01" } },
       ...extra,
     });
@@ -932,7 +931,7 @@ describe('"Save to vault" on Quick Connect (ticket 15)', () => {
 describe("a held password, around the Session's life (iteration-4 review)", () => {
   /** The fake Backend, but the test resolves the Session's opening and says when it logged in. */
   function heldSessions() {
-    const backend = fakeBackend({ ...unlocked, hosts, apiVersion: SAVE_TO_VAULT_API_VERSION });
+    const backend = fakeBackend({ ...unlocked, hosts, apiVersion: sinceOf("saveToVault") });
     let events: SessionEvents | null = null;
     let resolve: (held: string) => void = () => {};
     backend.openSession = (_host, _size, ev) => {

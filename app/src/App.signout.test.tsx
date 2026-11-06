@@ -8,7 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_EMAIL, FAKE_PASSWORD, fakeBackend, fixtures, type FakeScenario } from "./backend/fake";
 import { BackendCallError, VaultError } from "./backend/types";
-import { manualClock } from "./lock/manualClock";
+import { manualClock } from "./ui/manualClock";
 
 async function start(scenario: FakeScenario = fixtures["sign-out"]!) {
   const backend = fakeBackend(scenario);

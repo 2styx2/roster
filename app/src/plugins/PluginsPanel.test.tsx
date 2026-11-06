@@ -3,7 +3,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { PackageStatus } from "../backend/types";
-import { dataLine, PackagesPanel, PluginsPanel, REFRESH_MS, UPGRADE_TOPIC } from "./PluginsPanel";
+import api from "../../../crates/roster-core/tests/fixtures/plugin-api.json";
+import { dataLine, PackagesPanel, PluginsPanel, QUIET_NOTICES_API, REFRESH_MS, UPGRADE_TOPIC } from "./PluginsPanel";
 import type { PluginStatus, Snapshot } from "./manager";
 
 const NOW = Date.now();
@@ -234,5 +235,10 @@ describe("PluginsPanel's hint for Plugins written before api 4 (issue #228)", ()
     const builtin = status({ name: "hosts", path: "builtin:hosts", builtin: true, manifest: { name: "hosts", version: "1.0.0", description: "", author: null, api: 1, permissions: [] } });
     render(<PluginsPanel snapshot={snap([current, builtin])} onGrant={() => undefined} onClose={() => undefined} onRun={() => undefined} />);
     expect(screen.queryByText(/Written for api/)).toBeNull();
+  });
+
+  it("names the api the Plugin API reference says notices turned quiet at", () => {
+    const quiet = (api.types as Record<string, { fields?: { name: string; doc: string }[] }>).NoticeOptions?.fields?.find((f) => f.name === "quiet");
+    expect(quiet?.doc).toContain(`(since api ${QUIET_NOTICES_API})`);
   });
 });

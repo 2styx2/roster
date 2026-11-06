@@ -1,6 +1,7 @@
 // The catalog covers docs/app/errors.md and every code roster's errors.py has (serveContract.ts).
 import { describe, expect, it } from "vitest";
 import { Code, type CodeName } from "../backend/serveContract";
+import { capabilities } from "../backend/capabilities";
 import { BackendCallError } from "../backend/types";
 import { builtinErrorRegistry, builtinErrorRows, problemFromCallError, rowFor } from "./catalog";
 import type { Problem } from "./classify";
@@ -64,8 +65,8 @@ describe("the error catalog", () => {
   it("says roster setup --host for one Host from API 29, --only before, and --host when it can't know (:help)", () => {
     // A changed host key (43) names the setup after a reinstall too (#461).
     const row = rowFor(rows, 43);
-    expect(row.fix(p(43), { api: 29 })).toContain("run `roster setup --host esx`");
-    expect(row.fix(p(43), { api: 28 })).toContain("run `roster setup --only esx`");
+    expect(row.fix(p(43), { caps: capabilities({ api_version: 29 }) })).toContain("run `roster setup --host esx`");
+    expect(row.fix(p(43), { caps: capabilities({ api_version: 28 }) })).toContain("run `roster setup --only esx`");
     expect(row.fix(p(43))).toContain("run `roster setup --host esx`");
   });
 

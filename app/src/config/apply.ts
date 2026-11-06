@@ -15,7 +15,8 @@ import { terminalActions } from "../terminal/keymap";
 import { PASTE_IF_TEXT_KEY } from "../terminal/input";
 import { terminalFontStack } from "../terminal/fonts";
 import { defaultAppearance, type AppearanceOptions, type Theme } from "../theme/theme";
-import { layoutsOf, STATUS_SEGMENTS, type Layouts } from "../view/layout";
+import { layoutsOf, type Layouts } from "../view/layout";
+import { STATUS_SEGMENTS } from "../view/segments";
 import type { Config, ConfigLocation, ThemeDef } from "./types";
 
 export interface Derived {

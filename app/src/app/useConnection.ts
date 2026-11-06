@@ -6,6 +6,7 @@ import type { Tabs } from "../session/tabs";
 import type { Message } from "../ui/messages";
 import { capabilities, type Capabilities } from "../backend/capabilities";
 import { BackendStartError, type Backend, type BackendInfo, type BackendProblem, type HostList } from "../backend/types";
+import { errorText } from "../ui/format";
 
 export type Conn =
   | { state: "connecting" }
@@ -27,7 +28,7 @@ export interface Connection {
 
 function asProblem(e: unknown): BackendProblem {
   if (e instanceof BackendStartError) return e.problem;
-  const message = e instanceof Error ? e.message : String(e);
+  const message = errorText(e);
   return { kind: "failed", message, hint: "Retry, or run the backend command in a terminal to see why.", detail: null };
 }
 

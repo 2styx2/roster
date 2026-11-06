@@ -44,6 +44,11 @@ export const PANEL_MIN_PX = 280;
 export const TERMINAL_MIN_PX = 400;
 /** A panel floating over the terminal (Focus, a narrow window) leaves this much of it showing. */
 export const FLOAT_GAP_PX = 48;
+/** A panel's default width (styles.css's `--keys-width`): what a frame not drawn yet counts as. */
+export const DEFAULT_PANEL_PX = 320;
+/** A window this narrow or narrower has no room for the Sidebar, a docked panel and a usable
+ * terminal: panels float (styles.css's `@media (max-width: 1040px)`). */
+export const NARROW_WINDOW_PX = 1040;
 
 export interface Room {
   /** The window's width under the title bar (the `.body`). */

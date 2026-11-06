@@ -10,10 +10,14 @@ export interface FocusReturn {
   setBeforeTree(el: Element | null): void;
   /** Where focus was before the tree, forgotten as it's read. */
   takeBeforeTree(): Element | null;
-  /** Remembers where focus is now, for `restore`. */
+  /** Where the keys go back to if something takes them now: where focus is, or before the tree. */
+  whereNow(): Element | null;
+  /** Remembers `whereNow()`, for `restore`. */
   remember(): void;
   /** Focus back where `remember` found it, else the workspace. */
   restore(): void;
+  /** Focus back to `el` (a `whereNow()`), else the workspace. */
+  restoreTo(el: Element | null): void;
   /** Focus to `el` if there is one, else the workspace. */
   toMain(el?: HTMLElement | null): void;
 }
@@ -28,8 +32,13 @@ export function useFocusReturn(): { focus: FocusReturn; mainRef: React.RefObject
   }, []);
   const beforeTree = useRef<Element | null>(null);
   const returnTo = useRef<Element | null>(null);
-  const focus = useMemo<FocusReturn>(
-    () => ({
+  const focus = useMemo<FocusReturn>(() => {
+    const whereNow = () => ((tree.current?.contains(document.activeElement) ?? false) ? beforeTree.current : document.activeElement);
+    const restoreTo = (el: Element | null) => {
+      if (el instanceof HTMLElement && el.isConnected) el.focus();
+      else main.current?.focus();
+    };
+    return {
       tree: () => tree.current,
       setBeforeTree: (el) => {
         beforeTree.current = el;
@@ -39,18 +48,14 @@ export function useFocusReturn(): { focus: FocusReturn; mainRef: React.RefObject
         beforeTree.current = null;
         return el;
       },
+      whereNow,
       remember: () => {
-        const inTree = tree.current?.contains(document.activeElement) ?? false;
-        returnTo.current = inTree ? beforeTree.current : document.activeElement;
+        returnTo.current = whereNow();
       },
-      restore: () => {
-        const el = returnTo.current;
-        if (el instanceof HTMLElement && el.isConnected) el.focus();
-        else main.current?.focus();
-      },
+      restore: () => restoreTo(returnTo.current),
+      restoreTo,
       toMain: (el) => (el ?? main.current)?.focus(),
-    }),
-    [],
-  );
+    };
+  }, []);
   return { focus, mainRef: main, treeRef };
 }

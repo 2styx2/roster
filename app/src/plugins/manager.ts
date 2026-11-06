@@ -33,6 +33,7 @@ import { applyOp, parseOp, type HandlerContext, type Loaded, type OpCall, type O
 import { OutputFeed } from "./outputFeed";
 import { Shown, type Notice, type PendingConfirm, type RunningProgress } from "./shown";
 import { backgroundQuiet, quiet, type Message } from "../ui/messages";
+import { errorText } from "../ui/format";
 
 export type { HandlerContext } from "./opRegistry";
 export type { Notice, PendingConfirm, RunningProgress } from "./shown";
@@ -96,6 +97,12 @@ export interface DemoPlugins {
 const BUILTIN_PREFIX = CORE.builtin_prefix;
 /** The built-in features written as Plugins: always installed, granted what they ask until revoked. */
 const BUILTIN_PLUGINS: readonly string[] = CORE.bundled.map((name) => `${BUILTIN_PREFIX}${name}`);
+/** The most a built-in Plugin is granted before the user revokes any: the core runs it with what
+ * its manifest asks of these (plugin/mod.rs's `load` keeps only asked grants). The app can't read a
+ * built-in's manifest before loading it (`plugin_manifest` takes a folder), so this is a ceiling,
+ * not a list of what each gets: a serve method or a site stays something a built-in can't have
+ * unasked by the user. `hosts` and `folders` ask `inventory.read` (manager.test.ts checks). */
+export const BUILTIN_GRANTS: readonly string[] = ["inventory.read", "inventory.write", "sessions.open", "terminal.read", "terminal.write"];
 const builtinName = (path: string) => (path.startsWith(BUILTIN_PREFIX) ? path.slice(BUILTIN_PREFIX.length) : null);
 
 export const STATE_KEY = "plugins";
@@ -386,7 +393,7 @@ export class PluginManager {
         }
         await this.loadPath(entry.path, entry.granted, entry.name);
       } catch (e) {
-        this.problems.set(entry.name, String(e instanceof Error ? e.message : e));
+        this.problems.set(entry.name, errorText(e));
         this.changed();
       }
     }
@@ -396,6 +403,7 @@ export class PluginManager {
 
   private serially<T>(work: () => Promise<T>): Promise<T> {
     const next = this.packageWork.then(work, work);
+    // Its caller hears how it went (it gets `next`); the queue only waits for it.
     this.packageWork = next.catch(() => undefined);
     return next;
   }
@@ -424,7 +432,7 @@ export class PluginManager {
       try {
         statuses = await this.backend.packagesSync();
       } catch (e) {
-        this.notify("packages", "error", `Packages: ${e instanceof Error ? e.message : String(e)}`);
+        this.notify("packages", "error", `Packages: ${errorText(e)}`);
         return;
       }
       this.packages = statuses;
@@ -450,6 +458,7 @@ export class PluginManager {
     const entry = this.installed().find((e) => e.path === path);
     if (!p.pinned || !entry) {
       if (this.isDeclined(p)) {
+        // A clone that stays is never loaded, and the next start discards it again.
         await this.backend.packagesDiscard(p.name).catch(() => undefined);
         return;
       }
@@ -466,7 +475,7 @@ export class PluginManager {
           { kind: "install", path, manifest, asking: manifest.permissions.map((x) => x.name), package: { name: p.name, url: p.url, dir: p.dir, commit: p.commit } },
         ];
       } catch (e) {
-        this.notify(p.name, "error", `${p.name}: ${e instanceof Error ? e.message : String(e)}`);
+        this.notify(p.name, "error", `${p.name}: ${errorText(e)}`);
       }
       return;
     }
@@ -493,7 +502,7 @@ export class PluginManager {
       try {
         checked = await this.backend.packagesCheck(only);
       } catch (e) {
-        const why = e instanceof Error ? e.message : String(e);
+        const why = errorText(e);
         return only === undefined ? `Couldn't check the Packages: ${why}` : `Couldn't check ${only}: ${why}`;
       }
       const updates: string[] = [];
@@ -531,16 +540,19 @@ export class PluginManager {
       try {
         gone = await this.backend.packagesClean();
       } catch (e) {
-        return `Couldn't clean the Packages: ${e instanceof Error ? e.message : String(e)}`;
+        return `Couldn't clean the Packages: ${errorText(e)}`;
       }
       const paths = new Set(gone.map((n) => `${PACKAGE_PREFIX}${n}`));
+      const stays: string[] = [];
       for (const entry of this.installed().filter((e) => paths.has(e.path))) {
         await this.forget(entry.name);
-        await this.backend.pluginForget(entry.name).catch(() => false);
+        const kept = await this.dataFolderKept(entry.name);
+        if (kept) stays.push(kept);
       }
       this.saveInstalled(this.installed().filter((e) => !paths.has(e.path)));
       this.changed();
-      return gone.length === 0 ? "Nothing to clean: init.lua names every Package" : `Removed ${gone.join(", ")}`;
+      if (gone.length === 0) return "Nothing to clean: init.lua names every Package";
+      return [`Removed ${gone.join(", ")}`, ...stays].join(". ");
     });
   }
 
@@ -582,7 +594,7 @@ export class PluginManager {
       this.changed();
       return null;
     } catch (e) {
-      return e instanceof Error ? e.message : String(e);
+      return errorText(e);
     }
   }
 
@@ -598,6 +610,7 @@ export class PluginManager {
     if (pkg && prompt.kind === "install") {
       if (!allow) {
         this.saveCancelled([...this.cancelledInstalls().filter((d) => d.name !== pkg.name), { name: pkg.name, url: pkg.url, dir: pkg.dir }]);
+        // A clone that stays is never loaded, and the next start discards it again (syncPackage).
         await this.backend.packagesDiscard(pkg.name).catch(() => undefined);
         this.changed();
         return;
@@ -606,7 +619,7 @@ export class PluginManager {
         const pinned = await this.backend.packagesPin(pkg.name);
         this.packages = this.packages.map((p) => (p.name === pkg.name ? pinned : p));
       } catch (e) {
-        this.notify(name, "error", `${pkg.name}: ${e instanceof Error ? e.message : String(e)}`);
+        this.notify(name, "error", `${pkg.name}: ${errorText(e)}`);
         return;
       }
       this.packageConfig.set(name, JSON.stringify(this.packages.find((p) => p.name === pkg.name)?.config ?? {}));
@@ -618,7 +631,7 @@ export class PluginManager {
         const moved = await this.backend.packagesApply(pkg.name, pkg.update.to);
         this.packages = this.packages.map((p) => (p.name === pkg.name ? moved : p));
       } catch (e) {
-        this.notify(name, "error", `${pkg.name}: ${e instanceof Error ? e.message : String(e)}`);
+        this.notify(name, "error", `${pkg.name}: ${errorText(e)}`);
         return;
       }
     }
@@ -663,7 +676,7 @@ export class PluginManager {
       const file = await this.backend.pluginTypes(path);
       return `Wrote ${file}: the Plugin API ${pluginApiVersion}'s types, for lua-language-server`;
     } catch (e) {
-      return `Couldn't write the types: ${e instanceof Error ? e.message : String(e)}`;
+      return `Couldn't write the types: ${errorText(e)}`;
     }
   }
 
@@ -679,7 +692,7 @@ export class PluginManager {
       try {
         await this.backend.packagesRemove(pkg);
       } catch (e) {
-        return `Couldn't remove ${pkg}: ${e instanceof Error ? e.message : String(e)}`;
+        return `Couldn't remove ${pkg}: ${errorText(e)}`;
       }
       // Remembered like a cancelled install (issue #213): the next start doesn't ask again while
       // init.lua names the same repo and folder; `:packages install NAME` does.
@@ -688,12 +701,21 @@ export class PluginManager {
       this.packages = this.packages.map((p) => (p.name === pkg ? { ...p, commit: null, locked: null, pinned: false } : p));
     }
     await this.forget(name);
-    // Its data folder goes with it (decision Q93): a Plugin installed again starts empty.
-    await this.backend.pluginForget(name).catch(() => false);
+    const kept = await this.dataFolderKept(name);
     this.saveInstalled(this.installed().filter((e) => e.name !== name));
     this.changed();
     const stillNamed = pkg !== null && this.packages.some((p) => p.name === pkg);
-    return stillNamed ? `Removed ${name}. init.lua still names it: :packages install ${pkg} brings it back` : null;
+    const notes = [...(kept ? [kept] : []), ...(stillNamed ? [`init.lua still names it: :packages install ${pkg} brings it back`] : [])];
+    return notes.length ? [`Removed ${name}`, ...notes].join(". ") : null;
+  }
+
+  /** Deletes a removed Plugin's data folder (decision Q93: one installed again starts empty);
+   * what to say when it couldn't, or null. */
+  private async dataFolderKept(name: string): Promise<string | null> {
+    return this.backend.pluginForget(name).then(
+      () => null,
+      (e: unknown) => `${name}'s data folder stays (${errorText(e)}): one installed again finds it`,
+    );
   }
 
   /** Unloads a Plugin and forgets what the manager knew of it (not its State entry). */
@@ -763,6 +785,7 @@ export class PluginManager {
   private async send(name: PluginEventName, payload: Record<string, unknown>): Promise<void> {
     if (name === "session_open" || name === "session_exit") await this.sessionsSent;
     if (this.loaded.size === 0) return;
+    // An event the core couldn't deliver is one no Plugin heard; the next one goes as usual.
     const replies = await this.backend.pluginEvent(name, payload, this.builtins()).catch(() => []);
     for (const r of replies) {
       this.used(r.plugin, `heard ${name}`);
@@ -834,7 +857,7 @@ export class PluginManager {
     try {
       return (await this.ui.builtinSettings?.(name)) ?? null;
     } catch (e) {
-      this.notify(name, "warn", `${name}: loads without its settings: ${e instanceof Error ? e.message : String(e)}`);
+      this.notify(name, "warn", `${name}: loads without its settings: ${errorText(e)}`);
       return null;
     }
   }
@@ -892,25 +915,25 @@ export class PluginManager {
     if (this.stopped) return;
     let result;
     try {
-      // A built-in Plugin is granted everything it asks for until a permission is revoked.
       const builtin = builtinName(path);
       const settings = builtin === null ? null : await this.builtinSettings(builtin);
       if (builtin !== null) this.builtinConfig.set(builtin, JSON.stringify(settings));
       // The list of open Sessions sent last is in the core first: the Plugin may read it at load.
       await this.sessionsSent;
-      result = await this.backend.pluginLoad(path, granted ?? ["inventory.read", "inventory.write", "sessions.open", "terminal.read", "terminal.write"], settings, this.builtins());
+      result = await this.backend.pluginLoad(path, granted ?? BUILTIN_GRANTS, settings, this.builtins());
     } catch (e) {
       await this.unload(name);
-      this.problems.set(name, e instanceof Error ? e.message : String(e));
-      this.notify(name, "error", `${this.named(name)}: ${e instanceof Error ? e.message : String(e)}`);
+      this.problems.set(name, errorText(e));
+      this.notify(name, "error", `${this.named(name)}: ${errorText(e)}`);
       return;
     }
     const { manifest, reply } = result;
-    // Stopped while it loaded: the core's copy goes too, and nothing of it is shown.
+    // Stopped while it loaded: the core's copy goes too, and nothing of it is shown. An unload the
+    // core refuses leaves a copy nothing calls; a load by that name replaces it there.
     if (this.stopped) return void (await this.backend.pluginUnload(manifest.name).catch(() => false));
     await this.unload(manifest.name, false);
     const asked = manifest.permissions.map((p) => p.name);
-    const info = { manifest, path, granted: granted === null ? asked : granted.filter((g) => asked.includes(g)) };
+    const info = { manifest, path, granted: (granted ?? BUILTIN_GRANTS).filter((g) => asked.includes(g)) };
     this.known.set(manifest.name, info);
     this.loaded.set(manifest.name, { ...info, listens: new Set(), disposers: new Map() });
     this.problems.delete(manifest.name);
@@ -926,6 +949,7 @@ export class PluginManager {
       this.loaded.delete(name);
     }
     this.forgetUi(name);
+    // A copy the core keeps is one nothing calls now; a load by that name replaces it there.
     if (tellCore) await this.backend.pluginUnload(name).catch(() => false);
   }
 
@@ -934,7 +958,7 @@ export class PluginManager {
       plugin,
       result: null,
       ops: [],
-      error: { plugin, file: null, line: null, message: e instanceof Error ? e.message : String(e) },
+      error: { plugin, file: null, line: null, message: errorText(e) },
       disabled: null,
     };
   }
