@@ -14,7 +14,7 @@ from .authorized import TAKEN, NameTaken, NoLine, box_key_re, box_public_keys, e
 from .boxkeys import ensure_key, public_key_line
 from .claude import write_claude_files
 from .common import die, plural, replace_file, say
-from .config import selected
+from .config import selected, shown_file
 from .context import Context, current
 from .errors import KEY_FILE, UNKNOWN_HOST, VAULT_LOCKED_DURING_RUN, Exit, Problem, tagged
 from .hosts import provider_of
@@ -97,7 +97,7 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
             die("--key-type goes with --host NAME (one Host, to try a key type there): for more Hosts, set "
                 "key_type: on them, their group or defaults in roster.yml and run roster setup")
         cfg, hosts = key_type_for_run(cfg, hosts, override)
-    say(f"roster setup box '{cfg['box']}', {len(hosts)} hosts from {cfg['path']}")
+    say(f"roster setup box '{cfg['box']}', {len(hosts)} hosts from {shown_file(cfg)}")
     if not dry_run:                     # a swap a rotation was stopped in the middle of, finished
         rotation.repair_all(cfg, say)
     # one key per key type the Hosts use (this Box's own when none), each made on first need

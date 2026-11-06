@@ -207,6 +207,8 @@ class State:
 
     def __init__(self, config_arg, inv=None):
         self.cfg, self.path, self.error = None, None, None
+        self.given = None                   # roster.yml's path as given (-c, $ROSTER_CONFIG, a named one's): every
+        # load names the file from it, as the CLI's does, never from the resolved self.path (#506)
         self.inv: Any = None                # the loaded Inventory's models (cfg is their dict view, Q113)
         self.digest = None                  # what roster.yml held at the last load (good or not): the watcher's base
         self.noticed = None                 # an outside edit already reported as not applied (auto off)
@@ -236,7 +238,7 @@ class State:
         self.item_locks_lock = threading.Lock()
         providers.only_unlock_unlocks()
         try:
-            self.path = find_config(config_arg, inv)
+            self.path = self.given = find_config(config_arg, inv)
         except InventoryError as e:
             self.error = e
             return
@@ -255,7 +257,7 @@ class State:
         with self.lock:                     # a write holding it may reload; anyone else waits for the write
             self.digest, self.noticed = file_digest(self.path), None
             try:
-                inv = load_inventory(self.path)
+                inv = load_inventory(self.given or self.path)
             except InventoryError as e:
                 self.error = e
                 return
@@ -699,7 +701,7 @@ def box_check(state, params):
     error = state.error
     if state.path is not None and error is None:
         try:
-            load_config(state.path)
+            load_config(state.given or state.path)
         except InventoryError as e:
             error = e
     checks = health.check_box(state.cfg, error, health.askpass_state(state.askpass), API_VERSION)
