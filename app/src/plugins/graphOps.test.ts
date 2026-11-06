@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseOp } from "./ops";
+import { parseOp } from "./opRegistry";
 
 const view = (graph: unknown, extra: Record<string, unknown> = {}) => parseOp({ op: "view", id: "topo", spec: { title: "Topology", place: "full", graph, ...extra } });
 

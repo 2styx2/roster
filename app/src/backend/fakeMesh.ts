@@ -7,6 +7,11 @@
 // Below it, `meshServe`: a stand-in roster serve for the Mesh's methods (API 17), as the Rust test's,
 // for `?fixture=mesh` and the UI tests.
 import type { FakePlugin, FakeRoster } from "./fakePlugins";
+import { PluginServeError } from "./redact";
+import { BackendCallError } from "./types";
+import { errorText } from "../ui/format";
+import { FIRST_PARTY } from "./fakeManifests";
+import { JsonRpcCode } from "./serveContract";
 
 type Obj = Record<string, unknown>;
 type Link = { from: string; to: string; kind?: string; via?: string; status?: string; why?: string };
@@ -100,7 +105,7 @@ export const words = {
     return encoder.encode(name).length <= 100 ? name : `#${i}`;
   },
   clean(e: unknown): string {
-    const s = e instanceof Error ? e.message : String(e);
+    const s = errorText(e);
     return s.replace(/^[\s\S]*?roster\.serve\.[a-z]+ [\w._]+: /, "");
   },
   keys(t: object | undefined | null): string[] {
@@ -123,6 +128,7 @@ export const words = {
 const POLL = 1000;
 const DETAIL_LINKS = 20;
 const DETAILS_AT_ONCE = 300;
+/** JSON-RPC's code: this roster serve has no such method. */
 const ACTIONS: Record<string, string> = { plan: "Planning the Mesh", apply: "Applying the Mesh", cut: "Cutting" };
 
 const HELP = `# Mesh controls
@@ -145,27 +151,12 @@ The status bar says **Mesh out of date** when \`roster.yml\` changed the Mesh si
 **no-via**: a Link with \`via:\` goes through a jump Host, and ssh logs in to the jump Host first, so its source needs a Link to the jump Host too. Without one the Link is left out and \`roster check\` fails: add the Link it names, or take \`via:\` off.
 `;
 
-export const MESH_PERMISSIONS = [
-  "inventory.read",
-  "serve:mesh.status",
-  "serve:mesh.job",
-  "serve:mesh.stop",
-  "serve:mesh.plan",
-  "serve:mesh.apply",
-  "serve:mesh.cut",
-];
+export const MESH_PERMISSIONS = FIRST_PARTY.mesh.permissions;
 
 /** plugins/mesh as the fake Backend's Plugin. */
 export function meshPlugin(): FakePlugin {
   return {
-    manifest: {
-      name: "mesh",
-      version: "1.0.0",
-      description: "The Mesh's controls: who reaches whom, plan and apply it, and Cut a Host out",
-      author: "roster",
-      api: 6,
-      permissions: MESH_PERMISSIONS,
-    },
+    manifest: FIRST_PARTY.mesh,
     load,
   };
 }
@@ -246,7 +237,7 @@ function load(roster: FakeRoster) {
         const e = words.clean(j);
         state.status = null;
         state.refreshing = false;
-        state.problem = e.includes("unknown method")
+        state.problem = j instanceof PluginServeError && j.code === JsonRpcCode.METHOD_NOT_FOUND
           ? "This roster serve has no Mesh jobs (API 17): update roster to use the Mesh controls."
           : `roster serve couldn't say how the Mesh is: ${e}`;
         return show();
@@ -917,7 +908,7 @@ export function meshServe(world: MeshWorld): (method: string, params: Obj) => un
   return (method, params) => {
     switch (method) {
       case "mesh.job": {
-        if (!w.jobs) throw new Error("unknown method 'mesh.job' (code -32601)");
+        if (!w.jobs) throw new BackendCallError("unknown method 'mesh.job'", JsonRpcCode.METHOD_NOT_FOUND);
         if (!job || (params.job !== undefined && params.job !== job.number)) return null;
         const v: Obj = { job: job.number, action: job.action, state: "running", total: job.total, done: job.total - job.left, at: "orion-2", stopped: job.stopped };
         if (job.host) v.host = job.host;
@@ -940,8 +931,8 @@ export function meshServe(world: MeshWorld): (method: string, params: Obj) => un
       case "mesh.plan":
       case "mesh.apply":
       case "mesh.cut": {
-        if (params.background !== true) throw new Error(`${method} without background would hold the Plugin (code -1)`);
-        if (job && job.left > 0) throw new Error("a Mesh job is still running (code 111)");
+        if (params.background !== true) throw new BackendCallError(`${method} without background would hold the Plugin`, -1);
+        if (job && job.left > 0) throw new BackendCallError("a Mesh job is still running", 111);
         const action = method.slice(5);
         const host = typeof params.host === "string" ? params.host : undefined;
         const number = job ? job.number + 1 : 1;
@@ -950,7 +941,7 @@ export function meshServe(world: MeshWorld): (method: string, params: Obj) => un
         return { job: number, action, total, ...(host ? { host } : {}) };
       }
       default:
-        throw new Error(`unknown method '${method}' (code -32601)`);
+        throw new BackendCallError(`unknown method '${method}'`, JsonRpcCode.METHOD_NOT_FOUND);
     }
   };
 }

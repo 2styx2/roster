@@ -1,6 +1,6 @@
 // The Plugin API's LuaCATS stubs (`examples/plugins/types/roster.lua`), written from plugin-api.json
 // for `:help plugin-types` (T213, decision Q189), so the help text carries the API as data once
-// rather than as data and as roster.lua. It's a port of crates/roster-core/src/plugin/api.rs
+// rather than as data and as roster.lua. It's a port of crates/roster-core/src/plugin/api/
 // `stubs`, the one that writes the committed file and `:plugins types`; luaStubs.test.ts holds the
 // two to the same bytes.
 
@@ -29,7 +29,7 @@ export interface StubsData {
 
 const COMMAND = "cargo run -p roster-core --example gen_plugin_api";
 
-/** Markdown links reduced to their text, on one line (api.rs `plain`). */
+/** Markdown links reduced to their text, on one line (plugin/api `plain`). */
 function plain(text: string): string {
   let out = "";
   let rest = text;
@@ -53,14 +53,14 @@ const commentLines = (text: string): string =>
     .map((l) => `--- ${l.replace(/\r$/, "")}\n`)
     .join("");
 
-/** The module a function is in: its parent when that's a module, else `roster` (api.rs `module_of`). */
+/** The module a function is in: its parent when that's a module, else `roster` (plugin/api `module_of`). */
 function moduleOf(data: StubsData, path: string): string {
   const dot = path.lastIndexOf(".");
   const parent = dot < 0 ? "roster" : path.slice(0, dot);
   return data.modules.some((m) => m.name === parent) ? parent : "roster";
 }
 
-/** A type as the stubs write it, each declared type's name as `roster.Name` (api.rs `lua_type`). */
+/** A type as the stubs write it, each declared type's name as `roster.Name` (plugin/api `lua_type`). */
 function luaType(data: StubsData, ty: string): string {
   return ty.replace(/"[^"]*"?|[\p{L}_][\p{L}\p{N}_]*/gu, (word) =>
     /^\p{Lu}/u.test(word) && Object.hasOwn(data.types, word) ? `roster.${word}` : word,
@@ -70,7 +70,7 @@ function luaType(data: StubsData, ty: string): string {
 /** examples/plugins/types/roster.lua's text. */
 export function luaStubs(data: StubsData): string {
   let s = "---@meta roster\n";
-  s += `-- roster's Plugin API, roster.api_version ${data.api_version}: LuaCATS annotations for lua-language-server.\n-- Generated from crates/roster-core/src/plugin/api.rs by \`${COMMAND}\`; don't edit.\n-- The reference: docs/plugin-api.md (\`:help plugin-api\`).\n\n`;
+  s += `-- roster's Plugin API, roster.api_version ${data.api_version}: LuaCATS annotations for lua-language-server.\n-- Generated from crates/roster-core/src/plugin/api/ by \`${COMMAND}\`; don't edit.\n-- The reference: docs/plugin-api.md (\`:help plugin-api\`).\n\n`;
   const types = Object.entries(data.types).sort(([, a], [, b]) => a.order - b.order);
   for (const [name, t] of types) {
     s += commentLines(plain(t.summary));

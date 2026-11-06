@@ -8,8 +8,9 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_HOST_PASSWORD, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeBackend, type FakeScenario } from "./backend/fake";
-import { QUICK_CONNECT_API_VERSION, SAVE_TO_VAULT_API_VERSION } from "./backend/types";
+
 import { StubTerminal } from "./terminal/StubTerminal";
+import { sinceOf } from "./backend/capabilities";
 
 const hosts = makeHosts(12);
 const LABEL = "root@10.0.0.5";
@@ -17,7 +18,7 @@ const LABEL = "root@10.0.0.5";
 function backendWith(extra: Partial<FakeScenario> = {}) {
   return fakeBackend({
     hosts,
-    apiVersion: SAVE_TO_VAULT_API_VERSION,
+    apiVersion: sinceOf("saveToVault"),
     pending: { [hosts.hosts[0]!.name]: { title: "pending" } },
     quickBoxes: { "10.0.0.5": { hostname: "nas-01" } },
     vaultItems: ["dup ssh"],
@@ -132,7 +133,7 @@ describe('"Save to vault" on Quick Connect', () => {
   });
 
   it("isn't offered by a roster older than API 13", async () => {
-    const user = await ready(backendWith({ apiVersion: QUICK_CONNECT_API_VERSION }));
+    const user = await ready(backendWith({ apiVersion: sinceOf("quickConnect") }));
     await user.keyboard(`{Control>} {/Control}:connect ${LABEL}{Enter}`);
     const q = await within(pane()).findByRole("alertdialog", { name: `Quick Connect to ${LABEL}` });
     expect(within(q).queryByRole("checkbox", { name: /save to vault/i })).toBeNull();

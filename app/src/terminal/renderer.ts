@@ -5,7 +5,6 @@
 
 /** The renderer in use, and why it isn't WebGL. */
 export type RendererInUse =
-  /** xterm's WebGL renderer. */
   | "webgl"
   /** The DOM renderer because `terminal.renderer = "dom"` asked for it. */
   | "dom"

@@ -5,7 +5,9 @@
 
 mod common;
 
-use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::plugin::By;
+use roster_core::plugin::{Event, Limits, Load, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
@@ -13,13 +15,15 @@ use std::sync::Arc;
 struct FakeServe;
 
 impl Serve for FakeServe {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
         match method {
             "hosts.list" => Ok(json!({
                 "hosts": [{ "name": "esx-02" }, { "name": "esx-03" }, { "name": "db-01" }],
                 "groups": {}
             })),
-            other => Err(format!("unknown method {other}")),
+            other => Err(CallError::Io {
+                message: format!("unknown method {other}"),
+            }),
         }
     }
 }
@@ -41,7 +45,10 @@ fn read() -> Vec<Permission> {
 
 fn load(h: &PluginHost, config: Value) -> Reply {
     let (_, reply) = h
-        .load_with(&Source::Bundled("folders".into()), &read(), &config)
+        .load(
+            &Source::Bundled("folders".into()),
+            Load::new(&read()).config(config.clone()),
+        )
         .unwrap();
     assert!(reply.error.is_none(), "{:?}", reply.error);
     reply
@@ -71,7 +78,7 @@ fn folder(h: &PluginHost, first: &Reply, ctx: Value) -> Reply {
         .find(|o| o["name"] == "folder")
         .unwrap();
     let id = cmd["run"]["handler"].as_u64().unwrap();
-    h.call("folders", id, ctx)
+    h.call("folders", id, ctx, By::User)
 }
 
 fn args(text: &str) -> Value {
@@ -202,7 +209,7 @@ fn it_completes_subcommands_hosts_and_folders() {
     folder(&h, &first, args("add esx-02 Lab"));
     folder(&h, &first, args("new Night shift"));
     let id = op(&first, "command")[0]["complete"]["handler"].as_u64().unwrap();
-    let complete = |arg: &str| h.call("folders", id, json!(arg)).result;
+    let complete = |arg: &str| h.call("folders", id, json!(arg), By::User).result;
     assert_eq!(complete("re"), json!(["rename ", "remove "]));
     assert_eq!(complete("rename N"), json!(["rename \"Night shift\" "]));
     assert_eq!(complete("add esx"), json!(["add esx-02 ", "add esx-03 "]));
@@ -267,7 +274,9 @@ fn folders_yml_is_moved_in_once_without_losing_a_host() {
     // And :check says folders.yml isn't read any more.
     let health = op(&again, "health")[0];
     let check = health["spec"]["check"]["handler"].as_u64().unwrap();
-    let lines = h.call("folders", check, json!({ "health": "folders" })).result;
+    let lines = h
+        .call("folders", check, json!({ "health": "folders" }), By::User)
+        .result;
     assert!(
         lines.as_array().unwrap().iter().any(|l| l["level"] == "warn"
             && l["message"]
@@ -323,6 +332,7 @@ fn a_dropped_host_goes_into_the_folder() {
         "folders",
         drop,
         json!({ "section": "folders", "row": "Lab", "dropped": "esx-02" }),
+        By::User,
     );
     // Made in the user's own call (the drop), the line carries no mark (issue #183): the app
     // runs `:folder` as that call carried one hop, so it may answer on the message line.
@@ -332,7 +342,12 @@ fn a_dropped_host_goes_into_the_folder() {
     );
     // On the section: the command line asks which Folder.
     let drop = section_drop;
-    let r = h.call("folders", drop, json!({ "section": "folders", "dropped": "esx-02" }));
+    let r = h.call(
+        "folders",
+        drop,
+        json!({ "section": "folders", "dropped": "esx-02" }),
+        By::User,
+    );
     assert_eq!(op(&r, "cmdline")[0]["text"], "folder add esx-02 ");
     let folder_cmd = op(&first, "command")
         .into_iter()
@@ -340,7 +355,7 @@ fn a_dropped_host_goes_into_the_folder() {
         .unwrap()["run"]["handler"]
         .as_u64()
         .unwrap();
-    let added = h.call_carried("folders", folder_cmd, args("add esx-02 Lab"));
+    let added = h.call("folders", folder_cmd, args("add esx-02 Lab"), By::Carried);
     assert_eq!(echoed(&added), "Added esx-02 to Lab");
     assert_eq!(saved(&d), json!([{ "name": "Lab", "hosts": ["esx-02"] }]));
 }
@@ -350,7 +365,7 @@ fn revoked_it_still_works_without_checking_names() {
     let d = data("revoked");
     let h = host(&d);
     let (_, first) = h
-        .load_with(&Source::Bundled("folders".into()), &[], &json!({}))
+        .load(&Source::Bundled("folders".into()), Load::new(&[][..]).config(json!({})))
         .unwrap();
     assert!(first.error.is_none(), "{:?}", first.error);
     assert_eq!(

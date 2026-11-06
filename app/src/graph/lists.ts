@@ -1,10 +1,8 @@
 // A graph as two tables (ticket 77): every node, and every edge, so nothing in the drawing is
 // only in the drawing (WCAG 1.1.1). The nodes' table runs the graph's `open` and actions; the
 // edges' table's Enter goes to the edge's first end in the graph.
-import type { TableModel } from "../view/views";
-import type { TableRow } from "../ui/table";
-import { reachCounts, type GraphData, type GraphEdge, type GraphIndex, type GraphNode, type NodeShape } from "./model";
-import type { GraphModel } from "../view/views";
+import type { TableModel, TableRow } from "../ui/table";
+import { reachCounts, type GraphData, type GraphEdge, type GraphIndex, type GraphNode, type GraphModel, type NodeShape } from "./model";
 
 /** Cells the nodes' table keeps for an action's `when`, apart from its columns' ids. */
 const HIDDEN = "\u0000node.";

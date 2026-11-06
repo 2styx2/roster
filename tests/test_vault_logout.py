@@ -162,25 +162,29 @@ def test_every_secret_is_forgotten_before_the_cli_logs_out(bw, isolated, monkeyp
     assert "result" in call("vault.unlock", {"password": PASSWORD})
     assert bitwarden.session_key() == "fake-session-key"
     assert "BW_SESSION" not in os.environ
+    assert providers.get_secret("bw:Orion servers", "lab") == "pw-deploy"     # cached for this run now
     seen = {}
     real_logout = providers.PROVIDERS["bw"]["logout"]
 
-    def watching_logout(ctx):
-        seen.update(tokens=dict(state.askpass.tokens), handed=dict(state.askpass.handed), held=dict(state.held),
-                    typed=typed.password, session=bitwarden.session_key(), cached=dict(providers._secrets),
-                    unlocked=set(state.unlocked), login=state.login)
+    def watching_logout(ctx):                   # what's left the moment the CLI is told to log out
+        try:
+            cached = providers.get_secret("bw:Orion servers", "lab")
+        except providers.SecretError as e:
+            cached = type(e).__name__
+        seen.update(token=state.askpass.redeem(token), typed=typed.password, session=bitwarden.session_key(),
+                    cached=cached)
         return real_logout(ctx)
 
     monkeypatch.setitem(providers.PROVIDERS["bw"], "logout", watching_logout)
     with askpass.Channel(rpc.askpass_lookup) as state.askpass:
-        state.askpass.mint("bw:lab ssh", "esx-02")
+        token = state.askpass.mint("bw:lab ssh", "esx-02")
         typed = askpass.Typed("typed-pw-xyzzy")
         rpc.hold(state, "held-1", typed, "quick", "root@10.0.0.5")
-        providers._secrets["bw:lab ssh"] = "pw-cached"
         r = call("vault.logout")
+        assert call("quick.save", {"quick": "held-1", "name": "nas", "group": "lab"})["error"]["code"] == 67
     assert r["result"]["status"] == "not-logged-in"
-    assert seen == {"tokens": {}, "handed": {}, "held": {}, "typed": None, "session": None, "cached": {},
-                    "unlocked": set(), "login": None}
+    assert seen == {"token": None, "typed": None, "session": None, "cached": "VaultLocked"}
+    assert call("vault.status")["result"]["status"] == "not-logged-in"
 
 
 # ---- the cost: each bw call takes about a second

@@ -930,12 +930,6 @@ impl Screen {
         self.resizes != shot.resizes
     }
 
-    /// Whether a mask watch is on (tests: a fill leaves none behind, ticket 162).
-    #[cfg(test)]
-    pub(crate) fn watching_mask(&self) -> bool {
-        self.mask.is_some()
-    }
-
     /// Stops the mask watch, if one is on, noting nothing (the review of #299, #8: a fill that
     /// ends any way ends its watch).
     pub(crate) fn stop_mask_watch(&mut self) {

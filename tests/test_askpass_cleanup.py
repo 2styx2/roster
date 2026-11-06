@@ -84,12 +84,18 @@ def test_a_signal_still_removes_the_folder(serve, write_config, runtime_dir, sig
     assert folders(runtime_dir) == []
 
 
-def test_stdin_closed_mid_request_removes_the_folder(serve, write_config, runtime_dir, vault, monkeypatch):
-    write_config(INVENTORY)
+def test_stdin_closed_mid_request_removes_the_folder(serve, write_config, runtime_dir, vault, tmp_path,
+                                                     monkeypatch):
+    write_config(INVENTORY.replace("user: admin\n", "user: admin\n    auth: bw:esx ssh\n"))     # a vault to unlock
+    argv = tmp_path / "bw-argv.log"
+    monkeypatch.setenv("FAKE_ARGV_LOG", str(argv))
     monkeypatch.setenv("FAKE_BW_SLOW", json.dumps({"unlock": 30}))
     s = started(serve, runtime_dir)
-    s.request("vault.unlock", {"password": "hunter2"})      # still running when stdin closes
-    time.sleep(0.3)
+    s.request("vault.unlock", {"password": "hunter2"})
+    end = time.monotonic() + 10
+    while '"unlock"' not in (argv.read_text() if argv.exists() else "") and time.monotonic() < end:
+        time.sleep(0.01)
+    assert '"unlock"' in argv.read_text()                   # bw is unlocking: the request is still running
     t = time.monotonic()
     ended(s)
     assert time.monotonic() - t < 5 and folders(runtime_dir) == []
@@ -318,5 +324,8 @@ def test_a_token_whose_typed_password_was_forgotten_is_refused_not_crashed():
         typed = askpass.Typed("typed-pw-xyzzy")
         token = ch.mint(typed, "root@10.0.0.5")
         typed.password = None                                # vault.forget_typed, before ssh asked
-        reply = ch._reply(token)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as c:
+            c.connect(ch.socket_path)
+            c.sendall(token.encode() + b"\n")
+            reply = c.recv(1024)
     assert reply.startswith(f"no {askpass.TOKEN_SPENT}\n".encode()) and b"xyzzy" not in reply

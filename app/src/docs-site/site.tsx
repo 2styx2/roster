@@ -8,8 +8,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { Logo } from "../chrome/Logo";
 import logoCss from "../chrome/logo.css?raw";
-import { defaultConfig } from "../config/fixture";
-import { registerHelp, HelpView } from "../help/command";
+import { defaultConfig } from "../config/defaults";
+import { docsBuiltins, registerBuiltins } from "../commands/builtins";
 import { blockLinks, type Block } from "../help/doc";
 import helpDocCss from "../help/doc.css?raw";
 import { guides, PARTS } from "../help/guides";
@@ -68,7 +68,7 @@ export function siteContext(): HelpContext {
   // app's lazy chunk (T213).
   helpText.use(guideTexts);
   const r = builtinRegistries();
-  registerHelp(r, new HelpView());
+  registerBuiltins(r, docsBuiltins(r));
   return helpContext(r, {
     keymap: keymapOf(r.keymap.list()),
     options: defaultOptions,
@@ -81,7 +81,7 @@ export function siteContext(): HelpContext {
 }
 
 /** The pages in the index's order: the index, then each part's pages by their order. */
-export function indexOrder(ctx: HelpContext): HelpPage[] {
+function indexOrder(ctx: HelpContext): HelpPage[] {
   const parts: string[] = [...PARTS];
   const rank = (pg: HelpPage) => (pg.id === "index" ? -1 : parts.indexOf(pg.part ?? "") < 0 ? parts.length : parts.indexOf(pg.part ?? ""));
   return [...ctx.pages].sort((a, b) => rank(a) - rank(b) || a.order - b.order);
@@ -116,10 +116,6 @@ function pageIds(page: string, blocks: readonly Block[], print: boolean): Map<st
 }
 
 const short = (title: string) => title.split(":")[0] as string;
-
-/** Pages made from the app's code rather than a Markdown file: on the website they show the
- * defaults, and say so. */
-const GENERATED_NOTE = new Set(["quickref", "commands", "keys", "options", "themes", "finders", "errors", "health"]);
 
 export function buildSite(ctx: HelpContext, opts: SiteOptions): Site {
   const print = opts.print ?? false;
@@ -291,7 +287,7 @@ ${css}
 
 function sitePage(pg: HelpPage, article: string, pages: HelpPage[], opts: SiteOptions, gh: string): string {
   const start = pg.id === "index";
-  const note = GENERATED_NOTE.has(pg.id)
+  const note = pg.inEffect
     ? `<p class="site-note">On the website this page shows roster's defaults: no <code>init.lua</code>, no Plugins, nothing checked. In the app, <code>:help ${esc(pg.id)}</code> shows what's in effect on your Box.</p>`
     : "";
   const intro = start

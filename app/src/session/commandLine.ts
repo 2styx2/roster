@@ -10,7 +10,6 @@ export const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 /** A word's program name: quotes around it and any directory taken off. */
 export const base = (word: string) => word.replace(/^['"]+|['"]+$/g, "").split("/").pop() ?? "";
 
-/** The line's words, split at whitespace. */
 export const words = (command: string) => command.trim().split(/\s+/).filter(Boolean);
 
 /** Where the command's own program is: the first word after any `VAR=value`. */

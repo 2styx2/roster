@@ -5,11 +5,13 @@
 // terminal instead, with the start problem's facts and Retry as the error screen has them.
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import type { BackendProblem, NewInventory, NewInventoryHow, NewInventoryParams } from "../backend/types";
+import { Code, JsonRpcCode } from "../backend/serveContract";
 import { BackendCallError } from "../backend/types";
 import { Logo } from "../chrome/Logo";
 import { CopyCommand } from "../errors/ErrorPanel";
-import { withCode } from "../lock/withCode";
+import { withCode } from "../ui/withCode";
 import { Keys } from "../ui/Keys";
+import { errorText } from "../ui/format";
 
 const WAYS: { how: NewInventoryHow; label: string; about: string }[] = [
   { how: "blank", label: "A blank one", about: "A short roster.yml to add Hosts to." },
@@ -22,7 +24,7 @@ export const DEFAULT_FOLDER = "~/infra";
 
 /** A refusal that means this roster has no `inventory.create` (before serve API 28). */
 function tooOld(e: unknown): boolean {
-  return e instanceof BackendCallError && (e.code === -32601 || e.code === 1);
+  return e instanceof BackendCallError && (e.code === JsonRpcCode.METHOD_NOT_FOUND || e.code === Code.INVENTORY_ERROR);
 }
 
 export function FirstRun({
@@ -86,9 +88,9 @@ export function FirstRun({
       (err: unknown) => {
         setBusy(false);
         if (tooOld(err)) return setOld(true);
-        if (err instanceof BackendCallError && err.code === 5) return setStopped(true);
+        if (err instanceof BackendCallError && err.code === Code.CANCELLED) return setStopped(true);
         if (err instanceof BackendCallError && err.data?.field === "name") setAskName(true);
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorText(err);
         const fix = err instanceof BackendCallError && typeof err.data?.fix === "string" ? err.data.fix : null;
         setRefusal({ message, fix });
       },

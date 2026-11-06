@@ -1,23 +1,23 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { XtermPromptScreen } from "./promptScreen";
 import { FAKE_FINGERPRINT, FAKE_HOST_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "../backend/fake";
-import { BackendCallError, FillRefusal, QUICK_CONNECT_API_VERSION, SAVE_TO_VAULT_API_VERSION, SessionRefusal, type SessionEvents } from "../backend/types";
+import { BackendCallError, FillRefusal, SessionRefusal, type SessionEvents } from "../backend/types";
 import { IDLE_MS, hookLine } from "./shellHooks";
 import { PromptWatch } from "./prompt";
 import { Tabs, type TabStatus } from "./tabs";
+import { sinceOf } from "../backend/capabilities";
 
 const hosts = makeHosts(12);
 const reviewed = hosts.hosts.filter((h) => h.reviewed).map((h) => h.name);
 const unreviewed = hosts.hosts.find((h) => !h.reviewed)!.name;
 
 const text = (chunks: Uint8Array[]) => chunks.map((c) => new TextDecoder().decode(c)).join("");
-/** Lets the fake Backend's work run out: its steps are 0 ms timers, one after another. Each turn
- * here is a timer set after theirs, so it runs after the step that's due, however late a busy
- * machine runs them. 10 ms alone wasn't: woken late, it was due before their next step (T146). */
-const settle = async () => {
-  await new Promise((r) => setTimeout(r, 10));
-  for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
-};
+// The fake Backend's steps are timers: the tests move fake time on, so nothing depends on how
+// fast the machine runs them (T146).
+beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
+afterEach(() => vi.useRealTimers());
+/** Lets the fake Backend's work that's due run out (its steps, and what each sets off). */
+const settle = () => vi.advanceTimersByTimeAsync(10);
 /** serve's vault unlocked, as behind an unlocked lock screen (password Hosts need it). */
 const unlocked = { vault: { status: "unlocked" } } as const;
 
@@ -706,7 +706,7 @@ describe("a Host whose host key roster hasn't seen (ticket 36, decision Q60)", (
 
   it("doesn't ask through a roster older than API 11: roster's 44 is then a refusal", async () => {
     const { tabs, trusted } = unknownKey();
-    tabs.setAsksAboutKeys(false);
+    tabs.configure({ asksAboutKeys: false });
     tabs.open(host);
     await vi.waitFor(() => expect(status(tabs)?.state).toBe("failed"));
     const s = status(tabs);
@@ -731,7 +731,7 @@ describe("Quick Connect (ticket 14)", () => {
   const to = { user: "root", address: "10.0.0.5", port: 22 };
   const PASSWORD = FAKE_HOST_PASSWORD;
   function quick(extra: Partial<FakeScenario> = {}) {
-    const backend = fakeBackend({ ...unlocked, hosts, apiVersion: QUICK_CONNECT_API_VERSION, ...extra });
+    const backend = fakeBackend({ ...unlocked, hosts, apiVersion: sinceOf("quickConnect"), ...extra });
     return { backend, tabs: new Tabs(backend) };
   }
   const status = (tabs: Tabs) => tabs.snapshot().tabs[0]?.status;
@@ -768,7 +768,7 @@ describe("Quick Connect (ticket 14)", () => {
   it("its output reaches the Plugins' tap with no Host: it isn't one in the Inventory", async () => {
     const { tabs } = quick();
     const hostsSeen = new Set<string | null>();
-    tabs.setOutputTap({ output: (_id, host) => void hostsSeen.add(host) });
+    tabs.configure({ outputTap: { output: (_id, host) => void hostsSeen.add(host) } });
     const id = tabs.openQuick(to);
     await asked(tabs);
     tabs.connectQuick(id, PASSWORD);
@@ -853,7 +853,7 @@ describe('"Save to vault" on Quick Connect (ticket 15)', () => {
     const backend = fakeBackend({
       ...unlocked,
       hosts,
-      apiVersion: SAVE_TO_VAULT_API_VERSION,
+      apiVersion: sinceOf("saveToVault"),
       quickBoxes: { "10.0.0.5": { hostname: "nas-01" } },
       ...extra,
     });
@@ -931,7 +931,7 @@ describe('"Save to vault" on Quick Connect (ticket 15)', () => {
 describe("a held password, around the Session's life (iteration-4 review)", () => {
   /** The fake Backend, but the test resolves the Session's opening and says when it logged in. */
   function heldSessions() {
-    const backend = fakeBackend({ ...unlocked, hosts, apiVersion: SAVE_TO_VAULT_API_VERSION });
+    const backend = fakeBackend({ ...unlocked, hosts, apiVersion: sinceOf("saveToVault") });
     let events: SessionEvents | null = null;
     let resolve: (held: string) => void = () => {};
     backend.openSession = (_host, _size, ev) => {
@@ -1011,7 +1011,7 @@ describe("filling a password prompt (ticket 119)", () => {
       return { id: 1, auth: "key", write: done, resize: done, close: done, fill: (p: string) => (asked.push(p), fill(p)) };
     };
     const tabs = new Tabs(backend);
-    tabs.setFillPrompts({ userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) });
+    tabs.configure({ fillPrompts: { userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) } });
     const id = tabs.open(reviewed[0] ?? "");
     await settle();
     (ev as SessionEvents | null)?.output(new TextEncoder().encode("$ sudo -v\r\n[sudo] password for admin: "));
@@ -1043,7 +1043,7 @@ describe("filling a password prompt (ticket 119)", () => {
       throw new BackendCallError("Bitwarden vault is locked - unlock it first", SessionRefusal.vaultLocked);
     });
     const locked = vi.fn();
-    tabs.setVaultLockedHandler(locked);
+    tabs.configure({ onVaultLocked: locked });
     await expect(tabs.fill(id)).rejects.toThrow(/Unlock it, then press the fill key again/);
     expect(locked).toHaveBeenCalledOnce();
   });
@@ -1054,7 +1054,7 @@ describe("filling a password prompt (ticket 119)", () => {
       if (locked) throw new BackendCallError("Bitwarden vault is locked - unlock it first", SessionRefusal.vaultLocked);
       return { host: "h" };
     });
-    tabs.setVaultLockedHandler(() => (locked = false));
+    tabs.configure({ onVaultLocked: () => (locked = false) });
     await expect(tabs.fill(id)).rejects.toThrow(/Unlock it/);
     expect(tabs.snapshot().tabs[0]?.prompt?.line).toBe("[sudo] password for admin:");
     await expect(tabs.fill(id)).resolves.toBe("h");
@@ -1080,7 +1080,7 @@ describe("filling a password prompt (ticket 119)", () => {
     });
     print = at.print;
     const seen: string[] = [];
-    at.tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    at.tabs.configure({ outputTap: { output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) } });
     await expect(at.tabs.fill(at.id)).resolves.toBe("h");
     await at.print("**");
     await at.print(`${"\b \b".repeat(11)}\r\n[sudo ok]\r\n$ `);
@@ -1094,7 +1094,7 @@ describe("filling a password prompt (ticket 119)", () => {
       throw new BackendCallError("the prompt printed what roster typed to check it, so roster didn't fill it");
     });
     const seen: string[] = [];
-    at.tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    at.tabs.configure({ outputTap: { output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) } });
     await expect(at.tabs.fill(at.id)).rejects.toThrow(/printed what roster typed/);
     await at.print("typed by hand");
     // The token mask may hold a trailing hex letter for up to 50 ms.
@@ -1104,6 +1104,7 @@ describe("filling a password prompt (ticket 119)", () => {
   // Ticket 155 (#284): after a refusal the app sends the Session nothing of its own: no retry, no
   // shell hook line, no Enter. (The core types only its probe, which holds no Enter: pty_fill.rs.)
   it("sends the Session nothing after a refused fill, pressed again or left alone", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const backend = fakeBackend({ ...unlocked, hosts });
     let ev: SessionEvents | null = null;
     const writes: string[] = [];
@@ -1122,8 +1123,8 @@ describe("filling a password prompt (ticket 119)", () => {
       return { id: 1, auth: "key", write: async (d: string) => void writes.push(d), resize: done, close: done, fill };
     };
     const tabs = new Tabs(backend);
-    tabs.setShellHooks(() => true, (size) => new XtermPromptScreen(size));
-    tabs.setFillPrompts({ userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) });
+    tabs.configure({ shellHooks: { on: () => true, screen: (size) => new XtermPromptScreen(size) } });
+    tabs.configure({ fillPrompts: { userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) } });
     const id = tabs.open(reviewed[0] ?? "");
     await settle();
     const print = async (s: string) => {
@@ -1136,11 +1137,11 @@ describe("filling a password prompt (ticket 119)", () => {
     await expect(tabs.fill(id)).rejects.toThrow(/No password prompt/);
     // sudo redraws its prompt (Windows' ConPTY does), and the login goes quiet there.
     await print("\x1b[?25l\r[sudo] password for admin: \x1b[K\x1b[?25h");
-    await new Promise((r) => setTimeout(r, IDLE_MS * 2));
+    await vi.advanceTimersByTimeAsync(IDLE_MS * 2);
     // The offer is back; a serve refusal (a code) typed nothing either.
     await expect(tabs.fill(id)).rejects.toThrow(/changed since/);
     await expect(tabs.fill(id)).rejects.toThrow(/printed what roster typed/);
-    await new Promise((r) => setTimeout(r, IDLE_MS * 2));
+    await vi.advanceTimersByTimeAsync(IDLE_MS * 2);
     expect(fills).toBe(3);
     expect(writes).toEqual([]);
   });
@@ -1175,10 +1176,12 @@ describe("a nested ssh (ticket 120)", () => {
     };
     const tabs = new Tabs(backend);
     // Not by itself: `:integrate` reads the prompt off the Session's screen.
-    tabs.setShellHooks(() => false, (size) => new XtermPromptScreen(size));
-    tabs.setFillPrompts({
-      userOf: () => "admin",
-      watch: (size, user, nonce) => ((token = nonce), new PromptWatch(size, user, { hosts: () => hosts.hosts, fill: true }, nonce)),
+    tabs.configure({ shellHooks: { on: () => false, screen: (size) => new XtermPromptScreen(size) } });
+    tabs.configure({
+      fillPrompts: {
+        userOf: () => "admin",
+        watch: (size, user, nonce) => ((token = nonce), new PromptWatch(size, user, { hosts: () => hosts.hosts, refuseFill: null }, nonce)),
+      },
     });
     const id = tabs.open(reviewed.find((n) => n !== to.name) ?? "");
     await settle();
@@ -1246,9 +1249,9 @@ describe("a nested ssh (ticket 120)", () => {
       return { id: 1, auth: "key", write: async (d: string) => void (sent += d), resize: done, close: done };
     };
     const tabs = new Tabs(backend);
-    tabs.setShellHooks(() => false, (size) => new XtermPromptScreen(size));
+    tabs.configure({ shellHooks: { on: () => false, screen: (size) => new XtermPromptScreen(size) } });
     const seen: string[] = [];
-    tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    tabs.configure({ outputTap: { output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) } });
     const id = tabs.open(reviewed[0] ?? "");
     await settle();
     const print = async (t: string) => {
@@ -1284,7 +1287,7 @@ describe("a nested ssh (ticket 120)", () => {
     };
     const tabs = new Tabs(backend);
     const seen: string[] = [];
-    tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    tabs.configure({ outputTap: { output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) } });
     const id = tabs.open(reviewed[0] ?? "");
     await vi.advanceTimersByTimeAsync(0);
     const print = (t: string) => (ev as SessionEvents | null)?.output(new TextEncoder().encode(t));
@@ -1303,7 +1306,7 @@ describe("a nested ssh (ticket 120)", () => {
   it("never hands Plugins the attempt's token", async () => {
     const { tabs, print, own, token } = await onHost();
     const seen: string[] = [];
-    tabs.setOutputTap({ output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) });
+    tabs.configure({ outputTap: { output: (_id, _host, data) => void seen.push(new TextDecoder().decode(data)) } });
     await print(`ls\r\n${own("C")}a\r\n${own("D;0")}${own("A")}$ ${own("B")}`);
     expect(seen.join("")).toContain("a\r\n");
     expect(seen.join("")).not.toContain(token());
@@ -1319,7 +1322,7 @@ describe("shell hooks (ticket 121, #210)", () => {
     vi.useFakeTimers();
     const { backend, session, typed } = scriptedSessions();
     const tabs = new Tabs(backend);
-    tabs.setShellHooks(on, (size) => new XtermPromptScreen(size));
+    tabs.configure({ shellHooks: { on: on, screen: (size) => new XtermPromptScreen(size) } });
     const seen: Uint8Array[] = [];
     const id = tabs.open(reviewed[0]!);
     tabs.attach(id, (d) => seen.push(d));
@@ -1401,7 +1404,7 @@ describe("Sessions from another named Inventory (ticket 115)", () => {
       return { id: events.length, auth: "key", write: done, resize: done, close: done, fill: async (p: string) => (asked.push(p), { host }) };
     };
     const tabs = new Tabs(backend);
-    tabs.setFillPrompts({ userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) });
+    tabs.configure({ fillPrompts: { userOf: () => "admin", watch: (size, user) => new PromptWatch(size, user) } });
     const prompt = async (i: number) => {
       events[i]?.output(new TextEncoder().encode("$ sudo -v\r\n[sudo] password for admin: "));
       await settle();

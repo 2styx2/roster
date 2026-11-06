@@ -11,6 +11,7 @@ from test_serve import synced
 from roster import diagnose
 from roster.cli import main
 from roster.config import load_config
+from roster.errors import InventoryError
 
 HOSTS = """\
 groups:
@@ -38,9 +39,9 @@ def test_the_list_holds_networks_and_single_addresses(write_config):
 
 @pytest.mark.parametrize("value", ["[10.0.0.0/33]", "[not-a-network]", "10.0.0.0/8", "[10.0.0.1/8]"])
 def test_a_bad_entry_stops_the_load_naming_the_key(write_config, value):
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(write_config(f"rate_limited: {value}\n" + HOSTS))
-    assert "rate_limited" in str(e.value.code)
+    assert "rate_limited" in e.value.message
 
 
 @pytest.fixture
@@ -129,12 +130,6 @@ def test_a_name_with_no_list_still_gets_the_generic_hint(times_out, resolves):
     assert GENERIC in times_out("", "named")
 
 
-def test_no_address_range_is_left_in_roster():
-    """The hint used to come from one network's fixed prefix (#363)."""
-    import inspect
-    assert "10.19" not in inspect.getsource(diagnose)
-
-
 # #404 review N2: no code anywhere decides by a fixed address range, as diagnose.py once did. What gives one away: an
 # address prefix as a literal ("10.0." with the trailing dot), a prefix comparison against a dotted literal, a
 # shell pattern (10.0.*) or a regex anchored on one (^10\.0\.). A whole network as a literal ("10.0.0.0/8") is
@@ -200,18 +195,18 @@ def test_no_fixed_address_range_is_hard_coded_anywhere():
 
 
 def test_only_a_network_with_host_bits_set_is_told_about_host_bits(write_config):
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(write_config("rate_limited: [10.0.0.1/8]\n" + HOSTS))
-    assert "host bits" in str(e.value.code) and "10.0.0.0/8" in str(e.value.code)
-    with pytest.raises(SystemExit) as e:
+    assert "host bits" in e.value.message and "10.0.0.0/8" in e.value.message
+    with pytest.raises(InventoryError) as e:
         load_config(write_config("rate_limited: [not-a-network]\n" + HOSTS))
-    assert "host bits" not in str(e.value.code)
+    assert "host bits" not in e.value.message
 
 
 def test_an_unquoted_ipv6_address_read_as_a_number_says_to_quote_it(write_config):
     """YAML 1.1 reads 1:2:3:4:5:6:7:8 unquoted as a base-60 number."""
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(write_config("rate_limited: [1:2:3:4:5:6:7:8]\n" + HOSTS))
-    assert "quote" in str(e.value.code)
+    assert "quote" in e.value.message
     assert load_config(write_config("rate_limited: ['1:2:3:4:5:6:7:8']\n" + HOSTS))["rate_limited"] == \
         ["1:2:3:4:5:6:7:8/128"]

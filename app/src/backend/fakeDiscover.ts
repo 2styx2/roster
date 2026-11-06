@@ -4,7 +4,10 @@
 // crates/roster-core/tests/plugin_discover.rs records from the real Lua
 // (app/src/plugins/discover.transcript.json) and checks this does the same. Change the Lua first.
 import type { FakePlugin, FakeRoster, FakeServe } from "./fakePlugins";
+import { PluginServeError } from "./redact";
 import { BackendCallError } from "./types";
+import { FIRST_PARTY } from "./fakeManifests";
+import { Code, JsonRpcCode } from "./serveContract";
 
 const DEFAULT_LEADER = "y d";
 const MAX_ROWS = 10000;
@@ -14,7 +17,7 @@ const VIEW = "discover";
 const SCANS = ["serve:discover.plan", "serve:discover.start", "serve:discover.status", "serve:discover.stop"];
 const ADDS = "serve:discover.add";
 
-export interface FoundPort {
+interface FoundPort {
   port: number;
   name: string;
   product: string;
@@ -75,14 +78,10 @@ export function settings(config: Record<string, unknown>): [Settings, string[]] 
 const count = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const plural = (n: number, one: string, many: string) => `${count(n)} ${n === 1 ? one : many}`;
 const list = (items: string[]) => (items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1] ?? ""}`);
-const codeOf = (e: unknown) => {
-  const m = /\(code (-?\d+)\)$/.exec(String(e instanceof Error ? e.message : e));
-  return m ? Number(m[1]) : null;
-};
+// As model.lua's code and message: roster serve's error object (Plugin API 7), or text.
+const codeOf = (e: unknown) => (e instanceof PluginServeError ? e.code : null);
 const messageOf = (e: unknown) =>
-  String(e instanceof Error ? e.message : e)
-    .replace(/^roster\.serve\.[a-z]+ [\w._]+: /, "")
-    .replace(/ \(code -?\d+\)$/, "");
+  e instanceof PluginServeError ? e.serveMessage : String(e instanceof Error ? e.message : e).replace(/^roster\.serve\.[a-z]+ [\w._]+: /, "");
 
 const portsText = (ports: FoundPort[]) => {
   const bits: string[] = [];
@@ -144,14 +143,7 @@ function detailLines(f: Found): string[] {
 /** discover as the fake Backend's Plugin. */
 export function discoverPlugin(options: { permissions?: string[] } = {}): FakePlugin {
   return {
-    manifest: {
-      name: "discover",
-      version: "1.0.0",
-      description: "Scan a network from the app and add what it finds, as Pending changes you review",
-      author: "roster",
-      api: 6,
-      permissions: options.permissions ?? [...SCANS, ADDS],
-    },
+    manifest: { ...FIRST_PARTY.discover, ...(options.permissions ? { permissions: options.permissions } : {}) },
     load: (roster) => load(roster),
   };
 }
@@ -467,7 +459,7 @@ function load(roster: FakeRoster) {
   const start = (targets: string[], force: boolean) => {
     request("discover.start", { targets, ports: s.ports, force }, (ok, r) => {
       if (!ok) {
-        roster.notify(`The scan didn't start: ${messageOf(r)}`, codeOf(r) === 120 ? "warn" : "error");
+        roster.notify(`The scan didn't start: ${messageOf(r)}`, codeOf(r) === Code.SCAN_RUNNING ? "warn" : "error");
         return;
       }
       started(r as Status);
@@ -495,7 +487,7 @@ function load(roster: FakeRoster) {
   };
 
   const confirm = (ok: boolean, plan: unknown) => {
-    if (!ok && codeOf(plan) === -32601) {
+    if (!ok && codeOf(plan) === JsonRpcCode.METHOD_NOT_FOUND) {
       roster.notify(
         "Not scanned: the roster on this Box is too old to scan from the app (it needs roster serve API 18). Update roster there, or run `roster discover` in a terminal.",
         "error",
@@ -586,7 +578,7 @@ function load(roster: FakeRoster) {
       if (gone.length > 0) return [{ level: "warn", message: `${list(gone)} not granted: Discover can't scan`, fix: "Allow them in :plugins" }];
       request("discover.plan", { targets: ["10.0.0.0/30"] }, (ok, plan) => {
         let out: Record<string, unknown>[];
-        if (!ok && codeOf(plan) === -32601)
+        if (!ok && codeOf(plan) === JsonRpcCode.METHOD_NOT_FOUND)
           out = [
             {
               level: "error",
@@ -652,11 +644,11 @@ export function fakeDiscoverServe(net: FakeNet): FakeServe {
       throw new BackendCallError(`params: ${JSON.stringify(targets)} isn't an IP address or network (e.g. 10.0.0.0/24)`, -32602);
     const total = (targets as string[]).reduce((a, t) => a + addressCount(t), 0);
     const limit = force ? MAX : LIMIT;
-    if (total > limit) throw new BackendCallError(`that's ${count(total)} addresses; a scan visits at most ${count(limit)}${force ? "" : " without force"}`, 121);
+    if (total > limit) throw new BackendCallError(`that's ${count(total)} addresses; a scan visits at most ${count(limit)}${force ? "" : " without force"}`, Code.TOO_MANY_ADDRESSES);
     return [targets as string[], total] as const;
   };
   const status = (since = 0) => {
-    if (!scan) throw new BackendCallError("no scan has started in this roster serve", 122);
+    if (!scan) throw new BackendCallError("no scan has started in this roster serve", Code.NO_SCAN);
     const seen = Math.ceil((scan.found.length * scan.done) / Math.max(scan.total, 1));
     const all = scan.found.slice(0, seen);
     return {
@@ -679,7 +671,7 @@ export function fakeDiscoverServe(net: FakeNet): FakeServe {
         return { targets, addresses: total, ports: 47, scanner: net.scanner ?? "nmap", limit: LIMIT, max: MAX };
       }
       case "discover.start": {
-        if (scan && scan.state === "running") throw new BackendCallError(`a scan of ${scan.targets.join(", ")} is going already`, 120, { scan: scan.id } as never);
+        if (scan && scan.state === "running") throw new BackendCallError(`a scan of ${scan.targets.join(", ")} is going already`, Code.SCAN_RUNNING, { scan: scan.id } as never);
         const [targets, total] = valid(params.targets, params.force === true);
         scan = { id: `scan-${++n}`, targets, done: 0, total, state: "running", found: net0.filter((f) => targets.some((t) => inRange(f.address, t))) };
         return status();
@@ -693,25 +685,25 @@ export function fakeDiscoverServe(net: FakeNet): FakeServe {
         return s;
       }
       case "discover.stop": {
-        if (!scan) throw new BackendCallError("no scan has started in this roster serve", 122);
+        if (!scan) throw new BackendCallError("no scan has started in this roster serve", Code.NO_SCAN);
         const stopping = scan.state === "running";
         if (stopping) scan.state = "stopped";
         return { scan: scan.id, stopping };
       }
       case "discover.add": {
-        if (!scan || params.scan !== scan.id) throw new BackendCallError(`no scan ${JSON.stringify(params.scan)} here`, 122);
+        if (!scan || params.scan !== scan.id) throw new BackendCallError(`no scan ${JSON.stringify(params.scan)} here`, Code.NO_SCAN);
         const group = typeof params.group === "string" ? params.group : "discovered-20261031";
         const current = scan;
         const added = (params.addresses as string[]).map((a) => {
           const f = current.found.find((x) => x.address === a);
-          if (!f || f.known || f.added) throw new BackendCallError(`${a}: not found by this scan, or in the Inventory already`, 123);
+          if (!f || f.known || f.added) throw new BackendCallError(`${a}: not found by this scan, or in the Inventory already`, Code.CANT_ADD);
           f.added = f.name;
           return { address: a, name: f.name ?? a };
         });
         return { group, added, backup: "/home/you/team-inventory/.git/roster/roster.yml.bak" };
       }
       default:
-        throw new BackendCallError(`unknown method '${method}'`, -32601);
+        throw new BackendCallError(`unknown method '${method}'`, JsonRpcCode.METHOD_NOT_FOUND);
     }
   };
 }

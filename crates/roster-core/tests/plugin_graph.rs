@@ -5,15 +5,19 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{Limits, PluginHost, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
 struct NoServe;
 
 impl Serve for NoServe {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
-        Err(format!("unknown method {method}"))
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
+        Err(CallError::Io {
+            message: format!("unknown method {method}"),
+        })
     }
 }
 
@@ -83,9 +87,12 @@ fn a_graph_is_data_and_its_actions_get_the_node() {
 
     let open = handler(&graph["open"]);
     let event = json!({ "view": "map", "node": "esx-02", "host": "esx-02" });
-    assert_eq!(host.call("map", open, event.clone()).result, "opened esx-02 on esx-02");
+    assert_eq!(
+        host.call("map", open, event.clone(), By::User).result,
+        "opened esx-02 on esx-02"
+    );
     let check = handler(&graph["actions"][0]["run"]);
-    assert_eq!(host.call("map", check, event.clone()).result, "map:esx-02");
+    assert_eq!(host.call("map", check, event.clone(), By::User).result, "map:esx-02");
 
     // Setting it again drops the old graph's functions.
     let again = reply
@@ -93,8 +100,13 @@ fn a_graph_is_data_and_its_actions_get_the_node() {
         .iter()
         .find(|o| o["op"] == "command" && o["name"] == "again")
         .unwrap();
-    let r = host.call("map", handler(&again["run"]), json!({ "args": "", "words": [] }));
+    let r = host.call(
+        "map",
+        handler(&again["run"]),
+        json!({ "args": "", "words": [] }),
+        By::User,
+    );
     assert!(r.error.is_none(), "{:?}", r.error);
-    let stale = host.call("map", check, event);
+    let stale = host.call("map", check, event, By::User);
     assert!(stale.error.is_some(), "the old action still ran");
 }

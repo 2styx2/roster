@@ -5,15 +5,19 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{Limits, PluginHost, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
 struct NoServe;
 
 impl Serve for NoServe {
-    fn call(&self, method: &str, _: Value) -> Result<Value, String> {
-        Err(format!("unknown method {method}"))
+    fn call(&self, method: &str, _: Value) -> Result<Value, CallError> {
+        Err(CallError::Io {
+            message: format!("unknown method {method}"),
+        })
     }
 }
 
@@ -49,13 +53,13 @@ fn echo_and_cmdline_only_answer_the_user() {
     assert!(said.contains("roster.echo: only while the user runs"), "{said}");
     assert!(said.contains("roster.cmdline: only while the user runs"), "{said}");
     let note = reply.ops[1]["run"]["handler"].as_u64().unwrap();
-    let r = host.call("asker", note, json!({ "args": "", "words": [] }));
+    let r = host.call("asker", note, json!({ "args": "", "words": [] }), By::User);
     assert_eq!(r.ops, [json!({ "op": "cmdline", "text": "note " })]);
-    let r = host.call("asker", note, json!({ "args": "milk", "words": ["milk"] }));
+    let r = host.call("asker", note, json!({ "args": "milk", "words": ["milk"] }), By::User);
     assert_eq!(r.ops, [json!({ "op": "echo", "text": "Noted milk" })]);
     // Never someone else's command, roster's :plugins above all.
     let bad = reply.ops[2]["run"]["handler"].as_u64().unwrap();
-    let r = host.call("asker", bad, json!({ "args": "", "words": [] }));
+    let r = host.call("asker", bad, json!({ "args": "", "words": [] }), By::User);
     assert!(r.error.unwrap().message.contains("isn't one of your commands"));
 }
 
@@ -68,7 +72,10 @@ fn complete_isnt_a_call_the_user_started() {
            end })"#,
     );
     let id = reply.ops[0]["complete"]["handler"].as_u64().unwrap();
-    assert_eq!(host.call("asker", id, json!("a")).result, json!(["note afalse"]));
+    assert_eq!(
+        host.call("asker", id, json!("a"), By::User).result,
+        json!(["note afalse"])
+    );
 }
 
 #[test]
@@ -89,7 +96,7 @@ fn echo_can_be_marked_quiet() {
            end })"#,
     );
     let note = reply.ops[0]["run"]["handler"].as_u64().unwrap();
-    let r = host.call("asker", note, json!({ "args": "milk", "words": ["milk"] }));
+    let r = host.call("asker", note, json!({ "args": "milk", "words": ["milk"] }), By::User);
     assert_eq!(
         r.ops,
         [
@@ -97,7 +104,7 @@ fn echo_can_be_marked_quiet() {
             json!({ "op": "echo", "text": "3 notes" }),
         ]
     );
-    let r = host.call("asker", note, json!({ "args": "bad", "words": ["bad"] }));
+    let r = host.call("asker", note, json!({ "args": "bad", "words": ["bad"] }), By::User);
     assert!(r.error.unwrap().message.contains("roster.echo: quiet is true or false"));
 }
 

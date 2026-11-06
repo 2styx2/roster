@@ -63,3 +63,33 @@ fn copy_missing(from: &Path, to: &Path, copied: &mut Vec<PathBuf>) -> io::Result
     }
     Ok(())
 }
+
+/// At start: the one-time copy of roster-desk's State into `app_data` (the app's local data dir),
+/// unless [`crate::env::STATE_DIR_VAR`] moves the State elsewhere. The line for the app's log, if
+/// there's anything to say; never an error that stops the app: State is only a convenience.
+pub fn state_at_start(app_data: &Path) -> Option<String> {
+    if crate::env::state_dir().is_some() {
+        return None;
+    }
+    let old = legacy_state_dir(app_data)?;
+    match state(&old, app_data) {
+        Ok(true) => Some(format!("copied the State from {}", old.display())),
+        Ok(false) => None,
+        Err(e) => Some(format!("can't copy the State from {}: {e}", old.display())),
+    }
+}
+
+/// At start: the one-time copy of roster-desk's Config dir into `dir`, roster's ([`config`]). The
+/// line for the app's log, if there's anything to say.
+pub fn config_at_start(dir: &Path) -> Option<String> {
+    let old = crate::config::legacy_dir()?;
+    match config(&old, dir) {
+        Ok(copied) if !copied.is_empty() => Some(format!(
+            "copied {} file(s) of the Config from {}",
+            copied.len(),
+            old.display()
+        )),
+        Ok(_) => None,
+        Err(e) => Some(format!("can't copy the Config from {}: {e}", old.display())),
+    }
+}

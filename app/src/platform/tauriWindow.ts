@@ -57,6 +57,7 @@ export function tauriWindow(): WindowControls {
       });
       const stop = onMoveOrResize(() => {
         clearTimeout(timer);
+        // The window's geometry can't be read while it closes; the next move or resize saves it again.
         timer = setTimeout(() => void settle().catch(() => {}), SETTLE_MS);
       });
       return () => {

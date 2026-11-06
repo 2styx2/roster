@@ -7,7 +7,7 @@ import { useContext, useState } from "react";
 import { fixFor, sentence, type ErrorAction, type ErrorExtra, type ErrorRow, rowFor } from "./catalog";
 import type { Problem, ProblemData } from "./classify";
 import { RosterApi } from "./rosterApi";
-import { withCode } from "../lock/withCode";
+import { withCode } from "../ui/withCode";
 
 export interface ProblemActions {
   /** Runs a command line (`reconnect`, `check HOST`, `lock`, `find`). */
@@ -34,9 +34,9 @@ export function CopyCommand({ text, copy }: { text: string; copy: ProblemActions
 }
 
 function Action({ action, problem, actions }: { action: ErrorAction; problem: Problem; actions: ProblemActions }) {
-  const api = useContext(RosterApi);
+  const caps = useContext(RosterApi);
   if (action.kind === "copy") {
-    const text = action.text(problem, { api });
+    const text = action.text(problem, { caps });
     return text ? <CopyCommand text={text} copy={actions.copy} /> : null;
   }
   return (
@@ -137,7 +137,7 @@ export interface ProblemBodyProps {
 
 /** The message, where, fix, extras, actions and Details of one Problem. */
 export function ProblemBody({ problem, rows, actions, noActions, notInTab }: ProblemBodyProps) {
-  const api = useContext(RosterApi);
+  const caps = useContext(RosterApi);
   const row = rowFor(rows, problem.code);
   const shown = row.actions.filter(
     (a) => !(notInTab && a.kind === "run" && a.line(problem) === "reconnect") && !(problem.quick && a.hostOnly),
@@ -150,7 +150,7 @@ export function ProblemBody({ problem, rows, actions, noActions, notInTab }: Pro
         <dt>{WHERE_LABEL}</dt>
         <dd>{row.where.join(", ")}</dd>
         <dt>Fix</dt>
-        <dd>{withCode(fixFor(row, problem, { api }))}</dd>
+        <dd>{withCode(fixFor(row, problem, { caps }))}</dd>
       </dl>
       {row.extras?.map((x) => (
         <div key={x}>{extras[x](data)}</div>

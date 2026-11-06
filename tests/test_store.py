@@ -43,7 +43,7 @@ def test_a_file_outside_any_repo_is_a_plain_file(plain):
 
 def test_a_plain_file_saves_in_place_and_keeps_a_backup_beside_it(plain):
     s = store.at(plain)
-    backup = s.save(TEXT, TEXT.replace("10.0.0.5", "10.0.0.6"))
+    backup = s.write(TEXT, TEXT.replace("10.0.0.5", "10.0.0.6"), sync=dict)[0]
     assert plain.read_text() == TEXT.replace("10.0.0.5", "10.0.0.6")
     assert backup == plain.with_name("roster.yml.bak") and backup.read_text() == TEXT
 
@@ -71,7 +71,7 @@ def test_committed_in_a_repo_with_a_remote_is_a_repo(plain, tmp_path):
     committed(plain, tmp_path / "origin.git")
     s = store.at(plain)
     assert s.kind == "repo" and str(plain.parent.resolve()) in s.note
-    backup = s.save(TEXT, TEXT + "# more\n")
+    backup = s.write(TEXT, TEXT + "# more\n", sync=dict)[0]
     assert backup == plain.parent.resolve() / ".git" / "roster" / "roster.yml.bak"
     assert git(plain.parent, "status", "--porcelain", "--untracked-files=no") == "M roster.yml"
     assert s.diff()["kind"] == "repo" and s.diff()["count"] == 1
@@ -81,7 +81,7 @@ def test_a_repo_without_a_remote_saves_in_place_with_the_backup_in_its_git_dir(p
     committed(plain)
     s = store.at(plain)
     assert s.kind == "file" and "no remote" in s.note
-    assert s.save(TEXT, TEXT + "# more\n") == plain.parent.resolve() / ".git" / "roster" / "roster.yml.bak"
+    assert s.write(TEXT, TEXT + "# more\n", sync=dict)[0] == plain.parent.resolve() / ".git" / "roster" / "roster.yml.bak"
     assert s.diff()["count"] == 0
 
 
@@ -105,7 +105,7 @@ def test_a_planted_backup_symlink_is_replaced_never_followed(plain, tmp_path):
     victim = tmp_path / "victim"
     victim.write_text("keep me\n")
     plain.with_name("roster.yml.bak").symlink_to(victim)
-    store.at(plain).save(TEXT, TEXT + "# more\n")
+    store.at(plain).write(TEXT, TEXT + "# more\n", sync=dict)[0]
     assert victim.read_text() == "keep me\n"
     bak = plain.with_name("roster.yml.bak")
     assert not bak.is_symlink() and bak.read_text() == TEXT
@@ -118,7 +118,7 @@ def test_a_planted_symlink_for_the_git_dirs_backup_folder_is_refused(plain, tmp_
     elsewhere.mkdir()
     (plain.parent / ".git" / "roster").symlink_to(elsewhere)
     with pytest.raises(Problem):
-        store.at(plain).save(TEXT, TEXT + "# more\n")
+        store.at(plain).write(TEXT, TEXT + "# more\n", sync=dict)[0]
     assert list(elsewhere.iterdir()) == [] and plain.read_text() == TEXT       # nothing written anywhere
 
 
@@ -128,10 +128,10 @@ def test_the_backup_keeps_roster_yml_private(plain, tmp_path):
     plain.chmod(0o600)
     old = os.umask(0o022)
     try:
-        bak = store.at(plain).save(TEXT, TEXT + "# more\n")
+        bak = store.at(plain).write(TEXT, TEXT + "# more\n", sync=dict)[0]
         assert stat.S_IMODE(bak.stat().st_mode) == 0o600 and stat.S_IMODE(plain.stat().st_mode) == 0o600
         committed(plain, tmp_path / "origin.git")
-        bak = store.at(plain).save(TEXT + "# more\n", TEXT)
+        bak = store.at(plain).write(TEXT + "# more\n", TEXT, sync=dict)[0]
         assert stat.S_IMODE(bak.stat().st_mode) == 0o600
     finally:
         os.umask(old)
@@ -144,7 +144,7 @@ def test_detection_never_runs_the_repos_fsmonitor(plain, tmp_path):
     ran = tmp_path / "ran"
     git(plain.parent, "config", "core.fsmonitor", f"touch {ran}")
     assert store.at(plain).kind == "repo"
-    store.at(plain).save(TEXT, TEXT + "# more\n")
+    store.at(plain).write(TEXT, TEXT + "# more\n", sync=dict)[0]
     store.at(plain).diff()
     assert not ran.exists()
 
@@ -185,7 +185,7 @@ def test_git_that_fails_refuses_a_save_rather_than_guess(plain, tmp_path, monkey
         return real(repo, *args, **kw)
     monkeypatch.setattr(changes, "git", stuck)
     with pytest.raises(Problem) as e:
-        store.at(plain).save(TEXT, TEXT + "# more\n")
+        store.at(plain).write(TEXT, TEXT + "# more\n", sync=dict)[0]
     assert "won't save" in e.value.message and e.value.data["fix"]
     assert not plain.with_name("roster.yml.bak").exists() and plain.read_text() == TEXT
     shown = store.at(plain, for_show=True)
@@ -196,6 +196,6 @@ def test_without_git_a_backup_still_goes_in_the_git_dir_of_a_work_tree(plain, tm
     """N1: no git on PATH, but roster.yml sits in a work tree: the backup goes in its .git, never beside it."""
     committed(plain, tmp_path / "origin.git")
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
-    bak = store.at(plain).save(TEXT, TEXT + "# more\n")
+    bak = store.at(plain).write(TEXT, TEXT + "# more\n", sync=dict)[0]
     assert bak == plain.parent.resolve() / ".git" / "roster" / "roster.yml.bak"
     assert not plain.with_name("roster.yml.bak").exists()

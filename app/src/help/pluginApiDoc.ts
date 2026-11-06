@@ -1,6 +1,6 @@
 // The Plugin API's reference (`docs/plugin-api.md`), written from plugin-api.json for `:help
 // plugin-api` (T228, #438), so the help chunk carries the API once, as data, rather than as data and
-// as the reference's text. It's a port of crates/roster-core/src/plugin/api.rs `markdown`, the one
+// as the reference's text. It's a port of crates/roster-core/src/plugin/api/ `markdown`, the one
 // that writes the committed file (which GitHub shows); pluginApiDoc.test.ts holds the two to the same
 // bytes, so the app's page and the docs website stay what they were.
 import type { StubsData } from "./luaStubs";
@@ -25,7 +25,7 @@ export interface DocData extends Omit<StubsData, "values" | "functions" | "event
 const COMMAND = "cargo run -p roster-core --example gen_plugin_api";
 const STUBS_PATH = "examples/plugins/types/roster.lua";
 
-/** GitHub's anchor for a heading (api.rs `slug`). */
+/** GitHub's anchor for a heading (plugin/api `slug`). */
 function slug(title: string): string {
   return [...title.toLowerCase()]
     .filter((c) => /[\p{Alphabetic}\p{N}\s_-]/u.test(c))
@@ -34,7 +34,7 @@ function slug(title: string): string {
     .replace(/\s/gu, "-");
 }
 
-/** A type expression's pieces: text, and the names of declared types in it (api.rs `pieces`). */
+/** A type expression's pieces: text, and the names of declared types in it (plugin/api `pieces`). */
 function pieces(data: DocData, ty: string): [boolean, string][] {
   const out: [boolean, string][] = [];
   const push = (isType: boolean, s: string) => {
@@ -65,7 +65,7 @@ function pieces(data: DocData, ty: string): [boolean, string][] {
   return out;
 }
 
-/** A type as the docs write it: code, with each type a link to its entry (api.rs `md_type`). */
+/** A type as the docs write it: code, with each type a link to its entry (plugin/api `md_type`). */
 function mdType(data: DocData, ty: string): string {
   return pieces(data, ty)
     .map(([t, s]) => (t ? `[\`${s}\`](#${slug(`\`${s}\``)})` : `\`${s}\``))
@@ -76,7 +76,7 @@ function mdType(data: DocData, ty: string): string {
 const cell = (text: string) => text.replace(/\n/g, " ").replace(/\|/g, "\\|");
 const unpipe = (text: string) => text.replace(/\\\|/g, "|");
 
-/** The module a function is in: its parent when that's a module, else `roster` (api.rs `module_of`). */
+/** The module a function is in: its parent when that's a module, else `roster` (plugin/api `module_of`). */
 function moduleOf(data: DocData, path: string): string {
   const dot = path.lastIndexOf(".");
   const parent = dot < 0 ? "roster" : path.slice(0, dot);
@@ -131,7 +131,7 @@ export function pluginApiDoc(data: DocData): string {
   const types = Object.entries(data.types).sort(([, a], [, b]) => a.order - b.order);
   const functionsOf = (module: string) => data.functions.filter((f) => moduleOf(data, f.path) === module);
   let s = "# The Plugin API\n\n";
-  s += `<!-- Generated from crates/roster-core/src/plugin/api.rs by \`${COMMAND}\`: edit that, then run it. -->\n\n`;
+  s += `<!-- Generated from crates/roster-core/src/plugin/api/ by \`${COMMAND}\`: edit that, then run it. -->\n\n`;
   s += `Every function, value, event and data type of the \`roster\` Lua module a Plugin gets, \`roster.api_version\` ${data.api_version}. How to write, install and trust a Plugin is the guide, [Writing a Plugin](plugins.md); this is the reference. Each entry is a help topic: \`:help roster.inventory.host()\` for a function, \`:help roster-Host\` for a type.\n\n`;
   s += `Types are written as [LuaCATS](https://luals.github.io/wiki/annotations/) annotations write them: \`string?\` may be \`nil\`, \`Host[]\` is a list of Hosts, \`table<string, Group>\` a table of Groups by name, \`"info"|"warn"\` one of those strings. The same declarations are [\`roster.lua\`](../examples/plugins/types/roster.lua), for [your editor](#editor-support).\n\n`;
   s += `## The Lua\n\n${data.lua_doc}\n\n`;

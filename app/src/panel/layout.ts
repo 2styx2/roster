@@ -9,6 +9,7 @@
 // It also keeps which panels are on screen and in what order they were last used, so `␣ z` and
 // `␣ <` / `␣ >` act on the panel with focus, else the one used last, and a full panel used last
 // is drawn on top of another.
+import { optionRanges } from "../config/ranges";
 
 /** The State key: panel id → what the user chose. */
 export const PANELS_KEY = "panels";
@@ -33,8 +34,8 @@ export const NO_DEFAULTS: PanelDefaults = { width: null, views: {} };
 
 /** The widths init.lua and `:panel width` take, in percent of the window. The limits below
  * narrow them further for the window at hand. */
-export const MIN_PERCENT = 10;
-export const MAX_PERCENT = 95;
+export const MIN_PERCENT = optionRanges["panel.width"].min;
+export const MAX_PERCENT = optionRanges["panel.width"].max;
 /** `␣ <` / `␣ >`, in percent of the window. */
 export const STEP_PERCENT = 5;
 /** A docked panel is never narrower than this (or the window). */
@@ -43,6 +44,11 @@ export const PANEL_MIN_PX = 280;
 export const TERMINAL_MIN_PX = 400;
 /** A panel floating over the terminal (Focus, a narrow window) leaves this much of it showing. */
 export const FLOAT_GAP_PX = 48;
+/** A panel's default width (styles.css's `--keys-width`): what a frame not drawn yet counts as. */
+export const DEFAULT_PANEL_PX = 320;
+/** A window this narrow or narrower has no room for the Sidebar, a docked panel and a usable
+ * terminal: panels float (styles.css's `@media (max-width: 1040px)`). */
+export const NARROW_WINDOW_PX = 1040;
 
 export interface Room {
   /** The window's width under the title bar (the `.body`). */

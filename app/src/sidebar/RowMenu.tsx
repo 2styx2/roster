@@ -151,6 +151,7 @@ export function RowMenu({ label, entries, at, anchor, leader, run, close }: RowM
       aria-label={label}
       tabIndex={-1}
       className={`row-menu${keyboard ? " instant" : ""}`}
+      data-panel="row-menu"
       onKeyDown={onKeyDown}
       onContextMenu={(e) => e.preventDefault()}
     >

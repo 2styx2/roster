@@ -7,6 +7,7 @@
 // second tone only on shapes (this Box's square, an unreviewed node's dashed ring), warn and error
 // for marks, and greys for the rest.
 import type { Highlight, Scene, SceneEdge, SceneNode } from "./scene";
+import { STAND_IN_RADIUS } from "./sizes";
 
 export interface Camera {
   /** The world point at the canvas's centre, and the zoom (screen pixels per world unit). */
@@ -74,8 +75,7 @@ export interface Frame {
 
 /** How big a node is on screen at zoom `k`. */
 export const nodeRadius = (k: number) => Math.max(2.5, Math.min(6, 5 * Math.sqrt(k)));
-/** A collapsed cluster's node. */
-export const STAND_IN_RADIUS = 12;
+export { STAND_IN_RADIUS };
 
 export const toScreen = (c: Camera, w: number, h: number, x: number, y: number) => ({ x: (x - c.x) * c.k + w / 2, y: (y - c.y) * c.k + h / 2 });
 export const toWorld = (c: Camera, w: number, h: number, sx: number, sy: number) => ({ x: (sx - w / 2) / c.k + c.x, y: (sy - h / 2) / c.k + c.y });

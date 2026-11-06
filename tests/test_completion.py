@@ -147,9 +147,9 @@ def test_a_broken_roster_yml_completes_no_names_and_prints_no_error(capsys, writ
 
 
 def test_a_broken_inventory_list_completes_nothing(capsys, isolated):
-    from roster import inventories
-    inventories.list_file().parent.mkdir(parents=True, exist_ok=True)
-    inventories.list_file().write_text("{not json")
+    from roster import named
+    named.list_file().parent.mkdir(parents=True, exist_ok=True)
+    named.list_file().write_text("{not json")
     assert complete(capsys, "--inv", "") == []
 
 

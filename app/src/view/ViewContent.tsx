@@ -8,7 +8,8 @@ import { DataTable } from "../ui/DataTable";
 import { GraphView } from "../graph/GraphView";
 import type { GraphMemory } from "../graph/memory";
 import type { Content, HeadActionDef, ViewDef } from "./views";
-import { RowActionGlyph } from "../sidebar/Sidebar";
+import { RowActionGlyph } from "../ui/icons";
+import { isTyping } from "../ui/typing";
 
 /** The buttons on a view's or a Host-details section's heading (ticket 91): an icon with the
  * label as its name and tooltip, quiet like the panel's own close. */
@@ -37,7 +38,7 @@ export function runHeadKey(e: KeyboardEvent<HTMLElement>, actions: readonly Head
   if (!actions?.length || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return false;
   const action = actions.find((a) => a.key === e.key);
   if (!action) return false;
-  if ((e.target as HTMLElement).closest("input, textarea, select, [contenteditable='true']")) return false;
+  if (isTyping(e.target)) return false;
   e.preventDefault();
   e.stopPropagation();
   if (!e.repeat) action.run();

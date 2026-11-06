@@ -20,8 +20,8 @@ Wire format, one exchange per connection, then serve closes:
 REASON is safe to show in the terminal; CODE is one of errors.py's stable codes. The helper prints it as
 the one line "roster askpass: [CODE] REASON" on stderr, which the app's classifier parses.
 
-Stdlib only, and nothing else from roster (but winpipe, on Windows, and on serve's side common.find_program): ssh
-runs the helper for every prompt, it must start fast and never load roster.yml.
+Stdlib only, and nothing else from roster (but errors' codes, winpipe on Windows, and on serve's side
+common.find_program): ssh runs the helper for every prompt, it must start fast and never load roster.yml.
 
 On Windows ssh can't run a script as SSH_ASKPASS, only a program, so the helpers are the launchers pip and uv install
 for roster's entry points roster-askpass and roster-askpass-login (pyproject.toml), found next to the Python serve
@@ -42,18 +42,14 @@ import threading
 import time
 from typing import Any
 
+from .errors import LOOKUP_FAILED, NO_SERVE, TOKEN_SPENT, UNEXPECTED_PROMPT
+
 SOCKET_ENV, TOKEN_ENV = "ROSTER_ASKPASS_SOCKET", "ROSTER_ASKPASS_TOKEN"
 LOGIN_ENV = "ROSTER_ASKPASS_LOGGED_IN"     # set only by the logged-in script, never by ssh or the app
 WINDOWS = os.name == "nt"
 TTL = 60.0                  # seconds a token lives; ROSTER_ASKPASS_TTL may shorten it (tests), never lengthen
 REPLY_TIMEOUT = 30          # the helper waits this long for serve (a vault lookup can take a few seconds)
 PROMPT_LIMIT = 300          # characters of an unexpected prompt that are reported (it comes from the Host)
-
-# Stable codes (errors.py imports these; the rest of its codes arrive here inside Refused)
-LOOKUP_FAILED = 35          # the lookup failed some other way
-UNEXPECTED_PROMPT = 36      # the Host asked something other than the Login password
-TOKEN_SPENT = 37            # the one-time token is used, expired or cleared by vault.lock
-NO_SERVE = 38               # the helper couldn't reach `roster serve`
 
 # ---------------------------------------------------------------- which prompts get the password
 
@@ -162,10 +158,21 @@ def exchange(address, request, timeout):
     return reply
 
 
+LINE = "roster askpass: "      # its one stderr line: `roster askpass: [CODE] REASON` (app/src/errors/classify.ts too)
+
+
 def complain(code, reason):
     """The one line the terminal shows and the app's classifier reads; nothing goes to stdout, exit 1."""
-    print(f"roster askpass: [{code}] {' '.join(reason.split())}", file=sys.stderr)
+    print(f"{LINE}[{code}] {' '.join(reason.split())}", file=sys.stderr)
     return 1
+
+
+def complaint(line):
+    """(code, reason) of a complain() LINE, the code None when it isn't a number; None for any other line."""
+    if not line.startswith(LINE + "["):
+        return None
+    code, _, reason = line.removeprefix(LINE + "[").partition("] ")
+    return (int(code) if code.isdigit() else None), reason
 
 
 # ---------------------------------------------------------------- serve's side
@@ -456,7 +463,7 @@ class Channel:
         token = secrets.token_urlsafe(32)
         with self.lock:
             now = time.monotonic()
-            self.tokens = {t: v for t, v in self.tokens.items() if v[2] > now}   # drop expired ones
+            self.tokens = {t: v for t, v in self.tokens.items() if v[2] > now}
             self.tokens[token] = (login, label, now + self.ttl)
             self.labels = {t: v for t, v in self.labels.items() if v[1] > now}
             self.labels[token] = (label, now + 2 * self.ttl)
@@ -603,7 +610,7 @@ class Channel:
         if not request:                         # no token at all: most likely a starting serve's sweep checking that
             self.log("askpass: a connection hung up without a request (another serve checking this one is "
                      "alive, most likely) - ignored")
-            return b""                          # nothing to answer; not a refused token (#222)
+            return b""                          # nothing to answer; not a refused token
         found = self.redeem(request)
         if found is None:
             self.log("askpass: refused a token that is unknown, used, expired or cleared by vault.lock")

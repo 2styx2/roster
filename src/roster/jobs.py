@@ -17,9 +17,12 @@ import threading
 import time
 from collections import deque
 
+from .errors import problem_of
+
 PUSH_EVERY = 0.2            # s: progress goes out at most this often per job (a state change always does)
+RUNNING = ("running", "stopping")  # a job's states while it runs (the app's core reads them from the contract)
+OVER = ("done", "stopped", "failed")  # and once it's over
 KEPT = 32                   # jobs a newer one of their slot replaced, still found by id (a poll after it ended)
-INTERNAL_ERROR = -32603
 
 
 class Busy(Exception):
@@ -34,23 +37,9 @@ class Closed(Exception):
     """serve is closing: nothing new starts."""
 
 
-class Failed(Exception):
-    """Raised by a job's work: it failed with CODE and MESSAGE (and DATA), as an error response would say."""
-
-    def __init__(self, code, message, data=None):
-        super().__init__(message)
-        self.code, self.message, self.data = code, message, data
-
-
 def error_of(e):
-    """An exception as an error response's `{code, message, data?}`: a roster Problem or Failed keeps its code."""
-    if isinstance(e, SystemExit):
-        return {"code": 3, "message": (str(e.code) if e.code is not None else "exited").removeprefix("error: ")}
-    code, message = getattr(e, "code", None), getattr(e, "message", None)
-    if isinstance(code, int) and isinstance(message, str):
-        data = getattr(e, "data", None)
-        return {"code": code, "message": message, **({"data": data} if data is not None else {})}
-    return {"code": INTERNAL_ERROR, "message": f"{type(e).__name__}: {e}"}
+    """What a job's work raised, as the error response serve would answer with: {code, message, data?}."""
+    return problem_of(e).as_error()
 
 
 class Job:
@@ -118,7 +107,7 @@ class Job:
         self.owner.push(self)
 
     def running(self):
-        return self.state in ("running", "stopping")
+        return self.state in RUNNING
 
     def view(self):
         """What `job.progress` and `jobs.list` say about it: never the result (a Mesh plan can be megabytes)."""

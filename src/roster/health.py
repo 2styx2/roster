@@ -5,17 +5,32 @@ vault CLI's own status and the infra repo's git as this Box last saw it. Nothing
 fetches; `roster check HOST` is the one that connects. No check returns a secret (Logins are counted, never read)."""
 
 import platform
+from datetime import datetime, timezone
+from typing import Any, NamedTuple, cast
 
-from . import __version__, changes, providers, store
-from .common import find_program, known_hosts_file, ssh_config_file
-from .errors import Problem
+from . import __version__, boxkeys, changes, named, providers, rotation, store
+from .common import find_program
+from .config import load_config
+from .context import Context, current, ssh_index_file
+from .errors import (
+    INDEX_NOT_WRITTEN,
+    KEY_TOO_OLD,
+    OTHER_DOESNT_LOAD,
+    ROTATION_PENDING,
+    SAME_ADDRESS,
+    SAME_HOST_NAME,
+    SAME_MACHINE,
+    SHARED_BOX_NAME,
+    InventoryError,
+    Problem,
+)
+from .hosts import NO_PASSWORD, placeholder_user, provider_of
 from .providers import PROVIDERS
-from .sshops import hk_name, known_names, ssh_config_hosts
+from .sshops import fingerprint, hk_name, known_names
 
 # The sections, in order, with the name the CLI prints (the app has its own titles, by id).
 SECTIONS = {"roster": "roster", "inventory": "Inventory", "ssh": "ssh", "vault": "Vault", "askpass": "askpass",
             "repo": "Infra repo"}
-PLACEHOLDER_USERS = ("", "CHANGE-ME")
 # Names many machines carry out of the box (an OS image's default hostname): a Box named one of them likely shares
 # its name with another Box, and Boxes with one name are one owner (#384). Lower case: compared with the name
 # lowered (config.py keeps its case).
@@ -27,9 +42,24 @@ COMMON_BOX_NAMES = frozenset({
 SHOWN = 5                   # names listed before "and N more"
 
 
+# The error catalog's row (docs/app/errors.md) of each code a check is about: its `:help` topic is E<row>
+# (tests/test_health.py checks them against the catalog).
+ROWS = {OTHER_DOESNT_LOAD: 192, SAME_MACHINE: 193, SAME_HOST_NAME: 194, SAME_ADDRESS: 195, INDEX_NOT_WRITTEN: 206,
+        SHARED_BOX_NAME: 222, ROTATION_PENDING: 268, KEY_TOO_OLD: 269}
+
+
+def topic_of(code):
+    return f"E{ROWS[code]}"
+
+
 def check(section, level, message, fix=None, topic=None, **extra):
     return {"section": section, "level": level, "message": message,
             **({"fix": fix} if fix else {}), **({"topic": topic} if topic else {}), **extra}
+
+
+def coded(section, level, problem):
+    """A check that is PROBLEM (a code of its own, which the CLI shows as `[CODE] `), with its fix and topic."""
+    return check(section, level, problem.message, problem.fix, topic_of(problem.code), code=problem.code)
 
 
 def names(items):
@@ -55,19 +85,18 @@ def askpass_state(channel, error=None):
     return True, "the askpass channel is open"
 
 
-def check_box(path, cfg, error, askpass, api_version=None):
-    """Every check, in SECTIONS order. PATH: roster.yml's path (None when none was found); CFG: the loaded Inventory
-    (serve's last good one even while the file doesn't load), or None; ERROR: why roster.yml doesn't load now, or
-    None; ASKPASS: (ok, message) for the askpass channel (askpass_state). API_VERSION: serve's, for the roster
-    line."""
+def check_box(cfg, error, askpass, api_version=None):
+    """Every check, in SECTIONS order. CFG: the loaded Inventory (serve's last good one even while the file doesn't
+    load), or None; ERROR: the InventoryError roster.yml doesn't load with now, or None; ASKPASS: (ok, message) for
+    the askpass channel (askpass_state). API_VERSION: serve's, for the roster line."""
     out = [roster_version(api_version)]
-    out += inventory(path, cfg, error)
+    out += inventory(cfg, error)
     out += ssh(cfg)
     out += vault(cfg)
     out.append(check("askpass", "ok" if askpass[0] else "error", askpass[1],
                      None if askpass[0] else "restart `roster serve` (the app's :source does not); if it fails "
                                              "again, its stderr says why"))
-    out += repo(path if cfg or error is None else None)
+    out += repo(cfg["path"] if cfg else None)
     return out
 
 
@@ -78,13 +107,11 @@ def roster_version(api_version):
 
 # ---------------------------------------------------------------- Inventory
 
-def inventory(path, cfg, error):
+def inventory(cfg, error):
     out = []
     if error is not None:
-        from .errors import inventory_problem
-        p = inventory_problem(error, path)
         last = "; the app shows the last good one" if cfg else ""
-        out.append(check("inventory", "error", f"roster.yml doesn't load: {error}{last}", p.fix, "E1"))
+        out.append(check("inventory", "error", f"roster.yml doesn't load: {error.message}{last}", error.fix, "E1"))
     if cfg is None:
         return out
     hosts = list(cfg["hosts"].values())
@@ -95,7 +122,7 @@ def inventory(path, cfg, error):
     if waiting:
         out.append(check("inventory", "warn", f"{count(len(waiting), 'Host')} wait for review: {names(waiting)}",
                          "review each one (`:review` in the app), or set reviewed: true in roster.yml", "E3"))
-    no_user = [h["name"] for h in hosts if h["reviewed"] and h["ssh"]["user"] in PLACEHOLDER_USERS]
+    no_user = [h["name"] for h in hosts if h["reviewed"] and placeholder_user(h)]
     if no_user:
         out.append(check("inventory", "warn", f"no SSH user for {names(no_user)}",
                          "set user: on the Host or its group in roster.yml", "E4"))
@@ -104,32 +131,30 @@ def inventory(path, cfg, error):
         n = sum(len(h["problems"]) for h in hosts)
         out.append(check("inventory", "warn", f"{count(n, 'service entry')} left out, on {names(left_out)}",
                          "`roster hosts` prints each one with its fix", "E57"))
-    out += named(cfg)
+    out += named_inventories(cfg)
     return out
 
 
-def named(cfg):
+def named_inventories(cfg):
     """The named Inventories (ticket 115): which one this is, and the same machine in two of them (warnings only)."""
-    from . import inventories
-    from .common import current_inventory
-    if not inventories.list_file().exists():
+    if not named.list_file().exists():
         return []
-    inv = inventories.load()
+    inv = named.load()
     if not inv.inventories:
         return []
-    here = current_inventory()
+    here = current().name
     which = (f"this is the named Inventory {here}" + (" (the active one)" if here == inv.active else "")
              if here else "this roster.yml isn't one of the named Inventories")
     out = [check("inventory", "ok", f"{which}; named: {', '.join(x.name for x in inv.inventories)}")]
-    out += [check("inventory", "warn", w["message"], w["fix"], f"E{w['row']}") for w in inventories.overlaps(cfg)]
-    for f in inventories.foreign_legacy_files(inv):
+    out += [check("inventory", "warn", w["message"], w["fix"], topic_of(w["code"])) for w in overlaps(cfg)]
+    for f in named.foreign_legacy_files(inv):
         out.append(check("inventory", "warn", f"{f} has the name roster once used for a named Inventory's ssh config, "
                                               "but roster didn't write it, so it's left as it is",
                          "nothing to do if it's yours; rename it if `Include` picks it up by mistake"))
-    if inventories.stale():
-        out.append(check("inventory", "warn", f"{inventories.ssh_index_file()} is older than this Box's ssh config "
+    if named.stale():
+        out.append(check("inventory", "warn", f"{ssh_index_file()} is older than this Box's ssh config "
                                               "files and couldn't be rewritten", "make it writable, then run "
-                                              "`roster sync`", "E206"))
+                                              "`roster sync`", topic_of(INDEX_NOT_WRITTEN)))
     return out
 
 
@@ -146,13 +171,12 @@ def ssh(cfg):
     if cfg is None:
         return out
     hosts = [h for h in cfg["hosts"].values() if h["reviewed"]]
-    ours, written = ssh_config_file(), ssh_config_hosts()
+    ours, written = current().ssh_config, named.reachable_hosts()
     if written is None:
         out.append(check("ssh", "error", f"roster's ssh config ({ours}) isn't written, or ~/.ssh/config doesn't "
                                          "include it", "run `roster sync` (or `roster setup` on a new Box)", "E2"))
     else:
-        from .inventories import left_out_hosts
-        shadowed = left_out_hosts()         # another named Inventory's Host has the name: warning 146 says so
+        shadowed = named.left_out_hosts()     # another named Inventory's Host has the name: warning 146 says so
         missing = [h["name"] for h in hosts if h["name"] not in written and h["name"] not in shadowed]
         if missing:
             out.append(check("ssh", "warn", f"{count(len(missing), 'Host')} not in roster's ssh config yet: "
@@ -166,9 +190,8 @@ def ssh(cfg):
                                         "Mesh the other's entries, off the Hosts they share",
                          "set box_name: in roster.yml to a name no other Box uses, then run `roster setup` (on a Box "
                          "already set up, it re-tags this Box's key under the new name where it works; a same-named "
-                         "Box whose key was taken runs `roster setup` again)", "E222"))
-    from . import boxkeys
-    for key in boxkeys.in_use(cfg, hosts):          # one per key type its key Hosts use (T239)
+                         "Box whose key was taken runs `roster setup` again)", topic_of(SHARED_BOX_NAME)))
+    for key in boxkeys.in_use(cfg, hosts):          # one per key type its key Hosts use
         what = "this Box's key" if key.type.name == boxkeys.DEFAULT else f"this Box's {key.type.name} key"
         if key.key.exists():
             out.append(check("ssh", "ok", f"{what}: {key.key}"))
@@ -184,8 +207,8 @@ def ssh(cfg):
                                             f"{'' if not kind else 'with it '}can't work", "run `roster setup`",
                              "E12"))
     out += rotation_pending(cfg)
-    if not known_hosts_file().exists():
-        out.append(check("ssh", "warn", f"roster's known hosts ({known_hosts_file()}) isn't there yet",
+    if not current().known_hosts.exists():
+        out.append(check("ssh", "warn", f"roster's known hosts ({current().known_hosts}) isn't there yet",
                          "run `roster setup`; until then each Session asks before it trusts a Host's key", "E14"))
     else:
         known = known_names()
@@ -195,17 +218,13 @@ def ssh(cfg):
                                             f"{names(unknown)}",
                              "a Session asks before it trusts one; `roster setup` records them all", "E14"))
         else:
-            out.append(check("ssh", "ok", f"roster's known hosts has every Host's key: {known_hosts_file()}"))
+            out.append(check("ssh", "ok", f"roster's known hosts has every Host's key: {current().known_hosts}"))
     return out
 
 
-def key_age(cfg, key, what):
+def key_age(cfg: dict[str, Any], key: Any, what: str) -> list[Any]:
     """T240: a warning once KEY (boxkeys.BoxKey) is older than key_max_age: (on by default, 365d; off: none). Only a
     warning: roster never rotates by itself."""
-    from datetime import datetime, timezone
-
-    from . import boxkeys
-    from .errors import KEY_TOO_OLD
     limit = cfg.get("key_max_age")
     made = boxkeys.created(key.key)
     if limit is None or made is None:
@@ -213,23 +232,23 @@ def key_age(cfg, key, what):
     days = (datetime.now(timezone.utc) - made).days
     if days <= limit:
         return []
-    return [check("ssh", "warn", f"[{KEY_TOO_OLD}] {what} is {days} days old, past key_max_age: {limit}d ({key.key})",
-                  "rotate it: `roster setup --rotate` puts a new key on every Host, proves it, then removes the old "
-                  "(or set key_max_age: in roster.yml; off turns this off)", "E269")]
+    return [coded("ssh", "warn", Problem(
+        KEY_TOO_OLD, f"{what} is {days} days old, past key_max_age: {limit}d ({key.key})",
+        fix="rotate it: `roster setup --rotate` puts a new key on every Host, proves it, then removes the old (or set "
+            "key_max_age: in roster.yml; off turns this off)"))]
 
 
 def rotation_pending(cfg):
     """T240: the Box key rotation isn't finished: the old Box key is still on these Hosts (#471's LOW-5)."""
-    from .errors import ROTATION_PENDING
-    from .rotation import pending
-    waiting = pending(cfg)
-    from .rotation import problems  # #482's review LOW-1, LOW-2: an unreadable record, a kept old key
-    out = [check("ssh", "warn", message, fix, "E268") for message, fix in problems(cfg)]
+    waiting = rotation.pending(cfg)
+    # the record unreadable, an old key kept: said even when no Host waits
+    out = [coded("ssh", "warn", p) for p in rotation.problems(cfg)]
     if not waiting:
         return out
-    return out + [check("ssh", "warn", f"[{ROTATION_PENDING}] Box key rotation pending on {count(len(waiting), 'Host')}: "
-                                 f"{names(waiting)} (the old Box key is still on them)",
-                  "run `roster setup --rotate` again once they answer: it finishes them", "E268")]
+    return out + [coded("ssh", "warn", Problem(
+        ROTATION_PENDING, f"Box key rotation pending on {count(len(waiting), 'Host')}: {names(waiting)} (the old Box "
+                          "key is still on them)",
+        fix="run `roster setup --rotate` again once they answer: it finishes them"))]
 
 
 # ---------------------------------------------------------------- Vault
@@ -239,8 +258,8 @@ def provider_uses(cfg):
     counts = {}
     for h in cfg["hosts"].values():
         for login in (h["ssh"], h["login"], *h["services"].values()):
-            name = str(login.get("auth") or "").partition(":")[0].strip()
-            if name and name not in providers.NO_PASSWORD:
+            name = provider_of(login.get("auth"))
+            if name and name not in NO_PASSWORD:
                 counts[name] = counts.get(name, 0) + 1
     return counts
 
@@ -360,4 +379,98 @@ def repo(path):
                          f"push them, or look in a terminal: git -C {r.top} status", "E49"))
     if not out:
         out.append(check("repo", "ok", f"clean: {r.top}"))
+    return out
+
+
+# ---------------------------------------------------------------- the same machine in two Inventories
+
+# (code, catalog row, fix) for each warning
+WARNINGS = {
+    "doesnt_load": (OTHER_DOESNT_LOAD, "`roster --inv {other} check --box` says why; fix that file, or `roster inv "
+                                       "remove {other}` if you no longer use it"),
+    "same_machine": (SAME_MACHINE, "nothing to do if it's one machine you reach from both; if it isn't, one was cloned "
+                                   "with the other's host key: give it its own (`ssh-keygen -A` on it, then record it "
+                                   "again)"),
+    "same_name": (SAME_HOST_NAME, "rename one of them in its roster.yml; until then roster reaches {other}'s `{name}` "
+                                  "only once {other} is the active Inventory (`roster inv use {other}`)"),
+    "same_address": (SAME_ADDRESS, "nothing to do if the two are on different networks; if it's one machine, its key "
+                                   "changed: `roster check {name}` compares it with the recorded one"),
+}
+
+
+def warning(kind: str, message: str, **names: str) -> dict[str, Any]:
+    code, fix = WARNINGS[kind]
+    return {"code": code, "row": ROWS[code], "message": message, "fix": fix.format(**names)}
+
+
+class Machine(NamedTuple):
+    """A Host as the comparison sees it: its name, address, ssh port and recorded host-key fingerprints."""
+
+    name: str
+    ip: str
+    port: int
+    keys: frozenset[str]
+
+
+def machines(name: str | None, cfg: dict[str, Any]) -> list[Machine]:
+    """The Hosts of the Inventory CFG, with the fingerprints recorded for each in the Inventory NAME's known_hosts."""
+    import paramiko
+    f = Context(name).known_hosts
+    try:
+        recorded = paramiko.HostKeys(str(f)) if f.is_file() else None
+    except (OSError, ValueError, paramiko.SSHException):
+        recorded = None
+    out: list[Machine] = []
+    hosts = cast("dict[str, dict[str, Any]]", cfg["hosts"])
+    for h in hosts.values():
+        found = recorded.lookup(hk_name(h)) if recorded is not None else None
+        keys = frozenset(fingerprint(k) for k in found.values()) if found else frozenset[str]()
+        out.append(Machine(str(h["name"]), str(h["ip"]), int(h["ssh"]["port"]), keys))
+    return out
+
+
+def overlaps(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """The warnings for the Inventory CFG (this run's) against every other named Inventory: the same host key, the
+    same Host name, the same address and port with different keys. Never an error; compares fingerprints only."""
+    if not named.list_file().exists():
+        return []
+    inv = named.load()
+    here = current().name
+    others = [x for x in inv.inventories if x.name != here and not named.same_file(x.path, cfg["path"])]
+    if not others:
+        return []
+    label = here or "this Inventory"
+    mine = machines(here, cfg)
+    out: list[dict[str, Any]] = []
+    for x in others:
+        try:
+            theirs = machines(x.name, load_config(x.path))
+        except InventoryError:              # its words could quote a line of that file: they stay with it
+            out.append(warning("doesnt_load", f"{x.name}'s roster.yml doesn't load, so it isn't compared with this one",
+                               other=x.name))
+            continue
+        reported: set[tuple[str, str]] = set()
+        for h in mine:
+            for o in theirs:
+                if h.keys & o.keys:
+                    reported.add((h.name, o.name))
+                    out.append(warning("same_machine", f"`{h.name}` in {label} and `{o.name}` in {x.name} have "
+                                                       "the same host key: the same machine?"))
+        names = {o.name for o in theirs}
+        for h in mine:
+            if h.name in names and (h.name, h.name) not in reported:
+                wins = label if here == inv.active else x.name if x.name == inv.active else None
+                loser = x.name if wins == label else label
+                where = (f"`ssh {h.name}` reaches {wins}'s (the active Inventory); {loser}'s `{h.name}` is left out "
+                         "of this Box's ssh config") if wins else \
+                    (f"`ssh {h.name}` reaches the one listed first in `roster inv list`; the other is left out of "
+                     "this Box's ssh config")
+                out.append(warning("same_name", f"`{h.name}` is a Host in both {label} and {x.name}: {where}",
+                                   other=loser if wins else x.name, name=h.name))
+        for h in mine:
+            for o in theirs:
+                if (h.ip, h.port) == (o.ip, o.port) and h.keys and o.keys and not h.keys & o.keys:
+                    out.append(warning("same_address", f"`{h.name}` in {label} and `{o.name}` in {x.name} are both "
+                                                       f"{h.ip}:{h.port}, with different host keys: two networks "
+                                                       "with the same addresses?", name=h.name))
     return out

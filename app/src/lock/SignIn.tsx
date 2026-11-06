@@ -20,7 +20,7 @@ import {
 import { builtinErrorRows, fixFor, problemFromCallError, rowFor, sentence, type ErrorRow } from "../errors/catalog";
 import type { Problem } from "../errors/classify";
 import type { Vault } from "./useVault";
-import { withCode } from "./withCode";
+import { withCode } from "../ui/withCode";
 import { Keys } from "../ui/Keys";
 import "./signin.css";
 

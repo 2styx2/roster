@@ -81,7 +81,7 @@ pub(crate) struct Fair {
 }
 
 impl Serve for Fair {
-    fn call(&self, method: &str, params: Json) -> Result<Json, String> {
+    fn call(&self, method: &str, params: Json) -> Result<Json, super::CallError> {
         let _mine = self.mine.enter();
         let _all = self.all.enter();
         self.inner.call(method, params)

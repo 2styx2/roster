@@ -7,12 +7,12 @@ import { useEffect, useState } from "react";
 export function Announce({ text, delay = 500 }: { text: string; delay?: number }) {
   const [said, setSaid] = useState("");
   useEffect(() => {
-    const t = setTimeout(() => setSaid(text), delay);
+    const t = setTimeout(() => setSaid(text), text === "" ? 0 : delay);
     return () => clearTimeout(t);
   }, [text, delay]);
   return (
-    <span role="status" className="visually-hidden">
-      {said}
+    <span role="status" className="visually-hidden" aria-live="polite" aria-atomic="true">
+      {text === "" ? "" : said}
     </span>
   );
 }

@@ -295,6 +295,29 @@ fn where_windows_terminal_keeps_its_settings() {
 }
 
 #[test]
+fn the_import_reads_the_first_settings_there_are_and_only_on_windows() {
+    let local = temp_dir("local");
+    assert!(
+        wt::read_settings_in(false, Some(&*local))
+            .unwrap_err()
+            .contains("Windows only")
+    );
+    assert!(wt::read_settings_in(true, None).unwrap_err().contains("LOCALAPPDATA"));
+    assert!(
+        wt::read_settings_in(true, Some(&*local))
+            .unwrap_err()
+            .contains("no Windows Terminal settings.json")
+    );
+    let preview = &wt::settings_paths(&local)[1];
+    std::fs::create_dir_all(preview.parent().unwrap()).unwrap();
+    std::fs::write(preview, "{}").unwrap();
+    assert_eq!(
+        wt::read_settings_in(true, Some(&*local)).unwrap(),
+        (preview.display().to_string(), "{}".to_string())
+    );
+}
+
+#[test]
 fn apply_writes_exactly_what_the_preview_showed_or_nothing() {
     let dir = temp_dir("exactly");
     let settings = fixture("defaults-font.json");

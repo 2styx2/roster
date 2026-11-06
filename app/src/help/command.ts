@@ -1,16 +1,18 @@
 // `:help [TOPIC]` and the `help` finder (ticket 37), registered through the registries as a Plugin
 // would (ADR 0006). HelpView is the help panel's state outside React (like ThemeChoice): which
 // page and entry it shows, and the way back. App hands it the live HelpContext each render.
-import { matching, type CommandDef } from "../commands/table";
+import type { CommandDef } from "../commands/table";
+import { matching } from "../ui/completion";
 import type { FinderItem, FinderSourceDef } from "../finder/sources";
 import type { Registries } from "../registries";
 import { BUILTIN } from "../registry";
-import { optionRows, optionTag } from "../config/reference";
+import { optionRows, optionTag } from "./reference";
 import { plain } from "./doc";
 import { grepTexts } from "./grep";
 import { lineTopic } from "./lookup";
 import { findTopic, headingTag, pageBody, pageTexts, topics, type HelpContext, type Topic } from "./pages";
 import { helpText, type HelpText } from "./text";
+import { errorText } from "../ui/format";
 
 /** Where the help panel is: a page, and the entry or heading on it. */
 export interface HelpPlace {
@@ -56,7 +58,7 @@ export class HelpView {
   private waiting: { shown: boolean } | null = null;
 
   /** `text` is the guides' text (T213): a guide opens once it's loaded. */
-  constructor(private readonly text: HelpText = helpText) {}
+  constructor(readonly text: HelpText = helpText) {}
 
   /** What topics are resolved against: App sets it every render. */
   setContext(ctx: () => HelpContext) {
@@ -99,7 +101,7 @@ export class HelpView {
     };
     this.text.load().then(
       () => arrive(),
-      (e: unknown) => arrive(e instanceof Error ? e.message : String(e)),
+      (e: unknown) => arrive(errorText(e)),
     );
   }
 
@@ -120,7 +122,6 @@ export class HelpView {
     this.waiting = null;
   }
 
-  /** Why the guides' text couldn't load, or null. */
   textFailed(): string | null {
     return this.text.failed();
   }
@@ -205,7 +206,7 @@ export function helpCommand(view: HelpView): CommandDef {
 }
 
 /** The topic finder (`␣ ?`): every topic, fuzzy-matched; Enter runs `help TAG`. */
-export function helpFinder(view: HelpView): FinderSourceDef {
+function helpFinder(view: HelpView): FinderSourceDef {
   return {
     id: "help",
     source: BUILTIN,
@@ -228,7 +229,7 @@ export function helpFinder(view: HelpView): FinderSourceDef {
 
 /** `:lookup` (␣ F1, ticket 52): help on what's selected, Neovim's `K`. A Host's row opens
  * `:connect`, any other row the command it runs; with no row under the cursor, the topic finder. */
-export function lookupCommand(view: HelpView): CommandDef {
+function lookupCommand(view: HelpView): CommandDef {
   return {
     id: "lookup",
     source: BUILTIN,
@@ -245,7 +246,7 @@ export function lookupCommand(view: HelpView): CommandDef {
 
 /** `:version` (T180): this build's version, roster's licence and the third-party notices, as Neovim's
  * `:version`; the `version` help page, made from THIRD-PARTY-NOTICES when the app is built. */
-export function versionCommand(view: HelpView): CommandDef {
+function versionCommand(view: HelpView): CommandDef {
   return {
     id: "version",
     source: BUILTIN,
@@ -335,7 +336,7 @@ export function outlineFinder(view: HelpView): FinderSourceDef {
 }
 
 /** `:options [TEXT]`: the `options` finder, Neovim's `:options` window as a finder. */
-export function optionsCommand(): CommandDef {
+function optionsCommand(): CommandDef {
   return {
     id: "options",
     source: BUILTIN,
@@ -350,7 +351,7 @@ export function optionsCommand(): CommandDef {
 
 /** The `options` finder: each option that holds a value, its value now on the left after the
  * name, where it was set on the right, and its default and type in the footer. Enter opens its help. */
-export function optionsFinder(view: HelpView): FinderSourceDef {
+function optionsFinder(view: HelpView): FinderSourceDef {
   const rows = () => {
     const ctx = view.context();
     return ctx ? optionRows(ctx.config, ctx.state) : [];

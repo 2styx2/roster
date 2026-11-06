@@ -10,8 +10,8 @@ from conftest import WINDOWS
 
 from roster import catchup
 from roster.cli import main
-from roster.common import known_hosts_file
 from roster.config import load_config
+from roster.context import current
 
 MAP = """\
 groups:
@@ -37,7 +37,7 @@ def run(capsys, *argv):
 
 def answered(*addresses):
     """This Box has reached these addresses once: their host keys are in roster's known_hosts (as setup records)."""
-    f = known_hosts_file()
+    f = current().known_hosts
     f.parent.mkdir(parents=True, exist_ok=True)
     with f.open("a") as out:
         for a in addresses:
@@ -159,8 +159,7 @@ def test_sync_with_a_locked_vault_and_no_terminal_does_the_map_and_names_vault_u
     monkeypatch.delenv("BW_SESSION")
     rc, out, err = run(capsys, "sync")
     assert rc == 0
-    from roster.common import ssh_config_file
-    assert "Host new-01" in ssh_config_file().read_text()
+    assert "Host new-01" in current().ssh_config.read_text()
     assert "vault: bw not synced (locked; run in a terminal: roster vault unlock)" in out
     assert "umask" not in out + err
 
@@ -226,8 +225,8 @@ def test_vault_sync_offline_says_when_it_last_synced(capsys, box, monkeypatch):
 @pytest.fixture
 def scans(monkeypatch):
     """setup's host key scan, without the network: each Host answers (its host key recorded), as ssh-keyscan would."""
-    from roster import cli
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: answered(*(h["ip"] for h in hosts)) or set())
+    from roster import boxsetup
+    monkeypatch.setattr(boxsetup, "record_fingerprints", lambda cfg, hosts: answered(*(h["ip"] for h in hosts)) or set())
 
 
 def test_setup_with_a_locked_vault_counts_a_failed_host_once(capsys, box, scans, monkeypatch):
@@ -242,8 +241,8 @@ def test_setup_with_a_locked_vault_counts_a_failed_host_once(capsys, box, scans,
 
 
 def test_setup_that_installed_keys_points_at_check_for_exactly_those_hosts(capsys, box, scans, monkeypatch):
-    from roster import cli
-    monkeypatch.setattr(cli, "enroll", lambda *a, **k: None)          # the key went on (the stand-in's way)
+    from roster import boxsetup
+    monkeypatch.setattr(boxsetup, "enroll", lambda *a, **k: None)          # the key went on (the stand-in's way)
     rc, out, err = run(capsys, "setup")
     assert rc == 0
     assert "done         2 key hosts ready, 0 password-only hosts, 0 failed" in out
@@ -253,8 +252,8 @@ def test_setup_that_installed_keys_points_at_check_for_exactly_those_hosts(capsy
 
 
 def test_setup_with_nothing_to_do_ends_without_a_next_line(capsys, box, scans, monkeypatch):
-    from roster import cli
-    monkeypatch.setattr(cli, "ssh_ok", lambda name, timeout=10: True)  # the key works on both already
+    from roster import boxsetup
+    monkeypatch.setattr(boxsetup, "ssh_ok", lambda name, timeout=10: True)  # the key works on both already
     rc, out, _ = run(capsys, "setup")
     assert rc == 0
     assert out.strip().splitlines()[-1].startswith("done ")
@@ -274,8 +273,8 @@ def test_setup_remembers_a_host_it_didnt_finish_until_a_setup_does(capsys, box, 
     run(capsys, "setup", "--host", "new-01")
     cfg = load_config(box["path"])
     assert [g.hosts for g in catchup.gaps(cfg) if g.kind == "setup"] == [("new-01",)]
-    from roster import cli
-    monkeypatch.setattr(cli, "ssh_ok", lambda name, timeout=10: True)
+    from roster import boxsetup
+    monkeypatch.setattr(boxsetup, "ssh_ok", lambda name, timeout=10: True)
     run(capsys, "setup", "--host", "new-01")
     assert [g for g in catchup.gaps(cfg) if g.kind == "setup"] == []
 
@@ -542,8 +541,7 @@ def test_sync_skips_the_vault_cleanly_on_ctrl_d_at_the_prompt(capsys, box, monke
     rc, out, _ = run(capsys, "sync")
     assert rc == 0
     assert "vault: bw not synced (no master password given; roster vault unlock)" in out
-    from roster.common import ssh_config_file
-    assert "Host new-01" in ssh_config_file().read_text()
+    assert "Host new-01" in current().ssh_config.read_text()
 
 
 def test_setup_with_a_locked_keepassxc_never_names_vault_unlock(capsys, box, scans, write_config, tmp_path):
@@ -558,7 +556,7 @@ def test_setup_with_a_locked_keepassxc_never_names_vault_unlock(capsys, box, sca
 
 
 def test_setup_past_five_hosts_points_at_plain_check():
-    from roster.cli import setup_next_line
+    from roster.catchup import setup_next_line
     hosts = [f"h{i}" for i in range(6)]
     assert setup_next_line(hosts).endswith("next: roster check (check them)")
     assert "--host h4" in setup_next_line(hosts[:5])
@@ -575,13 +573,13 @@ def test_syncing_another_unnamed_map_reports_no_removed_hosts(capsys, box, write
 
 def test_a_host_whose_key_went_on_but_whose_mesh_failed_is_not_left_for_setup(capsys, box, scans, monkeypatch):
     """#503's review LOW-3."""
-    from roster import cli
+    from roster import boxsetup
     answered("10.0.0.5")
     monkeypatch.delenv("BW_SESSION")
     run(capsys, "setup", "--host", "new-01")                 # the vault locked: left
     monkeypatch.setenv("BW_SESSION", "fake-session-key")
-    monkeypatch.setattr(cli, "enroll", lambda *a, **k: None)
-    monkeypatch.setattr(cli, "setup_mesh", lambda cfg, by: {"new-01": "mesh: a peer didn't answer"})
+    monkeypatch.setattr(boxsetup, "enroll", lambda *a, **k: None)
+    monkeypatch.setattr(boxsetup, "setup_mesh", lambda cfg, by: {"new-01": "mesh: a peer didn't answer"})
     run(capsys, "setup", "--host", "new-01")
     cfg = load_config(box["path"])
     assert [g for g in catchup.gaps(cfg) if g.kind == "setup"] == []

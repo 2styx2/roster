@@ -1,0 +1,14 @@
+{
+  "_": "A Quick Connect's label and its user rule, as serve (quick_label, QUICK_USER) and the app (app/src/quick/target.ts) both have them. Add a case here, not to one side's tests.",
+  "labels": [
+    {"user": "root", "address": "10.0.0.5", "port": 22, "label": "root@10.0.0.5"},
+    {"user": "root", "address": "10.0.0.5", "port": 2222, "label": "root@10.0.0.5:2222"},
+    {"user": "admin", "address": "sw-core.lab", "port": 2222, "label": "admin@sw-core.lab:2222"},
+    {"user": "pi", "address": "fe80::1", "port": 2200, "label": "pi@[fe80::1]:2200"},
+    {"user": "pi", "address": "fe80::1", "port": 22, "label": "pi@fe80::1"}
+  ],
+  "users": {
+    "valid": ["root", "admin", "_svc", "ops.team", "a-b_c.d", "0day"],
+    "invalid": ["", "-oProxyCommand=x", ".hidden", "ro ot", "a@b", "root;id"]
+  }
+}

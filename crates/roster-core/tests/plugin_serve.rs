@@ -5,7 +5,9 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
@@ -16,15 +18,27 @@ use std::time::{Duration, Instant};
 #[derive(Default)]
 struct SerialServe {
     one_at_a_time: Mutex<()>,
+    /// Every call as it comes, before it waits for its turn.
+    asked: Mutex<Vec<String>>,
     calls: Mutex<Vec<(String, Value)>>,
+    /// A held `changes.publish` ([`SerialServe::hold`]) waits for this.
+    go: (Mutex<bool>, std::sync::Condvar),
 }
 
 impl Serve for SerialServe {
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
+        self.asked.lock().unwrap().push(method.to_string());
         let _turn = self.one_at_a_time.lock().unwrap();
         self.calls.lock().unwrap().push((method.to_string(), params.clone()));
         match method {
-            // The app's own long call.
+            // The app's own long call: held until the test lets it go, or for `ms`.
+            "changes.publish" if params["held"] == true => {
+                let mut go = self.go.0.lock().unwrap();
+                while !*go {
+                    go = self.go.1.wait(go).unwrap();
+                }
+                Ok(json!({ "published": true }))
+            }
             "changes.publish" => {
                 std::thread::sleep(Duration::from_millis(params["ms"].as_u64().unwrap_or(1500)));
                 Ok(json!({ "published": true }))
@@ -36,8 +50,8 @@ impl Serve for SerialServe {
             })),
             "discover.status" => Ok(json!({ "state": "running" })),
             "discover.start" => Ok(json!({ "scan": "scan-1", "state": "running" })),
-            "mesh.status" => Err("no Mesh here (code 110)".into()),
-            other => Err(format!("unknown method '{other}' (code -32601)")),
+            "mesh.status" => Err(CallError::rpc(110, "no Mesh here")),
+            other => Err(CallError::rpc(-32601, format!("unknown method '{other}'"))),
         }
     }
 }
@@ -47,19 +61,49 @@ impl SerialServe {
         self.calls.lock().unwrap().iter().map(|(m, _)| m.clone()).collect()
     }
 
-    /// The app's own long call, on a thread of its own, holding serve for `ms`. Returns once serve
-    /// has taken it.
+    /// The app's own long call, on a thread of its own, holding serve for `ms` (a test about time
+    /// spent waiting: at least that long). Returns once serve has taken it.
     fn busy(self: &Arc<Self>, ms: u64) -> std::thread::JoinHandle<()> {
+        self.publishing(json!({ "ms": ms }))
+    }
+
+    /// The app's own long call, holding serve until [`Held::release`]. Returns once serve has
+    /// taken it.
+    fn hold(self: &Arc<Self>) -> Held {
+        Held(Arc::clone(self), self.publishing(json!({ "held": true })))
+    }
+
+    fn publishing(self: &Arc<Self>, params: Value) -> std::thread::JoinHandle<()> {
         let me = Arc::clone(self);
         let t = std::thread::spawn(move || {
-            me.call("changes.publish", json!({ "ms": ms })).unwrap();
+            me.call("changes.publish", params).unwrap();
         });
-        let started = Instant::now();
+        self.wait_asked("changes.publish");
         while !self.methods().contains(&"changes.publish".to_string()) {
-            assert!(started.elapsed() < Duration::from_secs(2));
             std::thread::sleep(Duration::from_millis(5));
         }
         t
+    }
+
+    /// Returns once a call to `method` has come (it may still wait for its turn).
+    fn wait_asked(&self, method: &str) {
+        let started = Instant::now();
+        while !self.asked.lock().unwrap().iter().any(|m| m == method) {
+            assert!(started.elapsed() < Duration::from_secs(5), "no {method} came");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+/// A held `changes.publish`.
+struct Held(Arc<SerialServe>, std::thread::JoinHandle<()>);
+
+impl Held {
+    /// Lets it answer, and waits for it.
+    fn release(self) {
+        *self.0.go.0.lock().unwrap() = true;
+        self.0.go.1.notify_all();
+        self.1.join().unwrap();
     }
 }
 
@@ -160,10 +204,10 @@ roster.commands.add("quick", { run = function() return "here" end })
     // waits behind that one, on the Plugin's own thread.
     let waiting = {
         let host = Arc::clone(&host);
-        std::thread::spawn(move || host.call("waiter", count, json!({ "args": "", "words": [] })))
+        std::thread::spawn(move || host.call("waiter", count, json!({ "args": "", "words": [] }), By::User))
     };
-    std::thread::sleep(Duration::from_millis(50));
-    let next = host.call("waiter", quick, json!({ "args": "", "words": [] }));
+    serve.wait_asked("hosts.list");
+    let next = host.call("waiter", quick, json!({ "args": "", "words": [] }), By::User);
     ok(&next);
     assert_eq!(next.result, "here");
     let counted = waiting.join().unwrap();
@@ -193,21 +237,18 @@ roster.commands.add("ask", { run = function()
 end })
 "#,
     );
-    let publish = serve.busy(1500);
-    let started = Instant::now();
+    let publish = serve.hold();
     let asked = host.call(
         "waiter",
         command(&loaded.ops, "ask"),
         json!({ "args": "", "words": [] }),
+        By::User,
     );
     ok(&asked);
     assert_eq!(asked.result, "asked");
-    assert!(
-        started.elapsed() < Duration::from_millis(200),
-        "{:?}",
-        started.elapsed()
-    );
-    publish.join().unwrap();
+    // Back while serve is still held: neither request has had its turn.
+    assert_eq!(serve.methods(), ["changes.publish"]);
+    publish.release();
     let mut said = notices(&rx, 2);
     said.sort();
     // Login references that say how a secret is fetched come cut, as the sync call's do (Q92).
@@ -291,7 +332,7 @@ end })
     let timer = loaded.ops.iter().find(|o| o["op"] == "timer").unwrap()["run"]["handler"]
         .as_u64()
         .unwrap();
-    let fired = host.call("waiter", timer, json!({}));
+    let fired = host.call("waiter", timer, json!({}), By::User);
     ok(&fired);
     assert_eq!(fired.ops[0]["text"], "timer refused");
 
@@ -299,6 +340,7 @@ end })
         "waiter",
         command(&loaded.ops, "scan"),
         json!({ "args": "", "words": [] }),
+        By::User,
     ));
     let first = rx.recv_timeout(Duration::from_secs(3)).unwrap();
     ok(&first);
@@ -310,9 +352,10 @@ end })
         "waiter",
         command(&loaded.ops, "poll"),
         json!({ "args": "", "words": [] }),
+        By::User,
     );
     let timer = polled.ops[0]["run"]["handler"].as_u64().unwrap();
-    ok(&host.call("waiter", timer, json!({})));
+    ok(&host.call("waiter", timer, json!({}), By::User));
     assert_eq!(notices(&rx, 1), ["timer didn't ask"]);
     settled(&host);
 }
@@ -321,7 +364,7 @@ end })
 fn a_plugin_may_have_only_so_many_requests_waiting() {
     let serve = Arc::new(SerialServe::default());
     let (host, rx) = listening(&serve);
-    let publish = serve.busy(800);
+    let publish = serve.hold();
     load(
         &host,
         "cap",
@@ -338,7 +381,7 @@ local ok, err = pcall(roster.serve.request, "hosts.list", {}, function() end)
 assert(not ok and err:find("8 requests are waiting for roster serve already", 1, true), tostring(err))
 "#,
     );
-    publish.join().unwrap();
+    publish.release();
     assert_eq!(notices(&rx, 1), ["all 8"]);
     settled(&host);
 }
@@ -350,17 +393,19 @@ fn an_answer_after_an_unload_or_a_reload_is_dropped() {
     let init = r#"
 roster.serve.request("hosts.list", {}, function() roster.notify("answered " .. roster.plugin.version) end)
 "#;
-    let publish = serve.busy(400);
+    let publish = serve.hold();
     let (_, _folder) = load(&host, "reload", &["serve:hosts.list"], init);
     // Reloaded while its first request waits: only the second load's answer arrives.
     let (_, _folder) = load(&host, "reload", &["serve:hosts.list"], init);
-    publish.join().unwrap();
+    publish.release();
     assert_eq!(notices(&rx, 2), ["answered 1.0.0"]);
 
-    let publish = serve.busy(400);
+    let serve = Arc::new(SerialServe::default());
+    let (host, rx) = listening(&serve);
+    let publish = serve.hold();
     let (_, _folder) = load(&host, "reload", &["serve:hosts.list"], init);
     assert!(host.unload("waiter"));
-    publish.join().unwrap();
+    publish.release();
     assert!(notices(&rx, 1).is_empty());
 }
 
@@ -374,7 +419,7 @@ struct ConcurrentServe {
 }
 
 impl Serve for ConcurrentServe {
-    fn call(&self, _method: &str, params: Value) -> Result<Value, String> {
+    fn call(&self, _method: &str, params: Value) -> Result<Value, CallError> {
         let who = params["who"].as_str().unwrap_or("app").to_string();
         {
             let mut now = self.now.lock().unwrap();
@@ -445,7 +490,7 @@ end }})
     // fair-c's looping call: 6 calls behind its 8 requests, 150 ms each, 2 at a time and sharing
     // 4 with the others: far past its budget plus grace, and never given up on for it.
     let started = Instant::now();
-    let r = host.call("fair-c", sync, json!({ "args": "", "words": [] }));
+    let r = host.call("fair-c", sync, json!({ "args": "", "words": [] }), By::User);
     ok(&r);
     assert_eq!(r.result, "done");
     assert!(
@@ -481,7 +526,7 @@ struct HeldServe {
 }
 
 impl Serve for HeldServe {
-    fn call(&self, _method: &str, _params: Value) -> Result<Value, String> {
+    fn call(&self, _method: &str, _params: Value) -> Result<Value, CallError> {
         {
             let mut n = self.now.lock().unwrap();
             n.0 += 1;
@@ -570,6 +615,7 @@ end })
         "waiter",
         command(&loaded.ops, "ask"),
         json!({ "args": "", "words": [] }),
+        By::User,
     ));
     settled(&host);
     assert_eq!(*seen.0.lock().unwrap(), ["first", "second"]);
@@ -622,6 +668,7 @@ end })
         "waiter",
         command(&loaded.ops, "ask"),
         json!({ "args": "", "words": [] }),
+        By::User,
     ));
     let said = notices_within(&rx, 3, Duration::from_secs(20));
     assert_eq!(said, ["one", "two", "three"]);
@@ -654,6 +701,7 @@ end })
         "waiter",
         command(&loaded.ops, "ask"),
         json!({ "args": "", "words": [] }),
+        By::User,
     ));
     let said = notices_within(&rx, 2, Duration::from_secs(20));
     assert_eq!(said, ["called: running, 1 Host", "asked: 1"]);
@@ -682,6 +730,7 @@ end })
         "waiter",
         command(&loaded.ops, "ask"),
         json!({ "args": "", "words": [] }),
+        By::User,
     ));
     let mut said = notices_within(&rx, 6, Duration::from_secs(20));
     said.sort();
@@ -706,4 +755,79 @@ fn notices_within(rx: &Receiver<Reply>, want: usize, limit: Duration) -> Vec<Str
         );
     }
     out
+}
+
+/// Plugin API 7 (decision Q211): roster serve's error reaches a Plugin as an error object with
+/// `code` and `message`, and is still the text it was before (`tostring`, `..`, `#` and string
+/// methods), so a Plugin written for the string keeps working. What isn't serve's answer (a
+/// refusal before asking) stays a string, whose `.code` is nil too.
+#[test]
+fn serves_error_is_an_object_with_its_code_that_still_reads_as_the_old_text() {
+    let serve = Arc::new(SerialServe::default());
+    let (host, rx) = listening(&serve);
+    let (loaded, _folder) = load(
+        &host,
+        "error-object",
+        &["serve:mesh.status"],
+        r#"
+local ok, e = pcall(roster.serve.call, "mesh.status")
+local keys = {}
+for k in pairs(e) do keys[#keys + 1] = k end
+table.sort(keys)
+roster.notify(table.concat({
+  tostring(ok), type(e), tostring(e.code), e.message, table.concat(keys, ","),
+  tostring(e), "x: " .. e, e .. "!", tostring(#e == #tostring(e)),
+  tostring(e:find("no Mesh", 1, true)), e:match("%(code (%d+)%)"), e:sub(1, 17), e:upper():sub(1, 6),
+  string.format("%s", e), tostring(e.nope),
+}, "|"))
+local _, refused = pcall(roster.serve.call, "hosts.list")
+roster.notify(type(refused) .. "|" .. tostring(refused.code) .. "|" .. refused)
+roster.serve.request("mesh.status", nil, function(_, err)
+  roster.notify(type(err) .. "|" .. err.code .. "|" .. err.message .. "|" .. tostring(err))
+end)
+roster.commands.add("uncaught", { run = function() roster.serve.call("mesh.status") end })
+"#,
+    );
+    let said: Vec<&str> = loaded
+        .ops
+        .iter()
+        .filter(|op| op["op"] == "notify")
+        .map(|op| op["text"].as_str().unwrap())
+        .collect();
+    let text = "roster.serve.call mesh.status: no Mesh here (code 110)";
+    assert_eq!(
+        said[0].split('|').collect::<Vec<_>>(),
+        [
+            "false",
+            "table",
+            "110",
+            "no Mesh here",
+            "code,message",
+            text,
+            &format!("x: {text}"),
+            &format!("{text}!"),
+            "true",
+            "32",
+            "110",
+            "roster.serve.call",
+            "ROSTER",
+            text,
+            "nil",
+        ]
+    );
+    assert_eq!(said[1], "string|nil|roster.serve.call: not granted (serve:hosts.list)");
+    assert_eq!(
+        notices(&rx, 1),
+        ["table|110|no Mesh here|roster.serve.request mesh.status: no Mesh here (code 110)"]
+    );
+    // Uncaught, it stops the call with its text, as the string did.
+    let r = host.call(
+        "waiter",
+        command(&loaded.ops, "uncaught"),
+        json!({ "args": "", "words": [] }),
+        By::User,
+    );
+    let error = r.error.expect("an error");
+    assert!(error.message.ends_with(text), "{}", error.message);
+    settled(&host);
 }

@@ -1,0 +1,12 @@
+# A stand-in Host for the full-stack tests (app/e2e/fullstack): a real sshd with password logins
+# and sudo, on Alpine. The names and passwords are made up; nothing here is a real machine's.
+# (tests/e2e/ may get a Containerfile of its own for the CLI's end-to-end tests: one image could
+# serve both.)
+FROM docker.io/library/alpine:3.20
+RUN apk add --no-cache openssh-server sudo \
+ && adduser -D -s /bin/sh ops \
+ && echo 'ops:ops-e2e-pass-1' | chpasswd \
+ && echo 'ops ALL=(ALL) ALL' > /etc/sudoers.d/ops \
+ && chmod 0440 /etc/sudoers.d/ops \
+ && ssh-keygen -A
+CMD ["/usr/sbin/sshd", "-D", "-e", "-o", "PasswordAuthentication=yes", "-o", "UseDNS=no", "-o", "MaxStartups=100"]

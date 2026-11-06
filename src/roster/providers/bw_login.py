@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from ..common import WINDOWS
+from ..context import WINDOWS
 from . import (
     ASK,
     PROVIDERS,
@@ -39,10 +39,10 @@ from . import (
     ServerUnreachable,
     WrongLogin,
     WrongPassword,
+    bitwarden,
     errtext,
     not_installed,
 )
-from .bitwarden import _bw, _bw_status_json, _bw_unlock, set_session
 
 if not WINDOWS:                         # a PTY is Linux's and macOS's; native Windows has its pseudoconsole
     import fcntl
@@ -361,7 +361,7 @@ class BwLogin:
     def start(self, params):
         """params: method ("password", "apikey" or "sso"), server (optional; else as configured), and the
         method's own: email + password, client_id + client_secret, or identifier (SSO org, optional)."""
-        status = _bw_status_json(self.ctx)
+        status = bitwarden.status_json(self.ctx)
         if status.get("status") != "unauthenticated":
             who = f" as {status['userEmail']}" if status.get("userEmail") else ""
             raise AlreadyLoggedIn(f"the Bitwarden CLI is already logged in on this box{who} - unlock it instead "
@@ -384,7 +384,7 @@ class BwLogin:
         """`bw config server`, only when it changes something (bw refuses while logged in; we're logged out)."""
         if same_server(url, self.server):
             return
-        r = _bw(self.ctx, "config", "server", url or "bitwarden.com")
+        r = bitwarden.run(self.ctx, "config", "server", url or "bitwarden.com")
         if r.returncode != 0:
             raise LoginError(f"`bw config server` failed: {errtext(r)}")
         self.server = url
@@ -411,7 +411,7 @@ class BwLogin:
             password = params["password"]
             self.secrets.append(password)
             try:
-                _bw_unlock(password, self.ctx)
+                bitwarden.unlock_with(password, self.ctx)
             except WrongPassword as e:
                 e.step = self.step                  # still logged in: the person tries the password again
                 raise
@@ -484,7 +484,7 @@ class BwLogin:
         if what == 0:
             key = self.session_key()
             if key:
-                set_session(key)
+                bitwarden.set_session(key)
                 return self.finish()
             return self.at({"step": "master_password", "email": self.email})
         e = self.failure(after)
@@ -518,7 +518,7 @@ class BwLogin:
 
     def apikey_login(self, client_id, client_secret):
         self.secrets += [client_secret]
-        r = _bw(self.ctx, "login", "--apikey", env={"BW_CLIENTID": client_id, "BW_CLIENTSECRET": client_secret})
+        r = bitwarden.run(self.ctx, "login", "--apikey", env={"BW_CLIENTID": client_id, "BW_CLIENTSECRET": client_secret})
         if r.returncode != 0:
             raise self.fail(self.failure(None, text=errtext(r, 400)))
         return self.at({"step": "master_password", "email": None})
@@ -640,7 +640,7 @@ def login_info(ctx, server=ASK):
     """vault.status's `sign_in` for a logged-out bw: the ways in, and the server it's set to (None: bitwarden.com).
     SERVER, when the caller knows it already (vault.logout, from the `bw status` before it), saves asking bw again."""
     if server is ASK:
-        server = _bw_status_json(ctx).get("serverUrl")
+        server = bitwarden.status_json(ctx).get("serverUrl")
     return {"methods": ["password", "apikey", "sso"], "server": server}
 
 

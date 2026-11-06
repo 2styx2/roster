@@ -7,11 +7,7 @@
 // pixel, so a menu cut off by a scrolling ancestor or under another layer fails too.
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { inject } from "vitest";
-import { launch } from "./browser";
-// The fake Backend's master password (src/backend/fake.ts FAKE_PASSWORD; not imported, as that
-// module is the browser's).
-const FAKE_PASSWORD = "correct horse";
+import { launch, openApp as openAppAt } from "./browser";
 
 let browser: Browser;
 let context: BrowserContext | null = null;
@@ -29,14 +25,9 @@ afterEach(async () => {
 
 /** The app at `size`, unlocked, its Inventory listed. */
 async function openApp(size: { width: number; height: number }): Promise<Page> {
-  context = await browser.newContext({ viewport: size });
-  const page = await context.newPage();
-  // No dev toggle over the window: it isn't in the shipped app.
-  await page.goto(`${inject("appUrl")}?fixture=many-hosts&toggle=off`);
-  await page.getByLabel(/master password/i).fill(FAKE_PASSWORD);
-  await page.keyboard.press("Enter");
-  await page.getByRole("group", { name: "Inventory" }).getByRole("treeitem").first().waitFor();
-  return page;
+  const opened = await openAppAt(browser, "many-hosts", size);
+  context = opened.context;
+  return opened.page;
 }
 
 interface Box {
