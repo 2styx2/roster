@@ -751,6 +751,15 @@ mod tests {
         }
     }
 
+    /// plugin-api.json keys types by name: a second one by the same name would hide the first.
+    #[test]
+    fn every_type_has_a_name_of_its_own() {
+        let mut seen = std::collections::BTreeSet::new();
+        for t in TYPES {
+            assert!(seen.insert(t.name), "two types are named {}", t.name);
+        }
+    }
+
     #[test]
     fn the_event_name_type_names_every_event() {
         let names: Vec<String> = EVENTS.iter().map(|e| format!("\"{}\"", e.name)).collect();

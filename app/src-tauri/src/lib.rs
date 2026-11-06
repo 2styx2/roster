@@ -3,15 +3,15 @@
 //! (docs/app/dev/testing.md) and run by the end-to-end bridge. Each command here only turns
 //! Tauri's arguments, channels and events into the core's, on a blocking thread where it waits.
 
-use roster_core::backend::{BackendInfo, CheckStarted, OpenedSession, QuickTarget};
+use roster_core::backend::{BackendInfo, CheckStarted, CreateError, OpenedSession, QuickTarget};
 use roster_core::config::{self, Report};
 use roster_core::detect::BackendError;
 use roster_core::package;
 use roster_core::plugin;
 use roster_core::rpc::CallError;
-use roster_core::session::{Hop, SessionEvent, SessionId, Size};
-use roster_core::shell::{Emit, Places, Shell};
-use serde_json::{Value, json};
+use roster_core::session::{ExitMessage, Hop, SessionEvent, SessionId, Size};
+use roster_core::shell::{Emit, FoldersFile, Places, PlatformInfo, Shell};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -35,7 +35,7 @@ async fn backend_connect(core: Core<'_>, restart: bool) -> Result<BackendInfo, B
 }
 
 #[tauri::command]
-async fn inventory_create(core: Core<'_>, params: Value) -> Result<Value, CallError> {
+async fn inventory_create(core: Core<'_>, params: Value) -> Result<Value, CreateError> {
     blocking(core, move |s| s.inventory_create(params)).await
 }
 
@@ -108,7 +108,7 @@ async fn host_key_trust(core: Core<'_>, host: String, fingerprint: String) -> Re
 }
 
 #[tauri::command]
-async fn folders_read(core: Core<'_>) -> Result<Value, String> {
+async fn folders_read(core: Core<'_>) -> Result<FoldersFile, String> {
     blocking(core, |s| s.folders_read()).await
 }
 
@@ -123,7 +123,7 @@ async fn plugin_demo_stop(core: Core<'_>, id: u64) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn plugin_manifest(core: Core<'_>, path: String) -> Result<Value, String> {
+async fn plugin_manifest(core: Core<'_>, path: String) -> Result<plugin::ManifestRead, String> {
     blocking(core, move |s| s.plugin_manifest(&path)).await
 }
 
@@ -140,7 +140,7 @@ async fn plugin_load(
     settings: Option<Value>,
     builtins: Option<Vec<String>>,
     on_demo: Option<u64>,
-) -> Result<Value, String> {
+) -> Result<plugin::Loaded, String> {
     blocking(core, move |s| {
         s.plugin_load(&path, &grants, settings, builtins, on_demo)
     })
@@ -154,13 +154,12 @@ async fn plugin_call(
     plugin: String,
     handler: u64,
     args: Value,
-    user: Option<bool>,
-    carried: Option<bool>,
+    by: Option<plugin::By>,
     builtins: Option<Vec<String>>,
     on_demo: Option<u64>,
 ) -> Result<plugin::Reply, String> {
     blocking(core, move |s| {
-        s.plugin_call(&plugin, handler, args, user, carried, builtins, on_demo)
+        s.plugin_call(&plugin, handler, args, by, builtins, on_demo)
     })
     .await
 }
@@ -241,7 +240,9 @@ fn session_sink(events: Channel<InvokeResponseBody>) -> impl Fn(SessionEvent) + 
     move |event| {
         let body = match event {
             SessionEvent::Output(bytes) => InvokeResponseBody::Raw(bytes),
-            SessionEvent::Exit(exit) => InvokeResponseBody::Json(json!({ "exit": exit }).to_string()),
+            SessionEvent::Exit(exit) => {
+                InvokeResponseBody::Json(serde_json::to_string(&ExitMessage { exit }).expect("an exit is JSON"))
+            }
         };
         // Only fails once the window is gone; the Session is closed at exit anyway.
         let _ = events.send(body);
@@ -316,7 +317,7 @@ fn state_save(core: Core<'_>, state: Value) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn platform_info(core: Core<'_>) -> Value {
+fn platform_info(core: Core<'_>) -> PlatformInfo {
     core.platform_info()
 }
 
@@ -324,6 +325,8 @@ fn platform_info(core: Core<'_>) -> Value {
 /// meant for the shell; tauri doesn't expose wry's switch, so set it on the WebView2 settings.
 #[cfg(windows)]
 fn disable_browser_accelerators(window: &tauri::WebviewWindow) {
+    // Each step that fails leaves WebView2's own shortcuts on: an annoyance (Ctrl+F opens its find
+    // bar), never a reason to keep the window from opening.
     let _ = window.with_webview(|w| unsafe {
         use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
         use windows::core::Interface;
@@ -343,6 +346,7 @@ fn restore_and_show(shell: &Shell, window: &tauri::WebviewWindow) {
     use roster_core::window::{Rect, placement};
     use tauri::{PhysicalPosition, PhysicalSize};
     let state = shell.state_load().unwrap_or(Value::Null);
+    // No monitors known: no placement fits, and the window opens where the OS puts it.
     let monitors: Vec<Rect> = window
         .available_monitors()
         .unwrap_or_default()
@@ -354,6 +358,8 @@ fn restore_and_show(shell: &Shell, window: &tauri::WebviewWindow) {
             height: m.size().height,
         })
         .collect();
+    // A move or resize the OS refuses leaves the window where it opened, still usable; showing it
+    // is what matters.
     if let Some(p) = placement(&state, &monitors) {
         let _ = window.set_size(PhysicalSize::new(p.rect.width, p.rect.height));
         let _ = window.set_position(PhysicalPosition::new(p.rect.x, p.rect.y));
@@ -361,6 +367,7 @@ fn restore_and_show(shell: &Shell, window: &tauri::WebviewWindow) {
             let _ = window.maximize();
         }
     }
+    // Fails only once the window is gone, when there's nothing left to show.
     let _ = window.show();
 }
 
@@ -370,6 +377,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             use tauri::{Emitter, Manager};
+            // None: no app data folder here, which Places reports where the State is needed.
             let app_local = app.path().app_local_data_dir().ok();
             // State is only a convenience: a copy that fails is said, and the app starts anyway.
             if let Some(line) = app_local.as_deref().and_then(roster_core::migrate::state_at_start) {

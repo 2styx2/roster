@@ -13,6 +13,7 @@ pub(crate) mod editor;
 pub mod folders;
 mod locate;
 pub(crate) mod lua;
+pub mod package_spec;
 pub mod schema;
 pub mod shape;
 pub(crate) mod store;
@@ -588,9 +589,6 @@ fn validate(c: &Config) -> Result<(), Invalid> {
             return Err(out_of_range(&["views", id, "width"], &w, PANEL_WIDTH, PERCENT));
         }
     }
-    if let Some(proxy) = &c.plugin_proxy {
-        crate::proxy::Proxy::parse(proxy).map_err(|e| at(&["plugin_proxy"], e))?;
-    }
     if !PULL_FRESH_MINUTES.holds(c.pull_fresh_minutes) {
         return Err(out_of_range(
             &["pull_fresh_minutes"],
@@ -619,7 +617,7 @@ fn validate(c: &Config) -> Result<(), Invalid> {
     if let Some(command) = &c.roster_command {
         command.check().map_err(|m| at(&["roster_command"], m))?;
     }
-    crate::package::check_specs(&c.packages)?;
+    package_spec::check_specs(&c.packages)?;
     let mut seen = std::collections::HashSet::new();
     for (i, f) in c.folders.iter().enumerate() {
         let n = (i + 1).to_string();

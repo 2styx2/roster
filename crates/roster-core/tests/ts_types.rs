@@ -3,7 +3,7 @@
 //! app/src/config/core.gen.ts. The test fails while the file is stale; to write it again:
 //! `ROSTER_WRITE_TS=1 cargo test --test ts_types`.
 
-use roster_core::backend::{BackendInfo, CheckStarted, OpenedSession};
+use roster_core::backend::{BackendInfo, BackendKind, CheckStarted, CreateError, OpenedSession};
 use roster_core::config::{self, *};
 use roster_core::error::{BackendError, ErrorKind};
 use roster_core::rpc::CallError;
@@ -132,11 +132,31 @@ fn generated() -> String {
         decl::<Previewed>(&cfg),
         // The Backend and Sessions (backend.rs, error.rs, rpc.rs).
         decl::<BackendInfo>(&cfg),
+        decl::<BackendKind>(&cfg),
         decl::<BackendError>(&cfg),
         decl::<ErrorKind>(&cfg),
         decl::<CallError>(&cfg),
+        decl::<CreateError>(&cfg),
         decl::<CheckStarted>(&cfg),
         decl::<OpenedSession>(&cfg),
+        decl::<roster_core::session::Exit>(&cfg),
+        decl::<roster_core::session::ExitMessage>(&cfg),
+        decl::<roster_core::shell::PlatformInfo>(&cfg),
+        decl::<roster_core::shell::FoldersFile>(&cfg),
+        // Plugins and Packages (plugin/, package/).
+        decl::<roster_core::plugin::By>(&cfg),
+        decl::<roster_core::plugin::Manifest>(&cfg),
+        decl::<roster_core::plugin::Described>(&cfg),
+        decl::<roster_core::plugin::ManifestRead>(&cfg),
+        decl::<roster_core::plugin::Loaded>(&cfg),
+        decl::<roster_core::plugin::Reply>(&cfg),
+        decl::<roster_core::plugin::PluginError>(&cfg),
+        decl::<roster_core::shell::DemoReply>(&cfg),
+        decl::<roster_core::plugin::network::SiteCount>(&cfg),
+        decl::<roster_core::plugin::folder::DataUse>(&cfg),
+        decl::<roster_core::package::Status>(&cfg),
+        decl::<roster_core::package::Update>(&cfg),
+        decl::<roster_core::package::Checked>(&cfg),
     ];
     format!(
         "// Generated from roster-core's Rust types by crates/roster-core/tests/ts_types.rs: don't edit.\n\

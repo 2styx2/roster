@@ -1,5 +1,6 @@
 {
-  "about": "`mesh.status` on :tutor's demo (#233, decision Q202), as real serve answers it (status and brief in src/roster/mesh.py): a made-up Mesh over demoHosts()'s six (app/src/tutor/demo.ts). The lab's demo-01 to demo-03 are meshed, reaching each other both ways; demo-01 reaches the office's demo-05 too, which didn't answer the last apply (pending); the lab's switch demo-04 is kept out (mesh: false), and the printer demo-06 isn't named. Nothing connects anywhere. roster-core's plugin/demo.rs answers from it, and so does the fake Backend's demo (app/src/backend/fake.ts).",
+  "about": "`mesh.status` on :tutor's demo (#233, decision Q202), as real serve answers it (status and brief in src/roster/mesh.py): a made-up Mesh over demoHosts()'s six (app/src/tutor/demo.ts). The lab's demo-01 to demo-03 are meshed, reaching each other both ways; demo-01 reaches the office's demo-05 too, which didn't answer the last apply (pending); the lab's switch demo-04 is kept out (mesh: false), and the printer demo-06 isn't named. Nothing connects anywhere. roster-core's plugin/demo.rs answers from it, and so does the fake Backend's demo (app/src/backend/fake.ts). `refusal` is what both say for any other method, with the method's name for {method} (errors.md row 135).",
+  "refusal": "{method} isn't on the demo Inventory: the tutorial's demo answers only hosts.list, host.get and mesh.status",
   "plain": {
     "links": [
       { "from": "demo-01", "to": "demo-02", "kind": "key" },

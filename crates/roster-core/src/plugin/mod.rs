@@ -49,6 +49,7 @@ pub mod permission;
 pub(crate) mod runtime;
 
 use crate::config::lua;
+pub use crate::rpc::CallError;
 pub use demo::DemoHost;
 pub use permission::Permission;
 use serde::Serialize;
@@ -63,6 +64,37 @@ use std::time::{Duration, Instant};
 /// The version of the `roster` Lua module (`roster.api_version`). init.lua's table shows it too;
 /// init.lua's own version is `roster.config_version` (decision Q165).
 pub use crate::API_VERSION;
+
+/// roster serve's codes the Plugin host answers with or tells apart (src/roster/errors.py; backend.rs's
+/// `contract` test holds them to docs/serve-contract.json).
+pub mod code {
+    /// No Host has the name: `roster.inventory.host` answers `nil` for it (api 3).
+    pub const UNKNOWN_HOST: i64 = 2;
+    /// roster refused: the demo's answer for a method it has no stand-in for.
+    pub const ROSTER_ERROR: i64 = 3;
+    /// JSON-RPC's invalid params.
+    pub const INVALID_PARAMS: i64 = -32602;
+}
+
+/// Whose call a run is (decision Q98, issue #183), as the app says it with each call.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginCallBy"))]
+pub enum By {
+    /// The user chose it: a command, a key, a row's or button's action, a finder item, a toolbar
+    /// control, a question's answer.
+    #[default]
+    User,
+    /// The Plugin's own command its `roster.cmd` ran from the user's call (a `cmd` op without
+    /// `"user": false`): that call carried one hop, as a `roster.serve.request`'s answer is
+    /// (Q103d). It may copy, ask or echo, but a `roster.cmd` or a request made in it doesn't carry
+    /// the call further: the line's op says `"user": false`, and the app runs what it names as
+    /// [`By::App`].
+    Carried,
+    /// The app's doing, never the user's call (another Plugin's question took this one's place and
+    /// its `cancel` runs, a finder's items, a timer).
+    App,
+}
 
 /// The prefix of a built-in Plugin's path (`builtin:hosts`).
 pub const BUILTIN_PREFIX: &str = "builtin:";
@@ -131,10 +163,11 @@ pub const MANIFEST: &str = "roster-plugin.lua";
 /// The Plugin's code, in its folder.
 pub const ENTRY: &str = "init.lua";
 
-/// How a Plugin reaches `roster serve`. The Tauri shell's adapter calls the running Backend;
-/// tests use a fake. The host only ever asks for the methods a Plugin was granted.
+/// How a Plugin reaches `roster serve`. The Shell calls the running Backend; tests use a fake.
+/// The host only ever asks for the methods a Plugin was granted. serve's error keeps its code
+/// ([`CallError::Rpc`]): a Plugin gets it as an error object (Plugin API 7, decision Q210).
 pub trait Serve: Send + Sync {
-    fn call(&self, method: &str, params: Json) -> Result<Json, String>;
+    fn call(&self, method: &str, params: Json) -> Result<Json, CallError>;
 }
 
 /// Something that happened in the app, for the Plugins that listen ([`api::EVENTS`]).
@@ -146,6 +179,7 @@ pub struct Event {
 
 /// What went wrong in a Plugin: shown as `recent-alerts: init.lua:12: message`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginErrorInfo"))]
 pub struct PluginError {
     pub plugin: String,
     pub file: Option<String>,
@@ -189,11 +223,15 @@ pub(crate) struct Outcome {
 
 /// The answer to a load, a call or an event, for one Plugin.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginReply"))]
 pub struct Reply {
     pub plugin: String,
     /// What the function returned, as data (a finder's items, say).
+    #[cfg_attr(feature = "ts", ts(type = "unknown"))]
     pub result: Json,
-    /// The UI changes the Plugin asked for, in order (docs/plugins.md, "Ops").
+    /// The UI changes the Plugin asked for, in order (docs/plugins.md, "Ops"): untrusted data,
+    /// which the app's plugins/ops.ts checks.
+    #[cfg_attr(feature = "ts", ts(type = "unknown[]"))]
     pub ops: Vec<Json>,
     pub error: Option<PluginError>,
     /// Set when the Plugin is now disabled, with why: the frontend takes its UI away.
@@ -201,6 +239,7 @@ pub struct Reply {
     /// The events the Plugin listens for now, in [`api::EVENTS`]' order, when that's news to the app:
     /// always at load, then only after a call, event or answer that changed it (#223, decision
     /// Q185: the app keeps a command's output for `command_done` only while a Plugin listens).
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub listens: Option<Vec<String>>,
 }
 
@@ -219,6 +258,7 @@ impl Reply {
 
 /// What a Plugin's manifest says about it: shown in the install prompt before any of its code runs.
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginManifest"))]
 pub struct Manifest {
     pub name: String,
     pub version: String,
@@ -227,14 +267,36 @@ pub struct Manifest {
     /// The `roster.api_version` it was written for.
     pub api: u32,
     #[serde(serialize_with = "described")]
+    #[cfg_attr(feature = "ts", ts(as = "Vec<Described>"))]
     pub permissions: Vec<Permission>,
 }
 
+/// A permission as the manifest asks for it, with what it allows and why it's risky (decision Q81).
 #[derive(Serialize)]
-struct Described {
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginPermission"))]
+pub struct Described {
     name: String,
     summary: String,
     risk: Option<String>,
+}
+
+/// `:plugins install PATH`'s first step: the manifest, and the folder as the app keeps it.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginManifestRead"))]
+pub struct ManifestRead {
+    pub manifest: Manifest,
+    pub dir: String,
+}
+
+/// What a load gives back: the manifest, the folder as the app keeps it, the load's reply, and the
+/// grants the core no longer takes, each with why (`serve:x.y: …`): it runs without them.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginLoaded"))]
+pub struct Loaded {
+    pub manifest: Manifest,
+    pub dir: String,
+    pub reply: Reply,
+    pub refused: Vec<String>,
 }
 
 fn described<S: serde::Serializer>(ps: &[Permission], s: S) -> Result<S::Ok, S::Error> {
@@ -337,7 +399,7 @@ pub struct Status {
 enum Job {
     Load(String),
     /// A handler, its arguments, and whose call it is.
-    Call(u64, Json, runtime::By),
+    Call(u64, Json, By),
     Event(Event),
     /// A `roster.http` or `roster.serve.request` answer, for the function waiting for it.
     Answer(u64, runtime::Arrival),
@@ -603,30 +665,10 @@ impl PluginHost {
     }
 
     /// Calls a function the Plugin handed over (`{ "handler": N }` in its ops) with `args`, as
-    /// the user's call: they chose it (a command, a row or button, a finder item, a toolbar
-    /// control, a key, a question's answer). A timer's run, a command's `complete`, a finder's
-    /// `items` and a `:check` section's `check` are never the user's call, whoever runs them.
-    pub fn call(&self, plugin: &str, handler: u64, args: Json) -> Reply {
-        self.call_as(plugin, handler, args, runtime::By::User)
-    }
-
-    /// [`PluginHost::call`] for a Plugin's own command that its `roster.cmd` ran from the user's
-    /// call (a `cmd` op without `"user": false`): the user's call carried one hop (decision Q98,
-    /// issue #183). It may copy, ask or echo, but a `roster.cmd` or a `roster.serve.request` made
-    /// in it doesn't carry the call further: the line's op says `"user": false`, and the app runs
-    /// what it names of the Plugin's with [`PluginHost::call_by_app`].
-    pub fn call_carried(&self, plugin: &str, handler: u64, args: Json) -> Reply {
-        self.call_as(plugin, handler, args, runtime::By::Carried)
-    }
-
-    /// [`PluginHost::call`] for what the app runs on its own, not the user's choice (another
-    /// Plugin's question took this one's place and its `cancel` runs): never the user's call, so
-    /// it can't copy, ask, run a command line or act on the network or the Inventory.
-    pub fn call_by_app(&self, plugin: &str, handler: u64, args: Json) -> Reply {
-        self.call_as(plugin, handler, args, runtime::By::App)
-    }
-
-    fn call_as(&self, plugin: &str, handler: u64, args: Json, by: runtime::By) -> Reply {
+    /// `by`'s call ([`By`]): only the user's may copy, ask, run a command line or act on the
+    /// network or the Inventory. A timer's run, a command's `complete`, a finder's `items` and a
+    /// `:check` section's `check` are never the user's call, whoever runs them.
+    pub fn call(&self, plugin: &str, handler: u64, args: Json, by: By) -> Reply {
         let wall = self.limits.call + self.limits.grace;
         let Some((sender, serving)) = self.sender(plugin) else {
             let why = self.why_not(plugin);
@@ -823,16 +865,16 @@ impl PluginHost {
         let spawned = std::thread::Builder::new()
             .name(format!("plugin:{name}"))
             .spawn(move || {
-                let runtime = runtime::Runtime::new(
-                    &name,
-                    &version,
+                let runtime = runtime::Runtime::new(runtime::Start {
+                    plugin: name,
+                    version,
                     api,
-                    &dir,
-                    &config,
+                    dir,
+                    config,
                     grants,
                     serve,
-                    limits.memory,
-                    limits.call,
+                    memory: limits.memory,
+                    budget: limits.call,
                     post,
                     offline,
                     storage,
@@ -841,7 +883,7 @@ impl PluginHost {
                     network,
                     sessions,
                     builtins,
-                );
+                });
                 // Ends when the host drops the Plugin's sender (unload, disable).
                 for (job, reply) in rx {
                     let outcome = match &runtime {

@@ -124,7 +124,7 @@ fn a_refused_create_keeps_servers_code_and_fix() {
     .err()
     .unwrap();
     match e {
-        roster_core::rpc::CallError::Rpc { code, data, .. } => {
+        roster_core::backend::CreateError::Call(roster_core::rpc::CallError::Rpc { code, data, .. }) => {
             assert_eq!(code, 172);
             assert_eq!(data.unwrap()["fix"], "check the URL");
         }
@@ -153,7 +153,13 @@ fn a_create_under_way_can_be_cancelled() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     let e = t.join().unwrap().err().unwrap();
-    assert!(matches!(e, roster_core::rpc::CallError::Rpc { code: 5, .. }), "{e:?}");
+    assert!(
+        matches!(
+            e,
+            roster_core::backend::CreateError::Call(roster_core::rpc::CallError::Rpc { code: 5, .. })
+        ),
+        "{e:?}"
+    );
     assert!(!cancel.cancel(), "nothing left to cancel");
 }
 
@@ -166,7 +172,13 @@ fn an_older_roster_cannot_make_one() {
     )
     .err()
     .unwrap();
-    assert!(matches!(e, roster_core::rpc::CallError::Rpc { code: 1, .. }), "{e:?}");
+    assert!(
+        matches!(
+            e,
+            roster_core::backend::CreateError::Call(roster_core::rpc::CallError::Rpc { code: 1, .. })
+        ),
+        "{e:?}"
+    );
 }
 
 #[test]

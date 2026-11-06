@@ -26,6 +26,7 @@ local POLL = 1000 -- ms between mesh.job polls while a job runs
 local DETAIL_LINKS = 20 -- a Host's Links worth a look, at most, in its details
 local DETAILS_AT_ONCE = 300 -- Host-details sections set in one call; the rest come in deferred calls
 local ACTIONS = { plan = "Planning the Mesh", apply = "Applying the Mesh", cut = "Cutting" }
+local METHOD_NOT_FOUND = -32601 -- JSON-RPC's code: this roster serve has no such method
 
 ---@class MeshJob
 ---@field job integer
@@ -104,7 +105,7 @@ refresh = function()
     if not ok then
       local e = words.clean(j)
       state.status, state.refreshing = nil, false
-      state.problem = e:find("unknown method", 1, true)
+      state.problem = type(j) == "table" and j.code == METHOD_NOT_FOUND
           and "This roster serve has no Mesh jobs (API 17): update roster to use the Mesh controls."
         or ("roster serve couldn't say how the Mesh is: " .. e)
       return show()

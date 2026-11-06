@@ -4,7 +4,7 @@
 //! Tauri. Each method blocks: the shell runs the slow ones on a blocking thread.
 
 use crate::backend::{
-    Backend, BackendInfo, CheckStarted, CreateCancel, Open, OpenedSession, QuickTarget, Typed, timeout_for,
+    Backend, BackendInfo, CheckStarted, CreateCancel, CreateError, Open, OpenedSession, QuickTarget, Typed, timeout_for,
 };
 use crate::config::{self, Config, Loader, Report};
 use crate::detect::BackendError;
@@ -117,9 +117,8 @@ impl BackendSlot {
 struct PluginServe(Arc<BackendSlot>);
 
 impl plugin::Serve for PluginServe {
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
-        let backend = self.0.get().map_err(|e| e.to_string())?;
-        backend.call(method, params).map_err(|e| e.to_string())
+    fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
+        self.0.get()?.call(method, params)
     }
 }
 
@@ -139,11 +138,29 @@ impl std::ops::Deref for PluginTarget {
     }
 }
 
-/// A demo's reply nobody asked for, with the demo's number so an old demo's never reaches a new one.
+/// A demo's reply nobody asked for (`plugin-demo-reply`), with the demo's number so an old demo's
+/// never reaches a new one.
 #[derive(serde::Serialize, Clone)]
-struct DemoReply {
-    demo: u64,
-    reply: plugin::Reply,
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginDemoReply"))]
+pub struct DemoReply {
+    pub demo: u64,
+    pub reply: plugin::Reply,
+}
+
+/// `folders.yml`'s path and text (null: no file yet).
+#[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "FoldersFile"))]
+pub struct FoldersFile {
+    pub path: String,
+    pub text: Option<String>,
+}
+
+/// Facts about this machine the terminal needs: the Windows build, for xterm's `windowsPty`.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct PlatformInfo {
+    pub windows_build: Option<u32>,
 }
 
 /// A password typed for a Session, if one was: moved into serve's request, which is wiped once sent.
@@ -158,22 +175,13 @@ fn session_error(e: SessionError) -> CallError {
     CallError::Io { message: e.to_string() }
 }
 
-/// `plugin_proxy` from a Config (decision Q116); the Config's check refused a bad one, so a
-/// value here parses.
-fn plugin_proxy(config: &Config) -> Option<plugin::network::Proxy> {
-    config
-        .plugin_proxy
-        .as_deref()
-        .and_then(|p| plugin::network::Proxy::parse(p).ok())
-}
-
 fn emit_json(emit: &Emit, event: &str, payload: impl serde::Serialize) {
     emit(event, serde_json::to_value(payload).unwrap_or(Value::Null));
 }
 
 /// A reload's Config reaches the running Plugins' proxy setting, then the frontend hears of it.
 fn config_changed(plugins: &PluginHost, emit: &Emit, report: &Report) {
-    plugins.set_proxy(plugin_proxy(&report.config));
+    plugins.set_proxy(report.config.plugin_proxy.clone());
     emit_json(emit, "config-changed", report);
 }
 
@@ -273,6 +281,13 @@ impl Shell {
         self.config.as_ref().map(|l| l.settled()).unwrap_or_default()
     }
 
+    /// Which roster to run, from the Config (`roster_command`, `backend`), with the development
+    /// env vars winning. Reading the Config waits for init.lua's first load at startup (at most the
+    /// Lua wall-clock limit) rather than starting the default roster.
+    fn candidate(&self) -> Result<crate::detect::Candidate, BackendError> {
+        crate::detect::for_config(&self.settled_config())
+    }
+
     fn config_dir(&self) -> Result<PathBuf, String> {
         self.config
             .as_ref()
@@ -280,13 +295,9 @@ impl Shell {
             .ok_or_else(|| NO_CONFIG_DIR.into())
     }
 
-    /// Find and start the Backend (or return the running one). Errors explain what to fix. It
-    /// reads the Config first: at startup that waits for init.lua's first load (at most the Lua
-    /// wall-clock limit) rather than starting the default roster. Which roster runs comes from
-    /// the Config (`roster_command`, `backend`), with the development env vars winning; a change
-    /// takes effect at the next (re)start.
+    /// Find and start the Backend (or return the running one). Errors explain what to fix. A
+    /// change to which roster runs ([`Shell::candidate`]) takes effect at the next (re)start.
     pub fn backend_connect(&self, restart: bool) -> Result<BackendInfo, BackendError> {
-        let config = self.settled_config();
         // serve's notifications (`inventory.changed`, ticket 28; `job.progress`, API 21) go to the
         // frontend as one event.
         let emit = Arc::clone(&self.emit);
@@ -294,7 +305,7 @@ impl Shell {
             emit("roster-notification", json!({ "method": method, "params": params }))
         });
         let backend = self.backend.0.connect(restart, Backend::is_alive, || {
-            Backend::start(&crate::detect::for_config(&config)?, Some(notify))
+            Backend::start(&self.candidate()?, Some(notify))
         })?;
         Ok(backend.info.clone())
     }
@@ -303,10 +314,8 @@ impl Shell {
     /// that one call ([`Backend::create_inventory`]). serve writes roster.yml (ADR 0001); the
     /// frontend then connects again. The params are the dialog's choice: how, a folder, a path or
     /// a URL. Nothing secret is in them.
-    pub fn inventory_create(&self, params: Value) -> Result<Value, CallError> {
-        let config = self.settled_config();
-        let c = crate::detect::for_config(&config).map_err(|e| CallError::Io { message: e.message })?;
-        Backend::create_inventory(&c, params, &self.create)
+    pub fn inventory_create(&self, params: Value) -> Result<Value, CreateError> {
+        Backend::create_inventory(&self.candidate()?, params, &self.create)
     }
 
     /// The first-run dialog's Cancel (#417 L5): the serve making the Inventory stops (a clone
@@ -353,10 +362,13 @@ impl Shell {
 
     /// `folders.yml`'s path and text (null: no file yet), next to init.lua (decision Q46): read at
     /// start, for the Folders Plugin to move its Folders in once (ticket 61). Never written now.
-    pub fn folders_read(&self) -> Result<Value, String> {
+    pub fn folders_read(&self) -> Result<FoldersFile, String> {
         let dir = self.config_dir()?;
         let text = config::folders::read(&dir).map_err(|e| e.to_string())?;
-        Ok(json!({ "path": config::folders::path(&dir).display().to_string(), "text": text }))
+        Ok(FoldersFile {
+            path: config::folders::path(&dir).display().to_string(),
+            text,
+        })
     }
 
     /// Open a Session to `host` in a PTY of `size` ([`Backend::open_session`]): `session.prepare`
@@ -447,9 +459,10 @@ impl Shell {
         self.state_file()?.save(state).map_err(|e| e.to_string())
     }
 
-    /// Facts about this machine the terminal needs: the Windows build, for xterm's `windowsPty`.
-    pub fn platform_info(&self) -> Value {
-        json!({ "windowsBuild": crate::platform::windows_build() })
+    pub fn platform_info(&self) -> PlatformInfo {
+        PlatformInfo {
+            windows_build: crate::platform::windows_build(),
+        }
     }
 
     /// The Config as the app starts with it, and the error if init.lua couldn't be used. Waits
@@ -559,13 +572,13 @@ impl Shell {
     }
 
     /// `:plugins install PATH`, step 1: the manifest, for the permission prompt. Runs none of its code.
-    pub fn plugin_manifest(&self, path: &str) -> Result<Value, String> {
+    pub fn plugin_manifest(&self, path: &str) -> Result<plugin::ManifestRead, String> {
         let (source, _, shown) = self.plugin_source(path)?;
         let plugin::Source::Dir(dir) = source else {
             return Err(format!("{path} is built into roster"));
         };
-        let m = plugin::read_manifest(&dir).map_err(|e| e.to_string())?;
-        Ok(json!({ "manifest": m, "dir": shown }))
+        let manifest = plugin::read_manifest(&dir).map_err(|e| e.to_string())?;
+        Ok(plugin::ManifestRead { manifest, dir: shown })
     }
 
     /// `:plugins types PATH` (ticket 74): writes the Plugin API's stubs for this app's version as
@@ -584,12 +597,12 @@ impl Shell {
         settings: Option<Value>,
         builtins: Option<Vec<String>>,
         on_demo: Option<u64>,
-    ) -> Result<Value, String> {
+    ) -> Result<plugin::Loaded, String> {
         let (grants, refused) = Permission::parse_grants(grants);
         let host = self.plugin_host(builtins, on_demo)?;
         // The user's proxy for its requests to public names, from the Config in effect (decision
         // Q116), handed to this load; a reload that changes it reaches it later (set_proxy).
-        let proxy = self.config.as_ref().and_then(|l| plugin_proxy(&l.settled()));
+        let proxy = self.settled_config().plugin_proxy.clone();
         let (source, mut handed, shown) = self.plugin_source(path)?;
         // A built-in Plugin's settings come from the app (Folders: init.lua's Folders, and
         // folders.yml's to move in once); a Package's from init.lua, and a folder has none.
@@ -601,32 +614,26 @@ impl Shell {
         let (manifest, reply) = host
             .load(&source, plugin::Load::new(&grants).config(handed).proxy(proxy))
             .map_err(|e| e.to_string())?;
-        Ok(json!({ "manifest": manifest, "dir": shown, "reply": reply, "refused": refused }))
+        Ok(plugin::Loaded {
+            manifest,
+            dir: shown,
+            reply,
+            refused,
+        })
     }
 
-    /// Runs a Plugin's handler. `user: false`: the app runs it on its own (a finder's items, a
-    /// `:check`, a timer, a question's cancel because another took its place, a command a carried
-    /// run's `roster.cmd` named), never the user's call. `carried`: the Plugin's own command its
-    /// `roster.cmd` ran from the user's call, that call carried one hop (issue #183).
-    #[allow(clippy::too_many_arguments)] // one per argument of the command
+    /// Runs a Plugin's handler as `by`'s call (the user's when the app doesn't say).
     pub fn plugin_call(
         &self,
         plugin: &str,
         handler: u64,
         args: Value,
-        user: Option<bool>,
-        carried: Option<bool>,
+        by: Option<plugin::By>,
         builtins: Option<Vec<String>>,
         on_demo: Option<u64>,
     ) -> Result<plugin::Reply, String> {
         let host = self.plugin_host(builtins, on_demo)?;
-        Ok(if user == Some(false) {
-            host.call_by_app(plugin, handler, args)
-        } else if carried == Some(true) {
-            host.call_carried(plugin, handler, args)
-        } else {
-            host.call(plugin, handler, args)
-        })
+        Ok(host.call(plugin, handler, args, by.unwrap_or_default()))
     }
 
     pub fn plugin_event(

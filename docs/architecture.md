@@ -53,15 +53,21 @@ Process-wide state is in two places, and new code adds none:
 
 `crates/roster-core/` has no Tauri dependency, so WSL builds and tests all of it (`cargo test`). Its modules, bottom up:
 
-| Kind | Modules | Rule |
+<!-- layers:rust -->
+| Layer | Modules | What it is |
 |---|---|---|
-| Neutral | `anchor`, `env`, `error`, `files`, `platform`, `process`, `proxy`, `wipe` | Use nothing of the crate's. Help anchors, the `ROSTER_APP_*` env vars and the data folder, error kinds, atomic writes and paths kept inside a folder, the one `Os`, the one process runner, the Plugins' proxy address, wiped secrets. |
-| Parts | `config` (init.lua: schema, shape table, sandboxed Lua, watch), `package` (Packages, system git), `plugin` (the Plugin host, its API, `Op`), `session` (PTYs, fill), `screen`, `rpc` (serve's JSON-RPC client), `detect` (which Backend, the plan from init.lua), `state`, `wt`, `migrate`, `browser`, `slot`, `window` | Each owns its piece. `config` never uses `plugin` (`plugin` reads the Config). |
-| Facade | `backend` (start-up and the API check, the check job, opening and filling Sessions, `pass`), `serve_api` (`PASS_THROUGH`: the methods the frontend calls as they are), `shell` (`Shell`: one method per Tauri command, `COMMANDS`; `shell/bridge.rs` serves them over a local WebSocket for the full-stack e2e suite, behind the `bridge` feature) | What the Tauri shell and the e2e bridge call. |
+| `neutral` | `anchor`, `env`, `error`, `files`, `platform`, `process`, `proxy`, `wcwidth`, `wipe` | Use nothing of the crate's. Help anchors, the `ROSTER_APP_*` env vars and the data folder, error kinds, atomic writes and paths kept inside a folder, the one `Os`, the one process runner, the Plugins' proxy address, character widths (from xterm.js), wiped secrets. |
+| `part` | `config`, `package`, `plugin`, `session`, `screen`, `rpc`, `detect`, `state`, `wt`, `migrate`, `browser`, `slot`, `window` | Each owns its piece: `config` init.lua (schema, shape table, sandboxed Lua, watch, the `packages` entries' rules in `config/package_spec.rs`), `package` Packages and system git, `plugin` the Plugin host, its API and `Op`, `session` PTYs and fill, `screen` the repaint check, `rpc` serve's JSON-RPC client, `detect` which Backend and the plan from init.lua. A part uses neutral modules and other parts, never a facade. |
+| `facade` | `backend`, `serve_api`, `shell` | What the Tauri shell and the e2e bridge call: `backend` (start-up and the API check, the check job, opening and filling Sessions, `pass`), `serve_api` (`PASS_THROUGH`: the methods the frontend calls as they are), `shell` (`Shell`: one method per Tauri command, `COMMANDS`; `shell/bridge.rs` serves them over a local WebSocket for the full-stack e2e suite, behind the `bridge` feature). |
+<!-- /layers:rust -->
+
+Rules, as `crates/roster-core/tests/layers.rs` checks them (a `crate::` path in code, comments aside):
+
+- **Every module has a row.** A module `lib.rs` declares that no row names fails the test, and so does a row naming a module that's gone. A new module gets its row here in the same pull request.
+- **A neutral module uses nothing of the crate's;** a part uses no facade.
+- **No cycles,** counting every path: a module never reaches itself through others. The parts depend one way: `config` ← `plugin` ← `package` (the installer reads a Plugin's manifest), so `config` never reaches `plugin`, even through another module.
 
 - **The Tauri shell is an adapter.** `app/src-tauri/src/lib.rs` turns each Tauri command into one `Shell` call (Tauri channels become sink closures, `emit` an `Emit` closure); `crates/roster-core/tests/shell.rs` fails unless its `generate_handler!` list equals `shell::COMMANDS` and the bridge knows each one. It holds no logic WSL can't test. A serve method the frontend calls as it is goes through the one `serve_call` (allow-listed by `serve_api::PASS_THROUGH`); a command of its own exists only where the core adds something (a secret it holds, a job, a Session).
-- **Known cycle:** `config` ↔ `package`. `config::validate` checks init.lua's `packages` entries with `package::check_specs` (a Package's name and source rules, which the installer applies too), and `package` reads `config::PackageSpec`. Moving the spec rules into `config` is the fix when either side next changes.
-- `crates/roster-core/tests/layers.rs` checks the neutral modules and that `config/` never uses `crate::plugin`.
 
 ## The frontend
 
@@ -107,7 +113,7 @@ Modules never import each other in a circle, and feature folders depend one way:
 | A Rust type the app reads | `#[cfg_attr(feature = "ts", derive(ts_rs::TS))]` on the type, listed in `crates/roster-core/tests/ts_types.rs` | `ROSTER_WRITE_TS=1 cargo test --test ts_types` writes `app/src/config/core.gen.ts`; `config/types.ts` names it for the app. |
 | A stand-in for tests | Python: a program in `tests/fakes/` driven by `FAKE_*` env vars (the `fakes` fixture puts them on PATH). App: the fake Backend in `backend/fake*.ts`. Rust: `crates/roster-core/tests/fake_serve.py` | Share data with the real side rather than port it: a fixture both read (`demo-mesh.json`), a transcript the real core records and the fake replays (`ROSTER_UPDATE_TRANSCRIPT=1 cargo test --test plugin_mesh` writes `app/src/plugins/mesh.transcript.json`). |
 | An end-to-end scenario | The e2e suites: `tests/e2e/` for the CLI and `roster serve` against real sshd in containers (`scripts/e2e.sh`, `--compare REF` diffs another ref's behaviour against this one; [development.md, End-to-end suite](development.md#end-to-end-suite)), `app/e2e/` for the frontend in headless Chromium (`npm run e2e`, on the fake Backend), and `app/e2e/fullstack/` for the real frontend over the core bridge, the real core and `roster serve`, against real sshd in containers (`npm run e2e:full`; [testing.md, Full stack](app/dev/testing.md#full-stack-the-core-bridge)). A new Tauri command goes in `Shell` and `COMMANDS` first | |
-| A new module | Python: its layer in this page's table and in `tests/test_layers.py`, a line in `development.md`. App: its folder by owner, a line in `app/README.md` | |
+| A new module | Python: its layer in this page's table and in `tests/test_layers.py`, a line in `development.md`. Rust: `mod` in `crates/roster-core/src/lib.rs`, its row in [the Rust core's table](#the-rust-core) (`tests/layers.rs` reads it), a line in `app/README.md`. App: its folder by owner, a line in `app/README.md` | |
 
 ## One source
 
@@ -124,7 +130,7 @@ Never hand-copy a value across languages or modules: generate it from its source
 | `src/roster/roster.1` | `cliparser.build_parser` and `docs/cli-reference.md` | `uv run python -m roster.manpage` | `tests/test_manpage.py` |
 | `crates/roster-core/tests/fixtures/repaints.json`, `repaint-fuzz.json` | `scripts/gen-repaint-cases.py`, the core's verdicts | the script, then `ROSTER_WRITE_REPAINT_FUZZ=1 cargo test -p roster-core --lib repaint_fuzz` | `screen.rs`'s tests and `app/src/terminal/repaints.test.ts` |
 
-Shared fixtures that two implementations both read: `tests/vectors/redaction.json` (the `cmd:`/`env:` cut, in `jsonout.py` and the core's `runtime.rs`), `crates/roster-core/tests/fixtures/demo-mesh.json` (`:tutor`'s Mesh in `plugin/demo.rs` and `backend/fake.ts`), `web-urls.json` (which URLs open, in `browser.rs` and `details/details.ts`), `plugin-permissions.json` (each permission's words). Add a case to the fixture, not to one side's tests.
+Shared fixtures that two implementations both read: `tests/vectors/redaction.json` (the `cmd:`/`env:` cut, in `jsonout.py` and the core's `runtime.rs`), `crates/roster-core/tests/fixtures/demo-mesh.json` (`:tutor`'s Mesh and the demo's refusal words, in `plugin/demo.rs` and `backend/fake.ts`), `web-urls.json` (which URLs open, in `browser.rs` and `details/details.ts`), `plugin-permissions.json` (each permission's words). Add a case to the fixture, not to one side's tests.
 
 ## Standards
 
@@ -179,7 +185,7 @@ The structure tests, each failing with the rule and this page's section:
 | `tests/test_layers.py` | Python: every module has a layer, imports go down, leaves import nothing, nothing imports `cli`/`serve`, no new cycle, the table here matches the test's |
 | `app/src/architecture.test.ts` | App: the docs site and `:help` load no xterm, terminal view or PluginManager; pure modules load no `.tsx`; only wiring imports wiring; no module cycle; no folder cycle (of any length) but through `KNOWN_BACK_EDGES` |
 | `app/src/docs-site/build.test.ts` | `npm run docs` builds under Node |
-| `crates/roster-core/tests/layers.rs` | Rust: the neutral modules use nothing of the crate's; `config/` doesn't use `plugin` |
+| `crates/roster-core/tests/layers.rs` | Rust: every module has a row in the table here, neutral modules use nothing of the crate's, parts use no facade, no cycle through any path |
 | `crates/roster-core/tests/backend.rs`, `backend.rs`'s `contract` tests | `PASS_THROUGH` holds no method the core keeps (Q129) and only methods serve has |
 | The "Fails when stale" column above | Every generated file matches its source |
 

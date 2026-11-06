@@ -64,7 +64,8 @@ pub struct Config {
     pub auto_reload: bool,
     /// The proxy Plugins' requests to public names go through (decision Q116): `http://HOST:PORT`,
     /// never with credentials. None: they go direct.
-    pub plugin_proxy: Option<String>,
+    #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    pub plugin_proxy: Option<crate::proxy::Proxy>,
     /// This Box's own vault settings, sent to roster serve (`vault.configure`, tickets 35 and 41).
     pub vault: Vault,
     /// Packages: Plugins from git repos, pinned in `roster.lock` (ticket 24, decision Q83). In
@@ -1218,7 +1219,7 @@ pub struct FolderDef {
 
 /// A Package named in `init.lua` (ticket 24): where its git repo is, which version, and the
 /// settings it's handed. At most one of `tag`, `branch` and `commit`; none means the repo's
-/// default branch. Checked by [`crate::package::check_spec`].
+/// default branch. Checked by `config::package_spec::check_specs`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

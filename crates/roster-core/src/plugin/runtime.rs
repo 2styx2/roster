@@ -8,15 +8,16 @@ use super::api::EVENTS;
 use super::folder::Storage;
 use super::network::{self, Answer, Net};
 use super::op::Op;
-use super::{Builtins, Event, OpenSessions, Outcome, PluginError, Serve, ServeWait, permission::Permission};
+use super::{Builtins, By, Event, OpenSessions, Outcome, PluginError, Serve, ServeWait, permission::Permission};
 use crate::config::Os;
-use crate::config::lua::{self, Budget, Clock};
+use crate::config::lua::{self, Budget, Clock, Coded};
+use crate::rpc::CallError;
 use mlua::chunk::ChunkMode;
 use mlua::{Function, Lua, Table, Value};
 use serde_json::{Value as Json, json};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap};
-use std::path::Path;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -235,19 +236,6 @@ struct Before {
     quiet: BTreeSet<u64>,
 }
 
-/// Whose call a run is (decision Q98, issue #183).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum By {
-    /// The user chose it: a command, a key, a row's or button's action, a finder item, a toolbar
-    /// control, a question's answer.
-    User,
-    /// The Plugin's own command its `roster.cmd` ran from the user's call: that call carried one
-    /// hop, as a `roster.serve.request`'s answer is (Q103d), so nothing made in it carries it on.
-    Carried,
-    /// The app's doing, never the user's call.
-    App,
-}
-
 /// Hands a request's answer back to the host (request id, answer), from a network or serve thread.
 pub(crate) type Post = Arc<dyn Fn(u64, Arrival) + Send + Sync>;
 
@@ -255,7 +243,74 @@ pub(crate) type Post = Arc<dyn Fn(u64, Arrival) + Send + Sync>;
 /// (`roster.serve.request`, redacted already).
 pub(crate) enum Arrival {
     Http(Answer),
-    Serve(Result<Json, String>),
+    Serve(Result<Json, Failed>),
+}
+
+/// Why a Plugin's call into roster serve has no answer, as the Plugin hears it: references cut
+/// (Q92) from the message only, so serve's code is never text to parse back.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Failed {
+    /// serve's own error (`CallError::Rpc`): a Plugin gets it as an error object with `code` and
+    /// `message` (Plugin API 7, decision Q210).
+    Serve { code: i64, message: String },
+    /// serve didn't answer (it exited, or not in time), or the host refused to ask: a string.
+    Other(String),
+}
+
+impl Failed {
+    fn of(e: CallError) -> Failed {
+        match e {
+            CallError::Rpc { code, message, .. } => Failed::Serve {
+                message: redact_text(&message).unwrap_or(message),
+                code,
+            },
+            other => {
+                let text = other.to_string();
+                Failed::Other(redact_text(&text).unwrap_or(text))
+            }
+        }
+    }
+
+    /// The error after `what`: `WHAT: MESSAGE (code N)` for serve's, as Plugins got it as text
+    /// before Plugin API 7.
+    fn coded(self, what: &str) -> Result<Coded, String> {
+        match self {
+            Failed::Serve { code, message } => Ok(Coded {
+                text: format!("{what}: {message} (code {code})"),
+                code,
+                message,
+            }),
+            Failed::Other(why) => Err(format!("{what}: {why}")),
+        }
+    }
+
+    /// The Lua error a function raises for it.
+    pub(super) fn raise(self, what: &str) -> mlua::Error {
+        match self.coded(what) {
+            Ok(coded) => mlua::Error::external(coded),
+            Err(text) => mlua::Error::runtime(text),
+        }
+    }
+
+    /// What a request's function gets as its second value.
+    fn value(self, lua: &Lua, what: &str) -> mlua::Result<Value> {
+        match self.coded(what) {
+            Ok(coded) => lua::coded_value(lua, &coded),
+            Err(text) => Ok(Value::String(lua.create_string(text)?)),
+        }
+    }
+}
+
+impl From<&str> for Failed {
+    fn from(why: &str) -> Failed {
+        Failed::Other(why.to_string())
+    }
+}
+
+impl From<String> for Failed {
+    fn from(why: String) -> Failed {
+        Failed::Other(why)
+    }
 }
 
 /// A handler's number carries its load's generation above these bits (ticket 85), so an id
@@ -279,27 +334,58 @@ pub(crate) struct Runtime {
     budget: Duration,
 }
 
+/// What a Plugin's Lua starts with: each a fact about the Plugin from its own place (its manifest,
+/// the user's grants, the host's limits and shared state).
+pub(crate) struct Start {
+    pub plugin: String,
+    pub version: String,
+    /// The `api` its manifest says.
+    pub api: u32,
+    /// Its folder (empty: a built-in Plugin, with only `require("roster")`).
+    pub dir: PathBuf,
+    /// Its settings (`roster.plugin.config`).
+    pub config: Json,
+    pub grants: BTreeSet<Permission>,
+    pub serve: Arc<dyn Serve>,
+    /// Its memory limit, in bytes.
+    pub memory: usize,
+    /// Each call's time budget.
+    pub budget: Duration,
+    /// Where a request's answer goes; None: it makes none.
+    pub post: Option<Post>,
+    /// No request leaves (`:tutor`'s demo).
+    pub offline: bool,
+    pub storage: Option<Result<Storage, String>>,
+    pub serving: Arc<ServeWait>,
+    /// The load's generation, in its handlers' numbers.
+    pub generation: u64,
+    pub network: network::Setup,
+    pub sessions: Arc<OpenSessions>,
+    pub builtins: Builtins,
+}
+
 impl Runtime {
-    #[allow(clippy::too_many_arguments)] // each is one fact about the Plugin, from its own place
-    pub(crate) fn new(
-        plugin: &str,
-        version: &str,
-        api: u32,
-        dir: &Path,
-        config: &Json,
-        grants: BTreeSet<Permission>,
-        serve: Arc<dyn Serve>,
-        memory: usize,
-        budget: Duration,
-        post: Option<Post>,
-        offline: bool,
-        storage: Option<Result<Storage, String>>,
-        serving: Arc<ServeWait>,
-        generation: u64,
-        network: network::Setup,
-        sessions: Arc<OpenSessions>,
-        builtins: Builtins,
-    ) -> Result<Runtime, PluginError> {
+    pub(crate) fn new(start: Start) -> Result<Runtime, PluginError> {
+        let Start {
+            plugin,
+            version,
+            api,
+            dir,
+            config,
+            grants,
+            serve,
+            memory,
+            budget,
+            post,
+            offline,
+            storage,
+            serving,
+            generation,
+            network,
+            sessions,
+            builtins,
+        } = start;
+        let plugin = plugin.as_str();
         let fail = |e: mlua::Error| PluginError::new(plugin, None, None, format!("couldn't start Lua: {e}"));
         let sites: Vec<network::Site> = grants
             .iter()
@@ -315,8 +401,12 @@ impl Runtime {
         } else {
             Some(Net::new(sites, network).map_err(|e| PluginError::new(plugin, None, None, e))?)
         };
-        let (lua, clock) =
-            lua::sandboxed(memory, (!dir.as_os_str().is_empty()).then_some(dir), plugin.to_string()).map_err(fail)?;
+        let (lua, clock) = lua::sandboxed(
+            memory,
+            (!dir.as_os_str().is_empty()).then_some(dir.as_path()),
+            plugin.to_string(),
+        )
+        .map_err(fail)?;
         let shared = Rc::new(Shared {
             plugin: plugin.to_string(),
             api,
@@ -363,7 +453,7 @@ impl Runtime {
             .set_mode(ChunkMode::Text)
             .exec()
             .map_err(fail)?;
-        let roster = self::api(&lua, &shared, version, config).map_err(fail)?;
+        let roster = self::api(&lua, &shared, &version, &config).map_err(fail)?;
         lua::set_api(&lua, roster).map_err(fail)?;
         Ok(Runtime { lua, shared, budget })
     }
@@ -474,7 +564,7 @@ impl Runtime {
     }
 
     /// Calls the function waiting for serve request `id` with `result`: `(result)` or `(nil, why)`.
-    fn served(&self, id: u64, result: Result<Json, String>) -> Outcome {
+    fn served(&self, id: u64, result: Result<Json, Failed>) -> Outcome {
         let Some((what, user)) = self.shared.serving_requests.borrow_mut().remove(&id) else {
             return self.run(self.budget, |_| Ok(Json::Null));
         };
@@ -488,7 +578,7 @@ impl Runtime {
             requests.raw_set(id, Value::Nil)?;
             match result {
                 Ok(v) => done.call::<()>(to_lua(lua, &v)?)?,
-                Err(why) => done.call::<()>((Value::Nil, format!("{what}: {why}")))?,
+                Err(why) => done.call::<()>((Value::Nil, why.value(lua, &what)?))?,
             }
             Ok(Json::Null)
         });
@@ -1056,7 +1146,7 @@ pub(super) fn serve(lua: &Lua, shared: &Shared, what: &str, method: &str, params
 
 /// roster serve's answer, before it's Lua. A method that acts on the network or the Inventory
 /// (`roster.serve.call`'s and `inventory.write`'s alike) is asked only in the user's call (Q100).
-pub(super) fn ask_serve(shared: &Shared, method: &str, params: Json) -> Result<Json, String> {
+pub(super) fn ask_serve(shared: &Shared, method: &str, params: Json) -> Result<Json, Failed> {
     if super::permission::serve_user_only(method) && !shared.user_call.get() {
         return Err(USER_ONLY.into());
     }
@@ -1064,13 +1154,15 @@ pub(super) fn ask_serve(shared: &Shared, method: &str, params: Json) -> Result<J
     if calls >= MAX_SERVE_CALLS {
         return Err(format!(
             "more than {MAX_SERVE_CALLS} calls into roster serve in one go (roster.serve.request doesn't wait)"
-        ));
+        )
+        .into());
     }
     if waited >= MAX_SERVE_WAIT {
         return Err(format!(
             "waited {} s or more for roster serve in one go (roster.serve.request doesn't wait)",
             MAX_SERVE_WAIT.as_secs()
-        ));
+        )
+        .into());
     }
     // A method that can change things (a write, a Mesh run) may change the Inventory: what the
     // run read before it is out of date (decision Q127).
@@ -1093,31 +1185,13 @@ pub(super) fn ask_serve(shared: &Shared, method: &str, params: Json) -> Result<J
 
 /// serve's answer as a Plugin gets it: `cmd:`/`env:` references cut in the answer and in an
 /// error's message alike (Q92), since serve's messages echo what they were given.
-fn redacted(result: Result<Json, String>) -> Result<Json, String> {
+fn redacted(result: Result<Json, CallError>) -> Result<Json, Failed> {
     match result {
         Ok(mut v) => {
             redact(&mut v);
             Ok(v)
         }
-        Err(message) => Err(redact_error(&message)),
-    }
-}
-
-/// An error's message with its references cut. serve's `(code N)` at the end stays, even after a
-/// `cmd:` reference that runs to the end of the line: a Plugin tells errors apart by it.
-fn redact_error(message: &str) -> String {
-    // ` (code N)` last: one optional `-`, then at least one digit
-    let is_code = |n: &str| {
-        let digits = n.strip_prefix('-').unwrap_or(n);
-        !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
-    };
-    let (text, code) = match message.rfind(" (code ") {
-        Some(at) if message.ends_with(')') && is_code(&message[at + 7..message.len() - 1]) => message.split_at(at),
-        _ => (message, ""),
-    };
-    match redact_text(text) {
-        Some(cut) => format!("{cut}{code}"),
-        None => message.to_string(),
+        Err(e) => Err(Failed::of(e)),
     }
 }
 
@@ -1214,8 +1288,7 @@ pub(super) fn with_host_list<T>(
     read: impl FnOnce(&Json) -> mlua::Result<T>,
 ) -> mlua::Result<T> {
     if shared.host_list.borrow().is_none() {
-        let list =
-            ask_serve(shared, "hosts.list", json!({})).map_err(|m| mlua::Error::runtime(format!("{what}: {m}")))?;
+        let list = ask_serve(shared, "hosts.list", json!({})).map_err(|f| f.raise(what))?;
         if !list.is_object() {
             return Err(mlua::Error::runtime(format!("{what}: roster sent no list")));
         }
@@ -1226,10 +1299,10 @@ pub(super) fn with_host_list<T>(
 }
 
 /// roster serve's answer as Lua, or an error naming `what` called it.
-pub(super) fn answer(lua: &Lua, what: &str, result: Result<Json, String>) -> mlua::Result<Value> {
+pub(super) fn answer(lua: &Lua, what: &str, result: Result<Json, Failed>) -> mlua::Result<Value> {
     match result {
         Ok(v) => to_lua(lua, &v),
-        Err(message) => Err(mlua::Error::runtime(format!("{what}: {message}"))),
+        Err(failed) => Err(failed.raise(what)),
     }
 }
 
@@ -1423,13 +1496,14 @@ pub(crate) use crate::config::lua::to_lua;
 /// What the modules' bindings (plugin/api/MODULE.rs) use of the runtime, in one import.
 pub(super) mod prelude {
     pub(in crate::plugin) use super::{
-        LISTENERS, MAX_COPY, REQUEST_KEYS, Shared, WRITES, add_timer, answer, ask_later, ask_serve, check_id,
+        Failed, LISTENERS, MAX_COPY, REQUEST_KEYS, Shared, WRITES, add_timer, answer, ask_later, ask_serve, check_id,
         command_allowed, copy, data, details_ids, drop_owners, key_context, may_hear, must_have, need, not_had,
         not_yet, on_disk, own_command, own_get, own_ids, own_kind, own_put, plain, push, quiet_opt, reads, request,
         serve, serve_request, table_actions, take_timer, to_lua, unbadge, unbind, user_only, with_host_list,
     };
     pub(in crate::plugin) use crate::config::ThemeDef;
     pub(in crate::plugin) use crate::config::lua;
+    pub(in crate::plugin) use crate::plugin::code::UNKNOWN_HOST;
     pub(in crate::plugin) use crate::plugin::folder::Storage;
     pub(in crate::plugin) use crate::plugin::op::{self, Op, Removable};
     pub(in crate::plugin) use crate::plugin::permission::Permission;
@@ -1445,32 +1519,36 @@ mod tests {
     struct NoServe;
 
     impl Serve for NoServe {
-        fn call(&self, method: &str, _params: Json) -> Result<Json, String> {
-            Err(format!("unknown method {method}"))
+        fn call(&self, method: &str, _params: Json) -> Result<Json, CallError> {
+            Err(CallError::rpc(-32601, format!("unknown method {method}")))
+        }
+    }
+
+    /// A built-in-like Plugin `plugin` with `grants`, asking `serve`.
+    fn start(plugin: &str, grants: BTreeSet<Permission>, serve: Arc<dyn Serve>) -> Start {
+        Start {
+            plugin: plugin.into(),
+            version: "1.0.0".into(),
+            api: crate::plugin::API_VERSION,
+            dir: PathBuf::new(),
+            config: Json::Null,
+            grants,
+            serve,
+            memory: 8 * 1024 * 1024,
+            budget: Duration::from_millis(250),
+            post: None,
+            offline: false,
+            storage: None,
+            serving: Arc::new(ServeWait::default()),
+            generation: 1,
+            network: network::Setup::default(),
+            sessions: Arc::default(),
+            builtins: Builtins::default(),
         }
     }
 
     fn runtime() -> Runtime {
-        Runtime::new(
-            "quiet",
-            "1.0.0",
-            crate::plugin::API_VERSION,
-            Path::new(""),
-            &Json::Null,
-            BTreeSet::new(),
-            Arc::new(NoServe),
-            8 * 1024 * 1024,
-            Duration::from_millis(250),
-            None,
-            false,
-            None,
-            Arc::new(ServeWait::default()),
-            1,
-            network::Setup::default(),
-            Arc::default(),
-            Builtins::default(),
-        )
-        .unwrap()
+        Runtime::new(start("quiet", BTreeSet::new(), Arc::new(NoServe))).unwrap()
     }
 
     thread_local! {
@@ -1487,7 +1565,7 @@ mod tests {
     struct Calls(std::sync::atomic::AtomicU32);
 
     impl Serve for Calls {
-        fn call(&self, _method: &str, _params: Json) -> Result<Json, String> {
+        fn call(&self, _method: &str, _params: Json) -> Result<Json, CallError> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             SERVE_TIME.with(|t| t.set(t.get() + Duration::from_secs(150)));
             Ok(json!({ "ok": true }))
@@ -1500,25 +1578,11 @@ mod tests {
     #[test]
     fn one_call_may_wait_for_roster_serve_300_s_in_all() {
         let serve = Arc::new(Calls(Default::default()));
-        let rt = Runtime::new(
+        let rt = Runtime::new(start(
             "slow",
-            "1.0.0",
-            crate::plugin::API_VERSION,
-            Path::new(""),
-            &Json::Null,
             BTreeSet::from([Permission::Serve("mesh.status".into())]),
             serve.clone(),
-            8 * 1024 * 1024,
-            Duration::from_millis(250),
-            None,
-            false,
-            None,
-            Arc::new(ServeWait::default()),
-            1,
-            network::Setup::default(),
-            Arc::default(),
-            Builtins::default(),
-        )
+        ))
         .unwrap();
         rt.shared.serve_clock.set(fake_now);
         let loaded = rt.load(
@@ -1621,6 +1685,25 @@ mod tests {
         }
     }
 
+    /// An error case of the shared vectors, written as the CLI's text (`MESSAGE (code N)`), as
+    /// serve's error reaches a Plugin: the message cut, the code its own field, then the text again.
+    fn served_error(input: &str) -> String {
+        let coded = input.rsplit_once(" (code ").and_then(|(message, rest)| {
+            let code = rest.strip_suffix(')')?;
+            let digits = code.strip_prefix('-').unwrap_or(code);
+            (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| (code.parse::<i64>().ok(), message))
+        });
+        let e = match coded {
+            Some((Some(code), message)) => CallError::rpc(code, message),
+            _ => CallError::Io { message: input.into() },
+        };
+        match Failed::of(e) {
+            Failed::Serve { code, message } => format!("{message} (code {code})"),
+            Failed::Other(text) => text,
+        }
+    }
+
     /// tests/vectors/redaction.json, which the CLI's tests (tests/test_json.py) read too, so the
     /// Q92 cut is one rule in both languages: a change to one fails the other's tests.
     #[test]
@@ -1633,7 +1716,7 @@ mod tests {
             .filter_map(|case| {
                 let input = case["in"].as_str().unwrap();
                 let got = if case["error"] == true {
-                    redact_error(input)
+                    served_error(input)
                 } else {
                     redact_text(input).unwrap_or_else(|| input.to_string())
                 };

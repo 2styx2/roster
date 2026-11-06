@@ -13,7 +13,8 @@
 //!   (the temp dir), the user's alone, removed with the demo; one a crash left behind is swept at
 //!   the next demo's start. A Plugin's real `plugin-data` is never read or written.
 
-use super::{Limits, PluginHost, Serve};
+use super::code::{INVALID_PARAMS, ROSTER_ERROR, UNKNOWN_HOST};
+use super::{CallError, Limits, PluginHost, Serve};
 use serde_json::Value as Json;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -35,7 +36,7 @@ impl DemoServe {
 }
 
 impl Serve for DemoServe {
-    fn call(&self, method: &str, params: Json) -> Result<Json, String> {
+    fn call(&self, method: &str, params: Json) -> Result<Json, CallError> {
         match method {
             "hosts.list" => Ok(self.hosts.clone()),
             "host.get" => {
@@ -44,12 +45,18 @@ impl Serve for DemoServe {
                     .as_array()
                     .and_then(|hs| hs.iter().find(|h| h["name"] == name))
                     .cloned()
-                    .ok_or_else(|| format!("No Host named '{name}' on the demo Inventory (code 2)"))
+                    .ok_or_else(|| {
+                        CallError::rpc(UNKNOWN_HOST, format!("No Host named '{name}' on the demo Inventory"))
+                    })
             }
             "mesh.status" => mesh_status(&params),
-            other => Err(format!(
-                "{other} isn't on the demo Inventory: the tutorial's demo answers only hosts.list, host.get and mesh.status (code 3)"
-            )),
+            other => {
+                let words = demo_mesh()?["refusal"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .replace("{method}", other);
+                Err(CallError::rpc(ROSTER_ERROR, words))
+            }
         }
     }
 }
@@ -58,19 +65,31 @@ impl Serve for DemoServe {
 /// Backend answers from too): `mesh.status`'s plain answer, and what `grouped` and `brief` change.
 const DEMO_MESH: &str = include_str!("../../tests/fixtures/demo-mesh.json");
 
+fn demo_mesh() -> Result<Json, CallError> {
+    serde_json::from_str(DEMO_MESH).map_err(|e| CallError::Io {
+        message: format!("the demo's Mesh: {e}"),
+    })
+}
+
 /// `mesh.status` as real serve answers it (`status` and `brief` in src/roster/mesh.py), for
 /// the demo's Mesh: plain, `grouped: true` (API 19) or `brief: true` (API 17).
-fn mesh_status(params: &Json) -> Result<Json, String> {
+fn mesh_status(params: &Json) -> Result<Json, CallError> {
     let flag = |name: &str| match params.get(name) {
         None | Some(Json::Null) => Ok(false),
         Some(Json::Bool(b)) => Ok(*b),
-        Some(_) => Err(format!("params.{name} must be true or false (code -32602)")),
+        Some(_) => Err(CallError::rpc(
+            INVALID_PARAMS,
+            format!("params.{name} must be true or false"),
+        )),
     };
     let (grouped, brief) = (flag("grouped")?, flag("brief")?);
     if grouped && brief {
-        return Err("params.grouped and params.brief don't go together (code -32602)".into());
+        return Err(CallError::rpc(
+            INVALID_PARAMS,
+            "params.grouped and params.brief don't go together",
+        ));
     }
-    let mesh: Json = serde_json::from_str(DEMO_MESH).map_err(|e| format!("the demo's Mesh: {e}"))?;
+    let mesh = demo_mesh()?;
     let mut out = mesh["plain"].clone();
     let overlay = [(grouped, "grouped"), (brief, "brief")];
     for (_, part) in overlay.iter().filter(|(on, _)| *on) {

@@ -7,7 +7,7 @@ import { PLUGIN_COMMANDS, ROSTER_ONLY } from "../plugins/cmd";
 import { api_version as pluginApiVersion } from "../../../crates/roster-core/tests/fixtures/plugin-api.json?pick=api_version,commands,roster_only,tags";
 import { CORE } from "../plugins/core.gen";
 import { fakeFoldersPlugin } from "./fakeFolders";
-import { redact, redactError } from "./redact";
+import { PluginServeError, pluginServeError, redact } from "./redact";
 import { BackendCallError, type Host, type OpenSession, type PluginEventName, type PluginCaller, type PluginData, type PluginLoaded, type PluginManifest, type PluginReply } from "./types";
 import { errorText } from "../ui/format";
 
@@ -92,7 +92,7 @@ export interface FakeRoster {
    * `request` doesn't wait: `done` runs later, as the core's does (decision Q103). */
   serve?: {
     call(method: string, params?: Spec): unknown;
-    request(method: string, params: Spec | null | undefined, done: (result: unknown, err?: string) => void): void;
+    request(method: string, params: Spec | null | undefined, done: (result: unknown, err?: string | PluginServeError) => void): void;
   };
 }
 
@@ -167,8 +167,16 @@ const isDomain = (s: string) => {
 };
 const isIpv4 = (s: string) => /^(0|[1-9][0-9]{0,2})(\.(0|[1-9][0-9]{0,2})){3}$/.test(s) && s.split(".").every((n) => Number(n) <= 255);
 
-/** An IPv6 address's eight groups, or null. */
-function ipv6Groups(s: string): number[] | null {
+/** An IPv6 address's eight groups, or null. Its last 32 bits may be written as an IPv4 address
+ * (`::ffff:10.0.0.1`). */
+function ipv6Groups(text: string): number[] | null {
+  let s = text;
+  const dotted = /^(.*:)(\d+\.\d+\.\d+\.\d+)$/.exec(s);
+  if (dotted) {
+    if (!isIpv4(dotted[2] ?? "")) return null;
+    const [a = 0, b = 0, c = 0, d = 0] = (dotted[2] ?? "").split(".").map(Number);
+    s = `${dotted[1] ?? ""}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
   if (!/^[0-9a-f:]+$/.test(s)) return null;
   const halves = s.split("::");
   if (halves.length > 2) return null;
@@ -199,6 +207,7 @@ function ipv6Text(g: number[]): string {
   return best < 0 ? hex(g) : `${hex(g.slice(0, best))}::${hex(g.slice(best + len))}`;
 }
 
+// As network.rs's is_public, on the same table of cases (tests/fixtures/addresses.json).
 function v4Public(s: string): boolean {
   const [a = 0, b = 0, c = 0] = s.split(".").map(Number);
   return !(
@@ -207,6 +216,25 @@ function v4Public(s: string): boolean {
     (a === 192 && b === 168) || (a === 198 && (b === 18 || b === 19)) || (a === 198 && b === 51 && c === 100) ||
     (a === 203 && b === 0 && c === 113) || a >= 224
   );
+}
+
+function v6Public(g: number[]): boolean {
+  const [g0 = 0, g1 = 0, g2 = 0] = g;
+  const v4 = (hi: number, lo: number) => [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join(".");
+  const [g6 = 0, g7 = 0] = g.slice(6);
+  const zeros = (n: number) => g.slice(0, n).every((x) => x === 0);
+  if (zeros(5) && g[5] === 0xffff) return v4Public(v4(g6, g7)); // mapped
+  if (zeros(6) && !(g6 === 0 && g7 <= 1)) return v4Public(v4(g6, g7)); // compatible
+  if (g0 === 0x64 && g1 === 0xff9b && g.slice(2, 6).every((x) => x === 0)) return v4Public(v4(g6, g7)); // NAT64
+  if (g0 === 0x2002) return v4Public(v4(g1, g2)); // 6to4
+  return (g0 & 0xe000) === 0x2000 && !(g0 === 0x2001 && (g1 === 0x0db8 || g1 < 0x0200));
+}
+
+/** Whether `text` (an IPv4 or IPv6 address) is a public internet address; null if it isn't one. */
+export function publicAddress(text: string): boolean | null {
+  if (isIpv4(text)) return v4Public(text);
+  const g = ipv6Groups(text);
+  return g ? v6Public(g) : null;
 }
 
 interface Site {
@@ -262,8 +290,7 @@ function parseSite(text: string): Site | string {
     const g = ipv6Groups(addr);
     if (!g) return bad("that isn't an IPv6 address");
     if (ipv6Text(g) !== addr) return bad(`write the address as [${ipv6Text(g)}]`);
-    const [g0 = 0, g1 = 0] = g;
-    inside = (g0 & 0xe000) !== 0x2000 || (g0 === 0x2001 && (g1 === 0x0db8 || g1 < 0x0200));
+    inside = !v6Public(g);
     host = `[${addr}]`;
     kind = "ip";
   } else {
@@ -783,8 +810,6 @@ export function fakePluginHost(
     // As runtime.rs: `roster.serve` with any serve: grant, each call checked against its own.
     if ([...r.grants].some((g) => g.startsWith("serve:"))) {
       // serve's answers and errors with their cmd:/env: references cut, as runtime.rs's redacted (Q92).
-      const servedError = (e: unknown) =>
-        redactError(e instanceof BackendCallError && e.code !== null ? `${e.message} (code ${e.code})` : errorText(e));
       m.serve = {
         call: (method, params = {}) => {
           if (!r.grants.has(`serve:${method}`)) throw new Error(`roster.serve.call: not granted (serve:${method})`);
@@ -793,8 +818,8 @@ export function fakePluginHost(
             return redact(serve(method, params));
           } catch (e) {
             // No `cause`: serve's own error is uncut, and a Plugin could read it there (Q92).
-            // eslint-disable-next-line preserve-caught-error -- the cut message is all a Plugin gets
-            throw new Error(`roster.serve.call ${method}: ${servedError(e)}`);
+            const failed = pluginServeError(`roster.serve.call ${method}`, e);
+            throw typeof failed === "string" ? new Error(failed) : failed;
           }
         },
         // serve is asked now (the core's thread asks at once); `done` runs later, as a call of its
@@ -811,7 +836,8 @@ export function fakePluginHost(
             const result = redact(serve(method, params ?? {}));
             answer = () => done(result ?? undefined);
           } catch (e) {
-            answer = () => done(undefined, `${what}: ${servedError(e)}`);
+            const failed = pluginServeError(what, e);
+            answer = () => done(undefined, failed);
           }
           later(r, answer);
         },
@@ -903,7 +929,7 @@ export function fakePluginHost(
       running.set(manifest.name, r);
       const config = path.startsWith(CORE.builtin_prefix) && settings ? settings : configs.get(path);
       const reply = run(manifest.name, r, () => p.load(module(r, config)), true);
-      return { manifest, dir: path, reply };
+      return { manifest, dir: path, reply, refused: [] };
     },
     async pluginCall(plugin, handler, args, user = true, names) {
       told(names);

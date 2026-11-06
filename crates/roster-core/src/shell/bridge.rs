@@ -10,7 +10,7 @@
 //! (a Session's raw output) as they come. A connection needs the token the bridge printed.
 
 use super::{Emit, Shell};
-use crate::session::{SessionEvent, Size};
+use crate::session::{ExitMessage, SessionEvent, Size};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -73,7 +73,7 @@ pub fn dispatch(shell: &Shell, cmd: &str, args: &Value, channels: &Channels) -> 
         let (id, channels) = (channel_id(args, name)?, Arc::clone(channels));
         Ok(move |event: SessionEvent| match event {
             SessionEvent::Output(bytes) => channels(id, Message::Bytes(bytes)),
-            SessionEvent::Exit(exit) => channels(id, Message::Json(json!({ "exit": exit }))),
+            SessionEvent::Exit(exit) => channels(id, Message::Json(to_value(ExitMessage { exit }))),
         })
     };
     match cmd {
@@ -120,7 +120,7 @@ pub fn dispatch(shell: &Shell, cmd: &str, args: &Value, channels: &Channels) -> 
         "session_close" => answer(shell.session_close(arg(args, "id")?)),
         "state_load" => answer(shell.state_load()),
         "state_save" => answer(shell.state_save(&arg::<Value>(args, "state")?)),
-        "platform_info" => Ok(shell.platform_info()),
+        "platform_info" => Ok(to_value(shell.platform_info())),
         "config_load" => Ok(to_value(shell.config_load())),
         "config_open" => answer(shell.config_open()),
         "config_reload" => Ok(to_value(shell.config_reload())),
@@ -140,8 +140,7 @@ pub fn dispatch(shell: &Shell, cmd: &str, args: &Value, channels: &Channels) -> 
             &arg::<String>(args, "plugin")?,
             arg(args, "handler")?,
             arg(args, "args")?,
-            arg(args, "user")?,
-            arg(args, "carried")?,
+            arg(args, "by")?,
             arg(args, "builtins")?,
             arg(args, "onDemo")?,
         )),
@@ -262,6 +261,7 @@ fn page(stream: TcpStream, token: &str, shell: Arc<Shell>, pages: &Pages) -> std
                 Message::Json(m) => json!({ "channel": id, "message": m }),
                 Message::Bytes(b) => json!({ "channel": id, "bytes": b }),
             };
+            // The page's writer has gone (it disconnected): nobody is left for the message.
             let _ = tx.send(text.to_string());
         })
     };
@@ -288,6 +288,7 @@ fn page(stream: TcpStream, token: &str, shell: Arc<Shell>, pages: &Pages) -> std
                 Err(Failure::Args(m)) => json!({ "id": id, "err": format!("command {cmd}: {m}") }),
                 Err(Failure::Unknown) => json!({ "id": id, "err": format!("command {cmd} not found") }),
             };
+            // As above: a page that disconnected mid-command gets no answer.
             let _ = tx.send(reply.to_string());
         });
     }

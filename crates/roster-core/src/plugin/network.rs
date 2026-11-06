@@ -751,6 +751,7 @@ pub struct Setup {
 /// How a Plugin used one site, for `:plugins` (decision Q116): counts and a time, never a path,
 /// a query, a header or a body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "SiteRequests"))]
 pub struct SiteCount {
     /// The site as its permission names it (`api.example.com`, `private:nas.lan`).
     pub site: String,
@@ -1772,44 +1773,22 @@ mod tests {
         );
     }
 
+    /// tests/fixtures/addresses.json, which the fake Backend's port (fakePlugins.ts) is tested on too.
     #[test]
     fn private_and_special_addresses_are_not_public() {
-        for ip in [
-            "127.0.0.1",
-            "10.1.2.3",
-            "172.16.0.1",
-            "172.31.255.255",
-            "192.168.1.1",
-            "169.254.169.254",
-            "100.64.0.1",
-            "0.0.0.0",
-            "224.0.0.1",
-            "255.255.255.255",
-            "192.0.2.1",
-            "::1",
-            "::",
-            "fe80::1",
-            "fd00::1",
-            "fc00::1",
-            "ff02::1",
-            "::ffff:127.0.0.1",
-            "::ffff:10.0.0.1",
-            "::127.0.0.1",
-            "64:ff9b::a00:1",
-            "2002:7f00:1::",
-            "2001:db8::1",
-            "fec0::1",
-        ] {
-            assert!(!is_public(ip.parse().unwrap()), "{ip} must not count as public");
-        }
-        for ip in [
-            "45.10.20.30",
-            "172.32.0.1",
-            "2a05:1234::1",
-            "::ffff:45.10.20.30",
-            "2002:2d0a:141e::",
-        ] {
-            assert!(is_public(ip.parse().unwrap()), "{ip} is public");
+        let table: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/addresses.json")).unwrap();
+        for (key, public) in [("not_public", false), ("public", true)] {
+            let list = table[key].as_array().unwrap();
+            assert!(!list.is_empty(), "{key}");
+            for ip in list {
+                let ip = ip.as_str().unwrap();
+                assert_eq!(
+                    is_public(ip.parse().unwrap()),
+                    public,
+                    "{ip}: public should be {public}"
+                );
+            }
         }
     }
 

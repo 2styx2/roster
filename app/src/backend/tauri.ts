@@ -4,7 +4,7 @@
 // imported when running inside Tauri (see index.ts).
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { CallErrorWire, OpenedSession } from "../config/core.gen";
+import type { CallErrorWire, OpenedSession, PluginCallBy, PluginDemoReply, SessionExitMessage } from "../config/core.gen";
 import {
   BackendCallError,
   BackendStartError,
@@ -40,6 +40,7 @@ import {
   type PackageChecked,
   type PackageStatus,
   type OpenSession,
+  type PluginCaller,
   type PluginReply,
   type PublishResult,
   type PullResult,
@@ -51,7 +52,6 @@ import {
   type SignInStep,
   type VaultStatus,
   type SessionEvents,
-  type SessionExit,
   type SessionHandle,
   type SiteRequests,
   type PluginData,
@@ -90,7 +90,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 }
 
 /** One Session's channel: raw output bytes (an ArrayBuffer), then `{exit}` as JSON. */
-type SessionMessage = ArrayBuffer | Uint8Array | number[] | { exit: SessionExit };
+type SessionMessage = ArrayBuffer | Uint8Array | number[] | SessionExitMessage;
 
 function sessionChannel(events: SessionEvents): Channel<SessionMessage> {
   const ch = new Channel<SessionMessage>();
@@ -160,6 +160,13 @@ function openSessionArg(o: OpenSession) {
   return { session: o.session, host: o.host, cwd: o.cwd ?? null };
 }
 
+/** Whose call a Plugin's run is, as the core's `By` (plugin/mod.rs): the user's unless the app
+ * says otherwise. */
+function callBy(user: PluginCaller | undefined): PluginCallBy {
+  if (user === "carried") return "carried";
+  return user === false ? "app" : "user";
+}
+
 /** A serve method the core passes on as it is (`serve_call`). Secrets in `params` (a typed
  * password, a vault answer) go once to serve's stdin and are wiped there. */
 function serve<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
@@ -189,6 +196,8 @@ export function tauriBackend(): Backend {
     signIn: (start) => serve<SignInStep>("vault.login", { action: "start", ...start }),
     signInAnswer: (login, answer) => serve<SignInStep>("vault.login", { action: "answer", login, ...answer }),
     signInCancel: async () => {
+      // Cancelling is best effort on the way out of the sign-in: serve also ends a sign-in left
+      // unanswered for 10 minutes by itself (security.md), so a failed cancel leaves nothing held.
       await serve("vault.login", { action: "cancel" }).catch(() => {});
     },
     openSession,
@@ -205,7 +214,15 @@ export function tauriBackend(): Backend {
     // Named Inventories (ticket 115, API 27): which one serve runs on, and making another one active.
     listInventories: () => serve<Inventories>("inventories.list"),
     useInventory: (name) => serve<InventoryUsed>("inventories.use", { name }),
-    createInventory: (params) => call<NewInventory>("inventory_create", { params }),
+    // Which roster to run may be what failed: a BackendStartError says what to do, as connect's does.
+    async createInventory(params) {
+      try {
+        return await invoke<NewInventory>("inventory_create", { params });
+      } catch (e) {
+        if (isProblem(e)) throw new BackendStartError(e);
+        throw callError(e);
+      }
+    },
     cancelCreateInventory: () => call<boolean>("inventory_create_cancel"),
     verifyLogin: (host, changes: HostChanges) => serve<HostCheck>("host.verify_login", { host, changes }),
     updateHost: (host, changes: HostChanges) => serve<HostUpdate>("host.update", { host, changes }),
@@ -236,7 +253,7 @@ export function tauriBackend(): Backend {
     pluginManifest: (path) => call("plugin_manifest", { path }),
     pluginTypes: (path) => call<string>("plugin_types", { path }),
     pluginLoad: (path, grants, settings, builtins) => call("plugin_load", { path, grants, settings: settings ?? null, builtins: builtins ?? null }),
-    pluginCall: (plugin, handler, args, user, builtins) => call<PluginReply>("plugin_call", { plugin, handler, args, user: user !== false, carried: user === "carried", builtins: builtins ?? null }),
+    pluginCall: (plugin, handler, args, user, builtins) => call<PluginReply>("plugin_call", { plugin, handler, args, by: callBy(user), builtins: builtins ?? null }),
     pluginEvent: (name, payload, builtins) => call<PluginReply[]>("plugin_event", { name, payload, builtins: builtins ?? null }),
     pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map(openSessionArg) }).then(() => undefined),
     pluginUnload: (plugin) => call<boolean>("plugin_unload", { plugin }),
@@ -257,13 +274,13 @@ export function tauriBackend(): Backend {
         pluginTypes: (path) => call<string>("plugin_types", { path }),
         pluginLoad: (path, grants, settings, builtins) => call("plugin_load", { path, grants, settings: settings ?? null, builtins: builtins ?? null, onDemo }),
         pluginCall: (plugin, handler, args, user, builtins) =>
-          call<PluginReply>("plugin_call", { plugin, handler, args, user: user !== false, carried: user === "carried", builtins: builtins ?? null, onDemo }),
+          call<PluginReply>("plugin_call", { plugin, handler, args, by: callBy(user), builtins: builtins ?? null, onDemo }),
         pluginEvent: (name, payload, builtins) => call<PluginReply[]>("plugin_event", { name, payload, builtins: builtins ?? null, onDemo }),
         pluginSessions: (open) => call<null>("plugin_sessions", { open: open.map(openSessionArg), onDemo }).then(() => undefined),
         pluginUnload: (plugin) => call<boolean>("plugin_unload", { plugin, onDemo }),
         pluginForget: (plugin) => call<boolean>("plugin_forget", { plugin, onDemo }),
         onPluginReply(onReply) {
-          const stop = listen<{ demo: number; reply: PluginReply }>("plugin-demo-reply", (e) => {
+          const stop = listen<Omit<PluginDemoReply, "reply"> & { reply: PluginReply }>("plugin-demo-reply", (e) => {
             if (e.payload.demo === id) onReply(e.payload.reply);
           });
           return () => void stop.then((f) => f());

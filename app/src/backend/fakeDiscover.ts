@@ -4,6 +4,7 @@
 // crates/roster-core/tests/plugin_discover.rs records from the real Lua
 // (app/src/plugins/discover.transcript.json) and checks this does the same. Change the Lua first.
 import type { FakePlugin, FakeRoster, FakeServe } from "./fakePlugins";
+import { PluginServeError } from "./redact";
 import { BackendCallError } from "./types";
 import { FIRST_PARTY } from "./fakeManifests";
 import { Code } from "./serveContract";
@@ -77,14 +78,10 @@ export function settings(config: Record<string, unknown>): [Settings, string[]] 
 const count = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const plural = (n: number, one: string, many: string) => `${count(n)} ${n === 1 ? one : many}`;
 const list = (items: string[]) => (items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1] ?? ""}`);
-const codeOf = (e: unknown) => {
-  const m = /\(code (-?\d+)\)$/.exec(String(e instanceof Error ? e.message : e));
-  return m ? Number(m[1]) : null;
-};
+// As model.lua's code and message: roster serve's error object (Plugin API 7), or text.
+const codeOf = (e: unknown) => (e instanceof PluginServeError ? e.code : null);
 const messageOf = (e: unknown) =>
-  String(e instanceof Error ? e.message : e)
-    .replace(/^roster\.serve\.[a-z]+ [\w._]+: /, "")
-    .replace(/ \(code -?\d+\)$/, "");
+  e instanceof PluginServeError ? e.serveMessage : String(e instanceof Error ? e.message : e).replace(/^roster\.serve\.[a-z]+ [\w._]+: /, "");
 
 const portsText = (ports: FoundPort[]) => {
   const bits: string[] = [];

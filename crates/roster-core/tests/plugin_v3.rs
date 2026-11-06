@@ -5,14 +5,16 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{Limits, Permission, PluginHost, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
 struct FakeServe;
 
 impl Serve for FakeServe {
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
         let esx = json!({
             "name": "esx-02", "ip": "10.0.0.5", "group": "lab",
             "ssh": { "user": "root", "port": 22, "auth": "cmd:pass show lab/esx-02 --hunter2" },
@@ -33,11 +35,11 @@ impl Serve for FakeServe {
                   "message": "cmd:pass show lab/esx-02 --hunter2 failed: exit 1",
                   "details": { "auth": "env:ESX_PASSWORD", "tried": ["CMD:pass --hunter2", "bw:esx-02 web"] } }
             ] })),
-            "host.get" => Err(format!(
-                "unknown host '{}' (code 2)",
-                params["name"].as_str().unwrap_or("")
+            "host.get" => Err(CallError::rpc(
+                2,
+                format!("unknown host '{}'", params["name"].as_str().unwrap_or("")),
             )),
-            other => Err(format!("unknown method {other} (code -32601)")),
+            other => Err(CallError::rpc(-32601, format!("unknown method {other}"))),
         }
     }
 }
@@ -262,7 +264,7 @@ fn a_timer_that_loops_is_stopped_even_inside_a_coroutine() {
         .collect();
     assert_eq!(timers.len(), 2, "{ops:?}");
     for t in timers {
-        let r = host.call("t", t, json!({}));
+        let r = host.call("t", t, json!({}), By::User);
         let e = r.error.expect("it ran out of time").to_string();
         assert!(e.contains("an endless loop?"), "{e}");
         // A failed run's UI changes are dropped, so `has` is checked on its own below.
@@ -297,7 +299,7 @@ fn cmd_and_env_references_in_raw_text_reach_a_plugin_cut() {
     );
     assert_eq!(error, None);
     let go = loaded[0]["run"]["handler"].as_u64().unwrap();
-    let r = host.call("t", go, json!({ "args": "", "words": [] }));
+    let r = host.call("t", go, json!({ "args": "", "words": [] }), By::User);
     assert!(r.error.is_none(), "{:?}", r.error);
     let ops = r.ops;
     assert_eq!(

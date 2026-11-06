@@ -13,7 +13,9 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
+use roster_core::plugin::By;
 use roster_core::plugin::{Event, Limits, Load, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -114,9 +116,11 @@ struct Serve0 {
 }
 
 impl Serve for Serve0 {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
         self.calls.lock().unwrap().push(method.to_string());
-        Err(format!("unknown method {method}"))
+        Err(CallError::Io {
+            message: format!("unknown method {method}"),
+        })
     }
 }
 
@@ -520,7 +524,7 @@ fn a_quick_connect_session_has_no_host_so_its_alerts_have_no_badge_and_no_goto()
     let section = one(ops, "section").clone();
     let r = w
         .host
-        .call(NAME, action(&section, "Details of ERROR on a box"), json!({}));
+        .call(NAME, action(&section, "Details of ERROR on a box"), json!({}), By::User);
     ok(&r);
     assert_eq!(
         one(&r.ops, "float")["spec"]["title"],
@@ -545,6 +549,7 @@ fn its_actions_show_the_details_copy_the_line_and_dismiss_it_and_alerts_clear_di
         NAME,
         action(&section, "Details of ERROR: disk /dev/sda1 full"),
         json!({}),
+        By::User,
     );
     ok(&r);
     let float = one(&r.ops, "float");
@@ -561,18 +566,24 @@ fn its_actions_show_the_details_copy_the_line_and_dismiss_it_and_alerts_clear_di
     // The lines before it, then the line itself.
     assert_eq!(lines[5..], ["  mounting", "› ERROR: disk /dev/sda1 full"]);
 
-    let r = w
-        .host
-        .call(NAME, action(&section, "Copy kernel panic - not syncing"), json!({}));
+    let r = w.host.call(
+        NAME,
+        action(&section, "Copy kernel panic - not syncing"),
+        json!({}),
+        By::User,
+    );
     ok(&r);
     assert_eq!(
         one(&r.ops, "copy"),
         &json!({ "op": "copy", "text": "kernel panic - not syncing" })
     );
 
-    let r = w
-        .host
-        .call(NAME, action(&section, "Dismiss kernel panic - not syncing"), json!({}));
+    let r = w.host.call(
+        NAME,
+        action(&section, "Dismiss kernel panic - not syncing"),
+        json!({}),
+        By::User,
+    );
     ok(&r);
     assert_eq!(rows(one(&r.ops, "section")), ["ERROR: disk /dev/sda1 full"]);
     assert_eq!(
@@ -584,12 +595,12 @@ fn its_actions_show_the_details_copy_the_line_and_dismiss_it_and_alerts_clear_di
     );
 
     // :alerts shows them all in a float; :alerts clear dismisses them all.
-    let r = w.host.call(NAME, command, json!({ "args": "", "words": [] }));
+    let r = w.host.call(NAME, command, json!({ "args": "", "words": [] }), By::User);
     ok(&r);
     assert_eq!(one(&r.ops, "float")["spec"]["title"], "Recent alerts");
     let r = w
         .host
-        .call(NAME, command, json!({ "args": "clear", "words": ["clear"] }));
+        .call(NAME, command, json!({ "args": "clear", "words": ["clear"] }), By::User);
     ok(&r);
     assert!(rows(one(&r.ops, "section")).is_empty());
     // The status segment goes, and so does the timer that kept "2 min ago" true.
@@ -1025,13 +1036,13 @@ fn the_transcript_the_frontend_replays_is_what_the_real_lua_does() {
             }),
             "action" => {
                 let label = step["label"].as_str().unwrap();
-                vec![w.host.call(NAME, action(&sections[NAME], label), json!({}))]
+                vec![w.host.call(NAME, action(&sections[NAME], label), json!({}), By::User)]
             }
             "command" => {
                 let args = step["args"].as_str().unwrap();
                 let words: Vec<&str> = args.split_whitespace().collect();
                 let h = commands[step["name"].as_str().unwrap()];
-                vec![w.host.call(NAME, h, json!({ "args": args, "words": words }))]
+                vec![w.host.call(NAME, h, json!({ "args": args, "words": words }), By::User)]
             }
             "finder" => {
                 let items = finders[step["id"].as_str().unwrap()]["spec"]["items"].clone();
@@ -1042,10 +1053,10 @@ fn the_transcript_the_frontend_replays_is_what_the_real_lua_does() {
                     .find(|i| i["label"] == step["label"])
                     .unwrap()
                     .clone();
-                vec![w.host.call(NAME, handler(&item["run"]), json!({}))]
+                vec![w.host.call(NAME, handler(&item["run"]), json!({}), By::User)]
             }
             // The app's clock: the timer the Plugin set last fires.
-            "timer" => vec![w.host.call(NAME, timer.expect("a timer"), json!({}))],
+            "timer" => vec![w.host.call(NAME, timer.expect("a timer"), json!({}), By::User)],
             other => panic!("no step {other}"),
         };
         let mut ops = Vec::new();

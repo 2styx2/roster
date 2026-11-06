@@ -36,7 +36,7 @@ pub(super) const FUNCTIONS: &[Function] = &[
             ),
             (
                 "roster.serve.call METHOD: MESSAGE (code N)",
-                "the method failed (its codes are in [serve-api.md](serve-api.md))",
+                "the method failed: a [`ServeError`](#serveerror) with its `code` (in [serve-api.md](serve-api.md)) and `message`, this text as its `tostring`",
             ),
         ],
         refused: &[],
@@ -59,8 +59,8 @@ pub(super) const FUNCTIONS: &[Function] = &[
             ),
             p(
                 "done",
-                "fun(result: any, err: string?)",
-                "Runs once with the answer: the method's `result` (as `roster.serve.call` returns it), or `nil` and why (`roster.serve.request METHOD: MESSAGE (code N)`). Its return value is ignored; an error in it counts like an action's.",
+                "fun(result: any, err: ServeError|string?)",
+                "Runs once with the answer: the method's `result` (as `roster.serve.call` returns it), or `nil` and why: roster serve's error as a [`ServeError`](#serveerror) (`err.code`, `err.message`; `tostring(err)` is `roster.serve.request METHOD: MESSAGE (code N)`), or a string when serve gave no answer. Its return value is ignored; an error in it counts like an action's.",
             ),
         ],
         summary: "Asks roster serve without waiting: `done` gets the answer",

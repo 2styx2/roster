@@ -1460,6 +1460,25 @@ pub const TYPES: &[Type] = &[
         open: true,
     },
     Type {
+        name: "ServeError",
+        summary: "roster serve's error, as a Plugin gets it (since api 7)",
+        doc: "What `pcall` catches from [`roster.serve.call`](#rosterservecallmethod-params) and `roster.inventory`, and the second value [`roster.serve.request`](#rosterserverequestmethod-params-done)'s and [`roster.inventory.request`](#rosterinventoryrequestdone)'s `done` get, when roster serve answered with an error (decision Q210). Switch on `code`, never on the words. It's still the text it was before api 7: `tostring(e)`, `\"…\" .. e` and string methods (`e:find(\"busy\", 1, true)`, `e:match(…)`) see `roster.serve.call METHOD: MESSAGE (code N)`, and an uncaught one stops the call with that text. When serve gave no answer at all (it exited, or didn't answer in time) or roster refused before asking (`not granted`), the error is a plain string, whose `.code` is `nil` too.",
+        alias: "",
+        fields: &[
+            f(
+                "code",
+                "integer",
+                "serve's code: roster's own (`2` unknown Host, `4` busy, …) or JSON-RPC's (`-32601` no such method, `-32602` bad params), as [serve-api.md](serve-api.md) lists them.",
+            ),
+            f(
+                "message",
+                "string",
+                "serve's words, without the function's name or the code; a `cmd:` or `env:` Login reference in them is cut to its kind ([`LoginRef`](#loginref)).",
+            ),
+        ],
+        open: false,
+    },
+    Type {
         name: "LoginRef",
         summary: "A Login reference: where a password is, never the password",
         doc: "`PROVIDER:ITEM`, a vault item's name (`bw:esx-02 ssh`, `op:Lab/esx-02#password`, `kp:esx-02 ssh`), or `prompt` (asked for), `agent` (an ssh key), `key`, `none`. `env:VAR` and `cmd:COMMAND` are references too, but they say how a secret is fetched (and a secret pasted into a `cmd:` line would show), so a Plugin gets them cut to their kind: `env:` and `cmd:` (since api 3; decision Q92), in raw text such as a diff or a check's message too. The providers are in [Password providers](cli-reference.md#password-providers).",
@@ -1733,7 +1752,7 @@ pub const TYPES: &[Type] = &[
                 "HostCheck",
                 "Once `done` or `stopped`: `host.check`'s result. `ok` is false for a stopped check, its later steps `skipped`.",
             ),
-            o("error", "ServeError", "Once `failed`: why."),
+            o("error", "JobError", "Once `failed`: why."),
         ],
         open: false,
     },
@@ -2107,13 +2126,13 @@ pub const TYPES: &[Type] = &[
                 "MeshResult|MeshCut",
                 "Once `done`: what the method itself returns.",
             ),
-            o("error", "ServeError", "Once `failed`: why."),
+            o("error", "JobError", "Once `failed`: why."),
         ],
         open: false,
     },
     Type {
-        name: "ServeError",
-        summary: "An error roster serve answered with",
+        name: "JobError",
+        summary: "Why a job in roster serve failed, as plain data in its status",
         doc: "",
         alias: "",
         fields: &[

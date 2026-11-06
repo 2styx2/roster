@@ -15,6 +15,29 @@ use std::process::Command;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+/// Why making an Inventory failed (`inventory_create`): which roster to run couldn't be found or
+/// started (a [`BackendError`], with its kind and what to do, as `backend_connect` says it), or
+/// serve's call failed. On the wire it's either shape as it is.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "InventoryCreateError"))]
+pub enum CreateError {
+    Start(BackendError),
+    Call(CallError),
+}
+
+impl From<BackendError> for CreateError {
+    fn from(e: BackendError) -> Self {
+        CreateError::Start(e)
+    }
+}
+
+impl From<CallError> for CreateError {
+    fn from(e: CallError) -> Self {
+        CreateError::Call(e)
+    }
+}
+
 /// The oldest `roster serve` API this app understands.
 pub const REQUIRED_API_VERSION: i64 = 1;
 
@@ -25,6 +48,11 @@ pub const INVENTORY_ERROR: i64 = 1;
 /// address and port). The app asks the user (`host.scan_key {host}`, then [`Backend::trust_host_key`]).
 pub const HOST_KEY_UNKNOWN: i64 = 44;
 const METHOD_NOT_FOUND: i64 = -32601;
+/// A job's states while it runs (src/roster/jobs.py `RUNNING`; `job_states` in
+/// docs/serve-contract.json, which a `contract` test holds this to). Any other is over.
+const JOB_RUNNING: &[&str] = &["running", "stopping"];
+/// The over state of a job that failed: its `error` says why.
+const JOB_FAILED: &str = "failed";
 
 /// Where a Quick Connect goes (ticket 14): `user@address:port`, a box that isn't in the Inventory,
 /// and the SHA256 fingerprint of the host key the user was shown (`host.scan_key {address, port}`).
@@ -192,10 +220,11 @@ impl CheckEnds {
         if method != "job.progress" || params.get("kind").and_then(Value::as_str) != Some("check") {
             return;
         }
-        if matches!(
-            params.get("state").and_then(Value::as_str),
-            Some("running" | "stopping")
-        ) {
+        if params
+            .get("state")
+            .and_then(Value::as_str)
+            .is_some_and(|s| JOB_RUNNING.contains(&s))
+        {
             return;
         }
         let id = job_id(params.get("job").unwrap_or(&Value::Null));
@@ -279,13 +308,26 @@ impl Drop for OwnCheck<'_> {
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct BackendInfo {
-    /// "Local" or "WSL: <distro>".
+    /// "Local" or "WSL: <distro>": the label the UI shows.
     pub backend: String,
+    /// Where serve runs: on this machine, or in a WSL distro.
+    pub kind: BackendKind,
+    /// The WSL distro serve runs in (`kind: "wsl"`); null on this machine. Empty: WSL's default.
+    pub distro: Option<String>,
     /// The command line that runs serve.
     pub command: Vec<String>,
     /// The `inventory.info` result as roster sent it (its shape is serve's, not the core's).
     #[cfg_attr(feature = "ts", ts(type = "unknown"))]
     pub inventory: Value,
+}
+
+/// Where serve runs ([`Target`]), as the frontend tells them apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum BackendKind {
+    Local,
+    Wsl,
 }
 
 /// A check the core has under way (`host.check {background: true}`), as it starts: serve's job id,
@@ -351,6 +393,14 @@ impl Backend {
             target: c.target.clone(),
             info: BackendInfo {
                 backend: c.target.label(),
+                kind: match c.target {
+                    Target::Local => BackendKind::Local,
+                    Target::Wsl { .. } => BackendKind::Wsl,
+                },
+                distro: match &c.target {
+                    Target::Local => None,
+                    Target::Wsl { distro } => Some(distro.clone()),
+                },
                 command: c.serve_argv.clone(),
                 inventory,
             },
@@ -364,14 +414,14 @@ impl Backend {
     /// as it is (`-32601`, or `1` from one that answers every method so). `cancel` stops it from
     /// another thread while it runs: serve stops a clone under way and takes away what it left
     /// (#417 L5).
-    pub fn create_inventory(c: &Candidate, params: Value, cancel: &CreateCancel) -> Result<Value, CallError> {
+    pub fn create_inventory(c: &Candidate, params: Value, cancel: &CreateCancel) -> Result<Value, CreateError> {
         let client = Arc::new(spawn_serve(c, None).map_err(|e| CallError::Io {
             message: format!("the backend couldn't be started: {e}"),
         })?);
         *lock(&cancel.0) = Some(Arc::clone(&client));
         let r = client.call_timeout("inventory.create", params, timeout_for("inventory.create"));
         lock(&cancel.0).take();
-        r
+        Ok(r?)
     }
 
     /// The `api_version` serve reported at start.
@@ -430,8 +480,8 @@ impl Backend {
         loop {
             let r = self.call("host.check_job", json!({ "job": job }))?;
             match r.get("state").and_then(Value::as_str) {
-                Some("running" | "stopping") => {}
-                Some("failed") => {
+                Some(s) if JOB_RUNNING.contains(&s) => {}
+                Some(JOB_FAILED) => {
                     let e = r.get("error").cloned().unwrap_or(Value::Null);
                     return Err(CallError::Rpc {
                         code: e.get("code").and_then(Value::as_i64).unwrap_or(-32603),
@@ -832,6 +882,16 @@ mod contract {
         assert_eq!(c["codes"]["HOST_KEY_UNKNOWN"], HOST_KEY_UNKNOWN);
         assert_eq!(c["codes"]["FILL_REFUSED"], FILL_REFUSED);
         assert_eq!(c["json_rpc"]["METHOD_NOT_FOUND"], METHOD_NOT_FOUND);
+        assert_eq!(c["codes"]["UNKNOWN_HOST"], crate::plugin::code::UNKNOWN_HOST);
+        assert_eq!(c["codes"]["ROSTER_ERROR"], crate::plugin::code::ROSTER_ERROR);
+        assert_eq!(c["json_rpc"]["INVALID_PARAMS"], crate::plugin::code::INVALID_PARAMS);
+    }
+
+    #[test]
+    fn the_job_states_are_rosters() {
+        let c = contract();
+        assert_eq!(c["job_states"]["running"], json!(JOB_RUNNING));
+        assert!(c["job_states"]["over"].as_array().unwrap().contains(&json!(JOB_FAILED)));
     }
 
     #[test]

@@ -20,6 +20,8 @@ from collections import deque
 from .errors import problem_of
 
 PUSH_EVERY = 0.2            # s: progress goes out at most this often per job (a state change always does)
+RUNNING = ("running", "stopping")  # a job's states while it runs (the app's core reads them from the contract)
+OVER = ("done", "stopped", "failed")  # and once it's over
 KEPT = 32                   # jobs a newer one of their slot replaced, still found by id (a poll after it ended)
 
 
@@ -105,7 +107,7 @@ class Job:
         self.owner.push(self)
 
     def running(self):
-        return self.state in ("running", "stopping")
+        return self.state in RUNNING
 
     def view(self):
         """What `job.progress` and `jobs.list` say about it: never the result (a Mesh plan can be megabytes)."""

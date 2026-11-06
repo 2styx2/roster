@@ -1,5 +1,5 @@
 // The cmd:/env: cut (decision Q92) the core makes to everything a Plugin gets from roster serve
-// (crates/roster-core/src/plugin/runtime.rs, redact_text, redact_error, redact), ported so the fake
+// (crates/roster-core/src/plugin/runtime.rs, redact_text, redact, Failed), ported so the fake
 // Backend's Plugins get what the real ones do and a frontend test can catch a leak. Tested on the
 // cases the core and the CLI share: tests/vectors/redaction.json.
 
@@ -8,8 +8,6 @@ const SPACE = " \t\n\f\r";
 const BEFORE = `${SPACE}"'=:,({[`;
 const KINDS = ["cmd:", "env:"] as const;
 type Kind = (typeof KINDS)[number];
-/** serve's error code, last in a message. */
-const CODE = / \(code -?[0-9]+\)$/;
 
 function kindAt(text: string, i: number): Kind | null {
   if (i > 0 && !BEFORE.includes(text.charAt(i - 1))) return null;
@@ -55,12 +53,31 @@ export function redactText(text: string): string {
   return out.length ? out.join("") + text.slice(copied) : text;
 }
 
-/** An error message with its references cut, but a trailing ` (code N)` kept even after a `cmd:`
- * reference that runs to the end of the line: a Plugin tells errors apart by it. */
-export function redactError(message: string): string {
-  const m = CODE.exec(message);
-  const at = m ? m.index : message.length;
-  return redactText(message.slice(0, at)) + message.slice(at);
+/** roster serve's error as a Plugin gets it, as the core's Lua error object (Plugin API 7,
+ * decision Q210): serve's `code` and its `serveMessage` (the Lua object's `message`), references
+ * cut; as a string (`String(e)`, and `message` for the fake's error handling) the text it was
+ * before api 7, `WHAT: MESSAGE (code N)`. */
+export class PluginServeError extends Error {
+  constructor(
+    readonly code: number,
+    readonly serveMessage: string,
+    what: string,
+  ) {
+    super(`${what}: ${serveMessage} (code ${code})`);
+    this.name = "PluginServeError";
+  }
+
+  override toString(): string {
+    return this.message;
+  }
+}
+
+/** Why a Plugin's call into serve failed, after `what` (as runtime.rs's `Failed`): serve's own error
+ * (`code` set) as a {@link PluginServeError}, its message cut; anything else as cut text. */
+export function pluginServeError(what: string, e: unknown): PluginServeError | string {
+  const code = typeof e === "object" && e !== null && "code" in e && typeof e.code === "number" ? e.code : null;
+  const message = e instanceof Error ? e.message : String(e);
+  return code === null ? `${what}: ${redactText(message)}` : new PluginServeError(code, redactText(message), what);
 }
 
 /** A copy of plain data with every string cut, a key as much as a value. */

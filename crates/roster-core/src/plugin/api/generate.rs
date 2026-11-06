@@ -16,7 +16,7 @@ const LUA_DOC: &str = "roster embeds **Lua 5.4** (built into the app, nothing to
 - It runs on a thread of its own with a memory limit and a time budget per call: see [Limits](plugins.md#limits).";
 
 /// The errors any function can raise, and what a call that fails does.
-const ERRORS_DOC: &str = "A function that fails raises a Lua error: `pcall` catches it, with the message as a string. The message starts with the function (`roster.inventory.host: unknown host 'web-9' (code 2)`); a roster serve error ends with its code, from [serve-api.md's tables](serve-api.md). An error you don't catch stops the call: a notice names the Plugin, file and line (`pinned: init.lua:12: …`), the UI changes that call made are dropped, and the third such error after loading stops the Plugin.
+const ERRORS_DOC: &str = "A function that fails raises a Lua error: `pcall` catches it, with the message as a string that starts with the function (`roster.storage.write: …`). **roster serve's own error** (from `roster.serve.call`, `roster.serve.request`'s `done` and `roster.inventory`) is a [`ServeError`](#serveerror) instead (since api 7, decision Q210): an error object with `code`, serve's number from [serve-api.md's tables](serve-api.md), and `message`, serve's words. Tell errors apart by `e.code`, never by the text. `tostring(e)` is the text it was before api 7 (`roster.inventory.update: unknown host 'web-9' (code 2)`), and so are `..` and string methods (`e:find(…)`), so code written for the string keeps working. An error you don't catch stops the call: a notice names the Plugin, file and line (`pinned: init.lua:12: …`), the UI changes that call made are dropped, and the third such error after loading stops the Plugin.
 
 Any function can also raise:
 

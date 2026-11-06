@@ -5,8 +5,10 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::api::{self, Needs};
 use roster_core::plugin::{Limits, Permission, PluginHost, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -15,9 +17,9 @@ use std::sync::Arc;
 struct NoServe;
 
 impl Serve for NoServe {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
         match method {
-            "host.get" => Err("unknown host 'web-9' (code 2)".into()),
+            "host.get" => Err(CallError::rpc(2, "unknown host 'web-9'")),
             _ => Ok(json!({})),
         }
     }
@@ -183,6 +185,7 @@ fn the_pinned_example_answers_an_unknown_host_with_a_notice() {
         "pinned",
         pin["run"]["handler"].as_u64().unwrap(),
         json!({ "args": "web-9", "words": ["web-9"] }),
+        By::User,
     );
     assert!(r.error.is_none(), "{:?}", r.error);
     assert_eq!(

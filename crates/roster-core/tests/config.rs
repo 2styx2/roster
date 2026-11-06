@@ -325,7 +325,11 @@ fn plugin_proxy_is_unset_by_default_and_never_carries_credentials() {
     assert_eq!(Config::default().plugin_proxy, None);
     let dir = with_init("proxy", "return { plugin_proxy = \"http://10.0.0.5:3128\" }\n");
     assert_eq!(
-        config::load(&dir).unwrap().plugin_proxy.as_deref(),
+        config::load(&dir)
+            .unwrap()
+            .plugin_proxy
+            .map(|p| p.to_string())
+            .as_deref(),
         Some("http://10.0.0.5:3128")
     );
     let dir = with_init(
