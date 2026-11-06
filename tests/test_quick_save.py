@@ -217,6 +217,21 @@ def test_a_failure_adding_the_host_takes_the_new_item_back_out(box, sshd, vault,
     assert SECRET not in json.dumps(r)
 
 
+def test_an_item_found_by_name_after_a_lost_answer_is_left_and_named_not_taken_back(box, sshd, vault, unknown,
+                                                                                    isolated, fakes, monkeypatch):
+    monkeypatch.setenv("FAKE_BW_RAW", json.dumps({"create item": "not JSON"}))     # saved; bw's answer lost (#545)
+    state = unlocked(box)
+    with __import__("roster").askpass.Channel(rpc.askpass_lookup) as state.askpass:
+        spec = call(state, "quick.prepare", to(sshd, password=SECRET, save=True))["result"]
+        log_in(spec)
+        someone_adds_while_the_item_is_made(monkeypatch, box, "nas")
+        r = call(state, "quick.save", {"quick": spec["quick"], "name": "nas", "group": "lab"})
+    err = r["error"]
+    assert err["code"] == 81 and "couldn't be taken back out" in err["message"]
+    assert "check whether it's the item roster made" in err["message"] and err["data"]["left"]["name"] == "nas ssh"
+    assert "nas ssh" in vault.read_text() and SECRET not in json.dumps(r)
+
+
 # ---------------------------------------------------------------- OpenSSH runs the LocalCommand after the login
 
 @needs_ssh

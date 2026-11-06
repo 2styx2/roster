@@ -196,13 +196,20 @@ def add_saving(path, group, name, fields, provider, password, save_to=None, dry_
     return {**done, "item": made}
 
 
+FOUND = "found by its title after the vault's answer to the save was lost"
+CHECK_FOUND = "check whether it's the item roster made"
+
+
 def take_back(provider, name, made, e):
     """Writing Host NAME failed (E) once its vault item MADE was saved and before any Host pointed at it: delete that
     item again, by the id this run's create answered (Q43, as serve does; T269), and say so in E's words and code
-    (a Problem's, else 3). If it can't be deleted, 225 names it, for the user to delete by hand."""
+    (a Problem's, else 3). If it can't be deleted, or was only found by its name after the vault's answer was lost
+    (`found`: maybe not this run's, #545's review), 225 names it, for the user to check and delete by hand."""
     why = e.message if isinstance(e, Problem) else failure_text(e)
     item = made["name"]
     try:
+        if made.get("found"):                   # found by its name, not known to be this run's: never deleted
+            raise providers.SecretError(f"it was {FOUND}, so {CHECK_FOUND}")
         providers.delete_item(provider, made["id"])
     except Exception as undo:
         left = str(undo) if isinstance(undo, providers.SecretError) else type(undo).__name__

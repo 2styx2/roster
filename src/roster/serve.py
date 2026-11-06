@@ -224,6 +224,7 @@ class State:
         self.askpass: Any = None            # the askpass Channel, while serve() runs
         self.login = None                   # the sign-in in progress (vault.login): SignIn
         self.created = {}                   # item id -> provider, for the items vault.create_item made (undo)
+        self.unconfirmed = set()            # ids of items found by name after a lost create answer: never taken back
         self.jobs = jobs.Jobs(log=log_line)  # background work: Mesh runs and scans (its notify is serve's)
         self.verified = {}                  # host.verify_login successes: login_key -> (time, host key to pin)
         self.held = {}                      # typed passwords held for "Save to vault", by id: Held
@@ -1475,7 +1476,18 @@ def make_item(state, provider, item, password, user, address, port, save_to):
     """The Vault item for a password that just logged in (addhost.save_item, as `roster add --save-to-vault`'s), one
     at a time per provider. Raises the vault_problem (60-65, 14) when the vault refuses."""
     with item_writes(state, provider):
-        return addhost.save_item(provider, item, password, user, address, port, save_to)
+        made = addhost.save_item(provider, item, password, user, address, port, save_to)
+    if made.pop("found", False):                # #545's review: maybe not this run's, so never taken back
+        state.unconfirmed.add(made["id"])
+    return made
+
+
+def found_warning(state, made):
+    """The warning for an item make_item only found by its name after the vault's answer was lost, else None."""
+    if made is None or made["id"] not in state.unconfirmed:
+        return None
+    return (f"the vault item '{made['name']}' was {addhost.FOUND} ({made['id']}), and the Login points at it - "
+            f"{addhost.CHECK_FOUND} in the vault")
 
 
 def item_param(params, name):
@@ -1535,6 +1547,7 @@ def quick_save(state, params):
                                       "port": q["port"], "save_to": save_to},
                                      lambda path: edit.added(path, group, name, fields)[:2], f"{name} wasn't added",
                                      then=record_key)
+    warnings += [w for w in [found_warning(state, made)] if w]
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "item": made,
             "warnings": warnings, "sync": synced}
 
@@ -1576,7 +1589,7 @@ def host_save_login(state, params):
                                      lambda path: edit.edited(path, name, wanted)[:2],
                                      f"{name}'s Login wasn't changed")
     return {"changed": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "item": made,
-            "warnings": [], "sync": synced}
+            "warnings": [w for w in [found_warning(state, made)] if w], "sync": synced}
 
 
 def quick_label(user, address, port):
@@ -1660,6 +1673,7 @@ def host_add(state, params):
         if written_in:
             raise
         raise take_back(state, made, write_failed(f"{name} wasn't added", state.path, e)) from None
+    warnings += [w for w in [found_warning(state, made)] if w]
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": written["backup"], "verify": verify,
             "item": made, "warnings": warnings, "sync": written["sync"]}
 
@@ -1683,10 +1697,13 @@ def verify_failed(name, verify):
 
 
 def take_back(state, made, e):
-    """Writing the Host failed after its Vault item was made: delete the item again (Q43), and say so."""
+    """Writing the Host failed after its Vault item was made: delete the item again (Q43), and say so. One only found
+    by its name after the vault's answer was lost (state.unconfirmed) is left and named, never deleted."""
     if made is None:
         return e
     try:
+        if made["id"] in state.unconfirmed:
+            raise providers.SecretError(f"it was {addhost.FOUND}, so {addhost.CHECK_FOUND}")
         with deadline(UNDO_TIME), item_writes(state, made["provider"], UNDO_TIME):
             providers.delete_item(made["provider"], made["id"])
     except Exception as undo:
@@ -2246,7 +2263,8 @@ def vault_create_item(state, params):
     that's already there (code 60). The password goes to the provider on stdin; it's never answered back.
 
     Params: `{name, password, username?, uri?, provider?, save_to?}`
-    Result: `{provider, id, name, target}`
+    Result: `{provider, id, name, target}`. When the vault's answer to the create was lost and the item was only
+        found by its name afterwards, it isn't recorded as one this serve made: vault.undo_create refuses it (63)
     Errors: 14, 60-62, 64, 65
     Since: API 4
     """
@@ -2262,7 +2280,8 @@ def vault_create_item(state, params):
             made = providers.create_item(provider, name=name, password=password, save_to=save_to, **extra)
     except providers.SecretError as e:
         raise vault_problem(e) from None
-    state.created[made["id"]] = provider
+    if not made.pop("found", False):            # one found by its name may not be ours: never undone (#545)
+        state.created[made["id"]] = provider
     return {"provider": provider, **made}
 
 

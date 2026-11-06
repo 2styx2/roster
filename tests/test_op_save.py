@@ -4,11 +4,16 @@ addhost.save_item), with 1Password's vaults as the places to save to. Stand-in o
 FAKE_OP_STORE): never a real vault."""
 
 import json
+import os
+import stat
+import sys
 
 import pytest
-from test_add_save_vault import YML, Terminal, fails, forms, run
+from test_add_save_vault import YML, Terminal, broken_write, fails, forms, run
 
+from roster import providers
 from roster.cli import main
+from roster.context import WINDOWS
 
 PW = "0p-n3w-h0st-s3cret"               # never in argv, the environment, output, roster.yml or an error
 
@@ -177,7 +182,7 @@ def test_a_failed_write_takes_back_only_the_op_item_this_run_made_by_its_id(caps
     assert "'nas ssh' was taken back out" in code and "[225]" not in code
     assert [i["title"] for i in items(op)] == ["esx-02 ssh"]
     deletes = [json.loads(line) for line in argv_log(tmp_path).splitlines() if '"delete"' in line]
-    assert [d[-1] for d in deletes] == ["it-0002"]                  # the id op's create answered, nothing else
+    assert [d[-1] for d in deletes] == ["itm" + "2".zfill(23)]       # the id op's create answered, nothing else
     monkeypatch.setenv("FAKE_OP_DELETE_FAIL", "[ERROR] connection reset")
     Terminal(monkeypatch, PW, PW)
     code, out = fails(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "op")
@@ -237,15 +242,134 @@ def test_a_default_that_isnt_there_is_said_not_failed(capsys, write_config, op):
 
 # ---- op's answer to `op item create` lost once the item is saved: it doesn't read, or it never comes in time
 
-def test_a_lost_answer_finds_the_op_item_by_its_title(op, monkeypatch, capsys):
-    from roster import providers
+def test_a_lost_answer_finds_the_op_item_by_its_title_but_marks_it_found(op, monkeypatch, capsys):
     from roster.common import deadline
     monkeypatch.setenv("FAKE_OP_CREATE_ANSWER", "not JSON")
-    made_now = providers.create_item("op", name="box ssh", username="ops", password=PW, uri="ssh://10.0.0.5")
-    assert made_now["id"] == made(op, "box ssh")[0]["id"]
+    now = providers.create_item("op", name="box ssh", username="ops", password=PW, uri="ssh://10.0.0.5",
+                                save_to={"vault": "Infra"})
+    assert now["id"] == made(op, "box ssh")[0]["id"] and now["found"] is True
     monkeypatch.delenv("FAKE_OP_CREATE_ANSWER")
     monkeypatch.setenv("FAKE_OP_CREATE_HANG", "30")
     with deadline(3):
         late = providers.create_item("op", name="web ssh", password=PW, save_to={"vault": "Infra"})
-    assert late["id"] == made(op, "web ssh")[0]["id"] and late["target"]["label"] == "Infra"
-    assert PW not in json.dumps([made_now, late]) + "".join(capsys.readouterr())
+    assert late["id"] == made(op, "web ssh")[0]["id"] and late["found"] is True and late["target"]["label"] == "Infra"
+    assert PW not in json.dumps([now, late]) + "".join(capsys.readouterr())
+
+
+# ---- #545's review: an item found by its title after op's answer was lost is never taken for one this run made
+# (MED-1), and op's answer is never trusted as given (LOW-1). Stand-ins in front of the fake op change one answer.
+
+FAKES = os.path.join(os.path.dirname(__file__), "fakes")
+
+
+def wrap_op(tmp_path, monkeypatch, body):
+    d = tmp_path / "wrap"
+    d.mkdir(exist_ok=True)
+    f = d / "op"
+    f.write_text(f"#!{sys.executable}\nimport json, os, sys\nREAL = {os.path.join(FAKES, 'op')!r}\n{body}\n"
+                 "os.execv(sys.executable, [sys.executable, REAL, *sys.argv[1:]])\n")
+    f.chmod(f.stat().st_mode | stat.S_IXUSR)
+    if WINDOWS:
+        (d / "op.cmd").write_text(f'@"{sys.executable}" "{f}" %*\r\n')
+    monkeypatch.setenv("PATH", f"{d}{os.pathsep}{os.environ['PATH']}")
+
+
+# `item create` saves nothing and answers garbage (exit 0), while someone else's item of a like title appears
+THEIRS = """
+a = sys.argv[1:]
+if a[:2] == ["item", "create"]:
+    sys.stdin.read()
+    store = os.environ["FAKE_OP_STORE"]; listed = json.load(open(store))
+    listed.append({"id": "theirsxxxxxxxxxxxxxxxxxxxx", "title": os.environ.get("THEIR_TITLE", "NAS SSH"),
+                   "vault": os.environ.get("THEIR_VAULT", "Infra"), "created_at": os.environ.get("THEIR_TIME",
+                   "2099-01-01T00:00:00Z"), "fields": {"password": "their-pw"}})
+    open(store, "w").write(json.dumps(listed)); print("garbled"); sys.exit(0)
+"""
+
+
+@pytest.mark.parametrize("title, vault, when", [("NAS SSH", "Infra", None), ("nas ssh", "Private", None),
+                                                ("nas ssh", "Infra", "2020-01-01T00:00:00Z")],
+                         ids=["other-case", "other-vault", "made-before"])
+def test_a_lost_answer_never_takes_someone_elses_item(capsys, write_config, op, monkeypatch, tmp_path, title,
+                                                       vault, when):
+    yml = write_config(YML)
+    monkeypatch.setenv("THEIR_TITLE", title)
+    monkeypatch.setenv("THEIR_VAULT", vault)
+    if when:
+        monkeypatch.setenv("THEIR_TIME", when)
+    wrap_op(tmp_path, monkeypatch, THEIRS)
+    Terminal(monkeypatch, PW, PW)
+    broken_write(monkeypatch, yml)
+    code, out = fails(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "op", "--save-to", "Infra")
+    assert "[62]" in code and "couldn't confirm" in code and "check" in code
+    assert '"delete"' not in argv_log(tmp_path) and yml.read_text() == YML
+    assert "theirsxxxxxxxxxxxxxxxxxxxx" in [i["id"] for i in items(op)]
+
+
+def test_a_lost_answer_to_op_s_default_vault_cant_be_confirmed(op, monkeypatch, tmp_path):
+    monkeypatch.setenv("FAKE_OP_CREATE_ANSWER", "not JSON")              # saved in Private, the answer lost
+    with pytest.raises(providers.WriteFailed, match="couldn't confirm"):
+        providers.create_item("op", name="box ssh", password=PW)
+
+
+def test_an_item_found_by_title_is_said_and_never_taken_back(capsys, write_config, op, monkeypatch, tmp_path):
+    yml = write_config(YML)
+    monkeypatch.setenv("FAKE_OP_CREATE_ANSWER", "not JSON")              # ours is saved; op's answer is lost
+    Terminal(monkeypatch, PW, PW)
+    rc, out = run(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "op", "--save-to", "Infra")
+    assert rc == 0 and "auth: op:nas ssh" in yml.read_text()
+    assert "found by its title" in out and "check whether it's the item roster made" in out
+    Terminal(monkeypatch, PW, PW)
+    broken_write(monkeypatch, yml)
+    code, out = fails(capsys, "web", "--ip", "10.0.0.51", "--save-to-vault", "--provider", "op", "--save-to", "Infra")
+    assert "[225]" in code and "'web ssh'" in code and "check whether it's the item roster made" in code
+    assert '"delete"' not in argv_log(tmp_path) and made(op, "web ssh")
+
+
+def test_serve_never_records_an_item_found_by_title_as_its_own(serve, write_config, op, monkeypatch):
+    write_config(OP_INVENTORY)
+    monkeypatch.setenv("FAKE_OP_CREATE_ANSWER", "not JSON")
+    s = serve()
+    saved = s.call("vault.create_item", {"name": "box ssh", "password": PW, "provider": "op",
+                                         "save_to": {"vault": "Infra"}})["result"]
+    assert "found" not in saved
+    assert s.call("vault.undo_create", {"id": saved["id"]})["error"]["code"] == 63
+    assert made(op, "box ssh")
+    s.close()
+
+
+ODD = """
+a = sys.argv[1:]
+if a[:2] == ["item", "create"]:
+    t = json.loads(sys.stdin.read()); pw = [f["value"] for f in t["fields"] if f["id"] == "password"][0]
+    print(os.environ["ODD_ANSWER"].replace("PW", pw)); sys.exit(0)
+"""
+
+
+@pytest.mark.parametrize("answer", ['{"id": "PW"}', '{"id": "-x", "title": "PW"}', '{"id": ["PW"]}',
+                                    '{"id": "abcdefghijklmnopqrstuvwxyz", "title": {"t": "PW"}}', '[{"id": "PW"}]',
+                                    '{"id": "abcdefghijklmnopqrstuvwxyz", "title": "PW"}'])
+def test_ops_answer_is_never_taken_as_given(op, monkeypatch, tmp_path, capsys, answer):
+    monkeypatch.setenv("ODD_ANSWER", answer)
+    wrap_op(tmp_path, monkeypatch, ODD)
+    try:
+        res = json.dumps(providers.create_item("op", name="odd ssh", password=PW, save_to={"vault": "Infra"}))
+    except providers.SecretError as e:
+        res = str(e)
+    out = capsys.readouterr()
+    assert PW not in res + out.out + out.err
+    if "abcdefghijklmnopqrstuvwxyz" in answer:
+        assert json.loads(res)["name"] == "odd ssh"                      # roster's own name, never op's title
+
+
+def test_the_vault_goes_to_op_as_one_word(op, tmp_path):
+    providers.create_item("op", name="w ssh", password=PW, save_to={"vault": "Infra"})
+    [create] = [json.loads(line) for line in argv_log(tmp_path).splitlines() if '"create"' in line]
+    assert "--vault=v-infra" in create and "--vault" not in create
+
+
+def test_vault_targets_says_default_alone_when_nothing_sets_it(capsys, write_config, op):
+    write_config(OP_INVENTORY)
+    assert main(["vault", "targets"]) == 0
+    out = capsys.readouterr().out
+    assert "personal   Private vault (1Password's default)   (default)" in out and "from roster" not in out

@@ -361,3 +361,31 @@ def test_a_save_to_the_vault_doesnt_have_is_refused_before_the_password_naming_t
                     "--save-to", "My Team/No such")
     assert "[64]" in code and "--save-to" in code and "save_to." not in code
     assert term.asked == []
+
+
+# ---- #545's review, MED-1, for Bitwarden too: an item found by its name after bw's answer was lost is never taken back
+
+def test_a_bw_item_found_by_name_after_a_lost_answer_is_never_taken_back(capsys, yml, bw, monkeypatch, tmp_path):
+    monkeypatch.setenv("FAKE_BW_RAW", json.dumps({"create item": "not JSON"}))       # saved; bw's answer lost
+    Terminal(monkeypatch, PW, PW)
+    broken_write(monkeypatch, yml)
+    code, out = fails(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "bw")
+    assert "[225]" in code and "'nas ssh'" in code and "check whether it's the item roster made" in code
+    assert not [line for line in logged(tmp_path).splitlines() if json.loads(line)[:2] == ["delete", "item"]]
+    assert [i["name"] for i in bw_items(bw)] == ["esx-02 ssh", "nas ssh"]
+    assert PW not in code + out
+
+
+@pytest.mark.parametrize("theirs", [{"organizationId": "0rg-team", "collectionIds": ["c0l-infra"]},
+                                    {"revisionDate": "2020-01-01T00:00:00.000Z"}], ids=["in-a-collection", "old"])
+def test_a_lost_bw_answer_never_takes_someone_elses_item(capsys, yml, bw, monkeypatch, theirs):
+    # bw saves nothing of ours (its answer is lost) while someone else's item of that name is there
+    monkeypatch.setenv("FAKE_BW_CREATE_ALSO", json.dumps([{"id": "their-1", "name": "nas ssh", "type": 1,
+                                                           "login": {"password": "their-pw"},
+                                                           "revisionDate": "2099-01-01T00:00:00.000Z", **theirs}]))
+    monkeypatch.setenv("FAKE_BW_RAW", json.dumps({"create item": "not JSON"}))
+    monkeypatch.setenv("FAKE_BW_CREATE_DROP", "1")
+    Terminal(monkeypatch, PW, PW)
+    code, _ = fails(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "bw")
+    assert "[62]" in code and "couldn't confirm" in code
+    assert yml.read_text() == YML

@@ -645,7 +645,8 @@ def in_process(write_config, method, params, state=None):
     return state, rpc.handle(state, json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}))
 
 
-def test_a_create_that_times_out_after_saving_counts_as_made_and_can_be_undone(write_config, vault, monkeypatch):
+def test_a_create_that_times_out_after_saving_counts_as_made_but_is_never_undone(write_config, vault, monkeypatch):
+    """Found by its name after the timeout, it may not be this serve's (#545's review, MED-1): no undo."""
     from roster import serve as rpc
     monkeypatch.setattr(rpc.METHODS["vault.create_item"], "deadline", 2)
     monkeypatch.setenv("FAKE_BW_CREATE_HANG", "30")
@@ -655,7 +656,7 @@ def test_a_create_that_times_out_after_saving_counts_as_made_and_can_be_undone(w
     assert made == {"provider": "bw", "id": item["id"], "name": "box ssh", "target": {"id": "personal", "kind": "personal", "label": "Personal vault"}}
     monkeypatch.delenv("FAKE_BW_CREATE_HANG")
     _, r = in_process(write_config, "vault.undo_create", {"id": made["id"]}, state)
-    assert r["result"]["id"] == made["id"] and "box ssh" not in vault.read_text()
+    assert r["error"]["code"] == 63 and "box ssh" in vault.read_text()
 
 
 def test_a_create_that_times_out_before_saving_says_nothing_was_saved(write_config, vault, monkeypatch):

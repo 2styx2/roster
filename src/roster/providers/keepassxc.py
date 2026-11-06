@@ -278,14 +278,15 @@ def _create(item, ctx):
 
 def _created_anyway(ctx, name, path):
     """`keepassxc-cli add` timed out. Nothing had that title before (checked just before), so an entry at PATH now
-    is this one: it counts as made (and can be undone). None: nothing was saved. Can't tell: says so, naming it."""
+    is taken to be this one, as FOUND: never taken back (#545's review). None: nothing was saved. Can't tell: says
+    so, naming it."""
     try:
         there = path in _entries(ctx, floor=LOOKUP_FLOOR)
     except SecretError as e:
         raise _failed(f"{NAME} didn't answer `{TOOL} add` in time, and roster couldn't check whether '{name}' "
                           f"was saved ({e}) - look for it in the database, and delete it if it's not wanted")
-    if there:
-        return {"id": path, "name": name}
+    if there:                       # FOUND: maybe not this run's (#545's review), so it's never taken back
+        return {"id": path, "name": name, "found": True}
     raise _failed(f"{NAME} didn't answer `{TOOL} add` in time, and there's no '{name}' in the database: "
                       "nothing was saved")
 

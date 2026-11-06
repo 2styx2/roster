@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import time
 
 from . import (
     LOOKUP_FLOOR,
@@ -83,7 +84,7 @@ def _onepassword(spec, ctx):
         vault, item = item.split("/", 1)
     args = _op_base(ctx) + ["item", "get", item, "--fields", f"label={field}", "--format", "json"]
     if vault:
-        args += ["--vault", str(vault)]
+        args += [f"--vault={vault}"]
     r = _op(ctx, args + ["--reveal"])
     if r.returncode != 0 and "reveal" in errtext(r):      # older op versions have no --reveal
         r = _op(ctx, args)
@@ -112,7 +113,7 @@ def _op_items(ctx, mapped):
     _op_ready(ctx)
     vault = ctx.settings.get("vault")
     r = _op(ctx, _op_base(ctx) + ["item", "list", "--categories", "Login", "--format", "json"]
-            + (["--vault", str(vault)] if vault else []))
+            + ([f"--vault={vault}"] if vault else []))
     if r.returncode != 0:
         raise SecretError(f"`op item list` failed: {errtext(r, stdout=False)}")
     try:
@@ -168,7 +169,7 @@ SEVERAL = "several 1Password items match '{}' - use the item's id instead (the 1
 
 
 def _op_overviews(ctx, vault):
-    r = _op(ctx, _op_base(ctx) + ["item", "list", "--format", "json"] + (["--vault", str(vault)] if vault else []))
+    r = _op(ctx, _op_base(ctx) + ["item", "list", "--format", "json"] + ([f"--vault={vault}"] if vault else []))
     if r.returncode != 0:
         raise SecretError(f"`op item list` failed: {errtext(r, stdout=False)}")
     try:
@@ -284,10 +285,10 @@ def _op_resolve(setting, field, ctx):
     return _vault_target(v)
 
 
-def _op_same_title(ctx, name, floor=1):
-    """The overviews titled NAME (in any case) where a Login looks it up: the read vault, else every vault."""
-    r = _op(ctx, _op_base(ctx) + ["item", "list", "--format", "json"]
-            + (["--vault", _read_vault(ctx)] if _read_vault(ctx) else []), floor=floor)
+def _op_overviews_in(ctx, vault, floor=1):
+    """Every item's overview in VAULT (a name or id; None: every vault), never a value."""
+    r = _op(ctx, _op_base(ctx) + ["item", "list", "--format", "json"] + ([f"--vault={vault}"] if vault else []),
+            floor=floor)
     if r.returncode != 0:
         raise SecretError(f"`op item list` failed: {errtext(r, stdout=False)}")
     try:
@@ -296,12 +297,37 @@ def _op_same_title(ctx, name, floor=1):
             raise ValueError
     except ValueError:
         raise SecretError("couldn't read `op item list` output") from None
-    return [i for i in listed if isinstance(i, dict) and isinstance(i.get("id"), str)
-            and str(i.get("title") or "").casefold() == name.casefold()]
+    return [i for i in listed if isinstance(i, dict) and isinstance(i.get("id"), str)]
+
+
+def _op_same_title(ctx, name):
+    """The overviews titled NAME in any case where a Login looks it up (the read vault, else every vault): the
+    duplicate check before a create."""
+    return [i for i in _op_overviews_in(ctx, _read_vault(ctx))
+            if str(i.get("title") or "").casefold() == name.casefold()]
 
 
 def _summary(i):
     return {"name": str(i.get("title") or ""), "uris": _op_urls(i), "revised": i.get("updated_at")}
+
+
+# op's answer to `op item create` is the new item. roster takes only its id from it, and only one shaped as op's ids
+# are (26 lowercase letters and digits): never its title (the name is roster's own) or another field. An answer that
+# doesn't read, or none in time, is "lost" (#545's review, MED-1): the item may be saved all the same, so roster looks
+# for it, but only for exactly its title, in the vault it was saved to, made since this create started; one found
+# that way is FOUND, not made by this run for sure: never taken back (Q43), and said.
+
+OP_ID = re.compile(r"[a-z0-9]{26}")
+SKEW = 120          # s: op's created_at is the server's clock, roster's start is this Box's
+
+
+def _answered_id(stdout):
+    try:
+        answer = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    got = answer.get("id") if isinstance(answer, dict) else None
+    return got if isinstance(got, str) and OP_ID.fullmatch(got) else None
 
 
 def _op_create(item, ctx):
@@ -320,59 +346,61 @@ def _op_create(item, ctx):
               {"id": "password", "type": "CONCEALED", "purpose": "PASSWORD", "label": "password", "value": password}]
     template = json.dumps({"title": name, "category": "LOGIN", "fields": fields,
                            "urls": [{"label": "website", "primary": True, "href": item["uri"]}] if item["uri"] else []})
-    vault = ["--vault", target["save_to"]["vault"]] if target["kind"] == "vault" else []
+    vault = [f"--vault={target['save_to']['vault']}"] if target["kind"] == "vault" else []
+    started = time.time()
     try:
         r = _op(ctx, _op_base(ctx) + ["item", "create", *vault, "--format", "json", "-"], input=template)
     except TimedOut:                                     # stopped: the item may be saved all the same
-        return {**_created_anyway(ctx, name), "target": target}
+        return {**_found(ctx, name, target, started, "didn't answer `op item create` in time"), "target": target}
     finally:
         del template
     if r.returncode != 0:                                # stderr only: stdout would be the item itself
         if repeats_secret(r.stderr, password):
             raise _failed(f"{withheld('1Password')}: '{name}' wasn't created")
         raise _failed(f"1Password didn't create '{name}': {errtext(r, stdout=False) or f'exit {r.returncode}'}")
-    try:
-        answer = json.loads(r.stdout)
-    except json.JSONDecodeError:
-        answer = None
-    if not (isinstance(answer, dict) and isinstance(answer.get("id"), str) and answer["id"]):
-        answer = _found_by_title(ctx, name)              # an answer that didn't read: the one item of that title
-    made = {"id": answer["id"], "name": str(answer.get("title") or name), "target": target}
-    del answer, r                                        # op's answer holds the password: keep only id and title
-    return made
+    got = _answered_id(r.stdout)
+    del r                                                # op's answer holds the password: only its id is kept
+    if got is None:
+        return {**_found(ctx, name, target, started, "gave an answer to `op item create` that didn't read"),
+                "target": target}
+    return {"id": got, "name": name, "target": target}
 
 
-def _found_by_title(ctx, name):
-    """op's answer didn't read: the one item titled NAME is this one (none was before the create), else WriteFailed."""
+def _found(ctx, name, target, started, what):
+    """op's answer to the create of NAME was lost (WHAT happened): the one item titled exactly NAME in TARGET's vault,
+    made since STARTED, as {id, name, found: True}; else WriteFailed saying roster couldn't confirm it was made. op's
+    default vault (personal) has no id to look in, so it can't be confirmed there."""
+    check = f"check 1Password for '{name}' and delete it if it's not wanted"
+    if target["kind"] != "vault":
+        raise _failed(f"1Password {what}, and roster couldn't confirm the item was made (it can't tell which vault "
+                      f"is op's default) - {check}")
     try:
-        found = _op_same_title(ctx, name, floor=LOOKUP_FLOOR)
+        listed = _op_overviews_in(ctx, target["save_to"]["vault"], floor=LOOKUP_FLOOR)
     except SecretError as e:
-        raise _failed(f"1Password's answer to `op item create` didn't read, and roster couldn't check whether "
-                      f"'{name}' was saved ({e}) - look for it in 1Password, and delete it if it's not wanted") \
-            from None
-    if len(found) == 1:
-        return found[0]
-    if not found:
-        raise _failed(f"1Password said it created '{name}' but it isn't there - check it in 1Password")
-    raise _failed(f"1Password's answer to `op item create` didn't read, and now {len(found)} items are titled "
-                  f"'{name}' - check them in 1Password and delete the extra one")
+        raise _failed(f"1Password {what}, and roster couldn't confirm the item was made ({e}) - {check}") from None
+    found = [i for i in listed if i.get("title") == name and _made_since(i.get("created_at"), started)]
+    if len(found) != 1:
+        raise _failed(f"1Password {what}, and roster couldn't confirm the item was made "
+                      f"({len(found) or 'no'} new item{'' if len(found) == 1 else 's'} titled '{name}' in "
+                      f"{target['label']}) - "
+                      f"{check}")
+    if not OP_ID.fullmatch(found[0]["id"]):
+        raise _failed(f"1Password {what}, and roster couldn't confirm the item was made - {check}")
+    return {"id": found[0]["id"], "name": name, "found": True}
 
 
-def _created_anyway(ctx, name):
-    """`op item create` timed out. No item had that title before (checked just before), so one that has it now is this
-    one: it counts as made (and can be undone). None: nothing was saved. Can't tell: says so, naming it."""
+def _made_since(created, started):
+    """Whether op's CREATED (an ISO time) is at or after STARTED (this Box's clock, less SKEW)."""
+    import datetime
+    if not isinstance(created, str):
+        return False
     try:
-        found = _op_same_title(ctx, name, floor=LOOKUP_FLOOR)
-    except SecretError as e:
-        raise _failed(f"1Password didn't answer `op item create` in time, and roster couldn't check whether '{name}' "
-                      f"was saved ({e}) - look for it in 1Password, and delete it if it's not wanted") from None
-    if len(found) == 1:
-        return {"id": found[0]["id"], "name": str(found[0].get("title") or name)}
-    if not found:
-        raise _failed(f"1Password didn't answer `op item create` in time, and there's no '{name}' there: nothing was "
-                      "saved")
-    raise _failed(f"1Password didn't answer `op item create` in time, and now {len(found)} items are titled "
-                  f"'{name}' - check them in 1Password and delete the extra one")
+        when = datetime.datetime.fromisoformat(created.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if when.tzinfo is None:
+        return False
+    return when.timestamp() >= started - SKEW
 
 
 def _op_delete(item_id, ctx):
@@ -380,7 +408,7 @@ def _op_delete(item_id, ctx):
     _op_ready(ctx)
     if not item_id or item_id.startswith("-"):
         raise _failed(f"'{item_id}' isn't a 1Password item id")
-    r = _op(ctx, _op_base(ctx) + ["item", "delete", item_id])
+    r = _op(ctx, _op_base(ctx) + ["item", "delete", item_id])          # an id op answered, never a flag
     if r.returncode != 0:
         raise _failed(f"1Password didn't delete item {item_id}: {errtext(r, stdout=False) or f'exit {r.returncode}'}")
 

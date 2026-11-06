@@ -676,7 +676,7 @@ The Bitwarden CLI holds one account at a time, so signing in to another one mean
 
 | Method | Params | Result | Errors | Since API |
 |---|---|---|---|---|
-| `vault.create_item` | `{name, password, username?, uri?, provider?, save_to?}` | `{provider, id, name, target}` | `14`, `60`-`62`, `64`, `65` | 4 |
+| `vault.create_item` | `{name, password, username?, uri?, provider?, save_to?}` | `{provider, id, name, target}`. When the vault's answer to the create was lost and the item was only found by its name afterwards, it isn't recorded as one this serve made: vault.undo_create refuses it (63) | `14`, `60`-`62`, `64`, `65` | 4 |
 | `vault.undo_create` | `{id}` (from `vault.create_item`) | `{provider, id}` | `14`, `62`, `63` | 4 |
 | `vault.targets` | `{provider?}` | `{provider, targets: [{id, kind, label, organization?, collection?, save_to}], default, from, problem}`: `kind` is `personal`, `collection`, `group` or `vault` (1Password: `save_to` `{vault: ID}`) | `14` | 10 |
 | `vault.item_fields` | `{item, provider?}`: `item` the item's name or id (as after `bw:` or `op:` in auth), `provider` the vault (default: the Inventory's, as vault.status's) | `{provider, item, address?, port?, user?, note?}`: `note` says why the item's URI gave no address (another scheme than ssh, sftp, http or https, or a host that isn't an address) | `13`, `14`, `11`, `12`, `31`, `32`, `33`, `35`, `186` | 29 |

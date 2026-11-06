@@ -12,7 +12,8 @@
 # `op item create [ - ] [assignment...] [flags]` as op 2 takes it (developer.1password.com, item create): `-` reads
 #   an item JSON template ({title, category, fields: [{id, type, purpose, label, value}], urls: [{href, primary}]})
 #   on stdin, and can't go with --template; --vault (a name or id; default Private); --format json prints the item
-#   made, field values and all, as op does. FAKE_OP_WRITE_FAIL=TEXT: create fails with TEXT on stderr;
+#   made, field values and all, as op does: a new item's id is 26 lowercase letters and digits, as op's are, and its
+#   overview carries created_at (now). --vault=VALUE as one word works too. FAKE_OP_WRITE_FAIL=TEXT: create fails with TEXT on stderr;
 #   FAKE_OP_DELETE_FAIL=TEXT: delete does. FAKE_OP_CREATE_HANG=SECONDS: create saves the item, then answers that late;
 #   FAKE_OP_CREATE_ANSWER=TEXT: it saves the item, then prints TEXT instead of the item (an answer that doesn't read).
 # FAKE_OP_RAW=JSON: {"item get": TEXT, "item list": TEXT}: that command prints TEXT instead (malformed output).
@@ -23,6 +24,7 @@ a = sys.argv[1:]
 os.environ.get("FAKE_ARGV_LOG") and open(os.environ["FAKE_ARGV_LOG"], "a").write(json.dumps(["op", *a]) + "\n")
 os.environ.get("FAKE_OP_ENV_LOG") and open(os.environ["FAKE_OP_ENV_LOG"], "a").write(json.dumps(sorted(os.environ)) + "\n")
 if a[:1] == ["--account"]: a = a[2:]
+a = [w for x in a for w in (["--vault", x[8:]] if x.startswith("--vault=") else [x])]    # op takes either form
 signed = os.environ.get("OP_SESSION_test") == "tok" or os.environ.get("OP_SERVICE_ACCOUNT_TOKEN")
 os.environ.get("FAKE_LOG") and open(os.environ["FAKE_LOG"], "a").write("op " + " ".join(a[:2]) + "\n")
 if a[0] == "whoami":
@@ -56,7 +58,9 @@ if a[:2] == ["item", "create"]:
     fields = {f["label"]: f.get("value", "") for f in t.get("fields", []) if f.get("value")}
     for x in a[2:]:                                  # assignment statements: label=value (op's argv form)
         if "=" in x and not x.startswith("-"): k, _, val = x.partition("="); fields[k.split("[")[0]] = val
-    new = {"id": "it-%04d" % (len(listed) + 1), "title": flag("--title") or t.get("title", ""), "vault": v["name"],
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    new = {"id": "itm%023d" % (len(listed) + 1), "created_at": now, "title": flag("--title") or t.get("title", ""), "vault": v["name"],
            "fields": fields, "urls": [u["href"] for u in t.get("urls", [])] + ([flag("--url")] if flag("--url") else [])}
     listed.append(new); open(store, "w").write(json.dumps(listed))
     if os.environ.get("FAKE_OP_CREATE_HANG"): import time; time.sleep(float(os.environ["FAKE_OP_CREATE_HANG"]))
@@ -71,10 +75,11 @@ if a[:2] == ["item", "delete"]:
 if a[:2] == ["item", "list"]:
     cats = a[a.index("--categories") + 1].lower().split(",") if "--categories" in a else None
     vault = a[a.index("--vault") + 1] if "--vault" in a else None
-    print(json.dumps([{"id": i["id"], "title": i["title"], "version": 1, "vault": {"id": "v-" + i["vault"], "name": i["vault"]},
+    vault = next((v["name"] for v in vaults if vault == v["id"]), vault)        # by id or by name, as op
+    print(json.dumps([{"id": i["id"], "title": i["title"], "version": 1, "vault": {"id": next((v["id"] for v in vaults if v["name"] == i["vault"]), "v-" + i["vault"]), "name": i["vault"]},
                        "category": i.get("category", "LOGIN"), "additional_information": i.get("username", ""),
                        "urls": [{"primary": n == 0, "href": u} for n, u in enumerate(i.get("urls") or [])],
-                       "updated_at": "2026-11-01T10:00:00Z"}
+                       "created_at": i.get("created_at", "2026-11-01T10:00:00Z"), "updated_at": i.get("created_at", "2026-11-01T10:00:00Z")}
                       for i in listed if (cats is None or i.get("category", "LOGIN").lower() in cats)
                       and vault in (None, i["vault"])])); sys.exit()
 if a[:2] == ["item", "get"] and any(i["id"] == a[2] for i in listed):

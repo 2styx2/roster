@@ -935,6 +935,9 @@ def written(cfg, name, where, group, r):
     if r.get("item"):
         i = r["item"]
         say(f"saved        vault item '{i['name']}' in {i['provider']} ({i['target'].get('label', 'the vault')})")
+        if i.get("found"):                      # #545's review: auth: points at it, so say what's not known
+            say(f"note         '{i['name']}' was {addhost.FOUND} ({i['id']}): {name}'s auth: points at it - "
+                f"{addhost.CHECK_FOUND} in the vault")
     say(f"backup       {shown_file(cfg, r['backup'], 'its backup')}")
     say(f"wrote        {name} into {where}" + (" (a new group)" if r["new_group"] else "") + f" in {shown_file(cfg)}")
     if r["new_group"]:
@@ -1207,7 +1210,7 @@ def cmd_vault_targets(cfg, args):
     shown = [(shlex.quote(t["save_to"]), t) for t in found["targets"]]
     wide = max((len(text) for text, _ in shown), default=0)
     for text, t in shown:
-        mark = f"   (default, from {found['from'] or 'roster'})" if t["default"] else ""
+        mark = ("   (default" + (f", from {found['from']})" if found["from"] else ")")) if t["default"] else ""
         say(f"  {text:<{wide}}   {t['label']}{mark}")
     if problem:
         say(f"\n{tagged(problem)}")

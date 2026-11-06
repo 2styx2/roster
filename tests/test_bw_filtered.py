@@ -200,7 +200,8 @@ def test_several_matches_some_not_logins_are_counted_as_bw_found_them(vault, cap
 # ---- a lost create answer (#446's review, L1): exactly one row by that name, or roster says it can't tell
 
 def test_a_lost_answer_with_two_items_by_that_name_says_so(vault, monkeypatch, capsys):
-    monkeypatch.setenv("FAKE_BW_CREATE_ALSO", json.dumps([item("zzzz-9999", "box ssh", "pw-SECRET-two")]))
+    other = {**item("zzzz-9999", "box ssh", "pw-SECRET-two"), "revisionDate": "2099-01-01T00:00:00.000Z"}   # new too
+    monkeypatch.setenv("FAKE_BW_CREATE_ALSO", json.dumps([other]))
     with unreadable(monkeypatch), pytest.raises(providers.WriteFailed, match="2 items are named 'box ssh'") as e:
         providers.create_item("bw", name="box ssh", password=NEW_PW)
     assert names(vault).count("box ssh") == 2

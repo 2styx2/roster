@@ -85,7 +85,7 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
                           #             "forget": fn(ctx), the in-memory part of "lock" (drop a session key)
                           #             "reset": fn(), forget what the provider keeps for this run (reset())
                           #             "logout_help": why this provider has no account to sign out of, and what to do
-                          #             "create": fn(item, ctx) -> {"id", "name"}, item = {name, username,
+                          #             "create": fn(item, ctx) -> {"id", "name", "target", "found"?}, item = {name, username,
                           #                       password, uri}; refuses a name that exists (ItemExists)
                           #             "delete": fn(id, ctx), the undo of a create (Q43)
 #             "targets": fn(ctx) -> [target], where the provider can save: each {id, kind, label, save_to}
@@ -681,7 +681,9 @@ def create_item(provider, *, name, password, username="", uri="", save_to=None):
     """Create a login Vault item NAME in PROVIDER: username, password, and the address in its URI field
     (docs/adding-hosts.md), in SAVE_TO (ticket 35: "personal", {organization, collection}, {group}; None: the
     setting's). Refuses a NAME that's already there. Returns {id, name, target}, never the password; the password
-    never goes on a command line or into an error."""
+    never goes on a command line or into an error. `found: True` too when the vault's answer to the create was lost
+    and the item was found by its name instead (#545's review): it may not be the one this run made, so it's never
+    taken back (delete_item) and the caller says so."""
     fn = _writer(provider, "create")
     if not str(name).strip() or not password:
         raise SecretError("a Vault item needs a name and a password")
@@ -689,7 +691,8 @@ def create_item(provider, *, name, password, username="", uri="", save_to=None):
     where = save_to_setting(ctx) if save_to is None else (save_to, "choice")
     made = fn({"name": name, "username": username or "", "password": password, "uri": uri or "", "save_to": where},
               ctx)
-    return {"id": made["id"], "name": made["name"], "target": shown(made["target"])}
+    return {"id": made["id"], "name": made["name"], "target": shown(made["target"]),
+            **({"found": True} if made.get("found") else {})}
 
 
 def delete_item(provider, item_id):
