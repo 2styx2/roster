@@ -10,8 +10,11 @@ import type { SidebarRow } from "./model";
 
 export type MenuEntry =
   | {
-      /** Short: the menu is named after the Host. "…" when the command asks for more. */
+      /** Short: the menu is named after the Host. "…" when the command asks for more. Never the
+       * row's own names (round 22): those go in `full`. */
       label: string;
+      /** The whole label, names and all ("Close esx-02"), for the item's tooltip and description. */
+      full?: string;
       command: CommandLine;
       /** Its keys in keymap notation ("␣ R"), drawn as keycaps when the hints are shown. */
       keys?: string | null;
@@ -28,20 +31,32 @@ export interface HostMenuOptions {
   folders: boolean;
   /** The keys bound to a command line ("host rename"), or null. */
   keys(command: string): string | null;
+  /** The Host already has a Session: Open goes to it, so it says so. */
+  hasSession?: boolean;
+  /** The list's key for Enter on a row ("Enter"), which opens it: shown beside Open. */
+  openKeys?: string | null;
 }
 
 /** A Host row's menu: open, look, change, then remove, separated; the row's own actions (an
  * unreview, a Plugin's) with the changes. */
 export function hostMenu(row: SidebarRow, o: HostMenuOptions): MenuEntry[] {
   const host = row.host;
-  if (host === undefined) return [];
-  const own = (row.actions ?? []).map((a) => ({ label: a.label, command: a.command }));
+  const own = (row.actions ?? []).map((a) =>
+    a.short && a.short !== a.label
+      ? { label: a.short, full: a.label, command: a.command }
+      : { label: a.label, command: a.command },
+  );
+  // A group's (or another row's) menu is its own actions: the buttons its heading shows on hover.
+  if (host === undefined) return own;
   if (o.reviewed === null) return own;
   const groups: MenuEntry[][] = [
     o.reviewed
       ? [
-          { label: "Open", command: `open ${host}` },
-          { label: "New Session", command: `connect ${host}` },
+          // Open goes to the Host's Session when it has one, so it says that; New Session always
+          // opens another. Each names its key where one is bound.
+          { label: o.hasSession ? "Go to its Session" : "Open", command: `open ${host}`, keys: o.openKeys ?? null },
+          // Another Session only means something once there's one: with none, Open is it.
+          ...(o.hasSession ? [{ label: "New Session", command: `connect ${host}`, keys: o.keys(`connect`) }] : []),
         ]
       : [{ label: "Mark reviewed", command: `review ${host}` }],
     [

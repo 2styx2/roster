@@ -459,7 +459,7 @@ pub(super) fn options() -> Vec<Opt> {
             "The thin tmux-style bar of open Sessions, and its edge.",
             "\"top\"",
         );
-        b.add(p("statusbar"), Kind::List, "boolean|string[]", yes_no(standard), Allowed::Form("true, false, or segments in order: \"backend\", \"box\", \"inventory\", \"hosts\", \"path\", \"changes\", \"hints\", \"mode\""), "The status bar, and its segments.", "{ \"backend\", \"hosts\" }");
+        b.add(p("statusbar"), Kind::List, "boolean|string[]", yes_no(standard), Allowed::Form("true, false, or segments in order: \"backend\", \"box\", \"session\", \"inventory\", \"hosts\", \"path\", \"changes\", \"hints\", \"mode\""), "The status bar, and its segments.", "{ \"backend\", \"hosts\" }");
         b.unique();
         b.leaf(
             p("fullscreen"),

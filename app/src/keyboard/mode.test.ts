@@ -20,6 +20,12 @@ function run(chords: string[], c = ctx, start: KeyState = terminalMode) {
 }
 
 describe("press (Terminal mode / App mode)", () => {
+  it("lets an unbound Tab or Shift+Tab move focus in App mode, as everywhere else", () => {
+    const app = press(terminalMode, ctx.leader, ctx).state;
+    expect(press(app, "Tab", ctx).consumed).toBe(false);
+    expect(press(app, "Shift+Tab", ctx).consumed).toBe(false);
+  });
+
   it("catches a global key (F11) in Terminal mode too, and stays in Terminal mode", () => {
     const r = run(["F11", "x"]);
     expect(r.actions).toEqual(["focus"]);

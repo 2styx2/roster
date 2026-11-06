@@ -92,4 +92,28 @@ describe("a Session row's breadcrumb (ticket 120)", () => {
   it("has none on the Session's own Host", () => {
     expect(rowOf(tab(1, first))?.hop).toBeUndefined();
   });
+
+  it("lights nodes by how their Sessions stand: the current one in the accent, others live, connecting open", () => {
+    const build = sectionBuilder();
+    const reviewed = hosts.hosts.filter((h) => h.reviewed && h.name !== first).map((h) => h.name);
+    const [second = "", third = "", fourth = ""] = reviewed;
+    const up = (id: number, host: string): Tab => ({ ...tab(id, host, { state: "open" }), shell: true });
+    const sessions: TabsSnapshot = {
+      tabs: [up(1, first), up(2, second), tab(3, third, { state: "open" }), tab(4, fourth, { state: "ended", exit: { code: 0, closed: false }, problem: null })],
+      active: 1,
+      previous: null,
+    };
+    const rows = build(defs, ctx(sessions)).flatMap((s) => s.rows).filter((r) => r.dot);
+    const of = (host: string) => rows.filter((r) => r.host === host);
+    // The Session on screen and its Host: the accent. Another connected one: the text colour.
+    expect(of(first).map((r) => r.lit)).toEqual(["current", "current"]);
+    expect(of(second).map((r) => r.lit)).toEqual(["live", "live"]);
+    // Still logging in: connecting in its row and its Host's, never lit.
+    expect(of(third).map((r) => r.dot)).toEqual(["connecting", "connecting"]);
+    expect(of(third).some((r) => r.lit)).toBe(false);
+    // Ended: nothing lit.
+    expect(of(fourth).some((r) => r.lit)).toBe(false);
+    // With no Session at all, no node is lit.
+    expect(build(defs, ctx(none)).flatMap((s) => s.rows).some((r) => r.lit)).toBe(false);
+  });
 });

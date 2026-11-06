@@ -57,6 +57,10 @@ export interface HelpContext {
 
 export interface HelpPage extends Entry {
   title: string;
+  /** What the topic finder's page column and `:helpgrep` call it, when the title is longer than 24
+   * characters: 24 at most, never cut, distinct from every other page's ("When a Session fails"
+   * for "Connection errors: every way a Session can fail", round 21). The page keeps its title. */
+  short?: string;
   /** One line, for the index and the topic finder. */
   summary: string;
   /** Lower comes first in the index. The built-ins use 0–100. */
@@ -110,6 +114,9 @@ export function pageBody(ctx: HelpContext, id: string): Block[] {
   return ctx.pages.find((pg) => pg.id === id)?.body(ctx) ?? [];
 }
 
+/** What a page is called where room is short: its `short` name, else its title. */
+export const pageLabel = (pg: Pick<HelpPage, "title" | "short">): string => pg.short ?? pg.title;
+
 /** Every topic: each page, then what's on it, then the aliases. Tags are unique, ignoring case:
  * the first wins, and the others are `clashes` (lint.test.ts fails CI on any). */
 export function topicIndex(ctx: HelpContext): { topics: Topic[]; clashes: Topic[] } {
@@ -123,12 +130,14 @@ export function topicIndex(ctx: HelpContext): { topics: Topic[]; clashes: Topic[
   };
   for (const pg of ctx.pages) add({ tag: pg.id, page: pg.id, label: pg.title, kind: "page" });
   for (const pg of ctx.pages) {
-    for (const t of pg.tags ?? blockTags(pg.id, pg.title, pg.body(ctx))) add({ ...t, page: pg.id });
+    // The page column says the page's short name (round 21: two pages both read "Connection errors…").
+    for (const t of pg.tags ?? blockTags(pg.id, pg.title, pg.body(ctx))) add({ ...t, page: pg.id, ...(t.path !== undefined ? { path: pageLabel(pg) } : {}) });
   }
   for (const pg of ctx.pages) {
     for (const [alias, to] of Object.entries(pg.aliases ?? {})) {
       const target = out.find((t) => t.tag === to);
-      if (target) add({ ...target, tag: alias, label: alias, path: target.label, kind: "alias" });
+      // Titled as what it goes to (round 19): the finder's title slot never holds a tag.
+      if (target) add({ ...target, tag: alias, kind: "alias" });
       else clashes.push({ tag: alias, page: pg.id, label: `${alias} → ${to}, which isn't a topic`, kind: "alias" });
     }
   }
@@ -149,7 +158,7 @@ export function findTopic(ctx: HelpContext, query: string): Topic | undefined {
   const exact = (tag: string) => all.find((t) => t.tag.toLowerCase() === tag.toLowerCase());
   const found = exact(q) ?? exact(`:${q.replace(/^:/, "")}`);
   if (found) return found;
-  const items = all.map((t) => ({ id: t.tag, label: t.label, detail: t.tag, ...(t.path ? { path: t.path } : {}), command: "" }));
+  const items = all.map((t) => ({ id: t.tag, label: t.label, detail: t.tag, ...(t.path ? { path: t.path } : {}), ...(t.note ? { note: t.note } : {}), command: "" }));
   const best = searchItems(items, q)[0];
   return best ? all.find((t) => t.tag === best.id) : undefined;
 }
@@ -179,7 +188,7 @@ export function pageTexts(ctx: HelpContext): TextHit[] {
   const out: TextHit[] = [];
   for (const pg of ctx.pages) {
     let tag = pg.id;
-    let where = pg.title;
+    let where = pageLabel(pg);
     const push = (text: string, at = tag, place = where, heading = false) => {
       const t = text.replace(/\s+/g, " ").trim();
       if (t) out.push({ page: pg.id, tag: at, where: place, text: t, ...(heading ? { heading } : {}) });
@@ -189,7 +198,7 @@ export function pageTexts(ctx: HelpContext): TextHit[] {
         case "h":
           if (b.level > 1) {
             tag = headingTag(pg.id, b.anchor);
-            where = `${pg.title} › ${plain(b.text)}`;
+            where = `${pageLabel(pg)} › ${plain(b.text)}`;
           }
           push(plain(b.text), tag, where, true);
           break;
@@ -531,14 +540,20 @@ function healthPage(ctx: HelpContext): Block[] {
   ];
 }
 
-function indexPage(ctx: HelpContext): Block[] {
-  const listed = ctx.pages.filter((pg) => pg.id !== "index");
+/** Pages by the index's groups, in its order: the parts, then each Plugin's ("From folders"). A
+ * group with no page is left out. */
+export function pageGroups(pages: readonly HelpPage[]): [string, HelpPage[]][] {
   const groups = new Map<string, HelpPage[]>();
   for (const part of PARTS) groups.set(part, []);
-  for (const pg of listed) {
+  for (const pg of pages) {
     const group = pg.part ?? (pg.source === BUILTIN ? "Reference" : `From ${pg.source}`);
     groups.set(group, [...(groups.get(group) ?? []), pg]);
   }
+  return [...groups].filter(([, list]) => list.length > 0);
+}
+
+function indexPage(ctx: HelpContext): Block[] {
+  const groups = pageGroups(ctx.pages.filter((pg) => pg.id !== "index"));
   return [
     h(1, "roster help", "index"),
     p(
@@ -685,7 +700,7 @@ function allPage(ctx: HelpContext): Block[] {
               head: [[text("Topic")], [text("What")]],
               rows: sorted(list).map((t) => [
                 [link(t.tag, [code(t.tag)])],
-                [text(t.anchor ? (t.path && t.path !== pageTitle(t.page) ? t.path : pageTitle(t.page)) : t.label)],
+                [text(t.anchor && t.kind !== "alias" ? (t.note ?? pageTitle(t.page)) : t.label)],
               ]),
             },
           ]
@@ -710,13 +725,14 @@ const page = (
   title: string,
   summary: string,
   body: (ctx: HelpContext) => Block[],
-  more: { aliases?: Record<string, string> | undefined; inEffect?: true } = {},
+  more: { aliases?: Record<string, string> | undefined; inEffect?: true; short?: string | undefined } = {},
 ): HelpPage => ({
   id,
   source: BUILTIN,
   order,
   part,
   title,
+  ...(more.short ? { short: more.short } : {}),
   summary,
   body,
   ...(more.aliases ? { aliases: more.aliases } : {}),
@@ -736,10 +752,10 @@ const builtinHelpPages: readonly HelpPage[] = [
   }),
   page("themes", 53, "Reference", "Themes", "The registered Themes, and the one in use", themesPage, inEffect),
   page("finders", 54, "Reference", "Finders", "The finder sources: Sessions, Hosts, the tree, Themes, help topics…", findersPage, inEffect),
-  page("errors", 60, "Reference", "Connection errors", "The error catalog: where each problem lives and its fix", errorsPage, inEffect),
+  page("errors", 60, "Reference", "Connection errors", "The error catalog: where each problem lives and its fix", errorsPage, { ...inEffect, short: "Error catalog" }),
   page("health", 61, "Reference", "Health", "This Box's health: the last :check with no Host, with each fix", healthPage, { ...inEffect, aliases: { checkhealth: "health" } }),
   page("all", 90, "Reference", "Every topic", "Every page, command, key, option and error, A to Z", allPage, { aliases: { "help-index": "all" } }),
-  ...guides.map((g) => ({ ...page(g.id, g.order, g.part, g.title, g.summary, (ctx) => guideBody(g, ctx), { aliases: g.aliases }), tags: guideTags[g.id] ?? [] })),
+  ...guides.map((g) => ({ ...page(g.id, g.order, g.part, g.title, g.summary, (ctx) => guideBody(g, ctx), { aliases: g.aliases, short: g.short }), tags: guideTags[g.id] ?? [] })),
 ];
 
 export function builtinHelpRegistry(): HelpRegistry {

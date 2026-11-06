@@ -32,7 +32,7 @@ describe("the Lock", () => {
   it("opens locked, with the Sessions hidden", async () => {
     await start();
     expect(await screen.findByRole("dialog", { name: /locked/i })).toBeInTheDocument();
-    expect(await screen.findByText(/unlock bitwarden/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText("Bitwarden master password")).toBeInTheDocument();
     expect(sessions()).toBeNull();
     expect(passwordField()).toHaveFocus();
   });
@@ -45,6 +45,26 @@ describe("the Lock", () => {
     await screen.findByRole("main", { name: /workspace/i });
     expect(lockScreen()).toBeNull();
     expect((await backend.vaultStatus()).status).toBe("unlocked");
+  });
+
+  it("sends a password entered while roster still checks the vault once the check ends", async () => {
+    const backend = fakeBackend({ hosts: makeHosts(12) });
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const status = backend.vaultStatus.bind(backend);
+    backend.vaultStatus = async () => {
+      await gate;
+      return status();
+    };
+    const user = userEvent.setup();
+    render(<App backend={backend} clock={manualClock()} />);
+    const field = await screen.findByLabelText<HTMLInputElement>(/master password/i);
+    expect(screen.getByRole("button", { name: "Checking…" })).toHaveAttribute("aria-disabled", "true");
+    await user.type(field, `${FAKE_PASSWORD}{Enter}`);
+    expect(lockScreen()).not.toBeNull();
+    await act(async () => release());
+    await screen.findByRole("main", { name: /workspace/i });
+    expect(lockScreen()).toBeNull();
   });
 
   it("unlocks with a password sent the moment the form shows (an autofill and Enter)", async () => {
@@ -93,6 +113,29 @@ describe("the Lock", () => {
     expect(passwordField()).toHaveFocus();
     expect(lockScreen()).not.toBeNull();
     expect((await backend.vaultStatus()).status).toBe("locked");
+    await unlock(user);
+    await screen.findByRole("main", { name: /workspace/i });
+  });
+
+  it("after a wrong password says what to do if it's forgotten; Tab stays on the lock's controls (round 18)", async () => {
+    const { user } = await start();
+    await screen.findByLabelText(/master password/i);
+    expect(screen.queryByText(/forgot it\?/i)).toBeNull();
+    await unlock(user, "hunter2");
+    await screen.findByRole("alert");
+    expect(screen.getByText(/forgot it\?/i)).toHaveTextContent("roster never keeps it");
+    // field -> Unlock -> field, both ways: never an invisible stop on <body>.
+    expect(passwordField()).toHaveFocus();
+    const submit = screen.getByRole("button", { name: /^Unlock/ });
+    await user.tab();
+    expect(submit).toHaveFocus();
+    await user.tab();
+    expect(passwordField()).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(submit).toHaveFocus();
+    // Enter on Unlock with the field empty unlocks nothing; the right password still does.
+    await user.keyboard("{Enter}");
+    expect(lockScreen()).not.toBeNull();
     await unlock(user);
     await screen.findByRole("main", { name: /workspace/i });
   });

@@ -30,7 +30,7 @@ function Glyph({ name }: { name: keyof typeof GLYPHS }) {
 
 export function TitleBar({
   controls,
-  title = "Roster",
+  title = "roster",
   start,
   end,
 }: {

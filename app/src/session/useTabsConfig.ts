@@ -25,7 +25,8 @@ export function useTabsConfig(opts: {
   const { tabs, caps, hostByName, lockVault, outputTap } = opts;
   const asksAboutKeys = caps.has("hostKey");
   const canFill = caps.has("fill");
-  const refuseFill = useMemo(() => (caps.has("nestedFill") ? null : (what: string) => caps.needsNewer("nestedFill", what)), [caps]);
+  // Said calmly, without serve's API numbers (round 20): the note under the prompt says what to do.
+  const refuseFill = useMemo(() => (caps.has("nestedFill") ? null : (what: string) => `${what} needs a newer roster; update roster on this Box`), [caps]);
   const shellHooksInit = opts.config?.terminal.shellHooks ?? null;
   const inventoryNow = useLatest<readonly Host[]>(opts.hosts);
   useEffect(() => {

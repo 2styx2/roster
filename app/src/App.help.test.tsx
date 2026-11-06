@@ -51,6 +51,8 @@ describe(":help", () => {
     const before = document.activeElement;
     await user.keyboard(`${LEADER}?`);
     const finder = await screen.findByRole("dialog", { name: /find a help topic/i });
+    // Its list stacks its rows (styles.test.ts pins .finder-list), never the Picker's column grid.
+    expect(within(finder).getByRole("listbox")).toHaveClass("finder-list");
     await user.keyboard("terminal.size");
     expect(within(finder).getAllByRole("option")[0]).toHaveTextContent("terminal.size");
     await user.keyboard("{Enter}");
@@ -60,6 +62,29 @@ describe(":help", () => {
     await user.keyboard("{Escape}");
     expect(helpOrNull()).toBeNull();
     expect(document.activeElement).toBe(before);
+  });
+
+  it("␣ ? lists the pages under the index's groups before a query; an alias is titled as what it goes to, in Iosevka when that's a name (rounds 18, 19, 21)", async () => {
+    const user = await ready();
+    await user.keyboard(`${LEADER}?`);
+    const finder = await screen.findByRole("dialog", { name: /find a help topic/i });
+    expect(finder.querySelector(".picker-count")?.textContent).toMatch(/^[\d,]+ pages$/);
+    // Quiet headings, not rows: the cursor never stops on one.
+    const groups = [...finder.querySelectorAll(".finder-group")].map((g) => g.textContent);
+    expect(groups.slice(0, 3)).toEqual(["Getting started", "Make it yours", "Reference"]);
+    expect(within(finder).getAllByRole("option")[0]).toHaveAttribute("data-label", "roster help");
+    await user.keyboard("roster.o.keys.picker");
+    const row = within(finder).getAllByRole("option")[0]!;
+    expect(row.querySelector(".finder-name")).toHaveTextContent(/^keys\.picker$/);
+    expect(row.querySelector(".finder-name")).toHaveClass("data");
+    // Its tag isn't on the row (round 22): the footer names the selected row's, and the query
+    // still matched it.
+    expect(row.querySelector(".finder-detail")).toBeNull();
+    expect(finder.querySelector(".finder-foot-tag")).toHaveTextContent(":help keys.picker");
+    // Drawn whole on one line or not at all (round 23): the row's tooltip names it too.
+    expect(finder.querySelector(".finder-foot-tag")?.textContent).toBe(":help keys.picker");
+    expect(row.querySelector(".finder-label")?.getAttribute("title")).toMatch(/\n:help keys\.picker$/);
+    expect(finder.querySelector(".picker-count")).toHaveTextContent(/results?$/);
   });
 
   it(":help TOPIC opens it; Tab completes topics; an unknown one is said", async () => {

@@ -5,6 +5,11 @@
 // window, on rows at the top and the bottom of the Sidebar, opened at the row's left and right ends
 // and from the keyboard (the Menu key, Shift+F10). Every corner is checked to be the menu's own
 // pixel, so a menu cut off by a scrolling ancestor or under another layer fails too.
+// Where it goes (UI/UX pass, PR #418): as wide as its row and at its x, inside the Sidebar pane
+// (Q336, Q340 a); from the pointer it opens down from the pointer's height, or, flipped, ends on the
+// last row edge above it (Q335 d); from a key the tree scrolls just enough for it to open under its
+// row (Q335 d, Q337 a). In a window under 720 px the Sidebar floats, and over the idle pane it's
+// tucked away outside App mode (keyboard.md), so there the test enters App mode first.
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { launch, openApp as openAppAt } from "./browser";
@@ -23,10 +28,17 @@ afterEach(async () => {
   context = null;
 });
 
-/** The app at `size`, unlocked, its Inventory listed. */
+/** The app at `size`, unlocked, its Inventory listed (in a narrow window: in App mode, where the
+ * floating Sidebar shows). */
 async function openApp(size: { width: number; height: number }): Promise<Page> {
   const opened = await openAppAt(browser, "many-hosts", size);
   context = opened.context;
+  if (size.width <= 720) {
+    // The leader once the lock screen is gone (pressed while it was leaving, it went to its field).
+    await opened.page.locator('[role="dialog"][aria-labelledby="lock-title"]').waitFor({ state: "detached" });
+    await opened.page.keyboard.press("Control+Space");
+    await opened.page.getByRole("group", { name: "Inventory" }).getByRole("treeitem").first().waitFor();
+  }
   return opened.page;
 }
 
@@ -37,9 +49,10 @@ interface Box {
   bottom: number;
 }
 
-/** Scrolls the Sidebar so the `n`th Host row is at its top or its bottom, and gives that row's name
- * and box (the scroll is over by the time this returns: the next frame has been drawn). */
-async function rowAt(page: Page, n: number, where: "top" | "bottom"): Promise<{ name: string; box: Box }> {
+/** Scrolls the Sidebar so the `n`th Host row is at its top or its bottom, and gives that row's name,
+ * its treeitem's box and its whole row's (`[data-row]`, what the menu lines up with) (the scroll is
+ * over by the time this returns: the next frame has been drawn). */
+async function rowAt(page: Page, n: number, where: "top" | "bottom"): Promise<{ name: string; box: Box; slot: Box }> {
   return page.evaluate(
     async ([n, where]) => {
       const inventory = document.querySelector('[role="group"][aria-label="Inventory"]');
@@ -56,7 +69,12 @@ async function rowAt(page: Page, n: number, where: "top" | "bottom"): Promise<{ 
       const hit = document.elementFromPoint(r.left + 8, (r.top + r.bottom) / 2);
       if (!hit || !row.contains(hit)) throw new Error(`Host row ${n} isn't on screen at the ${where}`);
       const name = (row.getAttribute("aria-label") ?? "").split(",")[0] ?? "";
-      return { name, box: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } };
+      const s = (row.closest("[data-row]") ?? row).getBoundingClientRect();
+      return {
+        name,
+        box: { left: r.left, top: r.top, right: r.right, bottom: r.bottom },
+        slot: { left: s.left, top: s.top, right: s.right, bottom: s.bottom },
+      };
     },
     [n, where] as const,
   );
@@ -70,7 +88,8 @@ interface Opened {
   hidden: string[];
   /** What has focus: the menu, its first item, another of its items, or something else. */
   focus: "menu" | "first item" | "item" | "outside";
-  /** The box of the row it's for, now (the App-mode cursor may have scrolled it into view). */
+  /** The box of the row it's for (its `[data-row]`), now (the App-mode cursor, or the menu making
+   * room under it, may have scrolled it). */
   row: Box | null;
 }
 
@@ -94,6 +113,7 @@ async function opened(page: Page): Promise<Opened> {
     const label = menu.getAttribute("aria-label") ?? "";
     const rowBox = Array.from(document.querySelectorAll('[role="group"][aria-label="Inventory"] [role="treeitem"]'))
       .find((el) => (el.getAttribute("aria-label") ?? "").split(",")[0] === label)
+      ?.closest("[data-row]")
       ?.getBoundingClientRect();
     const active = document.activeElement;
     const first = menu.querySelector('[role="menuitem"]');
@@ -135,10 +155,10 @@ describe.each([
     ["top", TOP_ROW],
     ["bottom", BOTTOM_ROW],
   ] as const)("on a row at the Sidebar's %s", (where, n) => {
-    // Below the row where there's room (the top), flipped above it where there isn't (the bottom).
-    const expectSide = (m: Opened, above: number, below: number) => {
-      if (where === "top") expect(near(m.box.top, below), `menu top ${m.box.top}, expected ${below}`).toBe(true);
-      else expect(near(m.box.bottom, above), `menu bottom ${m.box.bottom}, expected ${above}`).toBe(true);
+    /** As wide as its row and at its x (Q340 a), so in the Sidebar pane (Q336). */
+    const expectRowWidth = (m: Opened, row: Box) => {
+      expect(near(m.box.left, row.left), `menu left ${m.box.left}, row's ${row.left}`).toBe(true);
+      expect(near(m.box.right, row.right), `menu right ${m.box.right}, row's ${row.right}`).toBe(true);
     };
 
     it.each([
@@ -146,15 +166,20 @@ describe.each([
       ["right", -4],
     ] as const)("right-clicked at its %s end: on screen, at the pointer, the menu focused", async (_end, dx) => {
       const page = await openApp(size);
-      const { name, box } = await rowAt(page, n, where);
+      const { name, box, slot } = await rowAt(page, n, where);
       const x = dx > 0 ? box.left + dx : box.right + dx;
       const y = (box.top + box.bottom) / 2;
       await page.mouse.click(x, y, { button: "right" });
       const m = await opened(page);
       expect(m.label).toBe(name);
       expectOnScreen(m);
-      // A corner at the pointer: below it, or above it when flipped; moved left only to stay in.
-      expectSide(m, y, y);
+      // Down from the pointer's height where there's room (the top); flipped where there isn't (the
+      // bottom), ending on the last row edge above the pointer, the row's own top, so it slices no
+      // row (Q335 d). Under the pointer the tree never moves (Q313).
+      if (where === "top") expect(near(m.box.top, y), `menu top ${m.box.top}, expected ${y}`).toBe(true);
+      else expect(near(m.box.bottom, box.top), `menu bottom ${m.box.bottom}, expected ${box.top}`).toBe(true);
+      // Across the pointer: the row's width at its x (Q340 a).
+      expectRowWidth(m, slot);
       expect(m.box.left).toBeLessThanOrEqual(x);
       expect(m.box.right).toBeGreaterThanOrEqual(x);
       expect(m.focus).toBe("menu");
@@ -166,7 +191,8 @@ describe.each([
         const page = await openApp(size);
         const { name, box } = await rowAt(page, n, where);
         // A click selects the row (and opens the Host: its Session's row goes in above, moving the
-        // list), and the leader puts the App-mode cursor on it, scrolled into view: the row's box is
+        // list, and in a narrow window tucking the Sidebar away as the terminal takes the keys), and
+        // the leader puts the App-mode cursor on it, scrolled into view: the row's box is
         // read once the menu is open. The Menu key comes at once, before that scroll's event, which
         // once closed the menu (T173's fix in RowMenu.tsx).
         await page.mouse.click(box.left + 8, (box.top + box.bottom) / 2);
@@ -177,10 +203,10 @@ describe.each([
         expectOnScreen(m);
         const row = m.row;
         if (!row) throw new Error(`no row for ${name}`);
-        expectSide(m, row.top, row.bottom);
-        // Beside the row: it overlaps it across.
-        expect(m.box.left).toBeLessThan(row.right);
-        expect(m.box.right).toBeGreaterThan(row.left);
+        // Under its row, at the bottom too: from a key the tree scrolls up just enough for that
+        // (Q335 d, Q337 a), where it once flipped over the row above.
+        expect(near(m.box.top, row.bottom), `menu top ${m.box.top}, row's bottom ${row.bottom}`).toBe(true);
+        expectRowWidth(m, row);
         expect(m.focus).toBe("first item");
       },
     );

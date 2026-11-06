@@ -4,7 +4,7 @@
 // reaches the page. The fake stands in for the core's probe: no prompt (or one that echoes) is
 // refused there.
 import { describe, expect, it } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_LOGIN_PASSWORD, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "./backend/fake";
@@ -197,7 +197,24 @@ describe("filling a password prompt", () => {
     await sudo(user);
     expect(offer()).toBeNull();
     await user.keyboard(`${LEADER}p`);
-    await waitFor(() => expect(messageLine()).toHaveTextContent(/needs a newer roster \(API version 25/));
+    // Calm and in the app's words (round 20): the text colour, no API numbers.
+    await waitFor(() => expect(messageLine()).toHaveTextContent("Filling password prompts needs a newer roster. Update roster on this Box."));
+    expect(messageLine()).not.toHaveTextContent(/API/);
+    expect(messageLine()).toHaveClass("slip");
+  });
+
+  it("says there's no Session to fill, before any roster version, when none is open (round 20)", async () => {
+    for (const apiVersion of [sinceOf("fill") - 1, sinceOf("nestedFill")]) {
+      const user = await ready({ apiVersion });
+      await user.keyboard(`${LEADER}p`);
+      // The keys are keycaps, as every key hint is (round 21); the tooltip and :messages keep the text.
+      await waitFor(() => expect(messageLine()).toHaveAttribute("title", "No Session to fill. Open one with ␣ f."));
+      expect(messageLine()).toHaveTextContent("No Session to fill. Open one with Leader f.");
+      expect([...messageLine().querySelectorAll(".message-keys .keycap")].map((k) => k.textContent)).toEqual(["Leader", "f"]);
+      expect(messageLine()).not.toHaveTextContent(/newer roster|API/);
+      expect(messageLine()).toHaveClass("slip");
+      cleanup();
+    }
   });
 });
 
@@ -281,7 +298,8 @@ describe("a nested ssh to another Host (ticket 120)", () => {
     await within(output()).findByText(new RegExp(`admin@${there}'s password:`));
     expect(tab()).toHaveAccessibleName(new RegExp(`now on ${there}`));
     const note = await screen.findByRole("status", { name: "Password prompt" });
-    expect(note).toHaveTextContent(/needs a newer roster \(API version 26; this one speaks 25\)/);
+    expect(note).toHaveTextContent(/needs a newer roster; update roster on this Box/);
+    expect(note).not.toHaveTextContent(/API/);
   });
 });
 
