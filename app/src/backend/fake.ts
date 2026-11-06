@@ -1772,7 +1772,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (created) throw new BackendCallError("this roster serve made one already", NewInventoryError.there);
       if (params.how !== "blank" && !params.source) throw new BackendCallError(`params.source: the ${params.how === "file" ? "roster.yml to copy" : "git URL"}`, -32602);
       if (scenario.firstRun === "name-taken" && !params.name) {
-        throw new BackendCallError("params.name: there's already an Inventory named 'infra'", -32602, {
+        throw new BackendCallError("params.name: there's already an Inventory named 'infra'", Code.INVENTORY_TAKEN, {
           field: "name",
           name: "infra",
           fix: "give it another name, or pick another folder (its name names the Inventory); `roster inv remove infra` forgets the other one",
