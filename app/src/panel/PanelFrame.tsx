@@ -9,7 +9,7 @@
 // Going full window keeps the docked width in place underneath, so the terminal doesn't change
 // size either. Nothing animates (the animate skill: a key or a click is its own confirmation).
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
-import { arrange, clamp, limitsPercent, limitsPx, percentOf, type PanelLayout, type PanelPlace, type Room, type Slot } from "./layout";
+import { arrange, clamp, DEFAULT_PANEL_PX, limitsPercent, limitsPx, NARROW_WINDOW_PX, percentOf, type PanelLayout, type PanelPlace, type Room, type Slot } from "./layout";
 import { isTyping } from "../ui/typing";
 
 export interface PanelControls {
@@ -48,10 +48,10 @@ export function roomOf(frame: HTMLElement): Room {
   return { body: width, others, floating };
 }
 
-/** Focus, or a window too narrow for a docked panel (styles.css's 1,040 px). */
+/** Focus, or a window too narrow for a docked panel. */
 function forcedToFloat(frame: HTMLElement): boolean {
   if (frame.closest<HTMLElement>(".screen")?.dataset.view === "focus") return true;
-  return typeof window !== "undefined" && window.matchMedia?.("(max-width: 1040px)").matches === true;
+  return typeof window !== "undefined" && window.matchMedia?.(`(max-width: ${NARROW_WINDOW_PX}px)`).matches === true;
 }
 
 /** Arranges every docked panel together (#176): docked while all fit beside a usable terminal,
@@ -67,7 +67,7 @@ export function arrangeAll(layout: PanelLayout) {
   const held = body ? [...body.querySelectorAll<HTMLElement>(":scope > .panel-frame[data-place='full']")].reduce((n, f) => n + f.offsetWidth, 0) : 0;
   // Its own width: a floating frame is drawn at it whatever its panel is narrowed to; jsdom draws
   // nothing, so the narrowest default stands in.
-  const slots: Slot[] = list.map(({ id, el }) => ({ id, side: el.dataset.side === "left" ? "left" : "right", want: el.offsetWidth || 320 }));
+  const slots: Slot[] = list.map(({ id, el }) => ({ id, side: el.dataset.side === "left" ? "left" : "right", want: el.offsetWidth || DEFAULT_PANEL_PX }));
   layout.setSpots(arrange({ body: width, others: sidebarRoom(body) + held, forced: forcedToFloat(first) }, slots));
 }
 
@@ -76,8 +76,8 @@ export function currentPercent(frame: HTMLElement, layout: PanelLayout, id: stri
   const room = roomOf(frame);
   const chosen = layout.width(id);
   if (chosen !== null) return clamp(chosen, limitsPercent(room).min, limitsPercent(room).max);
-  // Its own default width, as drawn (320 px, the narrowest default, when nothing is drawn).
-  return percentOf(frame.offsetWidth || 320, room.body);
+  // Its own default width, as drawn (the narrowest default when nothing is drawn).
+  return percentOf(frame.offsetWidth || DEFAULT_PANEL_PX, room.body);
 }
 
 /** How far one arrow key moves the edge, in percent of the window. */
@@ -173,7 +173,7 @@ export function PanelFrame({
     const { min, max } = limitsPx(room);
     // The panel as drawn: a float narrowed to share the window is narrower than its frame.
     const drawn = (el.firstElementChild as HTMLElement | null) ?? el;
-    const w = clamp(drawn.getBoundingClientRect().width || el.offsetWidth || 320, min, max);
+    const w = clamp(drawn.getBoundingClientRect().width || el.offsetWidth || DEFAULT_PANEL_PX, min, max);
     drag.current = { x: e.clientX, w, room, min, max };
     layout.use(id);
     setLive(w);
