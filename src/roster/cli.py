@@ -858,13 +858,7 @@ def vault_to_save(cfg, args):
     """--save-to-vault's {provider, save_to}: --provider, else the vault roster.yml's Logins use most
     (providers.main_vault, as the app's "Save to vault"); --save-to as that provider's target, else None (its
     save_to setting). Dies naming the flag when there's none, or for a provider or target it can't be."""
-    from . import health
-    provider = args.provider or providers.main_vault(health.referenced_providers(cfg))
-    if provider is None:
-        needs("--provider", "no Host Login in roster.yml uses a vault roster can save to (bw, kp)")
-    if provider not in PROVIDERS:
-        die(f"no provider '{provider}' on this Box (providers: {', '.join(sorted(PROVIDERS))})", code=NO_PROVIDER,
-            fix="give --provider bw or --provider kp")
+    provider = save_provider(cfg, args.provider)
     try:
         save_to = providers.save_to_text(provider, args.save_to) if args.save_to is not None else None
     except providers.SecretError as e:
@@ -872,11 +866,26 @@ def vault_to_save(cfg, args):
     return {"provider": provider, "save_to": save_to}
 
 
+def save_provider(cfg, given):
+    """The vault to save in: GIVEN, else the one roster.yml's Logins use most (providers.main_vault, as the app's "Save
+    to vault"), else the first of them that can save (1Password, which has no master password here). Dies naming
+    --provider when there's none, or for a provider that isn't on this Box."""
+    from . import health
+    used = health.referenced_providers(cfg)
+    provider = given or providers.main_vault(used) or next((n for n in used if providers.can_write(n)), None)
+    if provider is None:
+        needs("--provider", "no Host Login in roster.yml uses a vault roster can save to (bw, kp, op)")
+    if provider not in PROVIDERS:
+        die(f"no provider '{provider}' on this Box (providers: {', '.join(sorted(PROVIDERS))})", code=NO_PROVIDER,
+            fix="give --provider bw, kp or op")
+    return provider
+
+
 def target_text(setting):
     """A save_to setting as --save-to writes it."""
     if not isinstance(setting, dict):
         return str(setting)
-    return setting["group"] if "group" in setting else f"{setting['organization']}/{setting['collection']}"
+    return setting.get("group") or setting.get("vault") or f"{setting['organization']}/{setting['collection']}"
 
 
 def unlock_note(provider):
@@ -1176,6 +1185,36 @@ def cmd_vault_sync(cfg, args):
     if line := catchup.next_line([], left):
         say(line)
     return 1 if bad else 0
+
+
+def cmd_vault_targets(cfg, args):
+    """`roster vault targets [PROVIDER] [--json]` (T269): where Save to vault can put a new item, each as --save-to
+    takes it (addhost.save_targets: names only), the default marked; 1 when the default names a place that isn't
+    there (said with its fix)."""
+    import shlex
+    provider = save_provider(cfg, args.provider)
+    try:
+        found = addhost.save_targets(provider)
+    except Problem as e:
+        refuse(e)
+    problem = found["problem"]
+    if args.json:
+        from . import jsondocs
+        jsonout.emit(jsondocs.VaultTargetsDoc.model_validate({**found, "problem": problem and {
+            "code": problem.code, "message": problem.message, "fix": problem.fix}}))
+        return 1 if problem else 0
+    say(f"where {provider} can save a new item:  roster add NAME --save-to-vault --save-to TARGET\n")
+    shown = [(shlex.quote(t["save_to"]), t) for t in found["targets"]]
+    wide = max((len(text) for text, _ in shown), default=0)
+    for text, t in shown:
+        mark = f"   (default, from {found['from'] or 'roster'})" if t["default"] else ""
+        say(f"  {text:<{wide}}   {t['label']}{mark}")
+    if problem:
+        say(f"\n{tagged(problem)}")
+        if problem.fix:
+            say(f"  fix: {problem.fix}")
+        return 1
+    return 0
 
 
 # `roster vault unlock` / `vault lock` (decision Q203): an unlock that lasts until it's locked, saved in the session
@@ -1513,7 +1552,7 @@ def _main(argv=None):
     cfg = open_inventory(args.config, args.inv)
 
     if args.cmd == "vault":
-        return {"reveal": cmd_reveal, "sync": cmd_vault_sync}[args.vault_cmd](cfg, args)
+        return {"reveal": cmd_reveal, "sync": cmd_vault_sync, "targets": cmd_vault_targets}[args.vault_cmd](cfg, args)
     if args.cmd == "check" and args.auth:
         return cmd_auth_check(cfg, args)
     if args.cmd == "hosts" and args.name:

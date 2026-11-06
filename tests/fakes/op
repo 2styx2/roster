@@ -6,6 +6,15 @@
 #   items, [{"id", "title", "vault", "username", "urls": [...], "fields": {label: value}}] (default: the two below).
 #   `op item get ID --fields label=X` reads one of their fields (it prints concealed ones only with --reveal).
 #   FAKE_OP_CONCEALED=LABEL,...: those fields are CONCEALED (default: password), their value printed as a worst case.
+# FAKE_OP_STORE=FILE: the items as FAKE_OP_ITEMS has them, kept in FILE, which `op item create` adds to and
+#   `op item delete ID` takes from (each made item: {"id", "title", "vault", "fields": {label: value}, "urls": [href]}).
+# FAKE_OP_VAULTS=JSON: `op vault list --format json`'s vaults, [{"id", "name"}] (default: Private and Infra).
+# `op item create [ - ] [assignment...] [flags]` as op 2 takes it (developer.1password.com, item create): `-` reads
+#   an item JSON template ({title, category, fields: [{id, type, purpose, label, value}], urls: [{href, primary}]})
+#   on stdin, and can't go with --template; --vault (a name or id; default Private); --format json prints the item
+#   made, field values and all, as op does. FAKE_OP_WRITE_FAIL=TEXT: create fails with TEXT on stderr;
+#   FAKE_OP_DELETE_FAIL=TEXT: delete does. FAKE_OP_CREATE_HANG=SECONDS: create saves the item, then answers that late;
+#   FAKE_OP_CREATE_ANSWER=TEXT: it saves the item, then prints TEXT instead of the item (an answer that doesn't read).
 # FAKE_OP_RAW=JSON: {"item get": TEXT, "item list": TEXT}: that command prints TEXT instead (malformed output).
 # FAKE_ARGV_LOG=FILE: every call's full argv, one JSON list per line.
 # FAKE_OP_ENV_LOG=FILE: every call's environment variable names (never their values), one JSON list per line.
@@ -30,7 +39,35 @@ if a[0] == "read":
     v = items.get((vault, item), {}).get(field)
     if v is None: print(f'[ERROR] could not read secret {a[1]}', file=sys.stderr); sys.exit(1)
     print(v); sys.exit()
-listed = json.loads(os.environ.get("FAKE_OP_ITEMS") or "[]")
+store = os.environ.get("FAKE_OP_STORE")
+listed = json.loads(open(store).read() if store else os.environ.get("FAKE_OP_ITEMS") or "[]")
+vaults = json.loads(os.environ.get("FAKE_OP_VAULTS") or '[{"id": "v-private", "name": "Private"}, {"id": "v-infra", "name": "Infra"}]')
+def flag(name):
+    return a[a.index(name) + 1] if name in a else None
+if a[:2] == ["vault", "list"]:
+    print(json.dumps([{"id": v["id"], "name": v["name"], "content_version": 1} for v in vaults])); sys.exit()
+if a[:2] == ["item", "create"]:
+    if "-" in a and "--template" in a: print("[ERROR] can't use both piped input and --template", file=sys.stderr); sys.exit(1)
+    if os.environ.get("FAKE_OP_WRITE_FAIL"): print(os.environ["FAKE_OP_WRITE_FAIL"], file=sys.stderr); sys.exit(1)
+    t = json.loads(sys.stdin.read()) if "-" in a else {}
+    want = flag("--vault") or "Private"
+    v = next((v for v in vaults if want in (v["id"], v["name"])), None)
+    if v is None: print(f'[ERROR] "{want}" isn\'t a vault in this account. Specify the vault with its ID or name.', file=sys.stderr); sys.exit(1)
+    fields = {f["label"]: f.get("value", "") for f in t.get("fields", []) if f.get("value")}
+    for x in a[2:]:                                  # assignment statements: label=value (op's argv form)
+        if "=" in x and not x.startswith("-"): k, _, val = x.partition("="); fields[k.split("[")[0]] = val
+    new = {"id": "it-%04d" % (len(listed) + 1), "title": flag("--title") or t.get("title", ""), "vault": v["name"],
+           "fields": fields, "urls": [u["href"] for u in t.get("urls", [])] + ([flag("--url")] if flag("--url") else [])}
+    listed.append(new); open(store, "w").write(json.dumps(listed))
+    if os.environ.get("FAKE_OP_CREATE_HANG"): import time; time.sleep(float(os.environ["FAKE_OP_CREATE_HANG"]))
+    if "FAKE_OP_CREATE_ANSWER" in os.environ: print(os.environ["FAKE_OP_CREATE_ANSWER"]); sys.exit()
+    print(json.dumps({"id": new["id"], "title": new["title"], "version": 1, "vault": {"id": v["id"], "name": v["name"]},
+                      "category": "LOGIN", "fields": [{"id": k, "label": k, "value": val} for k, val in fields.items()],
+                      "urls": [{"primary": True, "href": h} for h in new["urls"]]})); sys.exit()
+if a[:2] == ["item", "delete"]:
+    if os.environ.get("FAKE_OP_DELETE_FAIL"): print(os.environ["FAKE_OP_DELETE_FAIL"], file=sys.stderr); sys.exit(1)
+    if not any(i["id"] == a[2] for i in listed): print(f'[ERROR] "{a[2]}" isn\'t an item.', file=sys.stderr); sys.exit(1)
+    open(store, "w").write(json.dumps([i for i in listed if i["id"] != a[2]])); sys.exit()
 if a[:2] == ["item", "list"]:
     cats = a[a.index("--categories") + 1].lower().split(",") if "--categories" in a else None
     vault = a[a.index("--vault") + 1] if "--vault" in a else None

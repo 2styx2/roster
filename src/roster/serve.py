@@ -2295,13 +2295,14 @@ def vault_undo_create(state, params):
 @method("vault.targets", locks=SHARES_VAULT)
 def vault_targets(state, params):
     """Where "Save to vault" can put an item (ticket 35): the personal vault and every collection of the organizations
-    you're in (Bitwarden), or the top level and every group (KeePassXC), and the default. A default that doesn't
+    you're in (Bitwarden), the top level and every group (KeePassXC), or op's default (Private) and every vault (1Password, T269; only
+    `providers: op: vault:` when it's set), and the default. A default that doesn't
     resolve doesn't fail the list: `default` is null and `problem` says why (code 64 or 65, its message names the
     setting). Needs the vault unlocked (14).
 
     Params: `{provider?}`
     Result: `{provider, targets: [{id, kind, label, organization?, collection?, save_to}], default, from,
-        problem}`
+        problem}`: `kind` is `personal`, `collection`, `group` or `vault` (1Password: `save_to` `{vault: ID}`)
     Errors: 14
     Since: API 10
     """

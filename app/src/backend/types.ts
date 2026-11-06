@@ -428,13 +428,18 @@ export interface VaultConfigured {
 }
 
 /** Where "Save to vault" puts a new Vault item (ticket 35): the personal vault (KeePassXC: the
- * top level), an organization's collection (Bitwarden; names or ids), or a group (KeePassXC). */
-export type SaveTo = "personal" | { organization: string; collection: string } | { group: string };
+ * top level; 1Password: op's default), an organization's collection (Bitwarden; names or ids), a
+ * group (KeePassXC), or a vault (1Password; name or id, T269). */
+export type SaveTo =
+  | "personal"
+  | { organization: string; collection: string }
+  | { group: string }
+  | { vault: string };
 
 /** One place `vault.targets` offers. `save_to` (ids, not names) is what to send back. */
 export interface SaveTarget {
   id: string;
-  kind: "personal" | "collection" | "group";
+  kind: "personal" | "collection" | "group" | "vault";
   /** "Personal vault", "My Team / Infra logins", "Top level", "Hosts". */
   label: string;
   organization?: string;

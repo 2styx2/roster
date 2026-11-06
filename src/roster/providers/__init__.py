@@ -525,7 +525,8 @@ def configure_box(settings):
 # ---- where a Vault item goes: `save_to`, the same shape in roster.yml, init.lua and a save's choice
 
 PERSONAL = "personal"
-SAVE_TO_SHAPES = '"personal", {organization, collection} (Bitwarden, by name or id) or {group} (KeePassXC)'
+SAVE_TO_SHAPES = ('"personal", {organization, collection} (Bitwarden, by name or id), {group} (KeePassXC) or {vault} '
+                  '(1Password, by name or id)')
 
 
 def save_to_fits(value):
@@ -546,17 +547,18 @@ def check_save_to(value):
 def save_to_text(provider, text):
     """A save_to as the command line writes it (`roster add --save-to`) for PROVIDER: `personal`, else the shape its
     save_to keys take: Bitwarden's `ORGANIZATION/COLLECTION` (split at the first `/`: a collection may nest, an
-    organization's name or id has none), KeePassXC's `GROUP`. UnknownTarget when it can't be one of PROVIDER's."""
+    organization's name or id has none), KeePassXC's `GROUP`, 1Password's `VAULT`. UnknownTarget when it can't be one
+    of PROVIDER's."""
     text = str(text).strip()
     if text == PERSONAL:
         return PERSONAL
     keys = PROVIDERS.get(provider, {}).get("save_to") or frozenset()
-    if keys == {"group"} and text:
-        return check_save_to({"group": text})
+    if len(keys) == 1 and text and keys != {"organization", "collection"}:       # kp's group, op's vault
+        return check_save_to({next(iter(keys)): text})
     org, _, collection = text.partition("/")
     if keys == {"organization", "collection"} and org.strip() and collection.strip():
         return check_save_to({"organization": org, "collection": collection})
-    shapes = {frozenset({"group"}): "personal or GROUP",
+    shapes = {frozenset({"group"}): "personal or GROUP", frozenset({"vault"}): "personal or VAULT",
               frozenset({"organization", "collection"}): "personal or ORGANIZATION/COLLECTION"}
     raise UnknownTarget(f"--save-to {text!r} isn't a place {provider} saves to: give "
                         f"{shapes.get(frozenset(keys), 'personal')}")
@@ -615,6 +617,16 @@ def resolve_target(ctx, setting, source):
 def shown(target):
     """A target as a save's result names it: no save_to, which the app only needs in a list."""
     return {k: v for k, v in target.items() if k != "save_to"}
+
+
+def target_text(target):
+    """A target (a "targets" row) as `roster add --save-to` takes it, by names (save_to_text reads it back):
+    `personal`, Bitwarden's `ORGANIZATION/COLLECTION`, KeePassXC's `GROUP`, 1Password's `VAULT`."""
+    if target["kind"] == "personal":
+        return PERSONAL
+    if target["kind"] == "collection":
+        return f"{target['organization']}/{target['collection']}"
+    return target["label"]
 
 
 def save_targets(name):

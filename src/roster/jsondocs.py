@@ -244,6 +244,30 @@ class ProvidersDoc(Part, frozen=True):
     last_sync: dict[str, str | None] = {}
 
 
+class SaveTarget(Part, frozen=True):
+    save_to: str                                # as `roster add --save-to` takes it: names, never an id
+    label: str
+    kind: str
+    default: bool
+
+
+class TargetProblem(Part, frozen=True):
+    code: int
+    message: str = Field(repr=False)
+    fix: str | None = None
+
+
+class VaultTargetsDoc(Part, frozen=True):
+    """`roster vault targets --json` (T269): where Save to vault can put a new item in PROVIDER, as --save-to takes
+    each one, and the default (null with `problem` when the setting names a place that isn't there)."""
+
+    provider: str
+    targets: list[SaveTarget]
+    default: str | None
+    from_: str | None = Field(alias="from")
+    problem: TargetProblem | None
+
+
 class UsedFor(Part, frozen=True):
     service: str
     hosts: list[str]

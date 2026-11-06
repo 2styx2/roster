@@ -13,7 +13,9 @@ host.add) and `roster add`, so a fix in one is a fix in both.
   item (Q43's "Save to vault"): the user in its username field, `ssh://ADDRESS[:PORT]` in its URI field, in SAVE_TO
   (providers.create_item). serve's quick.save, host.save_login and host.add, and `roster add --save-to-vault`.
 - `add_saving(...)`: `roster add --save-to-vault` (T265, Q217): every check, then the password asked, the item made,
-  then the Host written with `auth:` pointing at it; the item named if the write fails."""
+  then the Host written with `auth:` pointing at it; the item taken back out if the write fails (`take_back`, T269),
+  named if that fails too.
+- `save_targets(provider)`: `roster vault targets` (T269), where a save can go, as --save-to takes it."""
 
 import difflib
 import re
@@ -31,6 +33,7 @@ from .errors import (
     ITEM_NOT_FOUND,
     LOOKUP_FAILED,
     NO_PROVIDER,
+    ROSTER_ERROR,
     SEVERAL_ITEMS,
     Problem,
     vault_problem,
@@ -113,6 +116,22 @@ def save_item(provider, item, password, user, address, port, save_to=None):
     return {"provider": provider, **made}
 
 
+def save_targets(provider):
+    """`roster vault targets` (T269): where PROVIDER can save a new item, as --save-to takes each one (names only:
+    providers.target_text), and its default. {provider, targets: [{save_to, label, kind, default}], default (the
+    default's --save-to, or None when the setting doesn't resolve), from (init.lua, roster.yml or None), problem
+    (that Problem, 64 or 65, or None)}. Raises the vault's Problem: 61 PROVIDER can't save, 14 locked, ..."""
+    try:
+        found = providers.save_targets(provider)
+    except providers.SecretError as e:
+        raise vault_problem(e) from None
+    rows = [{"save_to": providers.target_text(t), "label": t["label"], "kind": t["kind"],
+             "default": t["id"] == found["default"]} for t in found["targets"]]
+    return {"provider": provider, "targets": rows,
+            "default": next((r["save_to"] for r in rows if r["default"]), None), "from": found["from"],
+            "problem": found["problem"] and vault_problem(found["problem"])}
+
+
 def add_saving(path, group, name, fields, provider, password, save_to=None, dry_run=False, on_write=None,
                before_vault=None, hidden=False):
     """`roster add NAME --save-to-vault` (T265, Q217): Host NAME (FIELDS as add()'s, checked, without auth) added to
@@ -122,7 +141,8 @@ def add_saving(path, group, name, fields, provider, password, save_to=None, dry_
     it raises to stop); the
     item (save_item: 60 when the name is taken, the vault's other refusals); the Host, written as add() writes it
     (ON_WRITE as add()'s, its result's `item` set); then PROVIDER's sync (`bw sync`), so other Boxes see the item at
-    their next sync. HIDDEN: as add()'s (#529). A write that fails once the item is made is 225, naming the item to delete by hand: no Host
+    their next sync. HIDDEN: as add()'s (#529). A write that fails once the item is made takes the item back out
+    (take_back: the write's own error, saying so), or is 225 naming the item to delete by hand when it can't: no Host
     points at it. Returns add()'s result with `item` (save_item's) and `vault_sync` ({ok, error?}). DRY_RUN: nothing asked or saved, and `item` is
     the one it would make ({provider, name, uri, username, target}: the SAVE_TO given, or the setting, as set)."""
     if not providers.can_write(provider):
@@ -167,17 +187,35 @@ def add_saving(path, group, name, fields, provider, password, save_to=None, dry_
     except BaseException as e:
         if written:                             # the Host is in: what failed after that leaves no stray item
             raise
-        why = e.message if isinstance(e, Problem) else failure_text(e)
-        raise Problem(ITEM_LEFT, f"{name} wasn't added ({why}), but its vault item '{item}' was already saved in "
-                                 f"{provider} ({made['target'].get('label', 'the vault')}): no Host uses it",
-                      {"left": made}, fix=f"delete '{item}' in the vault and run roster add again, or keep it and add "
-                                          f"{name} with --auth {provider}:{item}") from None
+        raise take_back(provider, name, made, e) from None
     try:
         synced = providers.sync_vault(provider)
         done["vault_sync"] = {"ok": True, "synced": synced is not None}
     except providers.SecretError as e:          # saved and written: other Boxes only see the item at a later sync
         done["vault_sync"] = {"ok": False, "error": str(e)}
     return {**done, "item": made}
+
+
+def take_back(provider, name, made, e):
+    """Writing Host NAME failed (E) once its vault item MADE was saved and before any Host pointed at it: delete that
+    item again, by the id this run's create answered (Q43, as serve does; T269), and say so in E's words and code
+    (a Problem's, else 3). If it can't be deleted, 225 names it, for the user to delete by hand."""
+    why = e.message if isinstance(e, Problem) else failure_text(e)
+    item = made["name"]
+    try:
+        providers.delete_item(provider, made["id"])
+    except Exception as undo:
+        left = str(undo) if isinstance(undo, providers.SecretError) else type(undo).__name__
+        return Problem(ITEM_LEFT, f"{name} wasn't added ({why}), but its vault item '{item}' was already saved in "
+                                  f"{provider} ({made['target'].get('label', 'the vault')}) and roster couldn't take "
+                                  f"it back out ({left}): no Host uses it", {"left": made},
+                       fix=f"delete '{item}' in the vault and run roster add again, or keep it and add {name} with "
+                           f"--auth {provider}:{item}")
+    if isinstance(e, Problem):
+        return Problem(e.code, f"{e.message}; its vault item '{item}' was taken back out", {**(e.data or {}),
+                       "undone": made}, fix=e.fix, details=e.details)
+    return Problem(ROSTER_ERROR, f"{name} wasn't added ({why}); its vault item '{item}' was taken back out",
+                   {"undone": made}, fix="fix what stopped the write, then run roster add again")
 
 
 # ---------------------------------------------------------------- what a vault item says about its Host

@@ -18,6 +18,7 @@ roster inv [\-\-json] {list,add,use,remove,which} [NAME] [PATH]
 roster vault ACTION ...
 roster vault status [\-\-json]
 roster vault sync
+roster vault targets [\-\-json] [PROVIDER]
 roster vault unlock [PROVIDER]
 roster vault lock [PROVIDER]
 roster vault reveal [\-\-wifi] name
@@ -206,7 +207,7 @@ save its password as a new vault item `NAME ssh` (its address in the URI, \-\-us
 with \-\-save\-to\-vault: where the item goes for this run: personal, ORGANIZATION/COLLECTION (bw) or GROUP (kp) (default: save_to: in roster.yml or init.lua)
 .TP
 \fB\-\-provider PROVIDER\fR
-with \-\-save\-to\-vault: the vault to save in, bw or kp (default: the vault roster.yml's Logins use most)
+with \-\-save\-to\-vault: the vault to save in, bw, kp or op (default: the vault roster.yml's Logins use most)
 .TP
 \fB\-\-json\fR
 with \-\-from\-vault and no NAME: print the list as JSON, add nothing
@@ -364,6 +365,17 @@ print JSON for scripts and tools, never a secret (see Machine\-readable output i
 \fBroster vault sync\fR
 .PP
 Sync every vault \fBroster.yml\fR\&'s Logins use that keeps a local copy (Bitwarden: \fBbw sync\fR; 1Password and the others ask their server or file each time, so it says they need none), then say what changed since the last sync: the items added and changed by name, the removed ones by count. Never a password: see The vault isn't watched. Nothing changed: \fBup to date\fR\&. An item added that no Login in \fBroster.yml\fR names ends it with \fBnext: roster add \-\-from\-vault\fR, at every sync until \fBroster.yml\fR names it or \fBroster add \-\-from\-vault\fR has listed it. Exits 1 if a sync failed, saying when roster last synced it
+.SS vault targets
+.PP
+\fBroster vault targets [\-\-json] [PROVIDER]\fR
+.PP
+Where \fBroster add \-\-save\-to\-vault\fR (and the app's \fBSave to vault\fR) can put a new item in PROVIDER (default: \fB\-\-save\-to\-vault\fR\&'s), each as \fB\-\-save\-to\fR takes it, by name: \fBpersonal\fR, Bitwarden's \fBORGANIZATION/COLLECTION\fR, KeePassXC's \fBGROUP\fR, 1Password's \fBVAULT\fR; the default is marked with where it's set. Unlocks a locked vault in a terminal. A default that names a place that isn't there is said with its fix (\fB64\fR, exit 1). \fB61\fR for a provider that can't save. See roster vault targets
+.TP
+\fBPROVIDER\fR
+the vault: bw, kp or op (default: the vault roster.yml's Logins use most, as \-\-save\-to\-vault's)
+.TP
+\fB\-\-json\fR
+print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
 .SS vault unlock
 .PP
 \fBroster vault unlock [PROVIDER]\fR
@@ -448,7 +460,7 @@ Internal, run by ssh: the \fBSSH_ASKPASS\fR helper for a \fBserve\fR password Se
 the prompt ssh shows
 .SH JSON OUTPUT
 .PP
-The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBhosts\fR (with \fB\-\-only\fR, \fB\-\-find\fR, \fB\-\-all\fR), \fBadd \-\-from\-vault\fR (no NAME: the list), \fBhosts NAME\fR, \fBhosts \-\-resources\fR, \fBcheck\fR, \fBcheck HOST\fR, \fBcheck \-\-box\fR, \fBcheck \-\-auth\fR, \fBdiscover\fR (its preview, without \fB\-\-write\fR), \fBmesh status\fR, \fBmesh \-\-dry\-run\fR (the plan) and \fBvault status\fR\&. The CLI is roster's interface for other apps; \fBroster serve\fR is the desktop app's own backend, not a public API. With \fB\-\-json\fR, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
+The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBhosts\fR (with \fB\-\-only\fR, \fB\-\-find\fR, \fB\-\-all\fR), \fBadd \-\-from\-vault\fR (no NAME: the list), \fBhosts NAME\fR, \fBhosts \-\-resources\fR, \fBcheck\fR, \fBcheck HOST\fR, \fBcheck \-\-box\fR, \fBcheck \-\-auth\fR, \fBdiscover\fR (its preview, without \fB\-\-write\fR), \fBmesh status\fR, \fBmesh \-\-dry\-run\fR (the plan), \fBvault status\fR and \fBvault targets\fR\&. The CLI is roster's interface for other apps; \fBroster serve\fR is the desktop app's own backend, not a public API. With \fB\-\-json\fR, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
 .IP \(bu 2
 \fBNever a secret.\fR Logins are references: the provider and the item (\fBbw:esx\-02 ssh\fR, \fBop:Lab/esx\-02\fR, \fBprompt\fR, \fBagent\fR). A \fBcmd:\fR or \fBenv:\fR reference says how a secret is fetched, and a password pasted into a \fBcmd:\fR line would show, so each one is cut to its kind (\fBcmd:\fR, \fBenv:\fR) everywhere in the output, error messages and check messages included, the way Plugins get them: a \fBcmd:\fR one to the end of its line, an \fBenv:\fR one its variable's name, wherever one starts a text or follows a space, a quote or one of \fB=:,({[\fR\&. An error message keeps a trailing \fB(code N)\fR\&. The cases both implementations are tested against are in \fBtests/vectors/redaction.json\fR\&. \fBcheck \-\-auth \-\-json\fR fetches every secret it tests and says only whether it was found. \fBvault reveal\fR has no \fB\-\-json\fR: it's for a person.
 .IP \(bu 2
@@ -498,6 +510,9 @@ The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBh
 .TP
 \fBvault status \-\-json\fR
 \fB{version, providers: [{name, kind, help, tool, installed, used_by}], unknown, ok, vault: [{section, level, message, fix?, topic?, saved_session?}], last_sync: {provider: time}}\fR: \fBvault\fR is the Vault section of \fBcheck \-\-box \-\-json\fR, \fBlast_sync\fR when \fBroster vault sync\fR last synced each provider that syncs (\fBnull\fR: never); \fBtool\fR is the CLI it runs (\fBnull\fR for none, and \fBinstalled\fR \fBnull\fR with it), \fBused_by\fR the groups whose Logins use it, \fBunknown\fR the providers \fBroster.yml\fR names that aren't set up. Exit 1 if there's one
+.TP
+\fBvault targets \-\-json\fR
+\fB{version, provider, targets: [{save_to, label, kind, default}], default, from, problem}\fR: each place as \fB\-\-save\-to\fR takes it (names, never an id), its label and kind (\fBpersonal\fR, \fBcollection\fR, \fBgroup\fR, \fBvault\fR), and whether it's the default; \fBdefault\fR is the default's \fBsave_to\fR (\fBnull\fR when the setting names a place that isn't there, \fBproblem\fR then \fB{code, message, fix}\fR, code \fB64\fR or \fB65\fR, exit 1), \fBfrom\fR where it's set (\fBinit.lua\fR, \fBroster.yml\fR or \fBnull\fR). Errors: \fB14\fR locked, \fB61\fR a provider that can't save
 .TP
 \fBcheck \-\-auth \-\-json\fR
 \fB{version, logins: [{group, auth, users, used_for: [{service, hosts}], status, error?}], ok}\fR: one row per Login reference and group; \fBstatus\fR is \fBok\fR (a value was found; it isn't tested against a Host), \fBfail\fR (with \fBerror\fR) or \fBask\fR (\fBprompt\fR). Exit 1 if one failed

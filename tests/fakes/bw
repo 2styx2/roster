@@ -14,6 +14,7 @@
 # FAKE_BW_ITEMS=FILE: a JSON list of items to use instead of the ones below (read on every call). `bw create item`
 #   (base64 JSON on stdin or as an argument, like bw) and `bw delete item ID` write it back.
 # FAKE_BW_WRITE_FAIL=TEXT: create and delete fail with TEXT on stderr (e.g. a server or policy refusal).
+# FAKE_BW_DELETE_FAIL=TEXT: only delete fails, with TEXT on stderr (a take-back that can't happen).
 # Signing in (`bw login`, vault.login) - prompts like bw's inquirer ones, on stderr, answers read from stdin:
 # FAKE_BW_STATE=FILE: {"logged_in": bool, "server": url|null, "email": ...}, kept across calls (overrides
 #   FAKE_BW_LOGGED_OUT once it exists). `bw logout` logs out (keeping the server), as bw does.
@@ -276,6 +277,7 @@ if a[:2] == ["create", "item"]:
     print(raw.get("create item", json.dumps(item))); sys.exit()      # like bw: the new item, password and all
 if a[:2] == ["delete", "item"]:
     if os.environ.get("FAKE_BW_WRITE_FAIL"): fail(os.environ["FAKE_BW_WRITE_FAIL"])
+    if os.environ.get("FAKE_BW_DELETE_FAIL"): fail(os.environ["FAKE_BW_DELETE_FAIL"])
     if not any(i["id"] == a[2] for i in items): fail("Not found.")
     json.dump([i for i in items if i["id"] != a[2]], open(os.environ["FAKE_BW_ITEMS"], "w")); sys.exit()
 if a[:2] == ["list", "items"]:

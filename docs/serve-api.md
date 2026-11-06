@@ -678,7 +678,7 @@ The Bitwarden CLI holds one account at a time, so signing in to another one mean
 |---|---|---|---|---|
 | `vault.create_item` | `{name, password, username?, uri?, provider?, save_to?}` | `{provider, id, name, target}` | `14`, `60`-`62`, `64`, `65` | 4 |
 | `vault.undo_create` | `{id}` (from `vault.create_item`) | `{provider, id}` | `14`, `62`, `63` | 4 |
-| `vault.targets` | `{provider?}` | `{provider, targets: [{id, kind, label, organization?, collection?, save_to}], default, from, problem}` | `14` | 10 |
+| `vault.targets` | `{provider?}` | `{provider, targets: [{id, kind, label, organization?, collection?, save_to}], default, from, problem}`: `kind` is `personal`, `collection`, `group` or `vault` (1Password: `save_to` `{vault: ID}`) | `14` | 10 |
 | `vault.item_fields` | `{item, provider?}`: `item` the item's name or id (as after `bw:` or `op:` in auth), `provider` the vault (default: the Inventory's, as vault.status's) | `{provider, item, address?, port?, user?, note?}`: `note` says why the item's URI gave no address (another scheme than ssh, sftp, http or https, or a host that isn't an address) | `13`, `14`, `11`, `12`, `31`, `32`, `33`, `35`, `186` | 29 |
 
 <!-- END generated:methods -->
@@ -697,7 +697,7 @@ The Bitwarden CLI holds one account at a time, so signing in to another one mean
 | Code | Meaning |
 |---|---|
 | `60` | An item named exactly that already exists. `data.matches`: `[{name, revised, uris}]`, as for 33 |
-| `61` | The provider can only read Logins: "provider 'op' can't save to the vault - ..." |
+| `61` | The provider can only read Logins: "provider 'env' can't save to the vault - ..." |
 | `62` | The vault CLI refused the create or delete (no rights to the collection, an organization policy, the server). The message has bw's words with any value cut out |
 | `63` | `vault.undo_create`: this `serve` didn't create that item, or it's already undone |
 | `64` | `save_to` names an organization, collection or group that isn't there (or a shape the provider doesn't have); the message names the setting to fix |

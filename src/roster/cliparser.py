@@ -217,7 +217,7 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
                    "asked twice on the terminal, hidden, never taken from an argument or the environment")
     s.add_argument("--save-to", metavar="TARGET", help="with --save-to-vault: where the item goes for this run: "
                    "personal, ORGANIZATION/COLLECTION (bw) or GROUP (kp) (default: save_to: in roster.yml or init.lua)")
-    s.add_argument("--provider", metavar="PROVIDER", help="with --save-to-vault: the vault to save in, bw or kp "
+    s.add_argument("--provider", metavar="PROVIDER", help="with --save-to-vault: the vault to save in, bw, kp or op "
                    "(default: the vault roster.yml's Logins use most)")
     s.add_argument("--json", action="store_true", help="with --from-vault and no NAME: print the list as JSON, add "
                    "nothing")
@@ -298,6 +298,12 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
     s.add_argument("--json", **as_json)
     vault.add_parser("sync", help="sync every vault that keeps a local copy (Bitwarden: bw sync), then say which "
                      "items were added, changed or removed since the last sync: names and counts, never a secret")
+    s = vault.add_parser("targets", help="where roster add --save-to-vault (and the app's Save to vault) can put a "
+                         "new item, as --save-to takes it: personal, Bitwarden's ORGANIZATION/COLLECTION, KeePassXC's "
+                         "GROUP, 1Password's VAULT; names only, the default marked")
+    s.add_argument("provider", nargs="?", metavar="PROVIDER", help="the vault: bw, kp or op (default: the vault "
+                   "roster.yml's Logins use most, as --save-to-vault's)")
+    s.add_argument("--json", **as_json)
     s = vault.add_parser("unlock", help="unlock Bitwarden and keep it unlocked for every roster run on this Box "
                          "(the session is saved in the bw-session file) until roster vault lock, bw lock or the "
                          "roster app's lock; Bitwarden only for now")
