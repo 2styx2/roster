@@ -515,7 +515,9 @@ def test_sync_in_a_terminal_says_what_an_unlock_costs_before_it_asks_once_and_of
     term = Terminal(monkeypatch, "\n")
     rc, out, err = run(capsys, "sync")
     assert rc == 0 and term.passwords == 1
-    assert UNLOCK_NOTE in err and OFFER in term.shown
+    assert UNLOCK_NOTE in term.shown and UNLOCK_NOTE not in err      # on the terminal: `sync 2>file` can't hide it
+    assert "this terminal has no Bitwarden session" in term.shown
+    assert term.shown.index(UNLOCK_NOTE) < term.shown.index(OFFER)
     assert no_secret(out, err)
 
 
@@ -523,7 +525,7 @@ def test_sync_in_a_terminal_with_a_working_session_never_asks(capsys, box, monke
     from test_vault_unlock import Terminal
     term = Terminal(monkeypatch, "\n")                     # BW_SESSION works (the box fixture's)
     rc, out, err = run(capsys, "sync")
-    assert rc == 0 and term.passwords == 0 and UNLOCK_NOTE not in err
+    assert rc == 0 and term.passwords == 0 and UNLOCK_NOTE not in err + term.shown
 
 
 def test_sync_skips_the_vault_cleanly_on_ctrl_d_at_the_prompt(capsys, box, monkeypatch):
@@ -538,7 +540,7 @@ def test_sync_skips_the_vault_cleanly_on_ctrl_d_at_the_prompt(capsys, box, monke
     monkeypatch.setattr(getpass, "getpass", eof)
     rc, out, _ = run(capsys, "sync")
     assert rc == 0
-    assert "vault: bw not synced (no master password given; run in a terminal: roster vault unlock)" in out
+    assert "vault: bw not synced (no master password given; roster vault unlock)" in out
     from roster.common import ssh_config_file
     assert "Host new-01" in ssh_config_file().read_text()
 
@@ -756,3 +758,26 @@ def test_sync_with_bw_not_logged_in_names_the_login_command(capsys, box, monkeyp
     monkeypatch.setenv("FAKE_BW_LOGGED_OUT", "1")
     rc, out, _ = run(capsys, "sync")
     assert rc == 0 and "vault: bw not synced (not logged in: roster vault bw --write -- login)" in out
+
+
+def test_a_new_vault_item_stays_named_until_the_map_names_it(capsys, box, write_config):
+    """#503's review LOW-4: not only by the sync that first saw it."""
+    run(capsys, "vault", "sync")
+    items = json.loads(box["items"].read_text()) + [
+        {"id": "cccc-3", "name": "nas-01 ssh", "type": 1, "revisionDate": "2026-11-05T09:00:00.000Z",
+         "login": {"username": "admin", "password": "pw-other-SECRET", "uris": [{"uri": "10.0.0.50"}]}}]
+    box["items"].write_text(json.dumps(items))
+    run(capsys, "vault", "sync")
+    rc, out, _ = run(capsys, "vault", "sync")                 # nothing changed since: still named
+    assert "up to date" in out and "next: roster add --from-vault (1 new vault item not in roster.yml)" in out
+    rc, out, _ = run(capsys, "sync", "--no-vault")
+    write_config(MAP + '      nas-01: {ip: 10.0.0.50, user: admin, auth: "bw:nas-01 ssh"}\n')
+    rc, out, _ = run(capsys, "vault", "sync")
+    assert "roster add --from-vault" not in out
+
+
+def test_a_sync_costs_one_bw_status(capsys, box, tmp_path, monkeypatch):
+    """#503's review NIT: the vault step's `bw status` is shared between the unlock check and the sync's last-sync."""
+    monkeypatch.setenv("FAKE_ARGV_LOG", str(tmp_path / "argv.log"))
+    run(capsys, "sync")
+    assert sum(c[:1] == ["status"] for c in bw_calls(tmp_path)) == 1

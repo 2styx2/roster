@@ -655,7 +655,9 @@ def vault_not_synced(p, e):
         if isinstance(e, NotLoggedIn):
             return f"not synced (not logged in: roster vault {p} --write -- login)" if p in ("bw", "op") else \
                 f"not synced ({e})"
-        return f"not synced ({e if isinstance(e, NotAsked) else 'locked'}; {providers.unlock_fix(p)})"
+        if isinstance(e, NotAsked):         # Ctrl-D at the prompt: in a terminal already, so just the command
+            return f"not synced ({e}; {providers.unlock_fix(p).removeprefix('run in a terminal: ')})"
+        return f"not synced (locked; {providers.unlock_fix(p)})"
     when = vaultsync.last_synced(p)
     return f"not synced ({e})" + (f"; using it as last synced {vaultsync.ago(when)}" if when else "")
 
@@ -671,8 +673,9 @@ def sync_vaults(cfg):
     out = []
     for p in sorted(p for p in refs if p in PROVIDERS and p not in ("env", "cmd", "prompt")):
         if interactive and p == "bw" and bw_would_ask():    # #503's review MED-1: say what an unlock here costs
-            print(f"note: the vault is locked, so roster asks for its master password once to sync it (Ctrl-D "
-                  f"skips the vault). As with roster vault unlock, {UNLOCK_COST}", file=sys.stderr, flush=True)
+            providers.tell(f"note: this terminal has no Bitwarden session (no working saved session or BW_SESSION), "
+                           "so roster asks for the master password once to sync the vault (Ctrl-D skips it). As with "
+                           f"roster vault unlock, {UNLOCK_COST}")
         try:
             seen = fromvault.load_seen(cfg["path"])["items"].get(p) or {}
             out.append((p, vaultsync.sync(p, interactive=interactive, mapped=fromvault.named(p, refs[p]), seen=seen),
@@ -1808,6 +1811,7 @@ def cmd_vault_sync(cfg, args):
             if isinstance(e, providers.VaultLocked):
                 say(f"        fix: {providers.unlock_fix(p)}")
             continue
+        unmapped += (r or {}).get("unmapped") or []        # named at each sync until mapped (#503's review LOW-4)
         if r is None:
             say(f"  ok    {p}: keeps no local copy (it asks its own server or file each time), nothing to sync")
         elif r["count"] is None:
@@ -1817,7 +1821,6 @@ def cmd_vault_sync(cfg, args):
         elif not (r["added"] or r["changed"] or r["removed"]):
             say(f"  ok    {p}: up to date (no change since the last sync)")
         else:
-            unmapped += r["unmapped"]
             parts = [f"{len(r[k])} {k}: {', '.join(r[k])}" for k in ("added", "changed") if r[k]]
             parts += [f"{r['removed']} removed"] if r["removed"] else []
             say(f"  ok    {p}: synced; since the last sync, {'; '.join(parts)}")

@@ -514,7 +514,9 @@ def _bw_ready(ctx):
     if ctx.state.get("ready"):
         return
     from_file = False if manual_unlock() else load_session_file()
-    status = _bw_status(ctx)
+    st = _bw_status_json(ctx)
+    ctx.state["last_sync"] = st.get("lastSync") or None   # for _bw_sync: one `bw status` fewer (#503's review NIT)
+    status = st.get("status")
     if status == "unauthenticated":
         if not (os.environ.get("BW_CLIENTID") and os.environ.get("BW_CLIENTSECRET")):
             raise NotLoggedIn(f"{NOT_LOGGED_IN} "
@@ -1040,8 +1042,10 @@ def _bw_items(ctx, mapped):
 
 def _bw_sync(ctx):
     """`bw sync`, after the time of the one before it (`bw status`'s lastSync). Its output is never read."""
+    fresh = not ctx.state.get("ready")      # _bw_ready's own `bw status` is this moment's: no second one
     _bw_ready(ctx)
-    previous = _bw_status_json(ctx).get("lastSync") or None
+    cached = ctx.state.pop("last_sync", None)
+    previous = cached if fresh else _bw_status_json(ctx).get("lastSync") or None
     r = _bw(ctx, "sync", discard=True)
     if r.returncode != 0:
         raise SecretError(f"`bw sync` failed: {errtext(r, stdout=False) or f'exit {r.returncode}'}")
