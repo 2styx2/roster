@@ -66,9 +66,24 @@ describe("The Sidebar as a tree (M4)", () => {
     await user.tab();
     expect(tree()).toHaveFocus();
     expect(screen.getByText("APP")).toBeInTheDocument();
-    expect(active()).toHaveAccessibleName("Sessions");
+    // Its first stop is the first Host, not a section heading (round 18).
+    expect(active()).toHaveAccessibleName(/^linux-1-000/);
     await user.keyboard("{ArrowDown}");
-    expect(active()).toHaveAccessibleName("Folders");
+    expect(active()).toHaveAccessibleName(/^router-1-004/);
+  });
+
+  it("starts App mode on the Session on screen, else on the first Host (round 18)", async () => {
+    const user = await ready();
+    await user.keyboard(LEADER);
+    // No Session open: the first Host, never a heading (it was the Sessions heading, then FOLDERS).
+    expect(active()).toHaveAccessibleName(/^linux-1-000/);
+    await user.keyboard("{Escape}");
+    await user.keyboard(`${LEADER}:open esxi-2-001{Enter}`);
+    await within(output()).findByText(/Connected to esxi-2-001/);
+    await user.keyboard(LEADER);
+    // A Session open: its own row in Sessions.
+    expect(active()).toHaveAccessibleName(/^esxi-2-001/);
+    expect(active()?.closest('[role="group"]')).toHaveAccessibleName("Sessions");
   });
 });
 
@@ -86,7 +101,7 @@ describe("Row state in words, not only colour (M3)", () => {
     await within(output()).findByText(/Connected to linux-1-000/);
     await user.keyboard("exit{Enter}");
     const sessions = within(tree()).getByRole("group", { name: "Sessions" });
-    expect(await within(sessions).findByRole("treeitem", { name: "linux-1-000, ended (code 0)" })).toBeInTheDocument();
+    expect(await within(sessions).findByRole("treeitem", { name: "linux-1-000, ended" })).toBeInTheDocument();
   });
 
   it("draws each state as a node of its own shape", async () => {

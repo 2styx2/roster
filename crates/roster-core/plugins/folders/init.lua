@@ -112,11 +112,16 @@ do
       moved = { from = from, n = #folders }
       if #folders > 0 then
         roster.notify(
-          "Moved " .. count(#folders, "Folder") .. " from " .. from .. " into roster's own data"
-            .. (from == "folders.yml" and ": folders.yml isn't read any more (:check)" or ""),
+          -- Said in the user's words: the file they wrote, or no source at all ("the State" is
+          -- roster's word, not theirs).
+          from == "folders.yml"
+              and ("Moved " .. count(#folders, "Folder") .. " from folders.yml to roster's data folder: folders.yml isn't read any more (:check)")
+            or ("Moved " .. count(#folders, "Folder") .. " to roster's data folder. Nothing to do."),
           "info",
-          -- A result that needs attention: it shows whatever ui.messages says (ticket 117).
-          { quiet = false }
+          -- From the State there's nothing to do, so it's quiet (in :messages, not a notice over the
+          -- terminal, Q306); from a folders.yml you wrote it needs attention: that file isn't read
+          -- any more.
+          { quiet = from ~= "folders.yml" }
         )
       end
     end
@@ -270,8 +275,9 @@ show = function()
       head.count = #f.hosts
       head.drop = dropped_into(f.name)
       head.actions = {
-        { label = "Rename " .. f.name, icon = "edit", run = "folder rename " .. quote(f.name) },
-        { label = "Delete Folder " .. f.name, icon = "close", run = "folder delete " .. f.name },
+        -- `short`: the words in the row's menu, which is named after the Folder already.
+        { label = "Rename " .. f.name, short = "Rename…", icon = "edit", run = "folder rename " .. quote(f.name) },
+        { label = "Delete Folder " .. f.name, short = "Delete Folder", icon = "close", run = "folder delete " .. f.name },
       }
     else
       head.detail = tostring(#f.hosts)
@@ -286,7 +292,12 @@ show = function()
       if own then
         row.drop = dropped_into(f.name)
         row.drag_out = "folder remove " .. h .. " " .. f.name
-        row.actions = { { label = "Remove " .. h .. " from " .. f.name, icon = "close", run = "folder remove " .. h .. " " .. f.name } }
+        row.actions = { {
+          label = "Remove " .. h .. " from " .. f.name,
+          short = "Remove from Folder",
+          icon = "close",
+          run = "folder remove " .. h .. " " .. f.name,
+        } }
       end
       rows[#rows + 1] = row
     end
@@ -300,7 +311,7 @@ show = function()
     title = "Folders",
     order = 200,
     count = shown,
-    empty = problem and ("Folders can't be read: " .. problem) or "No Folders yet. Drag a Host here or press `␣ a`.",
+    empty = problem and ("Folders can't be read: " .. problem) or "Drag a Host here, or `␣ a`.",
     actions = { { label = "New Folder", icon = "add", run = "folder new" } },
     drop = function(e)
       if e.dropped then roster.cmdline("folder add " .. e.dropped .. " ") end

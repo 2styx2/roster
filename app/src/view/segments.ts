@@ -14,6 +14,8 @@ export interface SegmentDef {
 export const SEGMENTS = [
   { id: "backend" },
   { id: "box" },
+  // The Session on screen (round 15): its node and name, as tmux names its window.
+  { id: "session" },
   { id: "inventory" },
   { id: "hosts", plugin: { className: "count" } },
   { id: "path" },

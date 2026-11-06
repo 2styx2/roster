@@ -190,7 +190,7 @@ function graphOver(g: { nodes: readonly unknown[]; edges: readonly unknown[]; cl
   return null;
 }
 
-const rowAction = (c: OpCall, a: PluginRowAction, context: HandlerContext) => ({ label: a.label, icon: a.icon, command: c.host.line(c.plugin, a.run, context) });
+const rowAction = (c: OpCall, a: PluginRowAction, context: HandlerContext) => ({ label: a.label, ...(a.short ? { short: a.short } : {}), icon: a.icon, command: c.host.line(c.plugin, a.run, context) });
 
 function sidebarRow(c: OpCall, section: string, row: PluginRow, hostByName: ReadonlyMap<string, Host>): SidebarRow {
   const { host: h, plugin } = c;

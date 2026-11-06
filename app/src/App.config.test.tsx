@@ -118,7 +118,7 @@ describe("Saving init.lua applies it live", () => {
     const next = within(panel)
       .getAllByRole("row")
       .filter((r) => r.textContent?.includes("Next Session"));
-    expect(next.map((r) => r.textContent)).toContainEqual(expect.stringMatching(/Next Session.*t.*init\.lua/));
+    expect(next.map((r) => r.textContent)).toContainEqual(expect.stringMatching(/Next Session.*init\.lua.*t$/));
   });
 
   it("defines a Theme as a table and overrides single tokens", async () => {

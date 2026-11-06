@@ -7,6 +7,7 @@ import { App } from "./App";
 import { FAKE_EMAIL, FAKE_PASSWORD, fakeBackend, fixtures, makeHosts, type FakeScenario } from "./backend/fake";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { configWith } from "./config/fixture";
 
 const LEADER = "{Control>} {/Control}";
 
@@ -114,13 +115,49 @@ describe("S5: sign-in fields say when they were refused", () => {
 describe("S7: an empty Inventory says what to do", () => {
   const empty: FakeScenario = { hosts: { hosts: [], groups: {} }, vault: { status: "unsupported" } };
 
+  it("offers Add a Host whenever this roster can add one, with or without a key (round 18)", async () => {
+    const config = configWith({
+      keys: [
+        { context: "leader", keys: "+", action: null },
+        { context: "leader", keys: "n", action: null },
+      ],
+    });
+    const platform = memoryPlatform({ config: { config, error: null, path: "/home/me/.config/roster/init.lua", version: 1 } });
+    start({ ...empty, apiVersion: 9 }, platform);
+    const main = await screen.findByRole("main", { name: /workspace/i });
+    // No key bound to it: the button stays (it hung on the key hint), and the line names only the file.
+    expect(within(main).getByRole("button", { name: "Add a Host" })).toBeInTheDocument();
+    expect(main).toHaveTextContent("or edit the file:");
+    expect(within(screen.getByRole("group", { name: "Inventory" })).getByText("None yet: + adds one.")).toBeInTheDocument();
+  });
+
+  it("says why there's no Add a Host on a roster too old for it (round 18)", async () => {
+    start(empty);
+    const main = await screen.findByRole("main", { name: /workspace/i });
+    expect(within(main).queryByRole("button", { name: "Add a Host" })).toBeNull();
+    expect(main).toHaveTextContent("Adding Hosts here needs a newer roster. Update roster on this Box, or add them to roster.yml:");
+    // Nothing on screen offers what the line says can't be done (round 19).
+    expect(document.querySelector('[data-control="add"]')).toBeNull();
+    expect(within(screen.getByRole("group", { name: "Inventory" })).queryByRole("button", { name: "Add a Host" })).toBeNull();
+    // The path, whole (jsdom has room for it), with the forms that drop whole folders for one "…/"
+    // ready but not shown (round 20), as the status bar's.
+    const path = main.querySelector(".empty-path");
+    const forms = [...(path?.querySelectorAll(".path-cut") ?? [])];
+    expect(forms.map((f) => f.textContent)).toEqual(["~/team-inventory/roster.yml", "~/…/roster.yml", "…/roster.yml"]);
+    expect(forms.map((f) => f.hasAttribute("data-off"))).toEqual([false, true, true]);
+    expect(path).toHaveAttribute("title", "~/team-inventory/roster.yml");
+    expect(within(main).getByText("roster.yml", { selector: "code" })).toBeInTheDocument();
+  });
+
   it("the Picker, the Sidebar and the workspace point at roster.yml", async () => {
     const user = start(empty);
     const main = await screen.findByRole("main", { name: /workspace/i });
     expect(main).toHaveTextContent(/No Hosts in the Inventory yet/);
     expect(main).toHaveTextContent("~/team-inventory/roster.yml");
     expect(within(main).queryByRole("button", { name: /find a host/i })).toBeNull();
-    expect(within(screen.getByRole("group", { name: "Inventory" })).getByText(/No Hosts yet\. Add them in roster\.yml\./)).toBeInTheDocument();
+    expect(within(screen.getByRole("group", { name: "Inventory" })).getByText((_, el) => el?.classList.contains("sb-empty") === true && el.textContent === "None yet: add them in roster.yml.")).toBeInTheDocument();
+    // The file is data, in Iosevka, as the pane sets it (round 19).
+    expect(within(screen.getByRole("group", { name: "Inventory" })).getByText("roster.yml", { selector: ".sb-empty code" })).toBeInTheDocument();
     await user.keyboard(`${LEADER}f`);
     const picker = screen.getByRole("dialog", { name: "Find a Host" });
     expect(picker).toHaveTextContent("The Inventory has no Hosts yet. Add them to roster.yml and they show up here.");
@@ -131,7 +168,7 @@ describe("S7: an empty Inventory says what to do", () => {
     const user = await ready();
     await user.keyboard(`${LEADER}f`);
     await user.keyboard("zzzz");
-    expect(screen.getByRole("dialog", { name: "Find a Host" })).toHaveTextContent("No Hosts match “zzzz”.");
+    expect(screen.getByRole("dialog", { name: "Find a Host" })).toHaveTextContent("No Hosts match zzzz.");
   });
 });
 
@@ -202,7 +239,7 @@ describe("N2: domain terms are capitalised as in the glossary", () => {
     const user = await ready();
     expect(screen.getByText("12 Hosts")).toBeInTheDocument();
     await user.keyboard(`${LEADER}f`);
-    expect(screen.getByRole("combobox")).toHaveAttribute("placeholder", "Find a Host: name, address, type, product, group…");
+    expect(screen.getByRole("combobox")).toHaveAttribute("placeholder", "Find a Host by name, address, group…");
     expect(screen.getByRole("dialog", { name: "Find a Host" })).toHaveTextContent("12 Hosts");
   });
 });

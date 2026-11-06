@@ -15,7 +15,12 @@ describe("capabilities", () => {
 
   it("says what needs a newer roster, by its own name or the one given", () => {
     const caps = capabilities({ api_version: 3 });
-    expect(caps.needsNewer("quickConnect")).toBe(`Quick Connect needs a newer roster (API version ${sinceOf("quickConnect")}; this one speaks 3)`);
-    expect(caps.needsNewer("review", ":unreview")).toMatch(/^:unreview needs a newer roster/);
+    // Calm, in the app's words; serve's API numbers only in what `:messages` keeps (round 20).
+    expect(caps.needsNewer("quickConnect")).toEqual({
+      kind: "slip",
+      text: "Quick Connect needs a newer roster. Update roster on this Box.",
+      logged: `Quick Connect needs a newer roster (API version ${sinceOf("quickConnect")}; this one speaks 3). Update roster on this Box.`,
+    });
+    expect(caps.needsNewer("review", ":unreview").text).toMatch(/^:unreview needs a newer roster/);
   });
 });

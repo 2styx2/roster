@@ -3,6 +3,7 @@
 // Leader: it gets a cap with the space-bar glyph and the real chord as its tooltip, so it never
 // reads as an underscore.
 import { Fragment } from "react";
+import { messageParts } from "./messageParts";
 import "./keys.css";
 
 const NAMES: Record<string, string> = {
@@ -92,6 +93,18 @@ function clauseStart(before: string): { at: number; sentence: boolean } {
  * word before the keys stays on their line ("press ␣ a"), so a wrap never leaves keys alone.
  * The clause naming the keys is a `.key-hint`, so hiding the hints (`ui.hints = false`) leaves
  * whole sentences: "No Folders yet. Drag a Host here." */
+/** Plain words with the files they name ("roster.yml") set as data, in Iosevka (round 19: the
+ * Sidebar's "add them in roster.yml" set it in Inter while the pane set it in Iosevka). */
+function withFiles(text: string, key: string): React.ReactNode {
+  const parts = messageParts(text, true);
+  if (!parts.some((p) => p.file)) return text;
+  return (
+    <Fragment key={key}>
+      {parts.map((p, i) => (p.file ? <code key={i}>{p.text}</code> : <Fragment key={i}>{p.text}</Fragment>))}
+    </Fragment>
+  );
+}
+
 export function WithKeys({ text, leader }: { text: string; leader?: string | undefined }) {
   const parts = text.split("`");
   const out: React.ReactNode[] = [];
@@ -106,7 +119,7 @@ export function WithKeys({ text, leader }: { text: string; leader?: string | und
     const dot = after.indexOf(".");
     // A sentence of its own takes its full stop with it; a tail leaves it to the sentence.
     const end = dot < 0 ? after.length : sentence ? dot + 1 : dot;
-    out.push(rest.slice(0, at));
+    out.push(withFiles(rest.slice(0, at), `t${i}`));
     out.push(
       <span key={i} className="key-hint">
         {word < 0 ? lead : lead.slice(0, word)}
@@ -119,6 +132,6 @@ export function WithKeys({ text, leader }: { text: string; leader?: string | und
     );
     rest = after.slice(end);
   }
-  out.push(rest);
+  out.push(withFiles(rest, "end"));
   return <>{out}</>;
 }

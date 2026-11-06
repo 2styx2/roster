@@ -44,7 +44,8 @@ describe("The Inventory section", () => {
     const host = within(inventory()).getByRole("treeitem", { name: /^switch-4-003/ });
     expect(host).toHaveTextContent(/unreviewed/);
     await user.click(host);
-    expect(screen.getByRole("status")).toHaveTextContent(/switch-4-003 isn't reviewed yet/);
+    // Said under the row it's about (round 20), not at the foot of the pane.
+    expect(screen.getByRole("alert")).toHaveTextContent(/switch-4-003 isn't reviewed yet/);
     expect(screen.queryByLabelText("terminal output")).toBeNull();
   });
 });
@@ -166,7 +167,7 @@ describe("Opening Hosts from the tree", () => {
 describe("Folders", () => {
   it("creates, renames and deletes Folders from the command line", async () => {
     const { user } = await ready();
-    expect(within(folders()).getByText(/No Folders yet/)).toBeInTheDocument();
+    expect(within(folders()).getByText(/Drag a Host here/)).toBeInTheDocument();
     await user.keyboard(`${LEADER}:folder new Lab ESXi{Enter}`);
     expect(within(folders()).getByRole("treeitem", { name: /^Lab ESXi/ })).toBeInTheDocument();
     await user.keyboard(`${LEADER}:folder rename Lab ESXi Daily{Enter}`);
@@ -217,7 +218,7 @@ describe("Folders", () => {
     const { user } = await ready();
     await user.keyboard(`${LEADER}:folder add switch-4-003 Lab{Enter}`);
     await user.click(within(folders()).getByRole("treeitem", { name: /^switch-4-003/ }));
-    expect(screen.getByRole("status")).toHaveTextContent(/isn't reviewed yet/);
+    expect(screen.getByRole("alert")).toHaveTextContent(/isn't reviewed yet/);
     await user.keyboard(`${LEADER}:folder add linux-1-000 Lab{Enter}`);
     await user.click(within(folders()).getByRole("treeitem", { name: /^linux-1-000/ }));
     await within(output()).findByText(/Connected to linux-1-000/);
@@ -258,4 +259,28 @@ describe("Folders", () => {
     expect(await within(folders()).findByRole("treeitem", { name: /^Secret Lab/ })).toBeInTheDocument();
   });
 
+});
+
+describe("The cursor's row outside App mode (round 19)", () => {
+  it("isn't drawn after Esc, so it never reads as a live Session, and App mode starts there again", async () => {
+    Element.prototype.scrollIntoView = () => {};
+    const { user } = await ready();
+    await user.keyboard(LEADER);
+    await user.keyboard("jjjj");
+    const at = cursorRow()?.getAttribute("data-row");
+    expect(at).toBeTruthy();
+    await user.keyboard("{Escape}");
+    expect(cursorRow()).toBeNull();
+    // Outside App mode the remembered row is drawn as any other row (no raised, text-coloured name).
+    expect(document.querySelector(".sidebar .sb-row.selected, .sidebar .sb-heading.selected")).toBeNull();
+    await user.keyboard(LEADER);
+    expect(cursorRow()?.getAttribute("data-row")).toBe(at);
+  });
+
+  it("keeps a clicked row selected: its buttons show for the pointer", async () => {
+    const { user } = await ready();
+    const group = within(inventory()).getByRole("treeitem", { name: /^subnet-2/ });
+    await user.click(group);
+    expect(rowOf(group)).toHaveClass("selected");
+  });
 });

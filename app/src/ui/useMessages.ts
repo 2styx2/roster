@@ -13,7 +13,16 @@ export interface MessagesState {
   choice: MessagesChoice;
 }
 
-export function useMessages(registries: Registries, store: { get(key: string): unknown; set(key: string, value: unknown): void }, configValue: Parameters<MessagesChoice["setConfig"]>[0]): MessagesState {
+/** Takes a message somewhere else than the line (a Sidebar row's slip, round 20): true when it did;
+ * `:messages` keeps it either way. */
+export type MessageDivert = (m: Message) => boolean;
+
+export function useMessages(
+  registries: Registries,
+  store: { get(key: string): unknown; set(key: string, value: unknown): void },
+  configValue: Parameters<MessagesChoice["setConfig"]>[0],
+  divert?: { get(): MessageDivert | null },
+): MessagesState {
   const [message, setMessage] = useState<Message>("");
   const [log] = useState(() => new MessageLog());
   const [choice] = useState(() => new MessagesChoice(store));
@@ -22,10 +31,10 @@ export function useMessages(registries: Registries, store: { get(key: string): u
   // that shows, an error above all (decision Q162).
   const say = useCallback(
     (m: Message) => {
-      setMessage((now) => lineAfter(now, m, choice.all()));
+      if (!divert?.get()?.(m)) setMessage((now) => lineAfter(now, m, choice.all()));
       log.push(m);
     },
-    [log, choice],
+    [log, choice, divert],
   );
   // The new list goes in before the old one comes out, so an open `:messages` view stays open.
   const logged = useSyncExternalStore(log.subscribe, log.snapshot);

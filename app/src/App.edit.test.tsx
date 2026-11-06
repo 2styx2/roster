@@ -10,6 +10,7 @@ import { EditError, VERIFY_STEPS } from "./backend/types";
 import { changesOf, draftOf, needsVerify } from "./edit/form";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { onMessageLine } from "./test-messageLine";
 
 const LEADER = "{Control>} {/Control}";
 const HOST = "linux-1-000";
@@ -128,7 +129,7 @@ describe("the edit form", () => {
   it("needs a roster that speaks API 5", async () => {
     const { user } = await ready({ ...(fixtures.edit as FakeScenario), apiVersion: 4 });
     await user.keyboard(`${LEADER}:edit ${HOST}{Enter}`);
-    expect(await screen.findByText(/:edit needs a newer roster \(API version 5; this one speaks 4\)/)).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine(/:edit needs a newer roster\. Update roster on this Box\./))).toBeInTheDocument();
   });
 });
 

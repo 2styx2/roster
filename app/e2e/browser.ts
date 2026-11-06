@@ -156,8 +156,8 @@ export async function unlock(page: Page): Promise<void> {
 }
 
 /** The whole app (index.html) on the fake Backend's `fixture`, in a window of `size`, unlocked,
- * its Inventory listed. No dev toggle over the window: it isn't in the shipped app. `init` runs in
- * the page before the app does. */
+ * its Inventory listed (shown, but for a narrow window's tucked Sidebar). No dev toggle over the
+ * window: it isn't in the shipped app. `init` runs in the page before the app does. */
 export async function openApp(
   browser: Browser,
   fixture: string,
@@ -169,7 +169,10 @@ export async function openApp(
   const page = await context.newPage();
   await page.goto(`${inject("appUrl")}?fixture=${fixture}&toggle=off`);
   await unlock(page);
-  await page.getByRole("group", { name: "Inventory" }).getByRole("treeitem").first().waitFor();
+  const listed = page.locator('[role="group"][aria-label="Inventory"] [role="treeitem"]').first();
+  // Shown; in a window under 720 px only listed: the floating Sidebar is tucked away over the idle
+  // pane until App mode (keyboard.md).
+  await listed.waitFor({ state: size.width <= 720 ? "attached" : "visible" });
   return { context, page };
 }
 

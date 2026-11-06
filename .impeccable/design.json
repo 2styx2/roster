@@ -1,0 +1,413 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-04T00:00:00Z",
+  "title": "Design System: roster",
+  "extensions": {
+    "colorMeta": {
+      "apricot-flare": {
+        "role": "primary",
+        "displayName": "Apricot Flare",
+        "canonical": "#ff9a70",
+        "tonalRamp": [
+          "#3a1a0d",
+          "#5c2a15",
+          "#7f3a1d",
+          "#9b411a",
+          "#c86a40",
+          "#ff9a70",
+          "#ffc1a6",
+          "#ffe5d9"
+        ]
+      },
+      "apricot-ink": {
+        "role": "primary",
+        "displayName": "Apricot Ink",
+        "canonical": "#ffa076"
+      },
+      "sea-glass": {
+        "role": "secondary",
+        "displayName": "Sea Glass",
+        "canonical": "#82ccd5",
+        "tonalRamp": [
+          "#0d2a2f",
+          "#16434b",
+          "#1f5d68",
+          "#296d82",
+          "#4f9ba8",
+          "#82ccd5",
+          "#b4e2e8",
+          "#e1f4f6"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#0f1011",
+        "tonalRamp": [
+          "#0f1011",
+          "#141617",
+          "#171819",
+          "#1e1f20",
+          "#2c2d2e",
+          "#69696a",
+          "#98989a",
+          "#e8e8ea"
+        ]
+      },
+      "chrome-graphite": {
+        "role": "neutral",
+        "displayName": "Chrome Graphite",
+        "canonical": "#141617"
+      },
+      "panel-graphite": {
+        "role": "neutral",
+        "displayName": "Panel Graphite",
+        "canonical": "#171819"
+      },
+      "raised-graphite": {
+        "role": "neutral",
+        "displayName": "Raised Graphite",
+        "canonical": "#1e1f20"
+      },
+      "raised-line": {
+        "role": "neutral",
+        "displayName": "Raised Line",
+        "canonical": "#2c2d2e"
+      },
+      "hover-graphite": {
+        "role": "neutral",
+        "displayName": "Hover Graphite",
+        "canonical": "#18191a"
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#1f2021"
+      },
+      "hairline-strong": {
+        "role": "neutral",
+        "displayName": "Strong Hairline",
+        "canonical": "#282a2b"
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "#e8e8ea"
+      },
+      "muted-pewter": {
+        "role": "neutral",
+        "displayName": "Muted Pewter",
+        "canonical": "#98989a"
+      },
+      "faint-pewter": {
+        "role": "neutral",
+        "displayName": "Faint Pewter (never text)",
+        "canonical": "#69696a"
+      },
+      "signal-yellow": {
+        "role": "status",
+        "displayName": "Signal Yellow",
+        "canonical": "#e9c944"
+      },
+      "raspberry": {
+        "role": "status",
+        "displayName": "Raspberry",
+        "canonical": "#e25a98"
+      },
+      "danger-raspberry": {
+        "role": "status",
+        "displayName": "Danger Raspberry",
+        "canonical": "#b9205c"
+      },
+      "terminal-foreground": {
+        "role": "neutral",
+        "displayName": "Terminal Foreground",
+        "canonical": "#d4d4d6"
+      },
+      "apricot-flare-light": {
+        "role": "primary",
+        "displayName": "Burnt Apricot (light)",
+        "canonical": "#9b411a"
+      },
+      "sea-glass-light": {
+        "role": "secondary",
+        "displayName": "Deep Sea Glass (light)",
+        "canonical": "#296d82"
+      },
+      "paper-bg-light": {
+        "role": "neutral",
+        "displayName": "Paper Ground (light)",
+        "canonical": "#f2f2f4"
+      },
+      "text-light": {
+        "role": "neutral",
+        "displayName": "Graphite Text (light)",
+        "canonical": "#1e1f20"
+      },
+      "muted-light": {
+        "role": "neutral",
+        "displayName": "Muted (light)",
+        "canonical": "#5a5b5c"
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "Title",
+        "purpose": "The Picker query and panel titles; the largest type in the app."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Sidebar rows, panel text, messages: the app talking."
+      },
+      "body-small": {
+        "displayName": "Body small",
+        "purpose": "Secondary lines, hints, the message line."
+      },
+      "label": {
+        "displayName": "Section label",
+        "purpose": "Uppercase Sidebar section headings only."
+      },
+      "data": {
+        "displayName": "Data",
+        "purpose": "Host names, the wordmark, terminal text: anything you could paste into a shell."
+      },
+      "data-small": {
+        "displayName": "Data small",
+        "purpose": "IPs, ports, counts, in muted tabular figures."
+      },
+      "keycap": {
+        "displayName": "Keycap",
+        "purpose": "Every key hint."
+      }
+    },
+    "shadows": [
+      {
+        "name": "overlay",
+        "value": "0 16px 48px var(--shadow), 0 2px 8px var(--shadow)",
+        "purpose": "The Picker and the floating command line."
+      },
+      {
+        "name": "float",
+        "value": "0 8px 24px var(--shadow)",
+        "purpose": "Menus, cards and error panels over the terminal."
+      },
+      {
+        "name": "side-sheet",
+        "value": "-8px 0 32px var(--shadow)",
+        "purpose": "A side panel floating over the terminal in a narrow window (mirrored for the left)."
+      },
+      {
+        "name": "raised-outline",
+        "value": "inset 0 0 0 1px var(--raised-line)",
+        "purpose": "The raised style: selected rows, tabs, counts. Not a shadow."
+      },
+      {
+        "name": "focus-ring",
+        "value": "0 0 0 2px var(--bg), 0 0 0 4px var(--accent)",
+        "purpose": "Keyboard focus on buttons."
+      },
+      {
+        "name": "input-focus",
+        "value": "0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent)",
+        "purpose": "Focused input halo."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.23, 1, 0.32, 1)",
+        "purpose": "The one easing curve."
+      },
+      {
+        "name": "dur-press",
+        "value": "120ms",
+        "purpose": "Button press scale (0.97)."
+      },
+      {
+        "name": "dur-fade",
+        "value": "120ms",
+        "purpose": "Opacity and colour changes."
+      },
+      {
+        "name": "dur-draw",
+        "value": "120ms",
+        "purpose": "An edge drawn on connect."
+      },
+      {
+        "name": "dur-move",
+        "value": "150ms",
+        "purpose": "Transforms: panels entering (4px offset)."
+      },
+      {
+        "name": "keyboard-navigation",
+        "value": "0ms",
+        "purpose": "Cursor, selection and live-bar moves are instant, as in Neovim."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "min-window",
+        "value": "480px"
+      },
+      {
+        "name": "secondary-text",
+        "value": "720px"
+      },
+      {
+        "name": "narrow",
+        "value": "900px"
+      },
+      {
+        "name": "panels-float",
+        "value": "1040px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "The default control: a raised graphite face that presses to 97%.",
+      "html": "<button class=\"ds-btn\">Publish</button>",
+      "css": ".ds-btn { font: 500 15px Inter, system-ui, sans-serif; color: var(--text, #e8e8ea); background: var(--raised, #1e1f20); border: 1px solid var(--line-strong, #282a2b); border-radius: 6px; height: 28px; padding: 0 12px; cursor: default; transition: background-color 120ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1); } .ds-btn:hover { background: var(--hover, #18191a); } .ds-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg, #0f1011), 0 0 0 4px var(--accent, #ff9a70); } .ds-btn:active { transform: scale(0.97); }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one actionable thing on a screen, in Apricot Flare.",
+      "html": "<button class=\"ds-btn-primary\">Unlock</button>",
+      "css": ".ds-btn-primary { font: 500 15px Inter, system-ui, sans-serif; color: var(--accent-text, #0f1011); background: var(--accent, #ff9a70); border: 1px solid transparent; border-radius: 6px; height: 28px; padding: 0 12px; cursor: default; transition: background-color 120ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1); } .ds-btn-primary:hover { background: color-mix(in srgb, var(--accent, #ff9a70) 88%, var(--text, #e8e8ea)); } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg, #0f1011), 0 0 0 4px var(--accent, #ff9a70); } .ds-btn-primary:active { transform: scale(0.97); }"
+    },
+    {
+      "name": "Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Ink field with a strong hairline; apricot border and halo on focus.",
+      "html": "<input class=\"ds-input\" placeholder=\"Master password\" type=\"password\">",
+      "css": ".ds-input { font: 400 15px Inter, system-ui, sans-serif; color: var(--text, #e8e8ea); background: var(--bg, #0f1011); border: 1px solid var(--line-strong, #282a2b); border-radius: 6px; height: 30px; padding: 0 8px; transition: border-color 120ms ease, box-shadow 120ms ease; } .ds-input::placeholder { color: var(--muted, #98989a); } .ds-input:focus-visible { outline: none; border-color: var(--accent, #ff9a70); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #ff9a70) 22%, transparent); }"
+    },
+    {
+      "name": "Keycap",
+      "kind": "chip",
+      "refersTo": "keycap",
+      "description": "Every key hint: Iosevka on a raised face with a heavier bottom edge.",
+      "html": "<span class=\"ds-keys\"><kbd class=\"ds-keycap\">␣</kbd><kbd class=\"ds-keycap\">f</kbd></span> <span class=\"ds-hint\">find</span>",
+      "css": ".ds-keys { display: inline-flex; gap: 3px; vertical-align: middle; } .ds-keycap { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px; font: 500 13px/1 Iosevka, Consolas, ui-monospace, monospace; color: var(--muted, #98989a); background: var(--raised, #1e1f20); border: 1px solid var(--line-strong, #282a2b); border-bottom-width: 1.5px; border-radius: 4px; } .ds-hint { font: 400 13px Inter, system-ui, sans-serif; color: var(--muted, #98989a); }"
+    },
+    {
+      "name": "Sidebar rows",
+      "kind": "nav",
+      "refersTo": "sidebar-row",
+      "description": "Host rows: node shape carries state and is muted at rest; only a live Host's node is apricot, and the live Session gets the 2px apricot bar; keyboard moves are instant.",
+      "html": "<ul class=\"ds-rows\"><li class=\"ds-row\"><span class=\"ds-node\"></span><span class=\"ds-name\">linux-1-000</span><span class=\"ds-ip\">10.0.0.2</span></li><li class=\"ds-row ds-live\"><span class=\"ds-node\"></span><span class=\"ds-name\">esx-02</span><span class=\"ds-ip\">10.0.0.5</span></li><li class=\"ds-row\"><span class=\"ds-node ds-ring\"></span><span class=\"ds-name\">switch-01</span><span class=\"ds-ip\">10.0.0.9</span></li><li class=\"ds-row\"><span class=\"ds-node ds-dashed\"></span><span class=\"ds-name\">appliance</span><span class=\"ds-ip\">10.0.0.23</span></li></ul>",
+      "css": ".ds-rows { list-style: none; margin: 0; padding: 6px; width: 285px; background: var(--sidebar, #141617); } .ds-row { position: relative; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px 0 12px; border-radius: 6px; color: var(--muted, #98989a); font: 500 15px Iosevka, Consolas, ui-monospace, monospace; } .ds-row:hover { background: var(--hover, #18191a); color: var(--text, #e8e8ea); } .ds-row.ds-live { background: var(--raised, #1e1f20); color: var(--text, #e8e8ea); box-shadow: inset 0 0 0 1px var(--raised-line, #2c2d2e); } .ds-row.ds-live::before { content: ''; position: absolute; left: 0; top: 5px; bottom: 5px; width: 2px; border-radius: 1px; background: var(--accent, #ff9a70); } .ds-node { width: 7px; height: 7px; border-radius: 50%; background: var(--muted, #98989a); flex: none; } .ds-row.ds-live .ds-node { background: var(--accent, #ff9a70); } .ds-node.ds-ring { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted, #98989a); } .ds-node.ds-dashed { background: transparent; border: 1.5px dashed var(--tone, #82ccd5); width: 8px; height: 8px; } .ds-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-ip { font-size: 14px; color: var(--muted, #98989a); font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Picker",
+      "kind": "custom",
+      "refersTo": "picker",
+      "description": "The fuzzy finder: a floating panel, query as title, Iosevka Host names, keycap footer.",
+      "html": "<div class=\"ds-picker\"><div class=\"ds-picker-search\">prox</div><ul class=\"ds-picker-list\"><li class=\"ds-picker-row ds-selected\"><span class=\"ds-host\">proxmox-01</span><span class=\"ds-ip\">10.0.0.4</span><span class=\"ds-muted\">lab</span></li><li class=\"ds-picker-row\"><span class=\"ds-host\">proxmox-02</span><span class=\"ds-ip\">10.0.0.12</span><span class=\"ds-badge\">unreviewed</span></li></ul><div class=\"ds-picker-foot\"><span>2 Hosts</span><span><kbd class=\"ds-keycap\">↵</kbd> open</span><span><kbd class=\"ds-keycap\">Esc</kbd> close</span></div></div>",
+      "css": ".ds-picker { width: 520px; background: var(--panel, #171819); border: 1px solid var(--line-strong, #282a2b); border-radius: 10px; box-shadow: 0 16px 48px var(--shadow, rgb(0 0 0 / .5)), 0 2px 8px var(--shadow, rgb(0 0 0 / .5)); overflow: hidden; font: 400 15px Inter, system-ui, sans-serif; color: var(--muted, #98989a); } .ds-picker-search { height: 50px; display: flex; align-items: center; padding: 0 16px; font-size: 17px; color: var(--text, #e8e8ea); border-bottom: 1px solid var(--line, #1f2021); } .ds-picker-list { list-style: none; margin: 0; padding: 6px; } .ds-picker-row { display: grid; grid-template-columns: 2fr 8em 1fr; gap: 12px; align-items: center; min-height: 34px; padding: 8px 10px; border-radius: 6px; } .ds-picker-row.ds-selected { background: var(--raised, #1e1f20); color: var(--text, #e8e8ea); box-shadow: inset 0 0 0 1px var(--raised-line, #2c2d2e); } .ds-host { font-family: Iosevka, Consolas, monospace; font-weight: 500; color: var(--text, #e8e8ea); } .ds-ip { font: 500 14px Iosevka, Consolas, monospace; font-variant-numeric: tabular-nums; } .ds-muted { font-size: 14px; } .ds-badge { justify-self: end; font-size: 13px; line-height: 15px; color: var(--warn, #e9c944); border: 1px solid color-mix(in srgb, var(--warn, #e9c944) 45%, transparent); border-radius: 4px; padding: 0 5px; } .ds-picker-foot { display: flex; gap: 14px; align-items: center; height: 34px; padding: 0 14px; border-top: 1px solid var(--line, #1f2021); font-size: 13px; } .ds-picker-foot > span:first-child { flex: 1; font-variant-numeric: tabular-nums; } .ds-keycap { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px; font: 500 13px/1 Iosevka, Consolas, monospace; color: var(--muted, #98989a); background: var(--raised, #1e1f20); border: 1px solid var(--line-strong, #282a2b); border-bottom-width: 1.5px; border-radius: 4px; }"
+    },
+    {
+      "name": "Status bar",
+      "kind": "nav",
+      "refersTo": "statusbar",
+      "description": "A tmux-like line: apricot backend node, Sea Glass Box square, Iosevka data, mode in Apricot Ink.",
+      "html": "<div class=\"ds-status\"><span><i class=\"ds-dot\"></i>WSL</span><span><i class=\"ds-box\"></i>devbox</span><span class=\"ds-num\">91 Hosts</span><span class=\"ds-pending\"><i class=\"ds-ring\"></i>2 changes</span><span class=\"ds-mode\">NORMAL</span></div>",
+      "css": ".ds-status { display: flex; align-items: center; gap: 16px; height: 24px; padding: 0 12px; background: var(--chrome, #141617); border-top: 1px solid var(--line, #1f2021); color: var(--muted, #98989a); font: 400 13px Inter, system-ui, sans-serif; white-space: nowrap; } .ds-status > span { display: inline-flex; align-items: center; gap: 6px; } .ds-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent, #ff9a70); } .ds-box { width: 6px; height: 6px; border-radius: 1.5px; background: var(--tone, #82ccd5); } .ds-num { font-family: Iosevka, Consolas, monospace; font-variant-numeric: tabular-nums; } .ds-pending { color: var(--warn, #e9c944); } .ds-ring { width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid currentColor; } .ds-mode { margin-left: auto; color: var(--accent-ink, #ffa076); font-weight: 600; letter-spacing: 0.04em; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Live Network Map",
+    "overview": "roster is a map of your network you can step into. Hosts are nodes, Sessions are edges drawn from this Box to them, and the Gap orbit mark is the motif carried everywhere instead of decoration. Everything else is a near-black instrument panel that gets out of the way, because the terminal is the hero. The surface is dark, flat and dense; colour is almost absent and apricot appears only where something is live or actionable now. Controls are machined and tactile, with a terminal's crispness: keyboard moves land instantly, as in Neovim. Every token is a default the user can change through Themes, init.lua and Plugins.",
+    "keyCharacteristics": [
+      "Near-black graphite layers (Ink to Raised Graphite), separated by hairlines.",
+      "One accent, Apricot flare, spent only on what's live or actionable.",
+      "Two voices of type: Iosevka for anything you could paste into a shell, Inter for the app talking to you.",
+      "State shown by node shape (filled, ring, dashed, hollow), never by colour alone.",
+      "Keycaps beside every action: keyboard discoverability is the onboarding.",
+      "Motion of 150 ms or less, ease-out, transform and opacity only, and it confirms cause and effect."
+    ],
+    "rules": [
+      {
+        "name": "The Accent Means Live Rule",
+        "body": "Apricot is spent only on what's connected or actionable now. Nothing decorative is apricot. Test: on a screen with no live Session, the accent should be nearly absent.",
+        "section": "colors"
+      },
+      {
+        "name": "The Place-Not-Action Rule",
+        "body": "Sea Glass marks where (this Box, an unreviewed Host) and is only ever a shape. If you could click it or read it, it isn't Sea Glass.",
+        "section": "colors"
+      },
+      {
+        "name": "The Faint-Is-Not-Text Rule",
+        "body": "Faint Pewter fails 4.5:1 by design. Text that needs to be quiet uses Muted Pewter.",
+        "section": "colors"
+      },
+      {
+        "name": "The Token-Only Rule",
+        "body": "No component names a colour. Every colour is a Theme token, so a Theme or Plugin can restyle everything.",
+        "section": "colors"
+      },
+      {
+        "name": "The Paste Test Rule",
+        "body": "If it's something you could paste into a shell, it's in Iosevka. Everything else is Inter.",
+        "section": "typography"
+      },
+      {
+        "name": "The Never-Cut-Mid-Token Rule",
+        "body": "IPs, ports and fingerprints are never truncated mid-token. Data cells use tabular numbers. A long address drops whole groups from its middle, and the whole value is one step away (a tooltip, the Picker's detail strip).",
+        "section": "typography"
+      },
+      {
+        "name": "The Terminal-Is-The-Hero Rule",
+        "body": "Chrome recedes. If a pixel isn't helping you reach or use a shell, it's quiet.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat-At-Rest Rule",
+        "body": "Resting UI never casts a shadow. A shadow means \"this is floating over your terminal and will go away.\"",
+        "section": "elevation"
+      },
+      {
+        "name": "The Nodes-And-Edges Rule",
+        "body": "The network's own shapes are the only ornament. The Gap orbit mark appears small and still (48 to 64px, muted) in empty states and on the lock screen, and is never used as wallpaper.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Instant Keys Rule",
+        "body": "What a key moves, it moves immediately: the Sidebar cursor, the live bar, the Picker's selection and the command line's completions don't animate. Motion is kept for things that arrive or connect (a panel entering, an edge drawing), never for keyboard navigation. Test: holding j should feel like scrolling a buffer, not watching a transition.",
+        "section": "components"
+      },
+      {
+        "name": "The Modal Clarity Rule",
+        "body": "The current mode is always readable at a glance in the status line (Inter 600, tracked 0.04em, Apricot Ink). Every command has a : form that completes, as in Neovim.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do use the raised style (Raised Graphite plus a 1px inset Raised Line) for selection, and add the 2px apricot bar only for the live Session.",
+      "Do put Host names, IPs, ports, keys and commands in Iosevka 500 with tabular figures, at Muted Pewter for secondary data.",
+      "Do show state with node shape (filled, ring, dashed, hollow) plus words, never colour alone. Nodes are Muted Pewter at rest and apricot only while their Host is live.",
+      "Do put the keycap for the next action beside every empty state, footer and menu item.",
+      "Do make keyboard navigation instant (no transition on cursor, selection or live-bar moves), as in Neovim.",
+      "Do keep motion under 150ms, ease-out, transform and opacity only, interruptible and off under reduced motion.",
+      "Do draw every colour from a Theme token so init.lua, Themes and Plugins can restyle it; Plugin UI uses the same tokens and components as built-ins.",
+      "Do use the Gap orbit mark small (48 to 64px) and still, at reduced opacity, for empty states and the lock screen."
+    ],
+    "donts": [
+      "Don't spend apricot on anything that isn't live or actionable now. No decorative accent.",
+      "Don't use Faint Pewter for text, or Sea Glass for text or anything clickable.",
+      "Don't add shadows, gradients, glows or glass to resting surfaces. Shadows are for floating surfaces only.",
+      "Don't use spinners where an edge or node can show progress, or toasts for errors that belong in place.",
+      "Don't add celebratory motion, bouncy springs, confetti or emoji in our own copy.",
+      "Don't build \"dashboard\" cards or charts. roster is a map and a terminal.",
+      "Don't truncate an IP, port or fingerprint mid-token.",
+      "Don't animate the lock cover. It's instant."
+    ]
+  }
+}

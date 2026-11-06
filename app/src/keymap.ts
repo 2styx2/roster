@@ -257,6 +257,11 @@ export function keyHint(keymap: Keymap, line: CommandLine): string | null {
   return keysFor(keymap, line, { global: false })[0] ?? null;
 }
 
+/** The first key a table binds to `action` (a list's "down", the Leader's "terminal"). */
+export function listKeyFor(table: Record<string, { action: string }>, action: string): string | null {
+  return Object.entries(table).find(([, b]) => b.action === action)?.[0] ?? null;
+}
+
 /** What the built-in bindings depend on: the OS the app runs on. */
 export interface KeymapHost {
   windows?: boolean;

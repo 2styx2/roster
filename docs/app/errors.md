@@ -142,7 +142,7 @@ Removing, renaming and moving Hosts and groups in the Sidebar (decision Q45) goe
 
 ## Trusting a new host key
 
-A Session to a Host whose host key isn't in roster's known hosts asks before anything connects (decision Q60): `session.prepare` refuses with 44, the app fetches the key (`host.scan_key {host}`: one connection, key exchange only) and shows the Host, its address and port, the key type and the SHA256 fingerprint, with "roster hasn't seen this Host's key before". **Trust and connect** (Enter) runs `host.trust_key`, which fetches the key again and records it only if it's still the one shown, then opens the Session. **Cancel** (Esc) records nothing and connects nothing. Sessions check host keys strictly (`StrictHostKeyChecking=yes`), so a key that differs from a recorded one is row 13, never a question. Every failure below ends with nothing recorded and no Session; the question's pane shows it like any refused Session.
+A Session to a Host whose host key isn't in roster's known hosts asks before anything connects (decision Q60): `session.prepare` refuses with 44, the app fetches the key (`host.scan_key {host}`: one connection, key exchange only) and shows the Host, its address and port, the key type and the SHA256 fingerprint, with "roster hasn't seen this Host's key before". The question opens on **Cancel**, so a reflexive Enter never trusts a key nobody has read (decision Q319). Quick Connect's question has an "I've checked this key" box: its Enter connects only once it's ticked (Q322), and only from the password field or **Trust and connect**, where ↵ shows. Enter on the box, on "Save to vault" or on the card itself never connects: before the tick it brings you back to the box, after it it moves on (from the box or the card to the password field, from "Save to vault" to Trust). A character typed while the box has focus goes into the password field. An empty password field logs in with this Box's keys (Q341). **Trust and connect** (Tab to it, then Enter, or a click) runs `host.trust_key`, which fetches the key again and records it only if it's still the one shown, then opens the Session. **Cancel** (Esc) records nothing and connects nothing. Sessions check host keys strictly (`StrictHostKeyChecking=yes`), so a key that differs from a recorded one is row 13, never a question. Every failure below ends with nothing recorded and no Session; the question's pane shows it like any refused Session.
 
 | # | Code | What happened | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
@@ -150,6 +150,16 @@ A Session to a Host whose host key isn't in roster's known hosts asks before any
 | 61 | 40, 41, 42 | Couldn't fetch the key: the address doesn't resolve, the port refused, or no answer (a network's SSH rate limiter can cause this) | Network / Host | "esxi-02 (10.0.0.10:22) didn't answer within 5 s" | Rows 15-17's fixes: check the address or port; if a network's SSH rate limiter is the cause, wait a few minutes, don't retry in a loop |
 | 62 | 23 | The key changed between the question and Trust | Host / network | "esxi-02's host key changed while roster was asking - nothing was recorded" | Don't trust it blindly: compare the new fingerprint with the Host's console or owner, then open the Session again to see it |
 | 63 | 43 | A different key got recorded for the address meanwhile (another Session's question, `roster setup`) | Host / network | "esxi-02's host key changed - not connecting" | Row 13's: compare the fingerprints; never accepted automatically |
+
+### Checking a host key
+
+The question shows the key's type and its SHA256 fingerprint. Before you trust it, read the same fingerprint on the machine itself, from its console (or ask whoever runs it), never over the network you're checking:
+
+```sh
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+It prints the key's size, `SHA256:` and the fingerprint, then the key's comment and type (`(ED25519)`). Use the file of the type the question names: `ssh_host_rsa_key.pub` for `ssh-rsa`, `ssh_host_ecdsa_key.pub` for `ecdsa-sha2-nistp256`. On Windows (OpenSSH Server) the files are in `C:\ProgramData\ssh\`. A switch, an appliance or ESXi may show it on its own console or web page instead. Every character must match; if one doesn't, press Cancel and find out why (a reinstalled machine, a reused address, or someone in between). The app's question links here (`:help host-keys`). Trust records the key in `~/.ssh/roster_known_hosts`, and from then on a different key is refused, never asked about (row 13). Cancel records nothing and closes the Session; the message line says so ("Didn't trust esx-02's key; nothing was saved.").
 
 ## Quick Connect
 

@@ -90,7 +90,8 @@ describe("Terminal mode and App mode", () => {
 describe("The Sidebar", () => {
   it("lists the open Sessions with the one on screen raised, and no tab strip", async () => {
     const user = await ready();
-    expect(within(sessionList()).getByText(/No Sessions open/)).toBeInTheDocument();
+    // No Session rows (the pane, not the Sidebar, says "No Sessions open").
+    expect(sessionList().querySelectorAll(".sb-row")).toHaveLength(0);
     await connect(user, h0);
     await connect(user, h1);
     expect(within(sessionList()).getAllByRole("treeitem", { name: /^(?!Sessions$)/ })).toHaveLength(2);
@@ -109,7 +110,8 @@ describe("The Sidebar", () => {
     await user.click(within(sessionList()).getByRole("button", { name: `Close ${h0}` }));
     expect(current()).toHaveAccessibleName(new RegExp(`^${h1}`));
     await user.click(within(sessionList()).getByRole("button", { name: `Close ${h1}` }));
-    expect(within(sessionList()).getByText(/No Sessions open/)).toBeInTheDocument();
+    // No Session rows (the pane, not the Sidebar, says "No Sessions open").
+    expect(sessionList().querySelectorAll(".sb-row")).toHaveLength(0);
   });
 
   it("switches Sessions by key: next, previous, by number, and j/k then Enter", async () => {
@@ -243,19 +245,25 @@ describe("The command line", () => {
     const user = await ready();
     await connect(user, h0);
     await user.keyboard(`${LEADER}:close{Enter}`);
-    expect(within(sessionList()).getByText(/No Sessions open/)).toBeInTheDocument();
+    // No Session rows (the pane, not the Sidebar, says "No Sessions open").
+    expect(sessionList().querySelectorAll(".sb-row")).toHaveLength(0);
   });
 
   it("says what's wrong, and won't connect to an unknown or unreviewed Host", async () => {
     const user = await ready();
     await user.keyboard(`${LEADER}:conect x{Enter}`);
     expect(screen.getByRole("status")).toHaveTextContent("Not a command: conect");
+    // A slip in the typing is said plainly, not as a warning, and the command it names is Iosevka.
+    expect(screen.getByRole("status")).toHaveClass("slip");
+    // What was typed is data too (round 19): Iosevka, no quote marks.
+    expect([...screen.getByRole("status").querySelectorAll("code.message-cmd")].map((c) => c.textContent)).toEqual(["conect", ":help commands"]);
     await user.keyboard(`${LEADER}:connect nope{Enter}`);
     expect(screen.getByRole("status")).toHaveTextContent("No Host named nope");
     const unreviewed = hosts.hosts.find((h) => !h.reviewed)!.name;
     await user.keyboard(`${LEADER}:connect ${unreviewed}{Enter}`);
     expect(screen.getByRole("status")).toHaveTextContent(/isn't reviewed/);
-    expect(within(sessionList()).getByText(/No Sessions open/)).toBeInTheDocument();
+    // No Session rows (the pane, not the Sidebar, says "No Sessions open").
+    expect(sessionList().querySelectorAll(".sb-row")).toHaveLength(0);
   });
 
   it("Esc closes it and gives the keys back to the terminal", async () => {
@@ -274,7 +282,7 @@ describe("Lock, by every path (one command)", () => {
   it.each([
     ["␣ L", (user: ReturnType<typeof userEvent.setup>) => user.keyboard(`${LEADER}L`)],
     [":lock", (user: ReturnType<typeof userEvent.setup>) => user.keyboard(`${LEADER}:lock{Enter}`)],
-    ["the Sidebar's button", (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole("button", { name: "Lock" }))],
+    ["the title bar's button", (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole("button", { name: "Lock" }))],
   ])("locks with %s", async (_, how) => {
     const user = await ready();
     await connect(user, h0);
@@ -296,29 +304,41 @@ describe("The Key bindings panel", () => {
     const user = await ready({ bindings: { leader: { t: "next" } } });
     await user.keyboard(`${LEADER}K`);
     const next = rowOf("Next Session");
+    // The source sits beside the option name, before the keys.
     expect(next.map((r) => r.textContent)).toEqual([
-      expect.stringMatching(/Next Session.*Leader.*\]$/),
-      expect.stringMatching(/Next Session.*Leader.*t.*init\.lua/),
+      expect.stringMatching(/^Next Session(?!.*init\.lua).*Leader.*\]$/),
+      expect.stringMatching(/^Next Session.*init\.lua.*Leader.*t$/),
     ]);
     // A built-in binding doesn't say "builtin" (ticket 29 N1); only another source is named.
     expect(rowOf("Leader")[0]).toHaveTextContent(/Ctrl\+Space$/);
+    expect(rowOf("Leader")[0]).not.toHaveTextContent(/builtin/);
     expect(within(panel()).getByRole("searchbox", { name: /filter/i })).toHaveFocus();
     await user.keyboard("close the s");
     const shown = within(panel()).getAllByRole("row").filter((r) => !r.classList.contains("group"));
     expect(shown.map((r) => r.textContent)).toEqual([expect.stringMatching(/Close the Session/)]);
   });
 
+  it("keeps each description whole in its tooltip, since a row is one line (round 18)", async () => {
+    const user = await ready({ bindings: { leader: { t: "next" } } });
+    await user.keyboard(`${LEADER}K`);
+    const [builtin, config] = rowOf("Next Session").map((r) => r.querySelector("td"));
+    // Then its option (round 21: a short window has no footer to name it).
+    expect(builtin).toHaveAttribute("title", expect.stringMatching(/^Next Session\nIn init\.lua: keys\./));
+    expect(config).toHaveAttribute("title", expect.stringMatching(/^Next Session init\.lua\nIn init\.lua: keys\.leader/));
+  });
+
   it("shows a changed Leader as coming from the Config", async () => {
     const user = await ready({ options: { leader: "Ctrl+b" } });
     await user.keyboard("{Control>}b{/Control}K");
-    expect(rowOf("Leader")[0]).toHaveTextContent(/Ctrl\+b.*init\.lua/);
+    expect(rowOf("Leader")[0]).toHaveTextContent(/init\.lua.*Ctrl\+b/);
   });
 
   it("closes with Esc or ␣ K again, and opens with the mouse", async () => {
     const user = await ready();
     await user.keyboard(`${LEADER}K{Escape}`);
     expect(screen.queryByRole("complementary", { name: "Key bindings" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Keys" }));
+    // The status bar's "keys" hint is also its button.
+    await user.click(within(document.querySelector(".statusbar") as HTMLElement).getByRole("button", { name: /keys$/ }));
     expect(panel()).toBeInTheDocument();
     await user.keyboard(`${LEADER}K`);
     expect(screen.queryByRole("complementary", { name: "Key bindings" })).toBeNull();
@@ -361,7 +381,7 @@ describe("Registries (ADR 0006)", () => {
     expect(within(sessionList()).getAllByRole("treeitem", { name: new RegExp(`^${h0}`) })).toHaveLength(2);
     await user.keyboard(`${LEADER}K`);
     const panel = screen.getByRole("complementary", { name: "Key bindings" });
-    expect(within(panel).getByText("Home box").closest("tr")).toHaveTextContent(/Leader\s*h.*init\.lua/);
+    expect(within(panel).getByText("Home box").closest("tr")).toHaveTextContent(/init\.lua.*Leader\s*h/);
   });
 });
 

@@ -4,6 +4,7 @@
 // Login's vault steps are), the rest still to come. The answer then says how each came out.
 import type { Capabilities } from "../backend/capabilities";
 import { CHECK_STEPS, type CheckStarted, type HostCheck, type JobProgress } from "../backend/types";
+import type { Message } from "../ui/messages";
 
 export type CheckState =
   /** `at`: the step under way (null before the first, or on a serve before API 21, which sends
@@ -52,7 +53,7 @@ export function checkOwned(check: CheckState | null, host: string, started: Chec
 
 /** What `:check stop` and the panel's `x` (#361) do now: stop the app's own check (its job), as
  * Stop does, or say why there's nothing of the app's to stop. */
-export function stopTarget(check: CheckState | null, caps: Capabilities): { job: string } | { message: string } {
+export function stopTarget(check: CheckState | null, caps: Capabilities): { job: string } | { message: Message } {
   if (check?.state !== "running") return { message: "There's no check running to stop" };
   if (check.stopping) return { message: `The check of ${check.host} is already stopping` };
   if (check.job !== undefined) return { job: check.job };

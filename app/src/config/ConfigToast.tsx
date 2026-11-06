@@ -20,6 +20,7 @@ export function ConfigToast({
   return (
     <div className={`config-toast${error ? " error" : ""}`} role="alert" aria-label="Config problem">
       <div className="config-toast-head">
+        <span className="notice-node" aria-hidden="true" />
         <span className="config-toast-title">{title}</span>
         <button type="button" className="config-toast-close" aria-label="Close" onClick={onClose}>
           <CloseGlyph />
