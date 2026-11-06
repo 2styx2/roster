@@ -395,6 +395,21 @@ def _save_by_name(f, data, key):
         raise
 
 
+def lock_everywhere(ctx):
+    """`roster vault lock`'s first half: `bw lock`, which locks every bw session on this Box (the app's too).
+    Returns (what to say when it locked, why it didn't: one of the two is None)."""
+    if not find_program("bw"):
+        return None, "bw (the Bitwarden CLI) isn't installed, so nothing was locked"
+    try:
+        r = ctx.run(["bw", "lock", "--nointeraction"], discard=True)
+    except SecretError as e:
+        return None, f"`bw lock` failed: {e}"
+    if r.returncode != 0:
+        return None, f"`bw lock` failed: {errtext(r, stdout=False) or f'exit {r.returncode}'}"
+    return ("bw lock: locked; bw keeps one unlock at a time, so the roster app and any other bw session on this Box "
+            "are locked too"), None
+
+
 def remove_session_file():
     """Remove session_file() (a link itself, never what it points to): True if one was there. On Linux and macOS
     through the folder's open handle, as it was saved (open_session_dir; #492, T250); by its name when that folder is
@@ -1059,4 +1074,10 @@ PROVIDERS["bw"].update(unlock=unlock_with, lock=_bw_lock, manual=_bw_manual, for
                        account=_bw_account, logout=_bw_logout, not_logged_in=NOT_LOGGED_IN,
                        create=_bw_create, delete=_bw_delete, targets=_bw_targets, resolve=_bw_resolve,
                        login_fields=_bw_login_fields, items=_bw_items, sync=_bw_sync,
-                       saved_session=_bw_saved_session)
+                       saved_session=_bw_saved_session, save_to=frozenset({"organization", "collection"}),
+                       unlock_hint="roster vault bw --write -- unlock (then export BW_SESSION=... as it says), or put "
+                                   "the session in ~/.config/roster/bw-session: (umask 077; bw unlock --raw > "
+                                   "~/.config/roster/bw-session)",
+                       session={"unlock": unlock_to_session_file, "lock": lock_everywhere,
+                                "remove": remove_session_file, "file": session_file, "until": UNTIL,
+                                "missing": "bw (the Bitwarden CLI) isn't installed"})

@@ -190,7 +190,10 @@ def _op_login_fields(name, ctx):
 
 
 PROVIDERS["op"].update(items=_op_items, ref_item=_op_ref_item, login_fields=_op_login_fields,
-                       manual=lambda ctx: adopt_inherited_session(ctx.state))
+                       manual=lambda ctx: adopt_inherited_session(ctx.state),
+                       unlock_hint="sign in: turn on the 1Password app's CLI integration, or eval $(op signin)",
+                       no_session="roster vault unlock and lock are Bitwarden only for now: 1Password's `op signin` "
+                                  "keeps its own session (roster vault op --write -- signin)")
 
 PROVIDERS["op"]["login_help"] = (
     "1Password signs in through its desktop app, not here: turn on Settings > Developer > \"Integrate with "

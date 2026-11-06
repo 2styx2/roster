@@ -2137,9 +2137,6 @@ def sign_out_error(e):
 # a key that isn't one of these is refused, so nothing else (a secret above all) can ride along. A value roster can't
 # use (a relative or Windows path, a save_to of the wrong shape) is refused alone: the other settings still apply.
 
-BOX_PATHS = {"kp": ("database", "key_file")}
-
-
 def box_path(value, field):
     if not isinstance(value, str) or not value.strip():
         raise Problem(INVALID_PARAMS, f"params.{field} must be a path")
@@ -2163,22 +2160,21 @@ def box_settings(params):
             return None
     save_to = take("save_to", save_to_param, params)
     if save_to is not None:
-        # init.lua has one save_to; it goes to the provider it fits: a collection is Bitwarden's, a group KeePassXC's
-        fits = ("bw", "kp") if save_to == providers.PERSONAL else ("kp",) if "group" in save_to else ("bw",)
-        for name in fits:
+        for name in providers.save_to_fits(save_to):   # init.lua has one: each provider whose targets it names
             box.setdefault(name, {})["save_to"] = save_to
+    paths = providers.box_paths()
     for name, given in params.items():
         if name == "save_to":
             continue
-        if name not in BOX_PATHS:
+        if name not in paths:
             raise Problem(INVALID_PARAMS, f"params.{name} isn't a setting roster takes from init.lua (it takes: "
-                                           f"save_to, {', '.join(sorted(BOX_PATHS))})")
+                                           f"save_to, {', '.join(sorted(paths))})")
         if not isinstance(given, dict):
             raise Problem(INVALID_PARAMS, f"params.{name} must be an object")
         for key, value in given.items():
-            if key not in BOX_PATHS[name]:
+            if key not in paths[name]:
                 raise Problem(INVALID_PARAMS, f"params.{name}.{key} isn't a setting roster takes from init.lua "
-                                               f"(it takes: {', '.join(BOX_PATHS[name])})")
+                                               f"(it takes: {', '.join(paths[name])})")
             setting = f"{name}.{key}"
             path = None if value is None else take(setting, box_path, value, setting)
             if path is not None:

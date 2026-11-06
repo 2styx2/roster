@@ -25,14 +25,6 @@ from .common import NAME_RE, NotPrivate, plain, read_private, say, utc_now, writ
 from .context import user_config_dir
 from .errors import LIST_FAILED, NO_LISTABLE_VAULT, VAULT_LOCKED, Problem
 
-NOT_VAULTS = ("env", "cmd", "prompt")       # providers that hold no items to list or sync
-UNLOCK = {"bw": "roster vault bw --write -- unlock (then export BW_SESSION=... as it says), or put the session in "
-                "~/.config/roster/bw-session: (umask 077; bw unlock --raw > ~/.config/roster/bw-session)",
-          "kp": "KeePassXC has no session roster can reuse: give the address and user yourself (roster add NAME "
-                "--ip ADDR --user USER --auth kp:ENTRY), or unlock it in the app",
-          "op": "sign in: turn on the 1Password app's CLI integration, or eval $(op signin)"}
-
-
 # ---------------------------------------------------------------- what roster.yml refers to
 
 def refs(path):
@@ -114,7 +106,7 @@ def listing(path, sync=True, interactive=False):
     used = refs(path)
     listable = [p for p in used if p in providers.PROVIDERS and providers.can_list(p)]
     skipped = [f"{p}: can't list its items without roster reading their passwords" for p in sorted(used)
-               if p in providers.PROVIDERS and p not in listable and p not in NOT_VAULTS]
+               if p in providers.PROVIDERS and p not in listable and providers.holds_items(p)]
     if not listable:
         raise Problem(NO_LISTABLE_VAULT, "roster.yml uses no vault roster can list (bw, op, kp)",
                       fix="add one Host with --auth bw:ITEM (or op:, kp:) first; then roster add --from-vault "
@@ -145,7 +137,7 @@ def listing(path, sync=True, interactive=False):
 def problem(provider, e):
     if isinstance(e, providers.VaultLocked) or providers.vault_status(provider) in ("locked", "unauthenticated"):
         return Problem(VAULT_LOCKED, f"{provider}: the vault is locked, and roster add --from-vault never asks for "
-                                     "its master password", fix=UNLOCK.get(provider, "unlock it, then run it again"))
+                                     "its master password", fix=providers.PROVIDERS[provider].get("unlock_hint") or "unlock it, then run it again")
     if isinstance(e, providers.Unsupported):
         return Problem(NO_LISTABLE_VAULT, str(e))
     return Problem(LIST_FAILED, f"{provider}: {e}", fix="see the message; roster check --auth tests the vault")
