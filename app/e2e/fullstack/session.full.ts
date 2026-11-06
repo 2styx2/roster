@@ -62,6 +62,12 @@ describe("a Session on the whole stack", () => {
     await page.keyboard.press("Enter");
     const trust = page.getByRole("alertdialog", { name: "Trust lab-01's host key?" });
     await trust.waitFor();
+    // It opens on Cancel, so a reflexive Enter never trusts an unread key (owner, Q233 g): Trust
+    // and connect is the control before Cancel (Tab from Cancel wraps to `:help host-keys`), then
+    // Enter.
+    expect(await trust.getByRole("button", { name: /^Cancel/ }).evaluate((b) => b === document.activeElement)).toBe(true);
+    await page.keyboard.press("Shift+Tab");
+    expect(await trust.getByRole("button", { name: /^Trust and connect/ }).evaluate((b) => b === document.activeElement)).toBe(true);
     await page.keyboard.press("Enter");
     await app.terminalShows(/^lab-01:~\$$/m);
     await page.keyboard.type("hostname\n");
@@ -102,7 +108,16 @@ describe("a Session on the whole stack", () => {
     await page.getByRole("option", { name: new RegExp(`^Quick Connect ${to}`) }).waitFor();
     await page.keyboard.press("Enter");
     const ask = page.getByRole("alertdialog", { name: `Quick Connect to ${to}` });
-    await ask.getByLabel(`Password for ${HOST_USER}`).fill(HOST_PASSWORD);
+    const password = ask.getByLabel(`Password for ${HOST_USER}`);
+    await password.fill(HOST_PASSWORD);
+    // Enter in the password field doesn't connect before "I've checked this key" is ticked: the
+    // question stays (Q236, Q250 a); ticked, the same Enter connects (Q254, Q256).
+    await page.keyboard.press("Enter");
+    const box = ask.getByRole("checkbox", { name: "I've checked this key" });
+    await expect.poll(() => box.evaluate((b) => b === document.activeElement)).toBe(true);
+    expect(await ask.isVisible()).toBe(true);
+    await box.check();
+    await password.focus();
     await page.keyboard.press("Enter");
     await ask.waitFor({ state: "detached" });
     await app.terminalShows(/^lab-02:~\$$/m);
