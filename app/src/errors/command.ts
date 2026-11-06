@@ -1,6 +1,6 @@
 // `:check`: a Host's diagnostics, this Box's health, or Stop for the app's own check.
 import type { AppContext, CommandDef } from "../commands/table";
-import { matching } from "../commands/match";
+import { matching } from "../ui/completion";
 import { BUILTIN } from "../registry";
 import type { SessionContext } from "../session/commands";
 

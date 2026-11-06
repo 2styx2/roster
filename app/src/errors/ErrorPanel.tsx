@@ -7,7 +7,7 @@ import { useContext, useState } from "react";
 import { fixFor, sentence, type ErrorAction, type ErrorExtra, type ErrorRow, rowFor } from "./catalog";
 import type { Problem, ProblemData } from "./classify";
 import { RosterApi } from "./rosterApi";
-import { withCode } from "../lock/withCode";
+import { withCode } from "../ui/withCode";
 
 export interface ProblemActions {
   /** Runs a command line (`reconnect`, `check HOST`, `lock`, `find`). */

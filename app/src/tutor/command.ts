@@ -1,7 +1,7 @@
 // `:tutor [NAME]`, `:tutor quit` and `:tutor reset [NAME]` (ticket 55), registered through the
 // command registry like any other command.
 import type { CommandDef } from "../commands/table";
-import { matching } from "../commands/match";
+import { matching } from "../ui/completion";
 import { BUILTIN } from "../registry";
 import { quiet } from "../ui/messages";
 import { DEFAULT_TUTORIAL, type TutorialDef, type TutorRegistry } from "./tutor";

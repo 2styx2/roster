@@ -105,13 +105,6 @@ export function reviewedMessage(host: string, reviewed: boolean, plain: boolean,
   return routine(`Marked ${host} ${reviewed ? "reviewed" : "unreviewed"}`, done, warnings);
 }
 
-/** Why an unreviewed Host won't open, and how to change that (`:review`, api 6), or roster.yml. */
-export function notReviewedMessage(name: string, canReview: boolean): string {
-  return canReview
-    ? `${name} isn't reviewed yet, so it can't be opened. :review ${name} marks it reviewed.`
-    : `${name} isn't reviewed yet, so it can't be opened. Review it in roster first.`;
-}
-
 /** Service entries roster left out of their Hosts (a bad port, url or login type in roster.yml):
  * the file still loaded, so this is said once, not shown as an error. Null when there are none. */
 export function servicesLeftOut(list: HostList): string | null {

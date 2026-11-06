@@ -2,8 +2,8 @@
 // says what happens to its vault item (nothing). Enter (the focused button) confirms, Esc keeps it.
 // It opens from a key or a row button, so it doesn't animate, like the other side panels.
 import { useEffect, useId, useRef, useState } from "react";
-import { CloseGlyph } from "../ui/CloseGlyph";
-import { Keys } from "../ui/Keys";
+import { CloseGlyph } from "./CloseGlyph";
+import { Keys } from "./Keys";
 
 export interface ConfirmPanelProps {
   title: string;

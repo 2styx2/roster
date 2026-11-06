@@ -12,7 +12,7 @@ import type { StateStore } from "../state/store";
 import type { TutorialDef } from "../tutor/tutor";
 import type { Message } from "../ui/messages";
 import type { FocusReturn } from "../ui/useFocusReturn";
-import { Latest } from "./latest";
+import { Latest } from "../ui/latest";
 
 export function useWorkspaceLife(o: {
   store: StateStore;

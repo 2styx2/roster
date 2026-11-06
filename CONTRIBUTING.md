@@ -17,6 +17,10 @@ One branch model for the whole repo: the Python CLI at the root and the roster a
 - **A ticket that needs another ticket's unmerged work** is cut from that ticket's branch, so the branches stack; open its pull request against `dev` once the first one is merged (or against the first branch, retargeted later). If it needs two, merge both into the new Work branch. Merging into a Work branch is fine. Merging into `dev` is not.
 - **First Release of the app after iteration 4** (decisions Q48, Q70). Iterations 1–4 all build up on `dev`, and each one is tested by hand before the next starts. After iteration 4, `dev` merges into `main` and is tagged `v0.1.0`. After iteration 7, the next Release is tagged `v0.2.0`. How to cut one: [docs/releasing.md](docs/releasing.md).
 
+## Where code goes
+
+[docs/architecture.md](docs/architecture.md) is the codebase's structure and standards: each half's layers and which way they depend, where each kind of new code goes, the files generated from one source, and the anti-patterns to avoid. Read it before adding a module, a file roster keeps, a serve method or command, or a value two languages share. `tests/test_layers.py`, `app/src/architecture.test.ts` and `crates/roster-core/tests/layers.rs` fail a pull request that breaks the layers.
+
 ## Docs
 
 **Docs ship with the change, in the same pull request.** A feature isn't done until `:help` can answer a question about it. roster's docs follow the model of Neovim's: one source for the in-app `:help`, the docs website and the PDF (`npm run docs` in `app/`, ADR 0008), complete, and never stale. For each kind of change:

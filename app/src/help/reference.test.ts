@@ -1,7 +1,7 @@
 // The option reference's data (generated from the core's shape table) and each option's value now
 // and where it was set: what `:options` lists and `:help options` shows beside each entry.
 import { describe, expect, it } from "vitest";
-import { configWith, defaultConfig } from "./fixture";
+import { configWith, defaultConfig } from "../config/fixture";
 import { bundledThemes } from "../theme/themes";
 import { optionRows, reference } from "./reference";
 

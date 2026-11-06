@@ -2,11 +2,11 @@
 // would (ADR 0006). HelpView is the help panel's state outside React (like ThemeChoice): which
 // page and entry it shows, and the way back. App hands it the live HelpContext each render.
 import type { CommandDef } from "../commands/table";
-import { matching } from "../commands/match";
+import { matching } from "../ui/completion";
 import type { FinderItem, FinderSourceDef } from "../finder/sources";
 import type { Registries } from "../registries";
 import { BUILTIN } from "../registry";
-import { optionRows, optionTag } from "../config/reference";
+import { optionRows, optionTag } from "./reference";
 import { plain } from "./doc";
 import { grepTexts } from "./grep";
 import { lineTopic } from "./lookup";

@@ -8,7 +8,7 @@ import type { RowAction } from "../sidebar/model";
 import type { StepMatch } from "../tutor/tutor";
 import type { ColumnKind, Sort, TableColumn, TableRow, Tone } from "../ui/table";
 import { CORE } from "./core.gen";
-import { GRAPH_KEYS, type PluginGraph, type PluginGraphUpdate } from "./graphOps";
+import type { PluginGraph, PluginGraphUpdate } from "./graphOps";
 
 /** What choosing something runs: a function the Plugin handed over, or a command line. */
 export type Run = { handler: number } | { command: string };
@@ -256,6 +256,9 @@ const KINDS: readonly ColumnKind[] = ["text", "data", "number"];
 const TONES: readonly Tone[] = ["muted", "warn", "error"];
 /** Keys a table uses itself (moving, sorting, and kept for a filter and its help). */
 const TABLE_KEYS = ["j", "k", "g", "G", "s", "S", "/", "?", "q"] as const;
+/** Keys the graph uses itself: moving, panning, zoom, search, its filter, clusters, the list,
+ * placing a node (`m`), and kept ones; and `s` `S`, which sort its node list (a table). */
+export const GRAPH_KEYS = ["h", "j", "k", "l", "H", "J", "K", "L", "g", "G", "n", "N", "o", "O", "t", "f", "m", "s", "S", "/", "?", "q", "+", "-", "=", "0"] as const;
 export const MAX_HELP = 200_000;
 /** Most buttons on a section's heading, and actions and links in a float. */
 export const MAX_HEAD_ACTIONS = 4;

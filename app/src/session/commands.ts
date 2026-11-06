@@ -2,7 +2,7 @@
 // fill its prompt, turn on its shell integration, save its typed password. session/actions.ts
 // does what they ask.
 import type { AppContext, CommandDef } from "../commands/table";
-import { matching } from "../commands/match";
+import { matching } from "../ui/completion";
 import { BUILTIN } from "../registry";
 
 /** What the Session commands ask of the app. */

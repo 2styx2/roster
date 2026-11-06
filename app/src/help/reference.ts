@@ -3,9 +3,9 @@
 // out by `cargo run -p roster-core --example gen_config_options`). `:help options` shows it and
 // `:options` finds an option in it, each with the value it has now and where that was set.
 import data from "../../../crates/roster-core/tests/fixtures/config-options.json";
-import { guides } from "../help/guides";
-import { luaValue, optionSource, optionValue, type StateChoices } from "../help/options";
-import type { Config } from "./types";
+import { guides } from "./guides";
+import { luaValue, optionSource, optionValue, type StateChoices } from "./options";
+import type { Config } from "../config/types";
 
 export interface RefRow {
   name: string;

@@ -4,7 +4,7 @@
 // (ticket 121); and prompt fills (ticket 119), a nested ssh's (ticket 120) read at the shell's C
 // mark against the Inventory as it is then.
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { Latest } from "../app/latest";
+import { Latest } from "../ui/latest";
 import type { Capabilities } from "../backend/capabilities";
 import type { Host } from "../backend/types";
 import type { Config } from "../config/types";

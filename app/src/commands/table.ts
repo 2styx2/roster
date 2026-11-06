@@ -9,7 +9,7 @@ import { configCommand, type ConfigContext } from "../config/command";
 import { checkCommand, type CheckContext } from "../errors/command";
 import { changesCommands, editCommand, groupCommand, hostCommand, reviewCommand, unreviewCommand, type InventoryContext } from "../inventory/commands";
 import { inventoryCommand } from "../inventory/switch";
-import { matching } from "./match";
+import { matching } from "../ui/completion";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import { sessionCommands as s, type SessionContext } from "../session/commands";
 import { sidebarCommands, type SidebarContext } from "../sidebar/commands";
