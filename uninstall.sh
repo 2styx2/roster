@@ -305,13 +305,35 @@ if (( ! keep_roster )); then
 remove "the roster source install.sh unpacked" "${XDG_DATA_HOME:-$HOME/.local/share}/roster/source"
 remove "install.sh's kept answers" "$CONF_DIR/install-choices"
 (( DRY )) || rmdir "${XDG_DATA_HOME:-$HOME/.local/share}/roster" 2>/dev/null || true
-# roster's own folder: what roster wrote (Mesh state, the Inventory list) goes; what you put there is asked about.
-# Kept with roster: revoke --all and mesh cut --all need them.
-mine=()
-for p in "$CONF_DIR"/mesh*.json* "$CONF_DIR"/inventories.json* "$CONF_DIR"/*.removed-*; do [[ -e $p ]] && mine+=("$p"); done
+# roster's own folder: what roster wrote goes; what you put there (roster.yml, providers/) is asked about.
+# Kept with roster: revoke --all and mesh cut --all need them. Every name roster writes there must be below
+# (tests/test_install_scripts.py reads them from roster's source): the Mesh state, the Inventory list and what a
+# removed Inventory left, the run lock, the key's name and age, a key rotation's record, the vault snapshots
+# (vault-sync/, vault-seen/), and the temp files of a run cut short (bw-session is stage 5's).
+# Kept: a Box key rotation's record (key-rotation, key-rotation-NAME) while a KEY.old or KEY.new is in ~/.ssh:
+# it's what says those key files are roster's (Q204 (d2)); without it a later roster won't use or clean them up.
+mine=() kept_rotation=()
+rotating=0
+for k in "${keys[@]}" ${other_keys[@]+"${other_keys[@]}"}; do [[ -e $k.old || -e $k.new ]] && rotating=1; done
+shopt -s dotglob
+for p in "$CONF_DIR"/mesh*.json* "$CONF_DIR"/mesh*.new "$CONF_DIR"/inventories.json* "$CONF_DIR"/*.removed-* \
+         "$CONF_DIR"/inventory.create.lock "$CONF_DIR"/run.lock "$CONF_DIR"/run-*.lock "$CONF_DIR"/key-created \
+         "$CONF_DIR"/key-name "$CONF_DIR"/key-name-* "$CONF_DIR"/key-types "$CONF_DIR"/key-types-* \
+         "$CONF_DIR"/setup-left "$CONF_DIR"/setup-left-* "$CONF_DIR"/vault-sync "$CONF_DIR"/vault-seen \
+         "$CONF_DIR"/.*.new "$CONF_DIR"/key-rotation "$CONF_DIR"/key-rotation-*; do
+    [[ -e $p ]] || continue
+    if (( rotating )) && [[ ${p##*/} == key-rotation* && ${p##*/} != *.new ]]; then kept_rotation+=("$p"); else mine+=("$p"); fi
+done
+shopt -u dotglob
 remove "roster's state in $(home "$CONF_DIR")" ${mine[@]+"${mine[@]}"}
+if (( ${#kept_rotation[@]} )); then
+    info "kept the Box key rotation's record (${kept_rotation[*]/#$CONF_DIR\//}): a key ending .old or .new is still in"
+    info "$(home "$HOME/.ssh"), and the record is what says roster made it (delete both by hand once no host holds that key)"
+fi
 yours=()
-for p in "$CONF_DIR"/*; do [[ -e $p ]] && yours+=("$p"); done
+for p in "$CONF_DIR"/*; do
+    [[ -e $p ]] && ! listed "$p" ${kept_rotation[@]+"${kept_rotation[@]}"} && yours+=("$p")
+done
 if (( ${#yours[@]} )) && [[ ${cfg_dir:-} == "$CONF_DIR" ]]; then
     info "kept $(home "$CONF_DIR"): your roster.yml is there (the next stage asks about it, checking it's saved)"
 elif (( ${#yours[@]} )); then

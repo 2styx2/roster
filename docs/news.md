@@ -49,6 +49,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
+- **`uninstall.sh` removes roster's newer files in `~/.config/roster`**: the run lock (`run.lock`), the key's age and name (`key-created`, `key-name`), a finished key rotation's record and the vault snapshots (`vault-sync/`, `vault-seen/`) were left there, so `uninstall.sh --yes` kept the folder and asked about them as if they were yours. They go with the rest of roster's state now; a key rotation's record stays only while its `.old` or `.new` key is still in `~/.ssh`.
 - **1Password items list their URLs primary first** (#500): the list of vault items (`roster add --from-vault` with no NAME) kept 1Password's order, while `--from-vault NAME` took the primary URL, so a listed item's address could differ from the one it filled in. Both use the primary URL first now.
 - **`roster setup` no longer counts a failed Host as ready too** (#476): one Host that needed its key while the vault was locked said `1 key hosts ready, 0 password-only hosts, 1 failed`; it says `0 … ready … 1 failed` now.
 
