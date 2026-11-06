@@ -240,6 +240,11 @@ KEY_TYPE_DRIFT = 219        # a warning: a Host holds this Box's key lines of ot
 MESH_KEY_PEER = 220         # a warning: a source's Ed25519 Mesh key goes to a peer whose key_type isn't ed25519
 KEY_FILE_SHARED = 221       # a note: revoke keeps a key file another Inventory on this Box still uses
 
+# roster add --save-to-vault (T265, decision Q217; catalog rows 285-287)
+NO_TERMINAL_FOR_PASSWORD = 223  # add --save-to-vault: no terminal to ask the new item's password on, so nothing saved
+PASSWORDS_DIFFER = 224      # add --save-to-vault: the password and its confirmation differ (or none was typed)
+ITEM_LEFT = 225             # add --save-to-vault: the vault item was made but roster.yml wasn't written: delete it
+
 
 # The vault's own state, not an item's: the codes a provider's failure keeps wherever it's reported
 VAULT_CODES = (WRONG_PASSWORD, NOT_LOGGED_IN, CLI_MISSING, UNSUPPORTED, VAULT_LOCKED, ALREADY_SIGNED_OUT,

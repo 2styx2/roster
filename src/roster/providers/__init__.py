@@ -541,6 +541,31 @@ def check_save_to(value):
     raise ValueError(f"must be {SAVE_TO_SHAPES}, not {value!r}")
 
 
+def save_to_text(provider, text):
+    """A save_to as the command line writes it (`roster add --save-to`) for PROVIDER: `personal`, else the shape its
+    save_to keys take: Bitwarden's `ORGANIZATION/COLLECTION` (split at the first `/`: a collection may nest, an
+    organization's name or id has none), KeePassXC's `GROUP`. UnknownTarget when it can't be one of PROVIDER's."""
+    text = str(text).strip()
+    if text == PERSONAL:
+        return PERSONAL
+    keys = PROVIDERS.get(provider, {}).get("save_to") or frozenset()
+    if keys == {"group"} and text:
+        return check_save_to({"group": text})
+    org, _, collection = text.partition("/")
+    if keys == {"organization", "collection"} and org.strip() and collection.strip():
+        return check_save_to({"organization": org, "collection": collection})
+    shapes = {frozenset({"group"}): "personal or GROUP",
+              frozenset({"organization", "collection"}): "personal or ORGANIZATION/COLLECTION"}
+    raise UnknownTarget(f"--save-to {text!r} isn't a place {provider} saves to: give "
+                        f"{shapes.get(frozenset(keys), 'personal')}")
+
+
+def main_vault(names):
+    """The vault to unlock and save to among provider NAMES (most used first): the first that has a master password,
+    or None. serve's vault.status and "Save to vault", and `roster add --save-to-vault`."""
+    return next((n for n in names if PROVIDERS.get(n, {}).get("unlock")), None)
+
+
 def box_paths():
     """{provider: its settings naming files on this Box}, the ones vault.configure takes from init.lua."""
     return {n: p["box_paths"] for n, p in PROVIDERS.items() if p.get("box_paths")}

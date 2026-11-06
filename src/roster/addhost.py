@@ -8,7 +8,12 @@ host.add) and `roster add`, so a fix in one is a fix in both.
   cli.py's.
 - `vault_fields(auth)`: the address, SSH port and user a vault item holds (its URI and username), read without the
   item's password ever reaching roster (providers.login_fields). The CLI's `--from-vault` and serve's
-  vault.item_fields."""
+  vault.item_fields.
+- `save_item(provider, item, password, user, address, port, save_to)`: the one way a Host's Login becomes a vault
+  item (Q43's "Save to vault"): the user in its username field, `ssh://ADDRESS[:PORT]` in its URI field, in SAVE_TO
+  (providers.create_item). serve's quick.save, host.save_login and host.add, and `roster add --save-to-vault`.
+- `add_saving(...)`: `roster add --save-to-vault` (T265, Q217): every check, then the password asked, the item made,
+  then the Host written with `auth:` pointing at it; the item named if the write fails."""
 
 import difflib
 import re
@@ -17,9 +22,12 @@ from urllib.parse import urlsplit
 import yaml
 
 from . import edit, providers, store
+from .common import failure_text
 from .config import load_config
 from .errors import (
     ADDRESS_TAKEN,
+    ITEM_EXISTS,
+    ITEM_LEFT,
     ITEM_NOT_FOUND,
     LOOKUP_FAILED,
     NO_PROVIDER,
@@ -79,6 +87,88 @@ def same_address(cfg, h):
 def added_lines(old, new):
     """What the write changes, as `- ` (a line it replaces, e.g. a group's `hosts: {}`) and `+ ` (a line it writes)."""
     return [line for line in difflib.ndiff(old.splitlines(), new.splitlines()) if line[:2] in ("- ", "+ ")]
+
+
+# ---------------------------------------------------------------- a Host's Login saved as a new vault item
+
+def item_name(name):
+    """The vault item a Host's ssh Login is saved as: `<host> ssh` (docs/adding-hosts.md's naming)."""
+    return f"{name} ssh"
+
+
+def ssh_uri(address, port):
+    """A vault item's URI for a Host: `ssh://ADDRESS`, with `:PORT` when it isn't 22."""
+    return f"ssh://{address}" + ("" if port == 22 else f":{port}")
+
+
+def save_item(provider, item, password, user, address, port, save_to=None):
+    """Save PASSWORD as the vault item ITEM in PROVIDER (providers.create_item): USER in its username field,
+    ssh_uri(ADDRESS, PORT) in its URI field, in SAVE_TO (None: the setting's). Returns {provider, id, name, target};
+    never the password. Raises the vault's Problem (vault_problem: 60 the name is taken, 61, 62, 64, 65, 14, ...)."""
+    try:
+        made = providers.create_item(provider, name=item, password=password, username=user,
+                                     uri=ssh_uri(address, port), save_to=save_to)
+    except providers.SecretError as e:
+        raise vault_problem(e) from None
+    return {"provider": provider, **made}
+
+
+def add_saving(path, group, name, fields, provider, password, save_to=None, dry_run=False, on_write=None):
+    """`roster add NAME --save-to-vault` (T265, Q217): Host NAME (FIELDS as add()'s, checked, without auth) added to
+    GROUP with `auth: PROVIDER:<NAME> ssh`, its password saved as that vault item first. In order: PROVIDER can save
+    (61); every check of add(), nothing asked or saved yet; PASSWORD() (the caller's prompt: it raises to stop); the
+    item (save_item: 60 when the name is taken, the vault's other refusals); the Host, written as add() writes it
+    (ON_WRITE as add()'s, its result's `item` set); then PROVIDER's sync (`bw sync`), so other Boxes see the item at
+    their next sync. A write that fails once the item is made is 225, naming the item to delete by hand: no Host
+    points at it. Returns add()'s result with `item` (save_item's) and `vault_sync` ({ok, error?}). DRY_RUN: nothing asked or saved, and `item` is
+    the one it would make ({provider, name, uri, username, target}: the SAVE_TO given, or the setting, as set)."""
+    if not providers.can_write(provider):
+        raise vault_problem(providers.CantWrite(
+            f"provider '{provider}' can't save to the vault - roster only reads its Logins: make the item in the "
+            f"password manager, then give --auth {provider}:ITEM"))
+    item = item_name(name)
+    fields = {**fields, "auth": edit.check_new("auth", f"{provider}:{item}")}
+    plan = add(path, group, name, fields, dry_run=True, new_address=True)
+    h = plan["host"]
+    user, address, port = h["ssh"]["user"], h["ip"], h["ssh"]["port"]
+    if dry_run:
+        target = {"setting": save_to, "from": "--save-to"} if save_to is not None else \
+            providers.default_target(provider)
+        return {**plan, "item": {"provider": provider, "name": item, "uri": ssh_uri(address, port),
+                                 "username": user, "target": target}}
+    typed = password()
+    try:
+        made = save_item(provider, item, typed, user, address, port, save_to)
+    except Problem as e:
+        if e.code != ITEM_EXISTS:
+            raise
+        raise Problem(e.code, e.message, e.data, fix=f"to use that item, give --auth {provider}:{item} instead of "
+                                                     "--save-to-vault; or delete it in the vault first") from None
+    finally:
+        del typed                               # Python can't wipe a str: at least no name holds it past here
+    written = []
+
+    def in_file(r):
+        r["item"] = made
+        written.append(r)
+        if on_write is not None:
+            on_write(r)
+    try:
+        done = add(path, group, name, fields, new_address=True, on_write=in_file)
+    except BaseException as e:
+        if written:                             # the Host is in: what failed after that leaves no stray item
+            raise
+        why = e.message if isinstance(e, Problem) else failure_text(e)
+        raise Problem(ITEM_LEFT, f"{name} wasn't added ({why}), but its vault item '{item}' was already saved in "
+                                 f"{provider} ({made['target'].get('label', 'the vault')}): no Host uses it",
+                      {"left": made}, fix=f"delete '{item}' in the vault and run roster add again, or keep it and add "
+                                          f"{name} with --auth {provider}:{item}") from None
+    try:
+        synced = providers.sync_vault(provider)
+        done["vault_sync"] = {"ok": True, "synced": synced is not None}
+    except providers.SecretError as e:          # saved and written: other Boxes only see the item at a later sync
+        done["vault_sync"] = {"ok": False, "error": str(e)}
+    return {**done, "item": made}
 
 
 # ---------------------------------------------------------------- what a vault item says about its Host
