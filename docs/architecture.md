@@ -107,7 +107,7 @@ Modules never import each other in a circle, and feature folders depend one way.
 | A Plugin op | A variant of `Op` in `plugin/op.rs`, sent by the binding | Its `{parse, apply}` entry in `app/src/plugins/opRegistry.ts`, field checks in `ops.ts`; a kind without an entry doesn't compile. |
 | A Rust type the app reads | `#[cfg_attr(feature = "ts", derive(ts_rs::TS))]` on the type, listed in `crates/roster-core/tests/ts_types.rs` | `ROSTER_WRITE_TS=1 cargo test --test ts_types` writes `app/src/config/core.gen.ts`; `config/types.ts` names it for the app. |
 | A stand-in for tests | Python: a program in `tests/fakes/` driven by `FAKE_*` env vars (the `fakes` fixture puts them on PATH). App: the fake Backend in `backend/fake*.ts`. Rust: `crates/roster-core/tests/fake_serve.py` | Share data with the real side rather than port it: a fixture both read (`demo-mesh.json`), a transcript the real core records and the fake replays (`ROSTER_UPDATE_TRANSCRIPT=1 cargo test --test plugin_mesh` writes `app/src/plugins/mesh.transcript.json`). |
-| An end-to-end scenario | The e2e suites: `app/e2e/` (headless Chromium, `npm run e2e`) <!-- e2e: filled after merge --> | |
+| An end-to-end scenario | The e2e suites: `tests/e2e/` for the CLI and `roster serve` against real sshd in containers (`scripts/e2e.sh`, `--compare REF` diffs another ref's behaviour against this one; [development.md, End-to-end suite](development.md#end-to-end-suite)), `app/e2e/` for the frontend in headless Chromium (`npm run e2e`) <!-- e2e: app full-stack suite filled after merge --> | |
 | A new module | Python: its layer in this page's table and in `tests/test_layers.py`, a line in `development.md`. App: its folder by owner, a line in `app/README.md` | |
 
 ## One source
