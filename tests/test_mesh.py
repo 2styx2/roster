@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from shlex import quote as q
 
 import pytest
 from conftest import POSIX_SH, WINDOWS, stand_in_hosts
@@ -578,6 +579,101 @@ def test_an_esxi_datastore_others_may_write_in_is_said_and_used(net):
                     "/vmfs/volumes/5f0e-uuid (ESXi: roster uses it anyway, as a datastore's permissions are its "
                     "storage's)"]
 
+
+
+@posix_modes
+def test_a_link_to_the_mesh_folder_in_a_folder_others_may_write_in_is_refused(net):
+    """#532's review L1: mesh_dir: PUB/link, PUB writable by others, link -> a safe folder: whoever may write PUB could
+    point the link elsewhere between the check and the key's use, so the folders as written are checked too."""
+    h = net.host("orion-2")
+    pub, safe = h / "pub", h / "safe"
+    pub.mkdir()
+    safe.mkdir(mode=0o700)
+    (safe / "mesh").mkdir(mode=0o700)
+    pub.chmod(0o777)
+    (pub / "link").symlink_to(safe / "mesh")
+    with_mesh_dir(net, net.seen(pub / "link"), host="orion-2")
+    r = mesh.run(net.cfg(), apply=True)
+    assert r["pending"]["orion-2"].startswith(f"[222] {net.seen(pub)} is writable by others")
+    assert list((safe / "mesh").iterdir()) == []
+
+
+def other_owner(tmp_path, monkeypatch, path):
+    """The stand-in Hosts' ls says uid 4242 owns PATH (as a second account would): tests/fakes can't chown."""
+    tools = tmp_path / "other-owner"
+    tools.mkdir()
+    (tools / "ls").write_text(
+        '#!/bin/sh\nfor d in /usr/bin /bin; do [ -x "$d/ls" ] && break; done\n'
+        f'"$d/ls" "$@" | awk -v p={q(str(path))} \'$NF == p {{ $3 = 4242 }} {{ print }}\'\n')
+    (tools / "ls").chmod(0o755)
+    monkeypatch.setenv("FAKE_HOST_PATH", str(tools))
+
+
+@posix_modes
+def test_a_folder_above_the_mesh_folder_another_account_owns_is_refused(net, tmp_path, monkeypatch):
+    """#532's review L2: whoever owns a folder above it may make it writable at any time, and rename the Mesh's
+    folder away: each one must be root's or the login's (as sshd's StrictModes asks of ~/.ssh)."""
+    srv = net.host("orion-2") / "srv"
+    (srv / "mesh").mkdir(parents=True)
+    with_mesh_dir(net, net.seen(srv / "mesh"), host="orion-2")
+    other_owner(tmp_path, monkeypatch, srv)
+    r = mesh.run(net.cfg(), apply=True)
+    assert r["pending"]["orion-2"] == (
+        f"[222] {net.seen(srv)} isn't this account's or root's (another user owns it): they could make it writable and "
+        "put a key pair of their own in the Mesh's place: chown it to this account or root, or give the Mesh another "
+        "mesh_dir:")
+    assert list((srv / "mesh").iterdir()) == []
+
+
+@posix_modes
+def test_a_mesh_folder_made_by_another_account_after_the_first_check_says_222(net, tmp_path, monkeypatch):
+    """#532's review NIT: the check after mkdir, when it fails, says 222's words, not ssh-keygen's."""
+    d = net.host("orion-2") / "home/.ssh/roster-mesh"
+    tools = tmp_path / "late"
+    tools.mkdir()
+    # the Mesh's folder isn't there at the first check; mkdir makes it, and ls then says 4242 owns it
+    (tools / "ls").write_text(
+        '#!/bin/sh\nfor d in /usr/bin /bin; do [ -x "$d/ls" ] && break; done\n'
+        f'"$d/ls" "$@" | awk -v p={q(str(d))} \'$NF == p {{ $3 = 4242 }} {{ print }}\'\n')
+    (tools / "ls").chmod(0o755)
+    monkeypatch.setenv("FAKE_HOST_PATH", str(tools))
+    r = mesh.run(net.cfg(), apply=True)
+    assert r["pending"]["orion-2"].startswith(f"[222] {d} isn't this account's")
+    assert not (d / "id_ed25519").exists()
+
+
+# Writes into the Mesh's folder never go through a name another account planted there (#532's review M1): on ESXi
+# the folder may be a datastore others can write (Q212 (k): a warning only), and the Mesh's scripts run as root.
+
+@posix_modes
+@pytest.mark.parametrize("planted", ["id_ed25519.pub.new", "config", "known_hosts", "ROSTER.md"])
+def test_an_esxi_rename_never_writes_through_a_link_planted_in_the_mesh_folder(net, tmp_path, planted):
+    mesh.run(net.cfg(), apply=True)
+    d = net.host("esx-02") / "vmfs/volumes/5f0e-uuid/.roster-mesh"
+    victim = tmp_path / "victim"
+    victim.write_text("precious\n")
+    (d / planted).unlink(missing_ok=True)
+    (d / planted).symlink_to(victim)
+    net.cfg_path.write_text(CONFIG.replace("box_name: box\n", "box_name: box2\n"))
+    r = mesh.run(net.cfg(), apply=True)
+    assert victim.read_text() == "precious\n"
+    assert "esx-02" not in r["pending"]
+    assert (d / "id_ed25519.pub").read_text().split()[2] == "roster-mesh:esx-02@box2"
+    assert not (d / "id_ed25519.pub").is_symlink() and "(owner box2)" in (d / "config").read_text()
+
+
+@posix_modes
+@pytest.mark.parametrize("planted", ["id_ed25519", "id_ed25519.pub"])
+def test_an_esxi_key_is_never_made_through_a_link_planted_at_its_name(net, tmp_path, planted):
+    d = net.host("esx-02") / "vmfs/volumes/5f0e-uuid/.roster-mesh"
+    d.mkdir(mode=0o700)
+    victim = tmp_path / "victim"                    # not there: ssh-keygen would make it through the link
+    (d / planted).symlink_to(victim)
+    r = mesh.run(net.cfg(), apply=True)
+    assert not victim.exists() and not os.path.lexists(victim)
+    assert "esx-02" not in r["pending"]
+    assert not (d / "id_ed25519").is_symlink() and not (d / "id_ed25519.pub").is_symlink()
+    assert (d / "id_ed25519.pub").read_text().split()[2] == "roster-mesh:esx-02@box"
 
 def back_to_the_default_directory(net):
     """orion-2's default directory still holds the key from before a mesh_dir: (roster warned about it then);

@@ -271,6 +271,16 @@ tagged() { [ "$(keystate "$1" "$2")" = ours ]; }
 # left DIR K STATE: a file by a Mesh key's name that roster leaves (NOTOURS; HALF: a Mesh public key with no private
 # key that gives it, #509 item 2)
 left() { if [ "$3" = half ]; then echo "HALF $1/$2.pub"; else echo "NOTOURS $1/$2"; fi; }
+# place SRC DEST: SRC (this run's own file, made outside the Mesh's folder: mktemp's) becomes DEST there, moved, never
+# written through a name in that folder: a datastore others may write (ESXi, Q212 (k)) could hold a link planted at
+# DEST or at a temp name, and the Mesh's scripts run as root there (#532's review M1). mv to a fresh random name
+# beside DEST (a copy across file systems makes a new file), then a rename over DEST (a link there is replaced, not
+# followed), so a run cut short leaves DEST as it was
+place() {
+  n=$(mktemp -u "${2%/*}/.roster-new.XXXXXX") && [ ! -e "$n" ] && [ ! -L "$n" ] && mv -f "$1" "$n" && mv -f "$n" "$2" \
+    && { command -v restorecon >/dev/null 2>&1 && restorecon -F "$2" 2>/dev/null; return 0; }
+  [ -n "$n" ] && [ -f "$n" ] && [ ! -L "$n" ] && rm -f "$n"; rm -f "$1"; return 1
+}
 mine() {
   for k in $(mkeys "$1"); do grep -qs " $TAG:" "$1/$k.pub" && return 0; done
   head -n 1 "$1/config" 2>/dev/null | grep -q '^# Written by roster mesh'
@@ -352,24 +362,37 @@ fi
 # whole key pair there, which roster would send to every peer, and a tag can't tell whose a key is (Q212 (j)).
 # unsafe: one line per folder at fault, as T248 checks the session file's: the Mesh's folder itself ($P, when it's
 # there) is the login's own and nobody else may write in it (sticky or not: anyone may still add a file by a name
-# that isn't there yet); each one above it, up to the account's home (to / for a folder outside it), nobody else may
-# write in unless it's sticky (as /tmp: only an entry's owner may rename or remove it)
+# that isn't there yet); each one above it, up to the account's home (to / for a folder outside it), is the login's or
+# root's (whoever owns it may make it writable at any time: sshd's StrictModes rule, #532's review L2) and nobody else
+# may write in it unless it's sticky (as /tmp: only an entry's owner may rename or remove it). Above the path as it
+# resolves and as it's written (#532's review L1: a link to a safe folder, kept in one others may write, could be
+# pointed elsewhere between the check and the key's use)
+fold() {  # fold DIR LAST: what's wrong with folder DIR (a real path), LAST: it's the Mesh's folder itself
+  set -- "$1" "$2" $(ls -ldn "$1" 2>/dev/null)
+  case "$3" in ?????w*|????????w*) w=1;; *) w=;; esac
+  case "$3" in ?????????[tT]*) st=1;; *) st=;; esac
+  if [ -n "$2" ] && [ -n "$5" ] && [ "$5" != "$me" ]; then
+    echo "$1 isn't this account's (another user owns it): chown it to this account, or give the Mesh another mesh_dir:"
+  elif [ -z "$2" ] && [ -n "$5" ] && [ "$5" != "$me" ] && [ "$5" != 0 ]; then
+    echo "$1 isn't this account's or root's (another user owns it): they could make it writable and put a key pair of their own in the Mesh's place: chown it to this account or root, or give the Mesh another mesh_dir:"
+  elif [ -n "$w" ] && { [ -n "$2" ] || [ -z "$st" ]; }; then
+    echo "$1 is writable by others (its group or everyone$([ -n "$st" ] && echo ', sticky or not')): another account could put a key pair there that roster would send to every peer: chmod go-w $1"
+  fi
+}
 unsafe() {
   me=$(id -u 2>/dev/null); hm=$(cd "$HOME" 2>/dev/null && pwd -P)
-  if [ -d "$P" ]; then d=$(cd "$P" && pwd -P) || return 0; last=1
-  else d=$(cd "${P%/*}" 2>/dev/null && pwd -P) || return 0; last=; fi
-  while :; do
-    set -- $(ls -ldn "$d" 2>/dev/null)
-    case "$1" in ?????w*|????????w*) w=1;; *) w=;; esac
-    case "$1" in ?????????[tT]*) st=1;; *) st=;; esac
-    if [ -n "$last" ] && [ -n "$3" ] && [ "$3" != "$me" ]; then
-      echo "$d isn't this account's (another user owns it): chown it to this account, or give the Mesh another mesh_dir:"
-    elif [ -n "$w" ] && { [ -n "$last" ] || [ -z "$st" ]; }; then
-      echo "$d is writable by others (its group or everyone$([ -n "$st" ] && echo ', sticky or not')): another account could put a key pair there that roster would send to every peer: chmod go-w $d"
-    fi
-    last=
+  if [ -d "$P" ]; then d=$(cd "$P" && pwd -P) || return 0; last=1; a=$P
+  else d=$(cd "${P%/*}" 2>/dev/null && pwd -P) || return 0; last=; a=${P%/*}; fi
+  while :; do     # as it resolves
+    fold "$d" "$last"; last=
     [ "$d" = "$hm" ] || [ "$d" = / ] && break
     d=${d%/*}; [ -n "$d" ] || d=/
+  done
+  while [ "$a" != "$HOME" ] && [ "$a" != / ] && [ -n "$a" ]; do     # as it's written: each folder holding the next
+    a=${a%/*}; [ -n "$a" ] || a=/
+    r=$(cd "$a" 2>/dev/null && pwd -P) || continue
+    fold "$r"
+    [ "$r" = "$hm" ] && break
   done
 }
 # refused, so the source is pending and nothing is used or made there; on ESXi said (UNSAFE) and used: a datastore's
@@ -431,16 +454,21 @@ if [ "$ROTATE" != 1 ] && [ "$K" = "$P/$KF" ] && [ -f "$K.pub" ] && ours_by "$WHO
   c=$(cat "$K.pub"); case "$c" in *" $TAG:$NAME@$OWNER") ;; *)
     echo "KEY retag"
     if [ "$MODE" = apply ]; then
-      { printf '%s %s\n' "$(printf '%s\n' "$c" | cut -d ' ' -f 1,2)" "$TAG:$NAME@$OWNER" > "$K.pub.new" \
-        && chmod 644 "$K.pub.new" && mv -f "$K.pub.new" "$K.pub"; } \
-        || { rm -f "$K.pub.new"; echo "ERROR couldn't re-tag $K.pub as this Box's"; echo ROSTER_DONE; exit 0; }
+      t=$(mktemp) && printf '%s %s\n' "$(printf '%s\n' "$c" | cut -d ' ' -f 1,2)" "$TAG:$NAME@$OWNER" > "$t" && place "$t" "$K.pub" \
+        || { echo "ERROR couldn't re-tag $K.pub as this Box's"; echo ROSTER_DONE; exit 0; }
     fi;;
   esac
 fi
 if [ ! -f "$K" ] || [ ! -f "$K.pub" ]; then
   if [ "$MODE" = apply ]; then
-    mkdir -p "$P" && [ -z "$(unsafe)" -o -n "$ESXI" ] && rm -f "$K" "$K.pub" && "$KG" -q $KT -N '' -C "$TAG:$NAME@$OWNER" -f "$K" >/dev/null 2>&1 \
-      || { echo "ERROR ssh-keygen couldn't make the Mesh's key in $P"; echo ROSTER_DONE; exit 0; }
+    mkdir -p "$P" || { echo "ERROR couldn't make $P"; echo ROSTER_DONE; exit 0; }
+    guard           # again: a folder someone else made there since the first check (in a sticky folder) is theirs
+    # made in a folder of this run's own (mktemp -d: 0700, outside the Mesh's folder), then moved into place (#532's
+    # review M1): ssh-keygen never opens a name in the Mesh's folder, where a link may have been planted
+    kd=$(mktemp -d) && "$KG" -q $KT -N '' -C "$TAG:$NAME@$OWNER" -f "$kd/k" </dev/null >/dev/null 2>&1 \
+      && rm -f "$K" "$K.pub" && place "$kd/k" "$K" && place "$kd/k.pub" "$K.pub" \
+      || { rm -rf "$kd"; echo "ERROR ssh-keygen couldn't make the Mesh's key in $P"; echo ROSTER_DONE; exit 0; }
+    rm -rf "$kd"
     echo "KEY made"
   else
     echo "KEY missing"
@@ -479,7 +507,15 @@ replace() {  # replace PATH < content: a temp file next to it, then mv, so a run
 put() {  # put PATH LABEL < content: write it when it differs
   t=$(mktemp) || { echo "ERROR mktemp failed"; exit 1; }; cat > "$t"
   if [ -f "$1" ] && cmp -s "$t" "$1"; then echo "SAME $2"
-  else echo "CHANGE $2"; [ "$MODE" = apply ] && { mkdir -p "${1%/*}" && replace "$1" < "$t"; }; fi
+  else
+    echo "CHANGE $2"
+    if [ "$MODE" = apply ]; then
+      case "$1" in    # the Mesh's own files are placed (never through a planted name: #532's review M1)
+        "$P"/*) mkdir -p "$P" && { place "$t" "$1" || echo "ERROR couldn't write $1"; };;
+        *) mkdir -p "${1%/*}" && replace "$1" < "$t";;
+      esac
+    fi
+  fi
   rm -f "$t"
 }
 drop() {  # drop PATH LABEL: remove it if it's there
