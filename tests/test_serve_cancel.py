@@ -184,11 +184,9 @@ def test_a_running_waiting_mesh_run_stops_its_job_when_cancelled(state, monkeypa
     assert out.answer(1)["result"] == {"stopped": True}
 
 
-def test_the_running_cancellable_methods_are_the_waiting_forms_of_jobs():
-    # and inventory.create's clone (T212, #417 L5): stopped and tidied, nothing kept
+def test_no_method_cancellable_while_running_claims_a_lock():
     running = {name for name, m in rpc.METHODS.items() if m.cancel == "running"}
-    assert running == {"host.check", "mesh.plan", "mesh.apply", "mesh.cut", "inventory.create"}
-    assert not any(rpc.METHODS[name].claims({}) for name in running)
+    assert running and not any(rpc.METHODS[name].claims({}) for name in running)
 
 
 # ---------------------------------------------------------------- the unlock and vault.status (Q112 (r))

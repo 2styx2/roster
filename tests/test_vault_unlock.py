@@ -101,10 +101,7 @@ class Terminal:
 
 def next_run():
     """What a new roster process starts with: no secret, no session key, no provider state."""
-    providers._secrets.clear()
-    providers.PROVIDER_STATE.clear()
-    bitwarden.forget_session()
-    bitwarden._offered["done"] = False
+    providers.reset()
 
 
 def session_path():

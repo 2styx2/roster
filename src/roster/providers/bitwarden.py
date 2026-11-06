@@ -603,6 +603,11 @@ def _bw_forget(ctx):
     forget_session()
 
 
+def _bw_reset():
+    forget_session()
+    _offered["done"] = False
+
+
 def _bw_lock(ctx):
     try:
         _bw(ctx, "lock")
@@ -1043,7 +1048,7 @@ def _bw_sync(ctx):
     return {"previous": previous}
 
 
-PROVIDERS["bw"].update(unlock=_bw_unlock, lock=_bw_lock, forget=_bw_forget, status=_bw_vault_status,
+PROVIDERS["bw"].update(unlock=_bw_unlock, lock=_bw_lock, forget=_bw_forget, reset=_bw_reset, status=_bw_vault_status,
                        account=_bw_account, logout=_bw_logout, not_logged_in=NOT_LOGGED_IN,
                        create=_bw_create, delete=_bw_delete, targets=_bw_targets, resolve=_bw_resolve,
                        login_fields=_bw_login_fields, items=_bw_items, sync=_bw_sync,

@@ -79,6 +79,7 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
                           #                        and the account the CLI is signed in to, in one call
                           #             "logout": fn(ctx), sign the CLI out (vault.logout); NotSignedIn if it isn't
                           #             "forget": fn(ctx), the in-memory part of "lock" (drop a session key)
+                          #             "reset": fn(), forget what the provider keeps for this run (reset())
                           #             "logout_help": why this provider has no account to sign out of, and what to do
                           #             "create": fn(item, ctx) -> {"id", "name"}, item = {name, username,
                           #                       password, uri}; refuses a name that exists (ItemExists)
@@ -310,6 +311,15 @@ def get_secret(ref, group):
         return val
 
 
+def forget_secrets(provider=None):
+    """Forget the secrets get_secret cached (only PROVIDER's, if given): the next look-up asks the vault again. The
+    vault stays unlocked."""
+    with _secret_lock:
+        for ref in [r for r in _secrets if provider is None
+                    or str(r[0] if isinstance(r, tuple) else r).startswith(provider + ":")]:
+            del _secrets[ref]
+
+
 # ---- unlock / lock without a terminal (for `roster serve`, which gets the master password from a GUI)
 
 def _vault_op(name, op):
@@ -411,6 +421,22 @@ def lock(name, cli=True):
         fn = PROVIDERS[name].get("lock" if cli else "forget")
         if fn:
             fn(Ctx(name, None))
+
+
+def reset():
+    """Forget everything this process holds for its vaults, as if a new run started: cached secrets, each provider's
+    state and settings, serve's and --json's modes, and what a provider keeps itself ("reset", e.g. bw's session key).
+    No provider's CLI runs."""
+    global MANUAL_UNLOCK, JSON_OUTPUT
+    with _secret_lock:
+        _secrets.clear()
+        PROVIDER_STATE.clear()
+        PROVIDER_SETTINGS.clear()
+        BOX_SETTINGS.clear()
+        MANUAL_UNLOCK = JSON_OUTPUT = False
+        for p in list(PROVIDERS.values()):
+            if p.get("reset"):
+                p["reset"]()
 
 
 # ---- this Box's own settings: from the app's init.lua, through `roster serve`'s vault.configure
@@ -552,9 +578,7 @@ def delete_item(provider, item_id):
     """Delete the Vault item ITEM_ID from PROVIDER: the undo of create_item (Q43). Bitwarden moves it to the
     trash, where it can still be restored for 30 days."""
     fn = _writer(provider, "delete")
-    with _secret_lock:                                   # a value cached from that item must go too
-        for ref in [r for r in _secrets if str(r[0] if isinstance(r, tuple) else r).startswith(provider + ":")]:
-            del _secrets[ref]
+    forget_secrets(provider)                             # a value cached from that item must go too
     fn(item_id, Ctx(provider, None))
 
 

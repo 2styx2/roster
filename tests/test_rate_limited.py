@@ -129,12 +129,6 @@ def test_a_name_with_no_list_still_gets_the_generic_hint(times_out, resolves):
     assert GENERIC in times_out("", "named")
 
 
-def test_no_address_range_is_left_in_roster():
-    """The hint used to come from one network's fixed prefix (#363)."""
-    import inspect
-    assert "10.19" not in inspect.getsource(diagnose)
-
-
 # #404 review N2: no code anywhere decides by a fixed address range, as diagnose.py once did. What gives one away: an
 # address prefix as a literal ("10.0." with the trailing dot), a prefix comparison against a dotted literal, a
 # shell pattern (10.0.*) or a regex anchored on one (^10\.0\.). A whole network as a literal ("10.0.0.0/8") is

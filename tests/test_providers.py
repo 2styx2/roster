@@ -128,7 +128,7 @@ def test_bitwarden_errors(fakes, monkeypatch):
     monkeypatch.setenv("BW_PASSWORD", "wrong")
     with pytest.raises(SecretError, match="unlock failed"):
         get_secret("bw:Orion servers", "g")
-    providers.PROVIDER_STATE.clear()
+    providers.reset()                  # a new run
     monkeypatch.setenv("BW_PASSWORD", "hunter2")
     with pytest.raises(SecretError, match="no Bitwarden item matches 'Nope'"):
         get_secret("bw:Nope", "g")

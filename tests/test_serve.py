@@ -635,12 +635,12 @@ def test_a_refused_create_is_a_clean_error_without_the_password(serve, write_con
 
 
 def in_process(write_config, method, params, state=None):
+    """METHOD in this process, on STATE or a new serve with the vault unlocked."""
     from roster import serve as rpc
-    state = state or rpc.State(str(write_config(INVENTORY)))
-    if method != "vault.unlock" and not state.created and not getattr(state, "_unlocked", False):
-        rpc.handle(state, json.dumps({"jsonrpc": "2.0", "id": 0, "method": "vault.unlock",
-                                      "params": {"password": "hunter2"}}))
-        state._unlocked = True
+    if state is None:
+        state = rpc.State(str(write_config(INVENTORY)))
+        assert "result" in rpc.handle(state, json.dumps({"jsonrpc": "2.0", "id": 0, "method": "vault.unlock",
+                                                         "params": {"password": "hunter2"}}))
     return state, rpc.handle(state, json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}))
 
 
@@ -667,15 +667,11 @@ def test_a_create_that_times_out_before_saving_says_nothing_was_saved(write_conf
     assert NEW_PW not in json.dumps(r)
 
 
-def test_a_create_that_times_out_and_cant_be_checked_says_so(write_config, vault, monkeypatch):
+def test_a_create_that_times_out_and_cant_be_checked_says_so(write_config, vault, tmp_path, monkeypatch):
     from roster import serve as rpc
     monkeypatch.setattr(rpc.METHODS["vault.create_item"], "deadline", 2)
     monkeypatch.setenv("FAKE_BW_CREATE_HANG", "30")
-    from roster.providers import bitwarden
-
-    def list_breaks(ctx, *search):
-        raise rpc.providers.SecretError("`bw` timed out")
-    monkeypatch.setattr(bitwarden, "_bw_lookup", list_breaks)
+    monkeypatch.setenv("FAKE_BW_LOCK_ON_CREATE", str(tmp_path / "locked"))     # locked elsewhere once it's saved
     _, r = in_process(write_config, "vault.create_item", {"name": "box ssh", "password": NEW_PW})
     err = r["error"]
     assert err["code"] == 62 and "couldn't check" in err["message"] and "'box ssh'" in err["message"], err
