@@ -129,34 +129,44 @@ export async function startStack(opts: StackOptions = {}): Promise<Stack> {
   const inventory = opts.repo ? join(dirs.home, "infra", "roster.yml") : join(dirs.home, "roster.yml");
   const git = (args: string[], cwd: string) => execFileSync("git", args, { env, cwd, stdio: "ignore" });
   const roster = (args: string[]) => execFileSync(uv, ["run", "--no-sync", "--project", REPO, "roster", ...args], { env, cwd: dirs.home, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  if (opts.inventory) {
-    mkdirSync(join(inventory, ".."), { recursive: true });
-    writeFileSync(inventory, opts.inventory(standIns));
-    if (opts.repo) {
-      const origin = join(root, "origin.git");
-      git(["init", "-q", "--bare", "-b", "main", origin], root);
-      const work = join(inventory, "..");
-      git(["init", "-q", "-b", "main"], work);
-      git(["add", "roster.yml"], work);
-      git(["commit", "-q", "-m", "The lab"], work);
-      git(["remote", "add", "origin", origin], work);
-      git(["push", "-q", "-u", "origin", "main"], work);
-    }
-    // This box's ssh config (Host blocks for the Inventory), as `roster sync` writes it.
-    roster(["-c", inventory, "sync"]);
-  }
-  if (!existsSync(BRIDGE)) throw new Error(`no bridge at ${BRIDGE}: cargo build -p roster-core --features bridge --example bridge`);
-  const child: ChildProcess = spawn(BRIDGE, [], { env, cwd: dirs.home, stdio: ["pipe", "pipe", "pipe"] });
+  let child: ChildProcess | null = null;
   let stderr = "";
-  child.stderr!.on("data", (b: Buffer) => (stderr += b.toString()));
-  const ws = await new Promise<string>((done, fail) => {
-    const lines = createInterface({ input: child.stdout! });
-    lines.on("line", (l) => {
-      const m = /^ROSTER_BRIDGE (\S+)$/.exec(l);
-      if (m) done(m[1]!);
+  let ws: string;
+  // Whatever fails before the bridge is up takes the sandbox with it.
+  try {
+    if (opts.inventory) {
+      mkdirSync(join(inventory, ".."), { recursive: true });
+      writeFileSync(inventory, opts.inventory(standIns));
+      if (opts.repo) {
+        const origin = join(root, "origin.git");
+        git(["init", "-q", "--bare", "-b", "main", origin], root);
+        const work = join(inventory, "..");
+        git(["init", "-q", "-b", "main"], work);
+        git(["add", "roster.yml"], work);
+        git(["commit", "-q", "-m", "The lab"], work);
+        git(["remote", "add", "origin", origin], work);
+        git(["push", "-q", "-u", "origin", "main"], work);
+      }
+      // This box's ssh config (Host blocks for the Inventory), as `roster sync` writes it.
+      roster(["-c", inventory, "sync"]);
+    }
+    if (!existsSync(BRIDGE)) throw new Error(`no bridge at ${BRIDGE}: cargo build -p roster-core --features bridge --example bridge`);
+    child = spawn(BRIDGE, [], { env, cwd: dirs.home, stdio: ["pipe", "pipe", "pipe"] });
+    child!.stderr!.on("data", (b: Buffer) => (stderr += b.toString()));
+    ws = await new Promise<string>((done, fail) => {
+      const lines = createInterface({ input: child!.stdout! });
+      lines.on("line", (l) => {
+        const m = /^ROSTER_BRIDGE (\S+)$/.exec(l);
+        if (m) done(m[1]!);
+      });
+      child!.on("exit", (code) => fail(new Error(`the bridge exited (${code}): ${stderr}`)));
     });
-    child.on("exit", (code) => fail(new Error(`the bridge exited (${code}): ${stderr}`)));
-  });
+  } catch (e) {
+    child?.kill();
+    rmSync(root, { recursive: true, force: true });
+    throw e;
+  }
+  const bridge = child;
   return {
     pageUrl: `${inject("fullAppUrl")}?bridge=${encodeURIComponent(ws)}`,
     home: dirs.home,
@@ -166,8 +176,8 @@ export async function startStack(opts: StackOptions = {}): Promise<Stack> {
     stderr: () => stderr,
     roster,
     async stop() {
-      const exited = new Promise((done) => child.once("exit", done));
-      child.stdin!.end();
+      const exited = new Promise((done) => bridge.once("exit", done));
+      bridge.stdin!.end();
       await exited;
       const tripped = existsSync(ran) ? readFileSync(ran, "utf8") : "";
       rmSync(root, { recursive: true, force: true });

@@ -375,7 +375,7 @@ mod tests {
             &ring::digest::SHA1_FOR_LEGACY_USE_ONLY,
             format!("dGhlIHNhbXBsZSBub25jZQ=={}", super::WS_GUID).as_bytes(),
         );
-        assert_eq!(super::base64(d.as_ref()), "s3pPLMBiTxaQ9kZs+xGzzo4WsWo=");
+        assert_eq!(super::base64(d.as_ref()), "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
         assert_eq!(super::base64(b"ab"), "YWI=");
         assert_eq!(super::base64(b"a"), "YQ==");
     }
