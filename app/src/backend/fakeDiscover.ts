@@ -5,6 +5,7 @@
 // (app/src/plugins/discover.transcript.json) and checks this does the same. Change the Lua first.
 import type { FakePlugin, FakeRoster, FakeServe } from "./fakePlugins";
 import { BackendCallError } from "./types";
+import { FIRST_PARTY } from "./fakeManifests";
 
 const DEFAULT_LEADER = "y d";
 const MAX_ROWS = 10000;
@@ -144,14 +145,7 @@ function detailLines(f: Found): string[] {
 /** discover as the fake Backend's Plugin. */
 export function discoverPlugin(options: { permissions?: string[] } = {}): FakePlugin {
   return {
-    manifest: {
-      name: "discover",
-      version: "1.0.0",
-      description: "Scan a network from the app and add what it finds, as Pending changes you review",
-      author: "roster",
-      api: 6,
-      permissions: options.permissions ?? [...SCANS, ADDS],
-    },
+    manifest: { ...FIRST_PARTY.discover, ...(options.permissions ? { permissions: options.permissions } : {}) },
     load: (roster) => load(roster),
   };
 }

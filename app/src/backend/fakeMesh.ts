@@ -8,6 +8,7 @@
 // for `?fixture=mesh` and the UI tests.
 import type { FakePlugin, FakeRoster } from "./fakePlugins";
 import { errorText } from "../ui/format";
+import { FIRST_PARTY } from "./fakeManifests";
 
 type Obj = Record<string, unknown>;
 type Link = { from: string; to: string; kind?: string; via?: string; status?: string; why?: string };
@@ -146,27 +147,12 @@ The status bar says **Mesh out of date** when \`roster.yml\` changed the Mesh si
 **no-via**: a Link with \`via:\` goes through a jump Host, and ssh logs in to the jump Host first, so its source needs a Link to the jump Host too. Without one the Link is left out and \`roster check\` fails: add the Link it names, or take \`via:\` off.
 `;
 
-export const MESH_PERMISSIONS = [
-  "inventory.read",
-  "serve:mesh.status",
-  "serve:mesh.job",
-  "serve:mesh.stop",
-  "serve:mesh.plan",
-  "serve:mesh.apply",
-  "serve:mesh.cut",
-];
+export const MESH_PERMISSIONS = FIRST_PARTY.mesh.permissions;
 
 /** plugins/mesh as the fake Backend's Plugin. */
 export function meshPlugin(): FakePlugin {
   return {
-    manifest: {
-      name: "mesh",
-      version: "1.0.0",
-      description: "The Mesh's controls: who reaches whom, plan and apply it, and Cut a Host out",
-      author: "roster",
-      api: 6,
-      permissions: MESH_PERMISSIONS,
-    },
+    manifest: FIRST_PARTY.mesh,
     load,
   };
 }

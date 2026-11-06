@@ -6,13 +6,14 @@
 import type { FakePlugin, FakeRoster } from "./fakePlugins";
 import type { Host, HostList } from "./types";
 import { errorText } from "../ui/format";
+import { FIRST_PARTY } from "./fakeManifests";
 
 type Obj = Record<string, unknown>;
 type Edge = { id: string; from: string; to: string; dir?: string; style?: string; tone?: string; cut?: boolean; label?: string };
 type Cluster = { id: string; title: string; mesh?: boolean; members: string[] };
 type Link = { from: string; to: string; kind?: string; via?: string; skip?: string };
 
-export const TOPOLOGY_PERMISSIONS = ["inventory.read", "serve:mesh.status", "serve:host.check", "serve:mesh.cut", "serve:mesh.job", "serve:host.check_job"];
+export const TOPOLOGY_PERMISSIONS = FIRST_PARTY.topology.permissions;
 
 const BOX = ":box";
 const MAX_HOSTS = 4999;
@@ -416,14 +417,7 @@ function groupClusters(s: Structure, word: string): string[] {
 /** plugins/topology, as its Lua. */
 export function topologyPlugin(): FakePlugin {
   return {
-    manifest: {
-      name: "topology",
-      version: "1.3.0",
-      description: "The Topology view: this Box, your Hosts by group, the Mesh and its Links as a map",
-      author: "roster",
-      api: 6,
-      permissions: TOPOLOGY_PERMISSIONS,
-    },
+    manifest: FIRST_PARTY.topology,
     load(roster: FakeRoster) {
       const { settings, problems } = settingsOf(roster.plugin.config);
       for (const p of problems) roster.notify(`${p}; using the default`, "warn");
