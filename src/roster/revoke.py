@@ -17,20 +17,46 @@ from .common import die, program_argv, say
 from .config import HIDDEN_FILE, load_config, selected, shown_path
 from .context import Context, current, ssh_index_file
 from .errors import KEY_FILE, KEY_FILE_SHARED, RENAME_HINT, InventoryError, Problem, tagged
-from .hosts import is_windows
+from .hosts import AccountLocks, account, is_windows
+
+
+class Refused(str):
+    """revoke_on's why when the Host refused this Box's key login (authorized.Done.refused)."""
 
 
 def revoke_on(h: dict[str, Any], tag_re: str) -> object:
-    """Take this Box's key (TAG_RE) off Host H (authorized.revoke): None when it says it's done, else why not. A
-    Windows Host's warnings, and the lines it took under another name, are said on stderr: the ok/FAIL lines stay
-    one per Host."""
+    """Take this Box's key (TAG_RE) off Host H (authorized.revoke): None when it says it's done, else why not (a
+    Refused when the key login was refused). A Windows Host's warnings, and the lines it took under another name, are
+    said on stderr: the ok/FAIL lines stay one per Host."""
     done = authorized.revoke(h, tag_re)
     for w in done.warnings:
         print(f"warning: [{KEY_FILE}] {h['name']}: {w} ({keyline.tag(keyline.name_in(tag_re))})",
               file=sys.stderr, flush=True)
     if done.why is None:
         other_names(h, tag_re, done.names)
-    return done.why
+    return Refused(str(done.why)) if done.refused else done.why
+
+
+def in_turn(turn: AccountLocks) -> Any:
+    """revoke_on, with Host entries that share an account (TURN's locks) taking turns (T258). Every entry is tried
+    (#524's review M1). One whose key login is refused once another entry's revoke took TAG_RE's lines off that same
+    account (address, port and user) stays a failure (#524's second pass: one address can reach two machines, a VIP
+    or a round-robin name, and the refusal may have another cause while the line stays): its why says so, as a hint
+    to check by hand."""
+    done: dict[tuple[tuple[str, int, str], str], str] = {}
+
+    def run(h: dict[str, Any], tag_re: str) -> object:
+        with turn(h):
+            why = revoke_on(h, tag_re)
+            if why is None:
+                done.setdefault((account(h), tag_re), h["name"])
+            elif isinstance(why, Refused) and (first := done.get((account(h), tag_re))):
+                return (f"{why} - this Box's key no longer logs in there: {first}, another entry on this account "
+                        "(address, port and user), just had this Box's lines taken off, so this is likely the same "
+                        f"machine; check by hand that {h['name']} holds no line of this Box's (one address can reach "
+                        "two machines)")
+            return why
+    return run
 
 
 def other_names(h: dict[str, Any], tag_re: str, names: Iterable[str]) -> None:
@@ -109,7 +135,7 @@ def revoke_run(cfg: dict[str, Any], only: str | None, yes: bool) -> int:
     bad = 0
     gone: list[str] = []
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-        for h, why in zip(hosts, ex.map(revoke_on, hosts, [mine] * len(hosts)), strict=True):
+        for h, why in zip(hosts, ex.map(in_turn(AccountLocks()), hosts, [mine] * len(hosts)), strict=True):
             bad += why is not None
             revoke_line("", h, why)
             if why is None:
@@ -240,7 +266,8 @@ def revoke_all(yes: bool = False) -> int:
     bad = 0
     with locked("revoke --all", [Context(name) for _, name, _ in targets]), \
             cf.ThreadPoolExecutor(max([cfg["workers"] for _, cfg, _ in plan] or [1])) as ex:
-        whys = ex.map(revoke_on, [h for _, h, _ in jobs], [r for _, _, r in jobs])
+        # one account may be in two Inventories: one set of locks for them all
+        whys = ex.map(in_turn(AccountLocks()), [h for _, h, _ in jobs], [r for _, _, r in jobs])
         for (label, h, _), why in zip(jobs, whys, strict=True):
             bad += why is not None
             revoke_line(f"{label}: ", h, why)

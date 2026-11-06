@@ -439,7 +439,7 @@ One person may have several Inventories, the team's for work and their own for h
 | `212` | This Box's key no longer logs in where setup put it. A CLI code (T243) |
 | `213` | The Host's account is locked or its password expired. A CLI code (T243) |
 | `214` | The Host takes no password login, so setup can't put the key on with one. A CLI code (T243) |
-| `215` | The connection was dropped before ssh spoke: a rate limiter. A CLI code (T243) |
+| `215` | The connection was dropped before ssh spoke: a rate limiter, or sshd's `PerSourcePenalties` after failed logins (T258). A CLI code (T243) |
 | `216` | `roster setup`: the vault was locked part way through the run. A CLI code (T243) |
 | `217` | `inventory.pull`: the infra repo's branch is gone from the server (merged and deleted); `data.upstream`, the fix names the branch to switch to. Nothing was switched (T243) |
 | `218` | This Box's key file is gone though roster made it (`check --box`, as topic `E280`; setup makes a new one). A CLI code (T243) |
