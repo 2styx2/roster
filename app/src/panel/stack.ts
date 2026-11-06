@@ -12,6 +12,12 @@ export interface Layer {
   held?: boolean;
 }
 
+/** Whether `el` (the focused element by default) is inside the layer `id`: its element carries
+ * `data-panel={id}` (a PanelFrame does, and so does each layer drawn outside one). */
+export function inLayer(id: string, el: Element | null = document.activeElement): boolean {
+  return el?.closest(`[data-panel="${id}"]`) != null;
+}
+
 /** Closes the topmost open layer of `layers` (top first); false when none is open. */
 export function closeTop(layers: readonly Layer[]): boolean {
   const top = layers.find((l) => l.open);

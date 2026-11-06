@@ -60,7 +60,6 @@ export class StateStore {
     return this.state[key];
   }
 
-  /** Sets one key of the State. */
   set(key: string, value: unknown) {
     this.update((s) => ({ ...s, [key]: value }));
   }

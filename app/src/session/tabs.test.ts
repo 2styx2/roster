@@ -1179,7 +1179,7 @@ describe("a nested ssh (ticket 120)", () => {
     tabs.configure({
       fillPrompts: {
         userOf: () => "admin",
-        watch: (size, user, nonce) => ((token = nonce), new PromptWatch(size, user, { hosts: () => hosts.hosts, fill: true }, nonce)),
+        watch: (size, user, nonce) => ((token = nonce), new PromptWatch(size, user, { hosts: () => hosts.hosts, refuseFill: null }, nonce)),
       },
     });
     const id = tabs.open(reviewed.find((n) => n !== to.name) ?? "");

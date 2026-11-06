@@ -3,11 +3,11 @@
 // slot (Form); a remove asks first.
 import type { Capabilities } from "../backend/capabilities";
 import type { Backend, BackendInfo, Host, HostList } from "../backend/types";
-import type { CommandContext } from "../commands/table";
 import type { ChangesStep } from "../edit/ChangesPanel";
 import { afterPull } from "../edit/pull";
 import { countOf, errorText } from "../ui/format";
 import { quiet, type Message } from "../ui/messages";
+import type { InventoryContext } from "./commands";
 import { afterChange, reviewedMessage } from "./said";
 import { nothingPending } from "./store";
 import type { InventoryState } from "./useInventory";
@@ -15,7 +15,7 @@ import type { InventoryState } from "./useInventory";
 /** The open form: one at a time (ticket 10's edit, 11's add, 15's save, the Pending changes). */
 export type Form = { kind: "edit"; host: string } | { kind: "add"; group: string } | { kind: "save"; tab: number } | { kind: "changes"; step: ChangesStep };
 
-export type InventoryActions = Pick<CommandContext, "inventory" | "review" | "showChanges" | "pull" | "edit" | "addHost">;
+export type InventoryActions = Pick<InventoryContext, "inventory" | "review" | "showChanges" | "pull" | "edit" | "addHost">;
 
 export function inventoryActions(o: {
   backend: Backend;
@@ -29,7 +29,6 @@ export function inventoryActions(o: {
   say(m: Message): void;
   selectedHost(): string | null;
   openForm(form: Form): void;
-  /** Asks before removing `host`. */
   askRemove(host: Host): void;
   openCommandLine(text: string): void;
 }): InventoryActions {

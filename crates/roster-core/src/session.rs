@@ -764,7 +764,6 @@ impl SessionManager {
         }
     }
 
-    /// How many Sessions are running.
     pub fn len(&self) -> usize {
         self.sessions.lock().unwrap().len()
     }
@@ -908,6 +907,21 @@ impl<E: std::fmt::Display> std::fmt::Display for FillError<E> {
 }
 
 impl<E> FillError<E> {
+    /// For a refusal before anything was looked up or typed, so the prompt can be offered again:
+    /// what to do next. None for the rest: one that typed the probe (an echo, a key sent
+    /// meanwhile) leaves the prompt spent, and the lookup's own refusal speaks for itself.
+    pub fn retry_fix(&self) -> Option<&'static str> {
+        match self {
+            FillError::NotPrinted => Some("press the key again while the prompt is at the cursor"),
+            // Ticket 162: offered again once the app sees where the Session is.
+            FillError::NotInHop => Some("press the key again once roster shows where the Session is"),
+            // A reset starts the core's screen over (the last pass on #318).
+            FillError::LostTrack { .. } => Some("run `reset` in the Session, then press the key again at the prompt"),
+            FillError::Changed { .. } => Some("press the key again once the Session's screen is still"),
+            _ => None,
+        }
+    }
+
     /// The line for the app's log (stderr) about this refusal, if it has one: at sudo's own
     /// prompt for the Session's own Host, what the probe drew there that wasn't sudo's
     /// `pwfeedback` mask as roster takes it (ticket 155, #284), so the form a terminal (Windows'

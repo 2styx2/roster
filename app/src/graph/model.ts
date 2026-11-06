@@ -29,7 +29,6 @@ export interface GraphNode {
   mark?: Mark;
   /** A few words about it ("out of date", "cut pending"), beside it when selected and in the list. */
   note?: string;
-  /** The cluster it's in. */
   cluster?: string;
   /** The Host it is: actions get it as `e.host`. */
   host?: string;

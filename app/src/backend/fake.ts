@@ -302,9 +302,8 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 
 const refuse = (r: Refusal) => new BackendCallError(r.message, r.code, r.data ?? null);
 
-/** A `host.check` answer with every step ok (a key Host's provider and vault-item skipped). */
-export /** A check a lock stopped as `at` was to start: the steps before it ok, the rest skipped. */
-function stoppedCheck(host: string, at: CheckStepName): HostCheck {
+/** A check a lock stopped as `at` was to start: the steps before it ok, the rest skipped. */
+export function stoppedCheck(host: string, at: CheckStepName): HostCheck {
   const stop = CHECK_STEPS.indexOf(at);
   return {
     host,
@@ -315,6 +314,7 @@ function stoppedCheck(host: string, at: CheckStepName): HostCheck {
   };
 }
 
+/** A `host.check` answer with every step ok (a key Host's provider and vault-item skipped). */
 function passingCheck(host: Host): HostCheck {
   const password = authOf(host) === "password";
   return {

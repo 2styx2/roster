@@ -13,7 +13,6 @@ import { keepFocus } from "../ui/keepFocus";
 /** What a control can show from: the app as it is now. */
 export interface ToolbarContext {
   pendingCount: number;
-  /** The Sidebar is on screen. */
   sidebarShown: boolean;
   /** roster can Quick Connect (API 12, ticket 14). */
   quickConnect: boolean;

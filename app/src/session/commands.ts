@@ -1,118 +1,133 @@
-// The Session commands in the workspace: open one to a Host (or a Quick Connect), go to one, close
-// it, reconnect it, fill its prompt, turn on its shell integration, save its typed password.
-import type { Capabilities } from "../backend/capabilities";
-import { BackendCallError, type Host } from "../backend/types";
-import type { CommandContext } from "../commands/table";
-import { resolveOpen, webUrl } from "../details/details";
-import { notReviewedMessage } from "../inventory/said";
-import type { Platform } from "../platform/types";
-import { parseQuickTarget } from "../quick/target";
-import { usedHost } from "../state/appState";
-import type { StateStore } from "../state/store";
-import { errorText } from "../ui/format";
-import { quiet, type Message } from "../ui/messages";
-import { INTEGRATE_SAYS } from "./integrate";
-import type { Tab, Tabs, TabsSnapshot } from "./tabs";
+// The Session commands: open one to a Host (or a Quick Connect), go to one, close it, reconnect it,
+// fill its prompt, turn on its shell integration, save its typed password. session/actions.ts
+// does what they ask.
+import type { AppContext, CommandDef } from "../commands/table";
+import { matching } from "../commands/match";
+import { BUILTIN } from "../registry";
 
-export type SessionCommands = Pick<
-  CommandContext,
-  "connect" | "quickConnect" | "open" | "reconnect" | "selectRelative" | "selectNth" | "close" | "integrate" | "fillPrompt" | "sessionOnScreen"
-> & {
-  /** Hands a web service's URL to the default browser (ticket 18): http or https only, checked
-   * here and again in the Tauri shell. */
-  openWeb(host: string, service: string, url: string): void;
-  /** Says why "Save to vault" can't open for the Session on screen, or null when it can. */
-  whyNoSave(tab: Tab | undefined): string | null;
-};
-
-export function sessionCommands(o: {
-  tabs: Tabs;
-  sessions: TabsSnapshot;
-  hostByName: ReadonlyMap<string, Host>;
-  caps: Capabilities;
-  store: StateStore;
-  platform: Platform;
-  say(m: Message): void;
-  /** The Host `:open SERVICE` means: Host details', else the selected one. */
-  currentHost(): string | null;
-  /** The Picker, with Quick Connect first. */
-  openQuickPicker(): void;
-}): SessionCommands {
-  const { tabs, sessions, hostByName, caps, say } = o;
-  const onScreen = sessions.tabs.find((t) => t.id === sessions.active);
-  const openHost = (host: string, here: boolean) => {
-    const current = tabs.snapshot().active;
-    if (!(here && current !== null && tabs.reconnect(current, host))) tabs.open(host);
-    o.store.update((s) => usedHost(s, host));
-  };
-  const openWeb = (host: string, service: string, url: string) => {
-    const checked = webUrl(url);
-    if (!checked) return say(`${host}'s ${service} has no http or https URL to open`);
-    if (!o.platform.openUrl) return say(`There's no browser to hand ${checked} to here`);
-    o.platform.openUrl(checked).then(
-      () => say(quiet(`Opened ${host}'s ${service} in the browser`, `Opened ${host}'s ${service} in the browser: ${checked}`)),
-      (e: unknown) => say(`Couldn't open ${checked}: ${errorText(e)}`),
-    );
-  };
-  const cmds: SessionCommands = {
-    connect: (name, here = false) => {
-      const host = hostByName.get(name);
-      if (!host && parseQuickTarget(name)) return cmds.quickConnect(name);
-      if (!host) return say(`No Host named ${name}`);
-      if (!host.reviewed) return say(notReviewedMessage(name, caps.has("add")));
-      openHost(name, here);
-    },
-    quickConnect: (text) => {
-      if (!caps.has("quickConnect")) return say(caps.needsNewer("quickConnect"));
-      if (text === null) return o.openQuickPicker();
-      const to = parseQuickTarget(text);
-      if (!to) return say(`${text} isn't a Quick Connect address: type user@address, or user@address:port`);
-      tabs.openQuick(to);
-    },
-    // A Host, or a web service in the default browser (ticket 18, decision Q71).
-    open: (arg) => {
-      const to = resolveOpen(arg, hostByName, o.currentHost(), sessions.tabs.map((t) => t.host));
-      if (to.kind === "error") return say(to.message);
-      if (to.kind === "web") return openWeb(to.host, to.service, to.url);
-      const tab = sessions.tabs.find((t) => t.host === to.host);
-      if (tab) tabs.select(tab.id);
-      else cmds.connect(to.host);
-    },
-    reconnect: () => {
-      if (sessions.active !== null) tabs.reconnect(sessions.active);
-    },
-    selectRelative: (delta) => tabs.selectRelative(delta),
-    selectNth: (n) => tabs.selectNth(n),
-    close: (n) => {
-      const id = n === null ? sessions.active : (sessions.tabs[n - 1]?.id ?? null);
-      if (id !== null) tabs.close(id);
-    },
-    integrate: () => {
-      if (!onScreen) return say("No Session to integrate: open one first.");
-      const label = onScreen.label;
-      void tabs.integrate(onScreen.id).then((r) => say(INTEGRATE_SAYS[r](label)));
-    },
-    fillPrompt: () => {
-      if (!caps.has("fill")) return say(caps.needsNewer("fill"));
-      const id = sessions.active;
-      if (id === null) return say("No Session to fill");
-      tabs.fill(id).then(
-        (host) => say(quiet(`Filled ${host}'s password`)),
-        (e: unknown) => {
-          const fix = e instanceof BackendCallError ? e.data?.["fix"] : undefined;
-          say(typeof fix === "string" && fix ? `${errorText(e)} - ${fix}` : errorText(e));
-        },
-      );
-    },
-    sessionOnScreen: () => (onScreen ? { host: onScreen.host, quick: Boolean(onScreen.quick) } : null),
-    openWeb,
-    whyNoSave: (tab) => {
-      if (!caps.has("saveToVault")) return caps.needsNewer("saveToVault");
-      if (!tab?.save) return "Nothing to save: tick Save to vault when you type a Session's password.";
-      if (tab.save.saved !== null) return `Already saved as ${tab.save.saved}.`;
-      if (!tab.save.loggedIn) return `${tab.host} hasn't logged in yet: roster saves the password only after it works.`;
-      return null;
-    },
-  };
-  return cmds;
+/** What the Session commands ask of the app. */
+export interface SessionContext {
+  /** Opens a Session to the Host (the app checks it exists and is reviewed); `here`: in the
+   * current tab if its Session has ended, else a new one. */
+  connect(host: string, here?: boolean): void;
+  /** Quick Connect (ticket 14): a Session to `user@address[:port]`, a box that isn't in the
+   * Inventory; null opens the Picker to type one. */
+  quickConnect(target: string | null): void;
+  /** Goes to the Host's open Session if there is one, else opens one (as `connect`). */
+  open(host: string): void;
+  /** Reconnects the current tab if its Session has ended or was refused. */
+  reconnect(): void;
+  /** The Session on screen: its Host, and whether it's a Quick Connect (not on a Host); null with none. */
+  sessionOnScreen(): { host: string; quick: boolean } | null;
+  /** The Session `delta` places after the current one, wrapping. */
+  selectRelative(delta: number): void;
+  /** The Nth Session, counting from 1. */
+  selectNth(n: number): void;
+  /** Closes the Nth Session, or the current one. */
+  close(n: number | null): void;
+  /** Opens "Save to vault" for the current Session, once it logged in with a password typed for it
+   * (tickets 15, 16). */
+  saveSession(): void;
+  /** Fills the password prompt the current Session shows from the vault (ticket 119): only when
+   * one is detected; the password goes from serve to the Session's PTY through the core, never
+   * through the frontend. */
+  fillPrompt(): void;
+  /** `:integrate` (ticket 121): sends the current Session's shell the hook line now. */
+  integrate(): void;
 }
+
+type SessionCommand = CommandDef<SessionContext & AppContext>;
+
+const command = (id: string, area: string, label: string, run: (ctx: SessionContext) => void): SessionCommand => ({
+  id,
+  source: BUILTIN,
+  area,
+  label: () => label,
+  run,
+});
+
+export const sessionCommands = {
+  connect: {
+    id: "connect",
+    source: BUILTIN,
+    area: "Hosts",
+    arg: "host",
+    label: (h) => (h ? `Connect to ${h}` : "Open a Session to a Host, or to user@address (Quick Connect)"),
+    doc:
+      "Opens a new Session to the Host, in a tab of its own. A Host that isn't reviewed yet stays closed until you " +
+      "review it ([:review](:review)). Anything that isn't a Host's name but reads as `user@address` or " +
+      "`user@address:port` is a Quick Connect: the tab shows the box's host key for you to check, and asks for a " +
+      "password (left empty, this Box's own keys log in). [:here](:here) reuses a tab whose Session has ended; " +
+      "[Connection errors](errors-guide) says what to do when it doesn't connect.",
+    run: (ctx, h) => ctx.connect(h ?? ""),
+  },
+  open: {
+    // A Host (or its open Session), or a web service in the default browser (ticket 18, Q71):
+    // `open HOST`, `open SERVICE` (the current Host's), `open HOST SERVICE`. A Host's name wins.
+    id: "open",
+    source: BUILTIN,
+    area: "Hosts",
+    arg: "text",
+    label: (a) =>
+      a
+        ? a.includes(" ")
+          ? `Open ${a.replace(" ", "'s ")} in the browser`
+          : `Open ${a}: the Host or its Session, else the current Host's web service`
+        : "Open a Host or go to its Session, or open a web service in the browser",
+    run: (ctx, a) => ctx.open(a ?? ""),
+    complete: (word, hostNames, ctx) => {
+      const space = word.indexOf(" ");
+      if (space >= 0) {
+        const host = word.slice(0, space);
+        return matching(ctx?.webServices?.(host) ?? [], word.slice(space + 1).trimStart()).map((s) => `${host} ${s}`);
+      }
+      const names = [...new Set([...(ctx?.webServices?.(null) ?? []), ...[...hostNames].sort()])];
+      return matching(names, word);
+    },
+  },
+  here: {
+    id: "here",
+    source: BUILTIN,
+    area: "Hosts",
+    arg: "host",
+    label: (h) => (h ? `Connect to ${h} in this tab` : "Open a Host in this tab, if its Session has ended"),
+    run: (ctx, h) => ctx.connect(h ?? "", true),
+  },
+  quick: {
+    id: "quick",
+    source: BUILTIN,
+    area: "Hosts",
+    arg: "text",
+    optionalArg: true,
+    label: (t) => (t ? `Quick Connect to ${t}` : "Quick Connect: a Session to user@address[:port], not in the Inventory"),
+    run: (ctx, t) => ctx.quickConnect(t ?? null),
+  },
+  save: command("save", "Sessions", "Save to vault: the password typed for this Session, once it logged in", (ctx) => ctx.saveSession()),
+  fill: command("fill", "Sessions", "Fill sudo's (or a nested ssh's) password prompt on screen from the Host's Login in the vault", (ctx) => ctx.fillPrompt()),
+  integrate: command(
+    "integrate",
+    "Sessions",
+    "Turn on shell integration in this Session's shell: one line that marks its prompts and says its folder",
+    (ctx) => ctx.integrate(),
+  ),
+  reconnect: command("reconnect", "Sessions", "Reconnect an ended Session", (ctx) => ctx.reconnect()),
+  next: command("next", "Sessions", "Next Session", (ctx) => ctx.selectRelative(1)),
+  prev: command("prev", "Sessions", "Previous Session", (ctx) => ctx.selectRelative(-1)),
+  session: {
+    id: "session",
+    source: BUILTIN,
+    area: "Sessions",
+    arg: "number",
+    label: (n) => `Go to Session ${n ?? "N"}`,
+    run: (ctx, n) => ctx.selectNth(Number(n)),
+  },
+  close: {
+    id: "close",
+    source: BUILTIN,
+    area: "Sessions",
+    arg: "number",
+    optionalArg: true,
+    label: (n) => (n ? `Close Session ${n}` : "Close the Session"),
+    run: (ctx, n) => ctx.close(n === undefined ? null : Number(n)),
+  },
+} satisfies Record<string, SessionCommand>;

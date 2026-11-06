@@ -8,7 +8,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { Logo } from "../chrome/Logo";
 import logoCss from "../chrome/logo.css?raw";
-import { defaultConfig } from "../config/fixture";
+import { defaultConfig } from "../config/defaults";
 import { docsBuiltins, registerBuiltins } from "../commands/builtins";
 import { blockLinks, type Block } from "../help/doc";
 import helpDocCss from "../help/doc.css?raw";

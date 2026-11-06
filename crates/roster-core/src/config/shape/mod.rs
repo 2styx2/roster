@@ -75,6 +75,54 @@ impl Kind {
     }
 }
 
+/// A number option's bounds, both included: the one place they're written. `validate()` holds a
+/// loaded value to them, the reference shows them (through [`Allowed::range`]), and the frontend
+/// reads them from the generated data (`ranges` in config-options.json).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct Bounds {
+    pub min: f64,
+    pub max: f64,
+}
+
+impl Bounds {
+    pub fn holds(self, v: impl Into<f64>) -> bool {
+        (self.min..=self.max).contains(&v.into())
+    }
+
+    /// `11 to 20`.
+    pub fn text(self) -> String {
+        format!("{} to {}", number(self.min), number(self.max))
+    }
+}
+
+/// Every number option's [`Bounds`].
+pub mod bounds {
+    use super::Bounds;
+
+    pub const UI_SIZE: Bounds = Bounds { min: 11.0, max: 20.0 };
+    /// In px; a size in pt is converted first.
+    pub const TERMINAL_SIZE: Bounds = Bounds { min: 6.0, max: 72.0 };
+    pub const FONT_WEIGHT: Bounds = Bounds { min: 100.0, max: 900.0 };
+    /// `line_height` and `cell_height`.
+    pub const LINE_HEIGHT: Bounds = Bounds { min: 0.5, max: 3.0 };
+    pub const SCROLLBACK: Bounds = Bounds {
+        min: 0.0,
+        max: 1_000_000.0,
+    };
+    pub const IDLE_LOCK_MINUTES: Bounds = Bounds { min: 1.0, max: 1440.0 };
+    pub const PULL_FRESH_MINUTES: Bounds = Bounds { min: 0.0, max: 1440.0 };
+    /// In percent of the window: `panel.width`, `views.*.width`.
+    pub const PANEL_WIDTH: Bounds = Bounds { min: 10.0, max: 95.0 };
+}
+
+fn number(v: f64) -> String {
+    if v.fract() == 0.0 {
+        format!("{}", v as i64)
+    } else {
+        format!("{v}")
+    }
+}
+
 /// The values a leaf may have, beyond its type.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Allowed {
@@ -89,6 +137,14 @@ pub enum Allowed {
 }
 
 impl Allowed {
+    pub const fn range(b: Bounds, unit: &'static str) -> Allowed {
+        Allowed::Range {
+            min: b.min,
+            max: b.max,
+            unit,
+        }
+    }
+
     /// One line for a person: `"webgl" or "dom"`, `6 to 72 px`.
     pub fn text(&self) -> String {
         match self {
@@ -98,21 +154,11 @@ impl Allowed {
                 [one] => (*one).to_string(),
                 [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
             },
-            Allowed::Range { min, max, unit } => {
-                let n = |v: f64| {
-                    if v.fract() == 0.0 {
-                        format!("{}", v as i64)
-                    } else {
-                        format!("{v}")
-                    }
-                };
-                format!(
-                    "{} to {}{}{unit}",
-                    n(*min),
-                    n(*max),
-                    if unit.is_empty() { "" } else { " " }
-                )
-            }
+            Allowed::Range { min, max, unit } => format!(
+                "{}{}{unit}",
+                Bounds { min: *min, max: *max }.text(),
+                if unit.is_empty() { "" } else { " " }
+            ),
             Allowed::Form(text) => (*text).to_string(),
         }
     }
@@ -304,7 +350,7 @@ pub const BUNDLED_THEMES: &[&str] = &[
 
 // ---------------------------------------------------------------- the `roster` table
 
-/// A name in init.lua's `roster` table (config/lua.rs `roster_api`). A Plugin's `roster` is
+/// A name in init.lua's `roster` table (config/api.rs `roster_table`). A Plugin's `roster` is
 /// another table, declared in plugin/api/.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApiItem {

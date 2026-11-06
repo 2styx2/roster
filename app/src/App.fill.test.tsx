@@ -276,7 +276,7 @@ describe("a nested ssh to another Host (ticket 120)", () => {
     await within(output()).findByText(new RegExp(`admin@${there}'s password:`));
     expect(tab()).toHaveAccessibleName(new RegExp(`now on ${there}`));
     const note = await screen.findByRole("status", { name: "Password prompt" });
-    expect(note).toHaveTextContent(/newer roster \(API 26\)/);
+    expect(note).toHaveTextContent(/needs a newer roster \(API version 26; this one speaks 25\)/);
   });
 });
 

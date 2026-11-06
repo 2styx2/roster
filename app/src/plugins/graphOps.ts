@@ -2,7 +2,7 @@
 // are plain data; `open` and `actions` are the graph's, and a function there gets the node. Kept
 // apart from ops.ts, which calls it for `roster.views.set` and `roster.views.update`.
 import type { EdgeDir, EdgeStyle, EdgeTone, FilterState, GraphCluster, GraphData, GraphEdge, GraphFilter, GraphNode, Mark, NodeShape, NodeState, Reach } from "../graph/model";
-import type { RowAction } from "../sidebar/Sidebar";
+import type { RowAction } from "../sidebar/model";
 import { when, type PluginTableAction, type Run } from "./ops";
 
 /** Most nodes, edges and clusters a graph holds, after updates too. */

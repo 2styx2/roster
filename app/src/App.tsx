@@ -22,10 +22,11 @@ import { useMessages } from "./ui/useMessages";
 import { usePluginBridge, type PluginHandlers } from "./app/usePluginBridge";
 import { type Backend } from "./backend/types";
 import { useConnection } from "./backend/useConnection";
-import { runLine, type CommandContext, type Commands } from "./commands/table";
+import { runLine, type AppContext, type CommandContext, type Commands } from "./commands/table";
 import { layoutWarnings } from "./config/apply";
+import type { ConfigContext } from "./config/command";
 import { ConfigToast } from "./config/ConfigToast";
-import { defaultConfig } from "./config/fixture";
+import { defaultConfig } from "./config/defaults";
 import { ImportPanel } from "./config/ImportPanel";
 import type { ConfigReport } from "./config/types";
 import { useConfigActions } from "./config/useConfigActions";
@@ -33,6 +34,7 @@ import { useConfigReport } from "./config/useConfigReport";
 import { HostDetails } from "./details/HostDetails";
 import { webServices } from "./details/details";
 import { CheckPanel } from "./errors/CheckPanel";
+import type { CheckContext } from "./errors/command";
 import { RosterApi } from "./errors/rosterApi";
 import { useCheck } from "./errors/useCheck";
 import { ErrorScreen } from "./ErrorScreen";
@@ -44,6 +46,7 @@ import { topics } from "./help/pages";
 import { useHelp } from "./help/useHelp";
 import { FirstRun } from "./inventory/FirstRun";
 import { inventoryActions, type Form } from "./inventory/actions";
+import type { InventoryContext } from "./inventory/commands";
 import { Forms } from "./inventory/Forms";
 import { SwitchPanel } from "./inventory/SwitchPanel";
 import { useInventories } from "./inventory/useInventories";
@@ -60,17 +63,19 @@ import { SignOutPanel } from "./lock/SignOutPanel";
 import { useWorkspaceVault } from "./lock/useWorkspaceVault";
 import { NO_DEFAULTS, PanelLayout, type PanelPlace } from "./panel/layout";
 import { PanelFrame } from "./panel/PanelFrame";
-import { closeTop, usePanelState, type Layer } from "./panel/stack";
+import { closeTop, inLayer, usePanelState, type Layer } from "./panel/stack";
 import { pickerTimer } from "./picker/timing";
 import { memoryPlatform } from "./platform/memory";
 import type { Platform } from "./platform/types";
 import { PluginNotices, PluginProgressItems } from "./plugins/PluginsPanel";
 import { type QuickTarget } from "./quick/target";
 import { builtinRegistries, type Registries } from "./registries";
-import { sessionCommands } from "./session/commands";
+import { sessionActions } from "./session/actions";
+import type { SessionContext } from "./session/commands";
 import { SessionsMain } from "./session/SessionsMain";
 import { Tabs } from "./session/tabs";
 import { hostMenu } from "./sidebar/hostMenu";
+import type { SidebarContext } from "./sidebar/commands";
 import type { SidebarRow } from "./sidebar/model";
 import { Sidebar } from "./sidebar/Sidebar";
 import { useSidebarModel } from "./sidebar/useSidebarModel";
@@ -91,6 +96,7 @@ import { Keys } from "./ui/Keys";
 import { MESSAGES_VIEW, shownText, spokenText } from "./ui/messages";
 import { useFocusReturn } from "./ui/useFocusReturn";
 import { GraphMemory } from "./graph/memory";
+import type { ViewContext } from "./view/commands";
 import { isShown, otherMode, placed, type Place } from "./view/layout";
 import { SessionBar } from "./view/SessionBar";
 import { ModeHint } from "./view/ModeHint";
@@ -462,10 +468,10 @@ function Workspace({
   ];
   function closeKeys() {
     keysPanel.set(null);
-    if (document.activeElement?.closest('[data-panel="keys"]')) focus.restore();
+    if (inLayer("keys")) focus.restore();
   }
   const selectedHost = () => sidebar.cursorRow()?.host ?? onScreenTab?.host ?? null;
-  const { openWeb, whyNoSave, ...session } = sessionCommands({
+  const { openWeb, whyNoSave, ...session } = sessionActions({
     tabs,
     sessions,
     hostByName,
@@ -495,18 +501,14 @@ function Workspace({
     openCommandLine,
   });
 
-  // What commands act on. Rebuilt each render, so it always sees the current state.
-  const ctx: CommandContext = {
+  // What commands act on, one part per feature. Rebuilt each render, so it always sees the
+  // current state.
+  const appCtx: AppContext = {
     openPicker: () => {
       if (overlay === null) focus.remember();
       if (overlay !== "picker") pickerTime.start();
       setOverlay("picker");
     },
-    ...session,
-    checkHost: check.checkHost,
-    checkBox: check.checkBox,
-    stopCheck: check.stopOwn,
-    toggleSidebar: () => toggle("sidebar"),
     toggleStatusBar: () => toggle(layout.bar),
     openCommandLine,
     toggleKeys: () => (keysPanel.value ? closeKeys() : keysPanel.open(true)),
@@ -517,29 +519,9 @@ function Workspace({
       ctx.closePanel();
     },
     closePanel: () => void closeTop(layers()),
-    list: (move) => {
-      if (move !== "choose") return sidebar.move(move);
-      const row = sidebar.cursorRow();
-      if (row) sidebar.setSelected(row.id);
-      // Enter on a group, Folder or heading folds it and stays in the Sidebar.
-      setMode(row && staysInAppMode(row.command) ? { mode: "app", pending: [] } : terminalMode);
-      if (row) run(row.command);
-    },
-    fold: sidebar.fold,
-    cursorRow: sidebar.cursorRow,
-    rowMenu: () => {
-      const row = sidebar.cursorRow();
-      if (!sidebar.shown) return say("The Sidebar is hidden: show it to use a Host's menu (sidebar)");
-      if (!row?.menu) return say("Only a Host's row has a menu: move the cursor to one");
-      sidebar.setMenu({ row: row.id, at: null });
-    },
     selectedHost,
     hostNames: () => hosts?.hosts.map((h) => h.name) ?? [],
-    groupNames: () => groupNames,
-    ...inventoryCmds,
     say,
-    viewMode: () => viewMode,
-    setViewMode: (mode) => setViewMode(mode ?? otherMode(viewMode)),
     showInfo: () => {
       if (!info) return;
       // The command too: it's the program the master password and sign-in codes go to.
@@ -563,19 +545,44 @@ function Workspace({
       if (!hostByName.has(host)) return say(`No Host named ${host}`);
       setDetails(host);
     },
-    saveSession: () => {
-      const why = whyNoSave(onScreenTab);
-      if (why !== null) return say(why);
-      if (onScreenTab) openForm({ kind: "save", tab: onScreenTab.id });
-    },
-    switchInventory: inventories.ask,
-    config: (what) => configActions.run[what](),
     openFinder: (source, query) => {
       if (!registries.finders.get(source)) return say(`No finder named ${source}`);
       if (overlay === null) focus.remember();
       setOverlay(query ? { finder: source, query } : { finder: source });
     },
   };
+  const sessionCtx: SessionContext = {
+    ...session,
+    saveSession: () => {
+      const why = whyNoSave(onScreenTab);
+      if (why !== null) return say(why);
+      if (onScreenTab) openForm({ kind: "save", tab: onScreenTab.id });
+    },
+  };
+  const sidebarCtx: SidebarContext = {
+    toggleSidebar: () => toggle("sidebar"),
+    list: (move) => {
+      if (move !== "choose") return sidebar.move(move);
+      const row = sidebar.cursorRow();
+      if (row) sidebar.setSelected(row.id);
+      // Enter on a group, Folder or heading folds it and stays in the Sidebar.
+      setMode(row && staysInAppMode(row.command) ? { mode: "app", pending: [] } : terminalMode);
+      if (row) run(row.command);
+    },
+    fold: sidebar.fold,
+    cursorRow: sidebar.cursorRow,
+    rowMenu: () => {
+      const row = sidebar.cursorRow();
+      if (!sidebar.shown) return say("The Sidebar is hidden: show it to use a Host's menu (sidebar)");
+      if (!row?.menu) return say("Only a Host's row has a menu: move the cursor to one");
+      sidebar.setMenu({ row: row.id, at: null });
+    },
+  };
+  const inventoryCtx: InventoryContext = { ...inventoryCmds, groupNames: () => groupNames, switchInventory: inventories.ask };
+  const checkCtx: CheckContext = { checkHost: check.checkHost, checkBox: check.checkBox, stopCheck: check.stopOwn };
+  const viewCtx: ViewContext = { viewMode: () => viewMode, setViewMode: (mode) => setViewMode(mode ?? otherMode(viewMode)) };
+  const configCtx: ConfigContext = { config: (what) => configActions.run[what]() };
+  const ctx: CommandContext = { ...appCtx, ...sessionCtx, ...sidebarCtx, ...inventoryCtx, ...checkCtx, ...viewCtx, ...configCtx };
 
   // What Plugins' calls reach here, and the built-ins that act on the workspace's own objects.
   useLayoutEffect(() =>

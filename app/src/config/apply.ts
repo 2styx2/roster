@@ -14,7 +14,7 @@ import { defaultTerminalOptions, standardAnsi, type TerminalOptions } from "../t
 import { terminalActions } from "../terminal/keymap";
 import { PASTE_IF_TEXT_KEY } from "../terminal/input";
 import { terminalFontStack } from "../terminal/fonts";
-import type { AppearanceOptions, Theme } from "../theme/theme";
+import { defaultAppearance, type AppearanceOptions, type Theme } from "../theme/theme";
 import { layoutsOf, STATUS_SEGMENTS, type Layouts } from "../view/layout";
 import type { Config, ConfigLocation, ThemeDef } from "./types";
 
@@ -176,6 +176,14 @@ export function themeOf(id: string, def: ThemeDef, base: Theme, source: string):
   };
 }
 
+/** The Theme `def` starts from: its `base`, else Roster's own of its appearance. When that isn't
+ * there it starts from Roster dark, and `missing` names what wasn't. */
+export function themeBase(def: ThemeDef, get: (id: string) => Theme | undefined): { base: Theme | undefined; missing?: string } {
+  const id = def.base ?? (def.appearance === "light" ? defaultAppearance.light : defaultAppearance.dark);
+  const base = get(id);
+  return base ? { base } : { base: get(defaultAppearance.dark), missing: id };
+}
+
 /** Registers the Config's keys, Themes and Folders; returns what undoes it and the warnings. */
 export function registerConfig(registries: Registries, c: Config): { dispose: () => void; warnings: ConfigWarning[] } {
   const warnings: ConfigWarning[] = [];
@@ -197,15 +205,11 @@ export function registerConfig(registries: Registries, c: Config): { dispose: ()
     const done = built.get(id);
     if (done) return done;
     building.add(id);
-    const baseId = def.base ?? (def.appearance === "light" ? "roster-light" : "roster-dark");
-    const ownBase = c.themes[baseId];
-    let base: Theme | undefined;
-    if (ownBase && baseId !== id && !building.has(baseId)) base = build(baseId, ownBase);
-    else base = registries.themes.get(baseId);
-    if (!base) {
-      warn(`themes.${id}`, `Theme ${id}: no Theme named ${baseId} to start from; using Roster dark`);
-      base = registries.themes.get("roster-dark");
-    }
+    const { base, missing } = themeBase(def, (baseId) => {
+      const own = c.themes[baseId];
+      return own && baseId !== id && !building.has(baseId) ? build(baseId, own) : registries.themes.get(baseId);
+    });
+    if (missing) warn(`themes.${id}`, `Theme ${id}: no Theme named ${missing} to start from; using Roster dark`);
     const theme = themeOf(id, def, base as Theme, CONFIG);
     building.delete(id);
     built.set(id, theme);

@@ -415,6 +415,7 @@ export function PluginFloatPanel({
       ref={panel}
       tabIndex={-1}
       className="side-panel plugin-float"
+      data-panel="plugin-float"
       aria-label={`${float.title || float.plugin} (from ${float.plugin})`}
       onKeyDown={(e) => {
         // A key held down from before the prompt (the Enter that unlocked, say) answers nothing.
@@ -503,6 +504,7 @@ export function PluginConfirmPanel({ confirm, onAnswer }: { confirm: PendingConf
     <section
       tabIndex={-1}
       className="side-panel confirm-panel plugin-confirm"
+      data-panel="plugin-confirm"
       role="alertdialog"
       aria-label={`${confirm.title} (from ${confirm.plugin})`}
       onKeyDown={(e) => {

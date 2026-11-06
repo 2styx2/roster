@@ -4,7 +4,7 @@
 // checked before the app draws anything: a field of the wrong kind drops the op with a reason, and
 // text is cut to what the UI can show. A Lua function arrives as `{ handler: N }`.
 import type { ThemeDef } from "../config/types";
-import type { RowAction } from "../sidebar/Sidebar";
+import type { RowAction } from "../sidebar/model";
 import type { StepMatch } from "../tutor/tutor";
 import type { ColumnKind, Sort, TableColumn, TableRow, Tone } from "../ui/table";
 import { CORE } from "./core.gen";
@@ -115,7 +115,6 @@ export interface PluginProgress {
   cancel?: Run;
 }
 
-/** The icons a Plugin's toolbar control may have. */
 export const PLUGIN_TOOLBAR_ICONS = ["find", "add", "details", "help", "map"] as const;
 type PluginToolbarIcon = (typeof PLUGIN_TOOLBAR_ICONS)[number];
 

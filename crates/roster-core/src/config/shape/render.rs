@@ -32,6 +32,8 @@ pub struct Reference {
     /// The bundled Themes' ids ([`super::BUNDLED_THEMES`]); the app's own list is checked
     /// against it.
     pub bundled_themes: Vec<&'static str>,
+    /// Each number option's bounds by its path (`panel.width`), for the frontend's own checks.
+    pub ranges: std::collections::BTreeMap<String, super::Bounds>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -327,6 +329,13 @@ pub fn reference() -> Reference {
         sections,
         aliases,
         bundled_themes: super::BUNDLED_THEMES.to_vec(),
+        ranges: options()
+            .iter()
+            .filter_map(|o| match o.allowed {
+                super::Allowed::Range { min, max, .. } => Some((o.path.clone(), super::Bounds { min, max })),
+                _ => None,
+            })
+            .collect(),
     }
 }
 

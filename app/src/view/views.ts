@@ -7,17 +7,13 @@
 // One view is open at a time (`ViewHost`): `:view ID`, a key bound to it, the `views` finder, or
 // a Plugin's own action open it; Esc closes it and focus goes back where it was.
 import type { CommandDef } from "../commands/table";
-import { matching } from "../commands/table";
+import { matching } from "../commands/match";
 import type { FinderSourceDef } from "../finder/sources";
 import type { Registries } from "../registries";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import type { ActionIcon } from "../ui/icons";
 import type { TableModel } from "../ui/table";
 import type { GraphModel } from "../graph/model";
-
-// Plugins' code still names these from here.
-export type { GraphModel, NodeActionDef } from "../graph/model";
-export type { TableActionDef, TableModel } from "../ui/table";
 
 export interface Fact {
   label: string;

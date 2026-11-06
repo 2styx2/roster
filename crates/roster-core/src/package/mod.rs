@@ -361,7 +361,6 @@ impl Packages {
         }
     }
 
-    /// The lock file's path.
     pub fn lock_path(&self) -> &Path {
         &self.lock
     }

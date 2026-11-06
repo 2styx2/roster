@@ -2,7 +2,7 @@
 //! Colour tokens and key contexts come from the schema's own lists, so a token added there is
 //! here too.
 
-use super::{Allowed, ApiItem, Kind, Opt, Param};
+use super::{Allowed, ApiItem, Kind, Opt, Param, bounds};
 use crate::config::schema::{Ansi, KeyContext, TerminalColors, ThemeColors, ThemeTerminalColors};
 
 const UNSET: &str = "unset";
@@ -189,11 +189,7 @@ pub(super) fn options() -> Vec<Opt> {
         "fonts.ui_size",
         "integer",
         "15",
-        Allowed::Range {
-            min: 11.0,
-            max: 20.0,
-            unit: "px",
-        },
+        Allowed::range(bounds::UI_SIZE, "px"),
         "The UI's text size; the smaller steps, the row height and the Sidebar's width follow it.",
         "16",
     );
@@ -232,11 +228,7 @@ pub(super) fn options() -> Vec<Opt> {
         "terminal.size",
         "number|string",
         "\"13pt\"",
-        Allowed::Range {
-            min: 6.0,
-            max: 72.0,
-            unit: "px (4.5 to 54 pt)",
-        },
+        Allowed::range(bounds::TERMINAL_SIZE, "px (4.5 to 54 pt)"),
         "The font size: a number is px, \"16pt\" is points (as Windows Terminal converts them), \"21px\" works too.",
         "\"16pt\"",
     );
@@ -244,11 +236,7 @@ pub(super) fn options() -> Vec<Opt> {
         "terminal.weight",
         "integer",
         "500",
-        Allowed::Range {
-            min: 100.0,
-            max: 900.0,
-            unit: "",
-        },
+        Allowed::range(bounds::FONT_WEIGHT, ""),
         "The font weight; the bundled Iosevka has 400, 500 and 700.",
         "400",
     );
@@ -256,11 +244,7 @@ pub(super) fn options() -> Vec<Opt> {
         "terminal.bold_weight",
         "integer",
         "700",
-        Allowed::Range {
-            min: 100.0,
-            max: 900.0,
-            unit: "",
-        },
+        Allowed::range(bounds::FONT_WEIGHT, ""),
         "The weight of bold (SGR 1) text.",
         "800",
     );
@@ -276,11 +260,7 @@ pub(super) fn options() -> Vec<Opt> {
         "terminal.line_height",
         "number",
         "1.0",
-        Allowed::Range {
-            min: 0.5,
-            max: 3.0,
-            unit: "",
-        },
+        Allowed::range(bounds::LINE_HEIGHT, ""),
         "A multiple of the font's own line height.",
         "1.2",
     );
@@ -288,11 +268,7 @@ pub(super) fn options() -> Vec<Opt> {
         "terminal.cell_height",
         "number",
         UNSET,
-        Allowed::Range {
-            min: 0.5,
-            max: 3.0,
-            unit: "",
-        },
+        Allowed::range(bounds::LINE_HEIGHT, ""),
         "A multiple of the font size, as Windows Terminal's cellHeight; wins over line_height.",
         "1.1",
     );
@@ -316,11 +292,7 @@ pub(super) fn options() -> Vec<Opt> {
         "terminal.scrollback",
         "integer",
         "10000",
-        Allowed::Range {
-            min: 0.0,
-            max: 1_000_000.0,
-            unit: "lines",
-        },
+        Allowed::range(bounds::SCROLLBACK, "lines"),
         "How many lines the terminal keeps above the screen.",
         "50000",
     );
@@ -510,11 +482,7 @@ pub(super) fn options() -> Vec<Opt> {
         "panel.width",
         "integer",
         UNSET,
-        Allowed::Range {
-            min: 10.0,
-            max: 95.0,
-            unit: "percent of the window",
-        },
+        Allowed::range(bounds::PANEL_WIDTH, "percent of the window"),
         "A docked panel's width, for every panel and view views doesn't give one. Unset, each keeps its own.",
         "40",
     );
@@ -545,11 +513,7 @@ pub(super) fn options() -> Vec<Opt> {
         "views.*.width",
         "integer",
         UNSET,
-        Allowed::Range {
-            min: 10.0,
-            max: 95.0,
-            unit: "percent of the window",
-        },
+        Allowed::range(bounds::PANEL_WIDTH, "percent of the window"),
         "Its docked width.",
         "60",
     );
@@ -715,11 +679,7 @@ pub(super) fn options() -> Vec<Opt> {
         "idle_lock_minutes",
         "integer",
         "15",
-        Allowed::Range {
-            min: 1.0,
-            max: 1440.0,
-            unit: "minutes",
-        },
+        Allowed::range(bounds::IDLE_LOCK_MINUTES, "minutes"),
         "Lock after this many minutes without input.",
         "30",
     );
@@ -727,11 +687,7 @@ pub(super) fn options() -> Vec<Opt> {
         "pull_fresh_minutes",
         "integer",
         "5",
-        Allowed::Range {
-            min: 0.0,
-            max: 1440.0,
-            unit: "minutes",
-        },
+        Allowed::range(bounds::PULL_FRESH_MINUTES, "minutes"),
         "How old the last pull of the infra repo may be before a form pulls again; 0 pulls every time.",
         "0",
     );

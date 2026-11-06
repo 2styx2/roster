@@ -3,6 +3,7 @@
 // page on the demo, every Session ended at the end; focus after unlocking, after the last Session,
 // back from the demo, and around a Plugin's question or float.
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { inLayer } from "../panel/stack";
 import { NEWS_KEY, newsNote } from "../news/news";
 import type { Platform } from "../platform/types";
 import type { Registries } from "../registries";
@@ -101,10 +102,10 @@ export function useWorkspaceLife(o: {
   // run first), and only when a new one comes up.
   const { pluginConfirm, pluginFloat } = o;
   useLayoutEffect(() => {
-    if (pluginConfirm !== null && !document.activeElement?.closest(".plugin-confirm")) focus.remember();
+    if (pluginConfirm !== null && !inLayer("plugin-confirm")) focus.remember();
   }, [pluginConfirm, focus]);
   useLayoutEffect(() => {
-    if (pluginFloat !== null && !document.activeElement?.closest(".plugin-float")) focus.remember();
+    if (pluginFloat !== null && !inLayer("plugin-float")) focus.remember();
   }, [pluginFloat, focus]);
   return { setPromptButton: (el) => prompt.set(el) };
 }
