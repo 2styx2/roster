@@ -64,9 +64,7 @@ TYPES = {
 
 def load_resources(raw, groups, hosts):
     """The `resources:` section, validated and normalized: every resource has every field of its type."""
-    section = raw.get("resources") or {}
-    if not isinstance(section, dict):
-        raise InventoryError("resources: must be a mapping of name: { type, ... }")
+    section = raw.get("resources") or {}     # a mapping: config.check_shapes
     out = {}
     for name, r in section.items():
         name, where = str(name), f"resource {name!r}"

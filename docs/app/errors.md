@@ -17,7 +17,7 @@ The # is a row's id, given in the order rows were added and cited by the code (`
 
 | # | What happened | Typical cause | Where it lives | Message (short) | Fix offered |
 |---|---|---|---|---|---|
-| 1 | `roster.yml` doesn't load | Bad YAML or a missing field after a hand edit; or there's no `roster.yml` yet | Inventory | "roster.yml has an error at line N: …"; "no roster.yml found here or in ~/.config/roster/ - make one (`roster init --blank`, …)" | Open the file; show roster's message. None yet: `roster init --blank` makes one (or `--inventory file:PATH\|repo:URL\|ssh-config`, [A new Inventory](../cli-reference.md#a-new-inventory)) |
+| 1 | `roster.yml` doesn't load | Bad YAML, a missing field or a key of the wrong shape (a group written as a number, text or a list) after a hand edit; or there's no `roster.yml` yet | Inventory | "roster.yml has an error at line N: …"; "… at line N: groups.lab: must be a mapping of the group's settings and hosts (…), not a number (3)" (a key of the wrong shape: what goes there); "no roster.yml found here or in ~/.config/roster/ - make one (`roster init --blank`, …)" | Open the file; show roster's message. None yet: `roster init --blank` makes one (or `--inventory file:PATH\|repo:URL\|ssh-config`, [A new Inventory](../cli-reference.md#a-new-inventory)) |
 | 2 | Host not in this Box's ssh config | `roster.yml` was edited but `roster sync` wasn't run | Box | "esxi-02 isn't in this Box's ssh config yet" | Button: run `roster sync` |
 | 3 | Host is `reviewed: false` | Came from `discover` | Inventory | "esxi-02 hasn't been reviewed" | Review it (ticket 11) |
 | 4 | No user set | Hand edit left the user out, or `CHANGE-ME` | Inventory | "No SSH user for esxi-02" | Edit the Host |
