@@ -54,12 +54,13 @@ def diff(before, items):
     return added, changed, len(set(before) - now)
 
 
-def sync(provider, interactive=False, mapped=None):
+def sync(provider, interactive=False, mapped=None, seen=()):
     """Sync PROVIDER and compare its items with the last snapshot: {provider, first, count, added: [name],
     changed: [name], removed: n, unmapped: [{name, missing}]}, or None for a provider with nothing to sync. UNMAPPED
-    (T243): the items added since the last sync that no Login in roster.yml names (MAPPED(item) is False), each with
-    what `roster add --from-vault` would miss to make a Host of it (address, user), never their values. The snapshot
-    is replaced only after a sync and a listing that worked. Raises SecretError."""
+    (T243): the items added since a sync that no Login in roster.yml names yet (MAPPED(item) is False), each with
+    what `roster add --from-vault` would miss to make a Host of it (address, user), never their values; they stay
+    named at each sync until roster.yml names them or `roster add --from-vault` has listed them (SEEN: its ids, #503's
+    review LOW-4). The snapshot is replaced only after a sync and a listing that worked. Raises SecretError."""
     if providers.sync_vault(provider, interactive) is None:
         return None
     if not providers.can_list(provider):
@@ -70,8 +71,10 @@ def sync(provider, interactive=False, mapped=None):
     items = providers.vault_items(provider, mapped, interactive=interactive)
     before = load(provider)
     added, changed, removed = diff((before or {}).get("items") or {}, items)
-    save(provider, {i["id"]: i.get("revised") for i in items})
-    unmapped = [{"name": shown(i), "missing": missing(i)} for i in added if not mapped(i)] if before is not None else []
+    waiting = set((before or {}).get("unmapped") or ()) | ({i["id"] for i in added} if before is not None else set())
+    left = [i for i in items if i["id"] in waiting and i["id"] not in set(seen) and not mapped(i)]
+    save(provider, {i["id"]: i.get("revised") for i in items}, [i["id"] for i in left])
+    unmapped = [{"name": shown(i), "missing": missing(i)} for i in left]
     return {"provider": provider, "first": before is None, "count": len(items),
             "added": [shown(i) for i in added], "changed": [shown(i) for i in changed], "removed": removed,
             "unmapped": unmapped}
@@ -89,12 +92,14 @@ def shown(item):
     return name if name and name.isprintable() else item["id"]
 
 
-def save(provider, items):
+def save(provider, items, unmapped=()):
+    """The snapshot: each item's id and revision date, and the ids of the new items roster.yml doesn't name yet."""
     f = snapshot_path(provider)
     if f.is_symlink():
         say(f"warning      {f} is a symlink (roster never writes through one here) - not updated")
         return
-    data = {"synced": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "items": items}
+    data = {"synced": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "items": items,
+            "unmapped": sorted(unmapped)}
     replace_file(f, json.dumps(data, indent=1, sort_keys=True) + "\n", mode=0o600)
 
 

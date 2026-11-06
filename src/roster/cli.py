@@ -598,7 +598,9 @@ def sync_vaults(cfg):
             print(f"note: the vault is locked, so roster asks for its master password once to sync it (Ctrl-D "
                   f"skips the vault). As with roster vault unlock, {UNLOCK_COST}", file=sys.stderr, flush=True)
         try:
-            out.append((p, vaultsync.sync(p, interactive=interactive, mapped=fromvault.named(p, refs[p])), None))
+            seen = fromvault.load_seen(cfg["path"])["items"].get(p) or {}
+            out.append((p, vaultsync.sync(p, interactive=interactive, mapped=fromvault.named(p, refs[p]), seen=seen),
+                        None))
         except EOFError:                   # Ctrl-D at the prompt: the vault is left as last synced (LOW-2)
             out.append((p, None, NotAsked("no master password given")))
         except RuntimeError as e:          # a SecretError, or a provider's own failure: its words, never a value
