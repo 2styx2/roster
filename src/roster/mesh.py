@@ -35,7 +35,7 @@ from .common import (
 )
 from .context import current
 from .errors import MESH_KEY_PEER, MESH_WINDOWS, NOT_A_SOURCE, Problem
-from .hosts import is_windows
+from .hosts import AccountLocks, is_windows
 from .sshops import hk_name, not_reached, recorded_host_keys
 
 TAG = "roster-mesh"
@@ -421,18 +421,25 @@ replace() {  # replace PATH < content: a temp file next to it, then mv, so a run
              # its SELinux label (a new inode may lack ssh_home_t, and sshd refuses it): chcon --reference before
              # the mv, restorecon after, where they exist (never fatal: busybox, macOS, Alpine have neither)
   f=$1; [ -L "$f" ] && f=$(readlink -f "$f" 2>/dev/null || echo "$f")
-  n=$f.roster-new; rm -f "$n"
-  if { [ ! -f "$f" ] || cp -p "$f" "$n"; } && cat > "$n"; then
+  # the temp file's name is this run's own (mktemp beside PATH, so the mv is a rename): two runs on one account at once
+  # (two Host entries for it, T258) never rename each other's away; no mktemp is said, never a fixed name (#524's F3)
+  command -v mktemp >/dev/null 2>&1 || { echo "ERROR this Host has no mktemp: roster needs it to rewrite $1"; return 1; }
+  if n=$(mktemp "$f.roster-new.XXXXXX") && { [ ! -f "$f" ] || cp -p "$f" "$n"; } && cat > "$n"; then
     [ -f "$f" ] && command -v chcon >/dev/null 2>&1 && chcon --reference="$f" "$n" 2>/dev/null
     if mv -f "$n" "$f"; then
       command -v restorecon >/dev/null 2>&1 && restorecon -F "$f" 2>/dev/null
       return 0
     fi
   fi
-  rm -f "$n"; echo "ERROR couldn't rewrite $1"; return 1
+  [ -n "$n" ] && rm -f "$n"; echo "ERROR couldn't rewrite $1"; return 1
 }
-put() {  # put PATH LABEL < content: write it when it differs
-  t=$(mktemp) || { echo "ERROR mktemp failed"; exit 1; }; cat > "$t"
+wrote() {  # wrote RC PATH: did the command that wrote PATH's new version (exit RC) finish? grep's 1 is "no line left";
+           # 2 (a read or write error: a full disk) or another command's failure leaves PATH as it was (#524's F1)
+  [ "$1" -le 1 ] && return 0; echo "ERROR couldn't write the new $2 (exit $1): nothing was changed"; return 1
+}
+put() {  # put PATH LABEL < content: write it when it differs; a failed write (a full disk) changes nothing (#524)
+  t=$(mktemp) || { echo "ERROR mktemp failed"; exit 1; }
+  cat > "$t" || { rm -f "$t"; echo "ERROR couldn't write the new $1: nothing was changed"; return 1; }
   if [ -f "$1" ] && cmp -s "$t" "$1"; then echo "SAME $2"
   else echo "CHANGE $2"; [ "$MODE" = apply ] && { mkdir -p "${1%/*}" && replace "$1" < "$t"; }; fi
   rm -f "$t"
@@ -463,8 +470,9 @@ else
   if [ "$MODE" = apply ]; then
     mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"; t=$(mktemp)
     # the Include after an earlier mark (another directory) goes with it
-    { echo "$MARK"; echo "$INC"; awk -v m="$MARK" 'd { d = 0; if (/^Include /) next } $0 == m { d = 1; next } { print }' "$C" 2>/dev/null; } > "$t"
-    replace "$C" < "$t"; rm -f "$t"
+    # set -e in the subshell: each command's failure counts, not only the last's
+    rc=0; ( set -e; echo "$MARK"; echo "$INC"; [ ! -f "$C" ] || awk -v m="$MARK" 'd { d = 0; if (/^Include /) next } $0 == m { d = 1; next } { print }' "$C" ) > "$t" || rc=2
+    wrote $rc "$C" && replace "$C" < "$t"; rm -f "$t"
   fi
 fi
 fi
@@ -479,8 +487,8 @@ if [ -z "$FOREIGN" ] && [ -z "$ESXI" ] && [ -d "$HOME/.claude" ]; then
     echo "CHANGE claude"
     if [ "$MODE" = apply ]; then
       t=$(mktemp)
-      { cat "$CM" 2>/dev/null; [ -s "$CM" ] && [ -n "$(tail -c 1 "$CM")" ] && echo; echo "$IMPORT"; } > "$t"
-      replace "$CM" < "$t"; rm -f "$t"
+      rc=0; ( set -e; [ ! -f "$CM" ] || cat "$CM"; if [ -s "$CM" ] && [ -n "$(tail -c 1 "$CM")" ]; then echo; fi; echo "$IMPORT" ) > "$t" || rc=2
+      wrote $rc "$CM" && replace "$CM" < "$t"; rm -f "$t"
     fi
   fi
 fi
@@ -517,8 +525,8 @@ if [ -z "$THEIRS" ] && grep -qxF -e "$MARK" -e "$INC" "$C" 2>/dev/null; then
   echo "CHANGE remove include"
   if [ "$MODE" = apply ]; then
     t=$(mktemp)
-    awk -v m="$MARK" -v i="$INC" 'd { d = 0; if (/^Include /) next } $0 == m { d = 1; next } $0 == i { next } { print }' "$C" > "$t"
-    replace "$C" < "$t"; rm -f "$t"; [ -s "$C" ] || rm -f "$C"
+    rc=0; awk -v m="$MARK" -v i="$INC" 'd { d = 0; if (/^Include /) next } $0 == m { d = 1; next } $0 == i { next } { print }' "$C" > "$t" || rc=2
+    wrote $rc "$C" && replace "$C" < "$t" && { [ -s "$C" ] || rm -f "$C"; }; rm -f "$t"
   fi
 fi
 [ -z "$ESXI" ] && [ -z "$FMD" ] && ours "$R" && drop "$R" "remove ROSTER.md"
@@ -526,7 +534,8 @@ CM=$HOME/.claude/CLAUDE.md
 if [ -z "$FMD" ] && grep -qxF "$IMPORT" "$CM" 2>/dev/null; then
   echo "CHANGE remove claude"
   if [ "$MODE" = apply ]; then
-    t=$(mktemp); grep -vxF "$IMPORT" "$CM" > "$t"; replace "$CM" < "$t"; rm -f "$t"; [ -s "$CM" ] || rm -f "$CM"
+    t=$(mktemp); rc=0; grep -vxF "$IMPORT" "$CM" > "$t" || rc=$?
+    wrote $rc "$CM" && replace "$CM" < "$t" && { [ -s "$CM" ] || rm -f "$CM"; }; rm -f "$t"
   fi
 fi
 """
@@ -567,9 +576,14 @@ S1=$(mktemp); S2=$(mktemp); sort "$H" > "$S1"; sort "$W" > "$S2"
 if [ "$MODE" = apply ] && { ! cmp -s "$S1" "$S2" || [ -s "$OL" ]; }; then
   d=${AK%/*}; mkdir -p "$d"; [ -z "$ESXI" ] && chmod 700 "$d"
   NEW=; [ -f "$AK" ] || NEW=1
-  t=$(mktemp)
-  if [ -s "$OL" ]; then grep -vE "$TAGS" "$AK" 2>/dev/null | grep -vxFf "$OL" > "$t"; else grep -vE "$TAGS" "$AK" 2>/dev/null > "$t"; fi
-  cat "$W" >> "$t"; replace "$AK" < "$t"; rm -f "$t"
+  t=$(mktemp); u=$(mktemp); rc=0
+  # each step's failure counted (#524's F1): a sh pipeline would say only its last command's
+  [ ! -f "$AK" ] || grep -vE "$TAGS" "$AK" > "$u" || rc=$?
+  if [ "$rc" -le 1 ]; then
+    if [ -s "$OL" ]; then grep -vxFf "$OL" "$u" > "$t" || { r=$?; [ $r -le 1 ] || rc=$r; }; else cat "$u" > "$t" || rc=2; fi
+  fi
+  [ "$rc" -le 1 ] && { cat "$W" >> "$t" || rc=2; }
+  wrote $rc "$AK" && replace "$AK" < "$t"; rm -f "$t" "$u"
   # ESXi keeps a file under /etc across a reboot only with the sticky bit (its own keys file is 1600); cp -p keeps
   # it on a rewrite, so only a file roster makes needs it
   [ -n "$ESXI" ] && [ -n "$NEW" ] && [ -f "$AK" ] && chmod 1600 "$AK"
@@ -624,8 +638,11 @@ def preamble(h, mode, own, prev=()):
             f"IMPORT={q(CLAUDE_IMPORT)}\n" + WHERE.replace("@MESH_FILES@", boxkeys.MESH_FILES))
 
 
-def heredoc(text):
-    return f"<<'ROSTER_MESH_EOF'\n{text}ROSTER_MESH_EOF\n"
+def stash(var, text):
+    """VAR=$(mktemp) holding TEXT, or the script stops there, said: a temporary file written in part (a full disk)
+    is never what a later step puts in place (#524's second pass)."""
+    return (f'{var}=$(mktemp)\ncat > "${var}" <<\'ROSTER_MESH_EOF\' || {{ echo "ERROR couldn\'t write a temporary file '
+            f'on this Host (a full disk?)"; exit 1; }}\n{text}ROSTER_MESH_EOF\n')
 
 
 def probe_script(h, peers, mode, rotate, own, prev=()):
@@ -652,7 +669,7 @@ def write_script(h, mode, files, keys, keep, own, prev=(), adopt=()):
     if files is not None:
         s.append(SOURCE)
         for name, text in files.items():
-            f = f"FC=$(mktemp)\ncat > \"$FC\" {heredoc(text)}"
+            f = stash("FC", text)
             if name == "ROSTER.md":
                 s.append(f + 'if [ -n "$FOREIGN" ]; then { [ -n "$R" ] && { [ ! -f "$R" ] || ours "$R"; }; } '
                          f'&& same "$R" {q(name)} 2 < "$FC"\n'
@@ -664,13 +681,13 @@ def write_script(h, mode, files, keys, keep, own, prev=(), adopt=()):
                          f'else put "$P/{name}" {q(name)} < "$FC"; fi\nrm -f "$FC"\n')
     else:
         s.append(NOT_SOURCE)
-    s.append("W=$(mktemp)\ncat > \"$W\" " + heredoc("".join(line + "\n" for line in keys)))
+    s.append(stash("W", "".join(line + "\n" for line in keys)))
     s.append(f"KEEP={q('|'.join(ere(k) for k in sorted(keep)))}\n")
     retag = sorted({k.rsplit(":", 1)[1].split("@", 1)[0] for k in keys} - set(keep))
     old = "-" in prev and bool(retag)
     pattern = [f"( {TAG}:{NAME_ERE}@{ere(p)}$)" for p in prev if p != "-"]
     s.append(f"RETAG={q('|'.join(pattern))}\n")
-    s.append("ADOPT=$(mktemp)\ncat > \"$ADOPT\" " + heredoc("".join(line + "\n" for line in sorted(adopt)) if old else ""))
+    s.append(stash("ADOPT", "".join(line + "\n" for line in sorted(adopt)) if old else ""))
     s.append(f"UNT={q('|'.join(ere(k) for k in retag) if old else '')}\n")
     s.append(AUTHORIZED)
     return "".join(s) + "echo ROSTER_DONE\n"
@@ -688,7 +705,8 @@ def cut_script(h, host, own, owner, prev=(), everything=False):
         s.append(NOT_SOURCE)
     s.append(f"""T=' {TAG}:{tag}{owners_re([owner, *prev])}$'
 if [ -f "$AK" ] && grep -qE "$T" "$AK"; then
-  t=$(mktemp); grep -vE "$T" "$AK" > "$t"; replace "$AK" < "$t"; rm -f "$t"; echo "CHANGE cut"
+  t=$(mktemp); rc=0; grep -vE "$T" "$AK" > "$t" || rc=$?; wrote $rc "$AK" && replace "$AK" < "$t"; rm -f "$t"
+  echo "CHANGE cut"
   [ -n "$ESXI" ] && [ -x /sbin/auto-backup.sh ] && /sbin/auto-backup.sh >/dev/null 2>&1
 fi
 grep -qE ' {TAG}:{tag}$' "$AK" 2>/dev/null && echo "UNTAGGED"
@@ -1232,9 +1250,11 @@ def cut(cfg, name, workers=16, progress=None, stopped=None):
     st = load_state()
     owner, was, proven = owner_of(cfg), earlier_owner(cfg, st), set(st["members"])
 
+    turn = AccountLocks()                       # Host entries that share an account take turns (T258)
+
     def one(item):
         n, own = item
-        with deadline_at(at):
+        with deadline_at(at), turn(hosts[n]):
             if why := not_now(stopped):
                 return n, None, why
             lines, err = on_host(hosts[n], cut_script(hosts[n], name, own, owner, was if n in proven else ()),
@@ -1284,8 +1304,10 @@ def cut_all(cfg, workers=16, progress=None, stopped=None):
     at = current_deadline()
     owner, was = owner_of(cfg), earlier_owner(cfg, load_state())
 
+    turn = AccountLocks()                       # Host entries that share an account take turns (T258)
+
     def one(n):
-        with deadline_at(at):
+        with deadline_at(at), turn(hosts[n]):
             if why := not_now(stopped):
                 return n, None, why
             lines, err = on_host(hosts[n], cut_script(hosts[n], n, True, owner, was, everything=True), timeout=CUT_TIMEOUT)
@@ -1458,7 +1480,7 @@ def remove_leftovers(cfg, found):
         if tags:
             s.append(f"""T=' {TAG}:({'|'.join(tags)})$'
 if [ -f "$AK" ] && grep -qE "$T" "$AK"; then
-  t=$(mktemp); grep -vE "$T" "$AK" > "$t"; replace "$AK" < "$t"; rm -f "$t"
+  t=$(mktemp); rc=0; grep -vE "$T" "$AK" > "$t" || rc=$?; wrote $rc "$AK" && replace "$AK" < "$t"; rm -f "$t"
   [ -n "$ESXI" ] && [ -x /sbin/auto-backup.sh ] && /sbin/auto-backup.sh >/dev/null 2>&1
 fi
 grep -qE "$T" "$AK" 2>/dev/null && {{ echo "ERROR a roster-mesh line is still there"; exit 0; }}

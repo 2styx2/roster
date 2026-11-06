@@ -817,6 +817,47 @@ def test_an_interrupted_cut_never_leaves_a_file_half_written(net, monkeypatch, t
     assert_no_file_was_damaged(net, before)
 
 
+def test_a_failed_write_never_replaces_a_file_with_a_truncated_one(net, monkeypatch, tmp_path):
+    """#524's review F1: grep's exit 2 (a full disk) while it writes the new file was taken for "no line left", and the
+    truncated file put in place. Now nothing is replaced, and the Host stays pending."""
+    if not os.path.exists("/proc/self/fd/1"):
+        pytest.skip("needs /proc to see where grep writes")
+    from test_sshops import failing_writes
+    mesh.run(net.cfg(), apply=True)
+    before = net.snapshot()
+    monkeypatch.setenv("FAKE_HOST_PATH", str(failing_writes(tmp_path / "full")))
+    r = mesh.cut(net.cfg(), "orion-2")
+    assert {"orion-2", "orion-3", "esx-02", "nas-1"} <= set(r["pending"])
+    keys = {path: data for path, data in before.items() if path.endswith("authorized_keys")}
+    assert keys and {path: net.snapshot().get(path) for path in keys} == keys
+
+
+def test_a_failed_write_of_a_mesh_file_never_puts_a_truncated_one_in_place(net, monkeypatch, tmp_path):
+    """#524's second pass: put() (and the temporary files a run's script writes from its heredocs) didn't check
+    their write: on a full disk a truncated Mesh config, known_hosts or ROSTER.md could be put in place."""
+    if not os.path.exists("/proc/self/fd/1"):
+        pytest.skip("needs /proc to see where cat writes")
+    d = tmp_path / "full"
+    d.mkdir()
+    (d / "cat").write_text(f"""#!/bin/sh
+out=$(readlink /proc/$$/fd/1)
+case "${{out##*/}}" in
+  tmp.*) {shutil.which("cat")} "$@" | head -n 1; echo "cat: write error: No space left on device" >&2; exit 1;;
+esac
+exec {shutil.which("cat")} "$@"
+""")
+    (d / "cat").chmod(0o755)
+    monkeypatch.setenv("FAKE_HOST_PATH", str(d))
+    r = mesh.run(net.cfg(), apply=True)
+    assert set(r["pending"]) == set(mesh.graph(net.cfg())["visit"])
+    failed = net.snapshot()
+    monkeypatch.delenv("FAKE_HOST_PATH")
+    mesh.run(net.cfg(), apply=True)
+    whole = net.snapshot()
+    written = [p for p in failed if "/roster-mesh/" in p or p.endswith("ROSTER.md")]
+    assert all(failed[p] == whole.get(p) for p in written), [p for p in written if failed[p] != whole.get(p)]
+
+
 @pytest.mark.skipif(WINDOWS, reason="NTFS has no mode bits to keep")
 def test_rewriting_a_file_keeps_its_mode(net):
     ak = net.host("orion-2") / "home/.ssh/authorized_keys"
@@ -824,7 +865,7 @@ def test_rewriting_a_file_keeps_its_mode(net):
     mesh.run(net.cfg(), apply=True)
     assert "roster-mesh:orion-3" in ak.read_text()
     assert ak.stat().st_mode & 0o7777 == 0o640
-    assert not list(net.host("orion-2").rglob("*.roster-new"))
+    assert not list(net.host("orion-2").rglob("*.roster-new*"))
 
 
 def test_every_rewrite_on_a_host_is_relabelled_after_the_move():

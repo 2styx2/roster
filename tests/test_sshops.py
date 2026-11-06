@@ -117,7 +117,59 @@ def test_an_interrupted_key_change_never_truncates_authorized_keys(tmp_path):
         subprocess.run(["sh", "-c", script], env={**os.environ, "HOME": str(tmp_path),
                                                   "PATH": f"{bin_}:{os.environ['PATH']}"}, capture_output=True)
         assert ak.read_text().startswith("ssh-rsa AAAAother someone@laptop\n")
-        assert not list(ak.parent.glob("*.roster"))
+        assert not list(ak.parent.glob("*.roster*"))
+
+
+def failing_writes(d):
+    """A stand-in grep in D that, writing to a file, writes one line and fails as a full disk would (exit 2)."""
+    d.mkdir(exist_ok=True)
+    (d / "grep").write_text(f"""#!/bin/sh
+out=$(readlink /proc/$$/fd/1)
+if [ -f "$out" ]; then {shutil.which("grep")} "$@" | head -n 1; echo "grep: write error: No space left on device" >&2; exit 2; fi
+exec {shutil.which("grep")} "$@"
+""")
+    (d / "grep").chmod(0o755)
+    return d
+
+
+@posix_shell
+@pytest.mark.skipif(not os.path.exists("/proc/self/fd/1"), reason="needs /proc to see where grep writes")
+def test_a_failed_write_of_the_new_key_file_changes_nothing(tmp_path):
+    """#524's review F1: grep's exit 2 (a read or write error: a full disk) was taken for "no line left", and the
+    truncated file renamed into place, locking every other key out. Now the script stops before the mv."""
+    bin_ = failing_writes(tmp_path / "bin")
+    ak = tmp_path / ".ssh" / "authorized_keys"
+    ak.parent.mkdir()
+    before = "ssh-rsa AAAAother someone@laptop\nssh-rsa AAAAmore else@laptop\nssh-ed25519 AAAAold roster-managed:ws1\n"
+    for script in (add_key_script(PUB, TAG_RE, "admin"), remove_key_script(TAG_RE, "admin")):
+        ak.write_text(before)
+        r = subprocess.run(["sh", "-c", script], env={**os.environ, "HOME": str(tmp_path),
+                                                      "PATH": f"{bin_}:{os.environ['PATH']}"}, capture_output=True,
+                           text=True)
+        assert r.returncode != 0 and "ROSTER_OK" not in r.stdout
+        assert "couldn't write the new ~/.ssh/authorized_keys" in r.stderr and "nothing was changed" in r.stderr
+        assert ak.read_text() == before
+        assert sorted(p.name for p in ak.parent.iterdir()) == ["authorized_keys"]
+
+
+@posix_shell
+def test_a_host_without_mktemp_says_so_and_changes_nothing(tmp_path):
+    """#524's review F3: the key scripts need mktemp (a new file of their own beside authorized_keys); without it they
+    say so, never fall back to a fixed name."""
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    for tool in ("sh", "grep", "cp", "mv", "rm", "mkdir", "touch", "chmod", "readlink", "printf", "uname", "sed"):
+        if real := shutil.which(tool):
+            os.symlink(real, bin_ / tool)
+    ak = tmp_path / ".ssh" / "authorized_keys"
+    ak.parent.mkdir()
+    ak.write_text("ssh-rsa AAAAother someone@laptop\n")
+    for script in (add_key_script(PUB, TAG_RE, "admin"), remove_key_script(TAG_RE, "admin")):
+        r = subprocess.run([str(bin_ / "sh"), "-c", script], env={**os.environ, "HOME": str(tmp_path),
+                                                                  "PATH": str(bin_)}, capture_output=True, text=True)
+        assert r.returncode != 0 and "ROSTER_OK" not in r.stdout
+        assert "this Host has no mktemp" in r.stderr and "nothing was changed" in r.stderr, r.stderr
+        assert ak.read_text() == "ssh-rsa AAAAother someone@laptop\n"
 
 
 @posix_shell
@@ -142,7 +194,7 @@ def selinux_tools(tmp_path, ok):
 
 def test_the_key_scripts_relabel_authorized_keys_after_the_move():
     for script in (add_key_script(PUB, TAG_RE, "admin"), remove_key_script(TAG_RE, "admin")):
-        mv = script.index('mv -f "$f.roster" "$f"')
+        mv = script.index('mv -f "$t" "$f"')
         assert script.index("chcon --reference=") < mv < script.index('restorecon -F "$f"')
 
 
@@ -159,7 +211,7 @@ def test_the_key_scripts_finish_with_or_without_selinux_tools(tmp_path, tools):
                                                               for t in ("chcon", "restorecon")))
         path = f"{tmp_path / 'bin'}:{path}"
         (tmp_path / "bin").mkdir()
-        for tool in ("sh", "grep", "cp", "mv", "rm", "mkdir", "touch", "chmod", "readlink", "printf"):
+        for tool in ("sh", "grep", "cp", "mv", "rm", "mkdir", "touch", "chmod", "readlink", "printf", "mktemp"):
             real = shutil.which(tool)
             if real and not os.path.exists(tmp_path / "bin" / tool):
                 os.symlink(real, tmp_path / "bin" / tool)
