@@ -325,6 +325,14 @@ def test_json_is_the_list_only(capsys, yml, bw, isolated):
     assert yml.read_text() == YML
 
 
+def test_json_after_a_sync_is_still_the_one_document(capsys, yml, bw, monkeypatch):
+    # found by the end-to-end suite: the sync's line came first on stdout, so stdout wasn't JSON
+    monkeypatch.setenv("FAKE_BW_LAST_SYNC", "2026-11-04T09:00:00.000Z")
+    rc, out, err = add(capsys, "--json")
+    assert rc == 0 and json.loads(out)["unmapped"] == 3
+    assert "synced       bw (the previous sync was" in err
+
+
 def test_mark_seen_makes_them_old_and_all_shows_them_again(capsys, yml, bw, isolated):
     assert add(capsys, "--mark-seen", "--no-sync")[0] == 0
     [f] = seen_files(isolated)

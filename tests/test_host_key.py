@@ -130,3 +130,25 @@ def test_a_host_that_doesnt_answer_records_nothing(app, box, unknown, isolated):
     assert app.call("host.scan_key", {"host": "esx"})["error"]["code"] == 41
     assert app.call("host.trust_key", {"host": "esx", "fingerprint": "SHA256:x"})["error"]["code"] == 41
     assert known_hosts(isolated).read_text() == ""
+
+
+def test_a_host_that_never_sends_its_banner_leaves_nothing_on_stderr(capfd):
+    # found by the end-to-end suite (a cancelled check of a paused Host): the key exchange gives up, and paramiko's
+    # own thread, still reading the closed socket, logged its traceback through logging's last resort onto stderr
+    import threading
+    import time
+
+    from roster.sshops import handshake
+    server = socket.create_server(("127.0.0.1", 0))
+    sock = socket.create_connection(server.getsockname())
+    before = set(threading.enumerate())
+    try:
+        with pytest.raises(paramiko.SSHException):
+            handshake(sock, [], timeout=0.5)
+        for t in set(threading.enumerate()) - before:
+            t.join(timeout=20)
+        time.sleep(0.1)
+    finally:
+        sock.close()
+        server.close()
+    assert "Exception (client)" not in capfd.readouterr().err

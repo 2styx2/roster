@@ -42,6 +42,11 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ### Fixed
 
+**CLI**
+
+- **`roster add --from-vault --json` prints JSON alone**: the vault sync's line ("synced bw (the previous sync was ...)") came first on stdout, so a script couldn't read the list; it goes to stderr now, so stdout is the one JSON document.
+- **No paramiko traceback when a Host never sends its banner**: a check that gave up on a Host that took the connection but never answered (a cancelled `host.check`, a frozen Host) could print paramiko's own `Exception (client): Error reading SSH protocol banner` traceback on stderr, in the CLI's output or serve's log.
+
 **App**
 
 - **The Topology map takes the keys back, and `/` starts a new search** (#475): with a Session opened from the map beside it, `:topology` (or `:view topology`, or the map's key) hands the keys back to the map, so a `/` typed next searches the map instead of going to the shell; asking for any open view again does the same. `/` on a map opens its search empty, as the Picker does, so typing a new name no longer adds to the last one.

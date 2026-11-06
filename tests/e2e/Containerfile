@@ -1,0 +1,13 @@
+# A stand-in Host for the end-to-end suite (tests/e2e, docs/development.md, "End-to-end suite"): a real sshd, two
+# users with passwords (lab, ops), a POSIX sh, ssh-keygen and an ssh client for the Mesh, and busybox's httpd for
+# `roster web`. Each container runs on the host's network, its sshd on ADDR:PORT (a 127.0.0.x address of its own), so
+# the Box and every stand-in Host reach each other at the address roster.yml gives them; its ssh client connects from
+# that address too (BindAddress), as the Mesh's from= expects.
+FROM docker.io/library/alpine:3.20
+RUN apk add --no-cache openssh-server openssh-client busybox-extras \
+ && adduser -D -s /bin/sh lab && adduser -D -s /bin/sh ops \
+ && echo lab:lab-pass-1 | chpasswd && echo ops:ops-pass-1 | chpasswd \
+ && mkdir -p /srv/www/api && echo '{"status": "ok"}' > /srv/www/api/status \
+ && echo '/api:web:web-pass-1' > /etc/httpd.conf
+COPY host-start.sh /usr/local/bin/host-start
+CMD ["/usr/local/bin/host-start"]
