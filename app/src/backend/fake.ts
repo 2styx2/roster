@@ -1500,7 +1500,8 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
   const fits = (want: SaveTo, t: SaveTarget) => {
     if (want === "personal" || t.save_to === "personal") return want === t.save_to;
     if ("group" in want) return t.kind === "group" && t.label === want.group;
-    if ("group" in t.save_to) return false;
+    if ("vault" in want) return t.kind === "vault" && [t.label, "vault" in t.save_to && t.save_to.vault].includes(want.vault);
+    if ("group" in t.save_to || "vault" in t.save_to) return false;
     const ids = t.save_to;
     return (
       [t.organization, ids.organization].includes(want.organization) && [t.collection, ids.collection].includes(want.collection)

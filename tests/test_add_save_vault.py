@@ -164,7 +164,7 @@ def test_kp_entry_made_in_a_group_then_auth_points_at_it(capsys, write_config, k
     assert PW not in out + logged(tmp_path) + yml.read_text()
 
 
-@pytest.mark.parametrize("provider", ["op", "env", "prompt"])
+@pytest.mark.parametrize("provider", ["env", "prompt"])
 def test_a_provider_that_cant_save_is_refused_before_anything_is_asked(capsys, yml, fakes, provider, monkeypatch):
     term = Terminal(monkeypatch, PW, PW)
     code, out = fails(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", provider)
@@ -217,15 +217,34 @@ def test_an_unknown_save_to_is_refused(capsys, yml, bw, monkeypatch):
     assert yml.read_text() == YML and [i["name"] for i in bw_items(bw)] == ["esx-02 ssh"]
 
 
-def test_a_failed_roster_yml_write_names_the_item_and_writes_no_host(capsys, yml, bw, monkeypatch):
+def broken_write(monkeypatch, yml):
     from roster import store
-    Terminal(monkeypatch, PW, PW)
 
     def broken(self, *a, **kw):
         raise PermissionError(13, "Permission denied", str(yml))
     monkeypatch.setattr(store.Store, "write", broken)
+
+
+def test_a_failed_roster_yml_write_takes_the_item_this_run_made_back_out(capsys, yml, bw, monkeypatch, tmp_path):
+    Terminal(monkeypatch, PW, PW)
+    broken_write(monkeypatch, yml)
+    code, out = fails(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "bw")
+    assert "[225]" not in code and "nas wasn't added" in code and "Permission denied" in code
+    assert "'nas ssh' was taken back out" in code
+    assert yml.read_text() == YML
+    assert [i["name"] for i in bw_items(bw)] == ["esx-02 ssh"]     # (the stand-in bw deletes for good)
+    deletes = [json.loads(line) for line in logged(tmp_path).splitlines() if json.loads(line)[:2] == ["delete", "item"]]
+    assert len(deletes) == 1                                        # one delete, by the id bw's create answered
+    assert PW not in code + out
+
+
+def test_a_take_back_that_fails_keeps_225_naming_the_item(capsys, yml, bw, monkeypatch):
+    Terminal(monkeypatch, PW, PW)
+    broken_write(monkeypatch, yml)
+    monkeypatch.setenv("FAKE_BW_DELETE_FAIL", "Error: the server is unreachable")
     code, out = fails(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "bw")
     assert "[225]" in code and "'nas ssh'" in code and "Permission denied" in code
+    assert "couldn't take it back out" in code and "server is unreachable" in code
     assert yml.read_text() == YML                                   # no Host points at it, none half-written
     assert [i["name"] for i in bw_items(bw)] == ["esx-02 ssh", "nas ssh"]     # left for the user to delete
     assert PW not in code + out
@@ -342,3 +361,31 @@ def test_a_save_to_the_vault_doesnt_have_is_refused_before_the_password_naming_t
                     "--save-to", "My Team/No such")
     assert "[64]" in code and "--save-to" in code and "save_to." not in code
     assert term.asked == []
+
+
+# ---- #545's review, MED-1, for Bitwarden too: an item found by its name after bw's answer was lost is never taken back
+
+def test_a_bw_item_found_by_name_after_a_lost_answer_is_never_taken_back(capsys, yml, bw, monkeypatch, tmp_path):
+    monkeypatch.setenv("FAKE_BW_RAW", json.dumps({"create item": "not JSON"}))       # saved; bw's answer lost
+    Terminal(monkeypatch, PW, PW)
+    broken_write(monkeypatch, yml)
+    code, out = fails(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "bw")
+    assert "[225]" in code and "'nas ssh'" in code and "check whether it's the item roster made" in code
+    assert not [line for line in logged(tmp_path).splitlines() if json.loads(line)[:2] == ["delete", "item"]]
+    assert [i["name"] for i in bw_items(bw)] == ["esx-02 ssh", "nas ssh"]
+    assert PW not in code + out
+
+
+@pytest.mark.parametrize("theirs", [{"organizationId": "0rg-team", "collectionIds": ["c0l-infra"]},
+                                    {"revisionDate": "2020-01-01T00:00:00.000Z"}], ids=["in-a-collection", "old"])
+def test_a_lost_bw_answer_never_takes_someone_elses_item(capsys, yml, bw, monkeypatch, theirs):
+    # bw saves nothing of ours (its answer is lost) while someone else's item of that name is there
+    monkeypatch.setenv("FAKE_BW_CREATE_ALSO", json.dumps([{"id": "their-1", "name": "nas ssh", "type": 1,
+                                                           "login": {"password": "their-pw"},
+                                                           "revisionDate": "2099-01-01T00:00:00.000Z", **theirs}]))
+    monkeypatch.setenv("FAKE_BW_RAW", json.dumps({"create item": "not JSON"}))
+    monkeypatch.setenv("FAKE_BW_CREATE_DROP", "1")
+    Terminal(monkeypatch, PW, PW)
+    code, _ = fails(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "bw")
+    assert "[62]" in code and "couldn't confirm" in code
+    assert yml.read_text() == YML

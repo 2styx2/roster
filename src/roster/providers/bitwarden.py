@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import sys
+import time
 
 from .. import context
 from ..common import NotPrivate, find_program, read_private_bytes, say
@@ -884,10 +885,11 @@ def _bw_create(item, ctx):
     encoded = base64.b64encode(json.dumps({
         "type": 1, "name": name, "notes": None, "favorite": False, "fields": [], "reprompt": 0,
         **where, "folderId": None, "login": login}).encode()).decode()
+    started = time.time()
     try:
         r = run(ctx, "create", "item", input=encoded)
     except TimedOut:                                       # bw was stopped: the item may be saved all the same
-        r, made = None, _created_anyway(ctx, name)
+        r, made = None, _created_anyway(ctx, name, target, started)
     if r is not None and r.returncode != 0:                # stderr only: stdout would be the item itself
         if repeats_secret(r.stderr, password) or repeats_secret(r.stderr, encoded):
             raise WriteFailed(f"{withheld('Bitwarden')}: '{name}' wasn't created")
@@ -903,11 +905,12 @@ def _bw_create(item, ctx):
             made = {}
         made = made if _a_made_item(made) else {}          # another shape: unreadable, found by name
     ours = r is not None and bool(made.get("id"))         # bw's own answer named it (not a row found by name)
-    if r is not None and not ours:                         # bw's answer didn't parse: find it, so it can be undone
-        made = _found_by_name(ctx, name)
+    if r is not None and not ours:                         # bw's answer didn't parse: find it by its name
+        made = _found_by_name(ctx, name, target, started)
     if collection and not _in_collection(ctx, made, collection):
         _refused_collection(ctx, made, target, ours)
-    return {"id": made["id"], "name": made.get("name", name), "target": target}
+    # one found by its name (#545's review, MED-1) may not be this run's: never taken back, and the caller says so
+    return {"id": made["id"], "name": name, "target": target, **({} if ours else {"found": True})}
 
 
 def _a_made_item(made):
@@ -917,11 +920,34 @@ def _a_made_item(made):
                                                                                     list)
 
 
-def _found_by_name(ctx, name):
-    """bw's create answer didn't parse: the one row named exactly NAME is this item (none was before the create, as
-    _created_anyway), else WriteFailed: none, several, or a listing that failed (roster couldn't check)."""
+SKEW = 120          # s: bw's revision dates are the server's clock, roster's start is this Box's
+
+
+def _scoped(target):
+    """`bw list items` options for where TARGET's new item is: the personal vault's items only (no organization), or
+    every item (a collection's are checked by _in_collection after)."""
+    return ["--organizationid", "null"] if target["kind"] == "personal" else []
+
+
+def _new_rows(rows, name, started):
+    """The rows named exactly NAME and revised since STARTED (less SKEW): what a lost create may have saved."""
+    import datetime
+
+    def since(revised):
+        try:
+            when = datetime.datetime.fromisoformat(str(revised).replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        return when.tzinfo is not None and when.timestamp() >= started - SKEW
+    return [i for i in rows if i["name"] == name and since(i.get("revised"))]
+
+
+def _found_by_name(ctx, name, target, started):
+    """bw's create answer didn't parse: the one row named exactly NAME where TARGET is, revised since STARTED (none
+    was there before the create, as _created_anyway), is taken to be it, as FOUND (never taken back); else
+    WriteFailed: none (roster couldn't confirm it was made), several, or a listing that failed (couldn't check)."""
     try:
-        found = [i for i in _bw_rows(ctx, "--search", name) if i["name"] == name]
+        found = _new_rows(_bw_rows(ctx, "--search", name, *_scoped(target)), name, started)
     except TimedOut:
         raise
     except SecretError as e:
@@ -929,7 +955,8 @@ def _found_by_name(ctx, name):
                           f"'{name}' was saved ({e}) - look for it in the vault, and delete it if it's not wanted") \
             from None
     if not found:
-        raise WriteFailed(f"Bitwarden said it created '{name}' but it isn't in the vault - check it there")
+        raise WriteFailed(f"Bitwarden's answer to `bw create item` didn't read, and roster couldn't confirm the item "
+                          f"was made (no new '{name}' where it was saved) - check the vault for it")
     if len(found) > 1:
         raise WriteFailed(f"Bitwarden's answer to `bw create item` didn't read, and now {len(found)} items are named "
                           f"'{name}' - check them in the vault and delete the extra one")
@@ -964,18 +991,19 @@ def _refused_collection(ctx, made, target, ours=True):
     raise _read_only(target, f"; '{name}' was taken back out")
 
 
-def _bw_lookup(ctx, name):
-    """The filter's rows (Q191, T229) for the items named exactly NAME, synced from the server first. Raises
-    SecretError if bw can't say."""
+def _bw_lookup(ctx, name, target, started):
+    """The filter's rows (Q191, T229) for the items named exactly NAME where TARGET is, revised since STARTED, synced
+    from the server first. Raises SecretError if bw can't say."""
     run(ctx, "sync", floor=LOOKUP_FLOOR)
-    return [i for i in _bw_rows(ctx, "--search", name, floor=LOOKUP_FLOOR) if i["name"] == name]
+    return _new_rows(_bw_rows(ctx, "--search", name, *_scoped(target), floor=LOOKUP_FLOOR), name, started)
 
 
-def _created_anyway(ctx, name):
-    """`bw create item` timed out. No item had that exact name before (checked just before), so one that has it now
-    is this one: it counts as made (and can be undone). None: nothing was saved. Can't tell: says so, naming it."""
+def _created_anyway(ctx, name, target, started):
+    """`bw create item` timed out. No item had that exact name before (checked just before), so a new one that has it
+    now where TARGET is may be this one: it's FOUND (never taken back: #545's review). None: nothing was saved. Can't
+    tell: says so, naming it."""
     try:
-        found = _bw_lookup(ctx, name)
+        found = _bw_lookup(ctx, name, target, started)
     except SecretError as e:
         raise WriteFailed(f"Bitwarden didn't answer `bw create item` in time, and roster couldn't check whether "
                           f"'{name}' was saved ({e}) - look for it in the vault, and delete it if it's not wanted")

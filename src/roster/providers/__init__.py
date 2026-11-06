@@ -85,7 +85,7 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
                           #             "forget": fn(ctx), the in-memory part of "lock" (drop a session key)
                           #             "reset": fn(), forget what the provider keeps for this run (reset())
                           #             "logout_help": why this provider has no account to sign out of, and what to do
-                          #             "create": fn(item, ctx) -> {"id", "name"}, item = {name, username,
+                          #             "create": fn(item, ctx) -> {"id", "name", "target", "found"?}, item = {name, username,
                           #                       password, uri}; refuses a name that exists (ItemExists)
                           #             "delete": fn(id, ctx), the undo of a create (Q43)
 #             "targets": fn(ctx) -> [target], where the provider can save: each {id, kind, label, save_to}
@@ -525,7 +525,8 @@ def configure_box(settings):
 # ---- where a Vault item goes: `save_to`, the same shape in roster.yml, init.lua and a save's choice
 
 PERSONAL = "personal"
-SAVE_TO_SHAPES = '"personal", {organization, collection} (Bitwarden, by name or id) or {group} (KeePassXC)'
+SAVE_TO_SHAPES = ('"personal", {organization, collection} (Bitwarden, by name or id), {group} (KeePassXC) or {vault} '
+                  '(1Password, by name or id)')
 
 
 def save_to_fits(value):
@@ -546,17 +547,18 @@ def check_save_to(value):
 def save_to_text(provider, text):
     """A save_to as the command line writes it (`roster add --save-to`) for PROVIDER: `personal`, else the shape its
     save_to keys take: Bitwarden's `ORGANIZATION/COLLECTION` (split at the first `/`: a collection may nest, an
-    organization's name or id has none), KeePassXC's `GROUP`. UnknownTarget when it can't be one of PROVIDER's."""
+    organization's name or id has none), KeePassXC's `GROUP`, 1Password's `VAULT`. UnknownTarget when it can't be one
+    of PROVIDER's."""
     text = str(text).strip()
     if text == PERSONAL:
         return PERSONAL
     keys = PROVIDERS.get(provider, {}).get("save_to") or frozenset()
-    if keys == {"group"} and text:
-        return check_save_to({"group": text})
+    if len(keys) == 1 and text and keys != {"organization", "collection"}:       # kp's group, op's vault
+        return check_save_to({next(iter(keys)): text})
     org, _, collection = text.partition("/")
     if keys == {"organization", "collection"} and org.strip() and collection.strip():
         return check_save_to({"organization": org, "collection": collection})
-    shapes = {frozenset({"group"}): "personal or GROUP",
+    shapes = {frozenset({"group"}): "personal or GROUP", frozenset({"vault"}): "personal or VAULT",
               frozenset({"organization", "collection"}): "personal or ORGANIZATION/COLLECTION"}
     raise UnknownTarget(f"--save-to {text!r} isn't a place {provider} saves to: give "
                         f"{shapes.get(frozenset(keys), 'personal')}")
@@ -617,6 +619,16 @@ def shown(target):
     return {k: v for k, v in target.items() if k != "save_to"}
 
 
+def target_text(target):
+    """A target (a "targets" row) as `roster add --save-to` takes it, by names (save_to_text reads it back):
+    `personal`, Bitwarden's `ORGANIZATION/COLLECTION`, KeePassXC's `GROUP`, 1Password's `VAULT`."""
+    if target["kind"] == "personal":
+        return PERSONAL
+    if target["kind"] == "collection":
+        return f"{target['organization']}/{target['collection']}"
+    return target["label"]
+
+
 def save_targets(name):
     """Where provider NAME can save, and its default: {targets, default (an id, or None when the setting doesn't
     resolve), from (where the default is set: init.lua, roster.yml or None), problem (that SecretError, or None)}."""
@@ -669,7 +681,9 @@ def create_item(provider, *, name, password, username="", uri="", save_to=None):
     """Create a login Vault item NAME in PROVIDER: username, password, and the address in its URI field
     (docs/adding-hosts.md), in SAVE_TO (ticket 35: "personal", {organization, collection}, {group}; None: the
     setting's). Refuses a NAME that's already there. Returns {id, name, target}, never the password; the password
-    never goes on a command line or into an error."""
+    never goes on a command line or into an error. `found: True` too when the vault's answer to the create was lost
+    and the item was found by its name instead (#545's review): it may not be the one this run made, so it's never
+    taken back (delete_item) and the caller says so."""
     fn = _writer(provider, "create")
     if not str(name).strip() or not password:
         raise SecretError("a Vault item needs a name and a password")
@@ -677,7 +691,8 @@ def create_item(provider, *, name, password, username="", uri="", save_to=None):
     where = save_to_setting(ctx) if save_to is None else (save_to, "choice")
     made = fn({"name": name, "username": username or "", "password": password, "uri": uri or "", "save_to": where},
               ctx)
-    return {"id": made["id"], "name": made["name"], "target": shown(made["target"])}
+    return {"id": made["id"], "name": made["name"], "target": shown(made["target"]),
+            **({"found": True} if made.get("found") else {})}
 
 
 def delete_item(provider, item_id):

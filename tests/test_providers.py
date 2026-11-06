@@ -450,13 +450,13 @@ def test_a_refused_create_never_echoes_the_password(bw_items, monkeypatch):
 
 
 def test_only_providers_that_can_write_create_items(bw_items, monkeypatch):
-    assert providers.can_write("bw")
-    for name in ("op", "env", "prompt", "cmd"):
+    assert providers.can_write("bw") and providers.can_write("op")      # op since T269
+    for name in ("env", "prompt", "cmd"):
         assert not providers.can_write(name)
         with pytest.raises(providers.CantWrite, match=f"provider '{name}' can't save to the vault"):
             providers.create_item(name, name="box ssh", password=NEW_PW)
     with pytest.raises(providers.CantWrite):
-        providers.delete_item("op", "aaaa-1111")
+        providers.delete_item("env", "aaaa-1111")
     with pytest.raises(SecretError, match="unknown password source"):
         providers.create_item("keeper", name="box ssh", password=NEW_PW)
 

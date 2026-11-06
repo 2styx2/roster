@@ -263,7 +263,7 @@ def test_from_vault_with_1password_takes_the_id_and_a_vault_path_too(capsys, yml
                     "fields": {"username": "lab", "password": "pw-lab-secret"}})
     assert run(capsys, "nas", "--auth", "op:Lab/nas ssh", "--from-vault", "--yes")[0] == 0
     assert "      nas: {ip: 10.0.0.70, user: lab, auth: op:Lab/nas ssh}\n" in yml.read_text()
-    assert ["op", "item", "list", "--format", "json", "--vault", "Lab"] in calls()
+    assert ["op", "item", "list", "--format", "json", "--vault=Lab"] in calls()      # one word (#545)
     assert run(capsys, "nas2", "--auth", "op:op-2", "--from-vault", "--ip", "10.0.0.71", "--yes")[0] == 0
     assert "      nas2: {ip: 10.0.0.71, user: root, auth: op:op-2}\n" in yml.read_text()
 

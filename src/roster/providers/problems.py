@@ -203,7 +203,7 @@ class CantWrite(SecretError):
     """The provider can only read Logins: it can't create or delete Vault items."""
 
     code = errors.CANT_WRITE
-    fix = "save to a provider that can write (bw, kp), or make the item by hand"
+    fix = "save to a provider that can write (bw, kp, op), or make the item by hand"
 
 
 class ItemExists(SecretError):

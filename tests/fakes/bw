@@ -14,6 +14,8 @@
 # FAKE_BW_ITEMS=FILE: a JSON list of items to use instead of the ones below (read on every call). `bw create item`
 #   (base64 JSON on stdin or as an argument, like bw) and `bw delete item ID` write it back.
 # FAKE_BW_WRITE_FAIL=TEXT: create and delete fail with TEXT on stderr (e.g. a server or policy refusal).
+# FAKE_BW_CREATE_DROP=1: `create item` saves nothing of the item it was given (with FAKE_BW_CREATE_ALSO: only those).
+# FAKE_BW_DELETE_FAIL=TEXT: only delete fails, with TEXT on stderr (a take-back that can't happen).
 # Signing in (`bw login`, vault.login) - prompts like bw's inquirer ones, on stderr, answers read from stdin:
 # FAKE_BW_STATE=FILE: {"logged_in": bool, "server": url|null, "email": ...}, kept across calls (overrides
 #   FAKE_BW_LOGGED_OUT once it exists). `bw logout` logs out (keeping the server), as bw does.
@@ -267,23 +269,28 @@ if a[:2] == ["create", "item"]:
         if org is None: fail("Organization not found.")
         mine = {c["id"]: c for c in org["collections"]}
         req["collectionIds"] = [c for c in req.get("collectionIds") or [] if c in mine and not mine[c].get("readOnly")]
-    item = {**req, "object": "item", "id": str(uuid.uuid4()), "revisionDate": "2026-10-30T12:00:00.000Z"}
+    item = {**req, "object": "item", "id": str(uuid.uuid4()),
+            "revisionDate": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())}     # made now
     with open(os.environ["FAKE_BW_ITEMS"], "w") as f:
-        json.dump(items + [item] + json.loads(os.environ.get("FAKE_BW_CREATE_ALSO") or "[]"), f)
+        json.dump(items + ([] if os.environ.get("FAKE_BW_CREATE_DROP") else [item])
+                  + json.loads(os.environ.get("FAKE_BW_CREATE_ALSO") or "[]"), f)
     if lock_mark: open(lock_mark, "w").close()
     if os.environ.get("FAKE_BW_CREATE_RUNS"): subprocess.run(json.loads(os.environ["FAKE_BW_CREATE_RUNS"]), check=True)
     if os.environ.get("FAKE_BW_CREATE_HANG"): time.sleep(float(os.environ["FAKE_BW_CREATE_HANG"]))
     print(raw.get("create item", json.dumps(item))); sys.exit()      # like bw: the new item, password and all
 if a[:2] == ["delete", "item"]:
     if os.environ.get("FAKE_BW_WRITE_FAIL"): fail(os.environ["FAKE_BW_WRITE_FAIL"])
+    if os.environ.get("FAKE_BW_DELETE_FAIL"): fail(os.environ["FAKE_BW_DELETE_FAIL"])
     if not any(i["id"] == a[2] for i in items): fail("Not found.")
     json.dump([i for i in items if i["id"] != a[2]], open(os.environ["FAKE_BW_ITEMS"], "w")); sys.exit()
 if a[:2] == ["list", "items"]:
     if "FAKE_BW_LIST_RAW" in os.environ: sys.stdout.write(os.environ["FAKE_BW_LIST_RAW"]); sys.exit()
     search = a[a.index("--search") + 1].lower() if "--search" in a else ""
     coll = a[a.index("--collectionid") + 1] if "--collectionid" in a else None
+    org = a[a.index("--organizationid") + 1] if "--organizationid" in a else None     # "null": personal items, as bw
     print(json.dumps([i for i in items if search in i["name"].lower()
-                      and (coll is None or coll in (i.get("collectionIds") or []))])); sys.exit()
+                      and (coll is None or coll in (i.get("collectionIds") or []))
+                      and (org is None or (org == "null" and not i.get("organizationId")) or i.get("organizationId") == org)])); sys.exit()
 q = a[2]
 def stdout_was(what):
     """FAKE_BW_STDOUT_LOG: where this call's stdout goes, "devnull" or "pipe" (roster must never read an item)."""

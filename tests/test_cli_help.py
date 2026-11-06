@@ -197,7 +197,7 @@ def test_an_invalid_choice_names_the_position_and_the_choices(capsys):
     with pytest.raises(SystemExit):
         main(["vault", OP_SESSION, "op"])
     err = capsys.readouterr().err
-    assert "argument ACTION: invalid choice (not repeated) - one of: status, sync, unlock, lock, reveal, bw, op" in err
+    assert "argument ACTION: invalid choice (not repeated) - one of: status, sync, targets, unlock, lock, reveal, bw, op" in err
 
 
 def test_a_bad_value_names_its_option(capsys):

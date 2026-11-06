@@ -30,14 +30,16 @@ const TARGETS: SaveTarget[] = [
 ];
 
 let version = 0;
-const report = (saveTo: SaveTo | null): ConfigReport => ({
+/** init.lua's `vault.save_to`: serve's shapes but 1Password's vault (not in the config schema yet). */
+type InitSaveTo = Exclude<SaveTo, { vault: string }>;
+const report = (saveTo: InitSaveTo | null): ConfigReport => ({
   config: configWith({ vault: { ...defaultConfig.vault, saveTo } }),
   error: null,
   path: "/home/me/.config/roster/init.lua",
   version: ++version,
 });
 
-async function ready({ setting, saveTo = null, api = 10 }: { setting?: SaveTo; saveTo?: SaveTo | null; api?: number } = {}) {
+async function ready({ setting, saveTo = null, api = 10 }: { setting?: SaveTo; saveTo?: InitSaveTo | null; api?: number } = {}) {
   const user = userEvent.setup();
   const scenario: FakeScenario = {
     ...(fixtures.add as FakeScenario),
