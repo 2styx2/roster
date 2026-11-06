@@ -178,7 +178,7 @@ Run the checks CI runs (or `scripts/check-local.sh`, [development.md](developmen
 ```bash
 uv run ruff check src tests scripts app/scripts && uv run pyright && uv run pytest -n auto
 cd app && npm run check            # tsc, ESLint, Vitest, the docs build
-cargo test && cargo clippy -p roster-core --all-targets -- -D warnings && cargo fmt --check
+cargo test && cargo clippy -p roster-core --all-targets -- -D warnings && cargo fmt --check   # CI: clippy --workspace (WSL can't build the Tauri crate)
 ```
 
 The structure tests, each failing with the rule and this page's section:
