@@ -237,7 +237,7 @@ def test_setup_with_a_locked_vault_counts_a_failed_host_once(capsys, box, scans,
     assert "done         0 key hosts ready, 0 password-only hosts, 1 failed" in out
     assert "new-01: Bitwarden vault is locked" in out and "roster vault unlock" in out
     assert "umask" not in out + err
-    assert out.strip().splitlines()[-1] == "next: roster vault unlock (in a terminal: the vault is locked)"
+    assert out.strip().splitlines()[-1] == "next: run in a terminal: roster vault unlock (bw is locked)"
 
 
 def test_setup_that_installed_keys_points_at_check_for_exactly_those_hosts(capsys, box, scans, monkeypatch):
@@ -503,6 +503,85 @@ def test_run_on_a_host_that_works_hands_over_to_ssh_as_before(capsys, box, monke
 # ---------------------------------------------------------------- a Login's vault item renamed, deleted, doubled
 
 PW_MAP = MAP.replace('auth: "bw:new-01 ssh"}', 'auth: "bw:new-01 ssh", enroll: false}')
+# ---------------------------------------------------------------- roster sync in a terminal (#503's review MED-1)
+
+UNLOCK_NOTE = "unlocking here locks the roster app and any other bw session on this Box"
+
+
+def test_sync_in_a_terminal_says_what_an_unlock_costs_before_it_asks_once_and_offers_to_keep_it(capsys, box,
+                                                                                                 monkeypatch):
+    from test_vault_unlock import OFFER, Terminal
+    monkeypatch.delenv("BW_SESSION")
+    term = Terminal(monkeypatch, "\n")
+    rc, out, err = run(capsys, "sync")
+    assert rc == 0 and term.passwords == 1
+    assert UNLOCK_NOTE in err and OFFER in term.shown
+    assert no_secret(out, err)
+
+
+def test_sync_in_a_terminal_with_a_working_session_never_asks(capsys, box, monkeypatch):
+    from test_vault_unlock import Terminal
+    term = Terminal(monkeypatch, "\n")                     # BW_SESSION works (the box fixture's)
+    rc, out, err = run(capsys, "sync")
+    assert rc == 0 and term.passwords == 0 and UNLOCK_NOTE not in err
+
+
+def test_sync_skips_the_vault_cleanly_on_ctrl_d_at_the_prompt(capsys, box, monkeypatch):
+    import getpass
+
+    from test_vault_unlock import Terminal
+    monkeypatch.delenv("BW_SESSION")
+    Terminal(monkeypatch, "\n")
+
+    def eof(prompt=""):
+        raise EOFError
+    monkeypatch.setattr(getpass, "getpass", eof)
+    rc, out, _ = run(capsys, "sync")
+    assert rc == 0
+    assert "vault: bw not synced (no master password given; run in a terminal: roster vault unlock)" in out
+    from roster.common import ssh_config_file
+    assert "Host new-01" in ssh_config_file().read_text()
+
+
+def test_setup_with_a_locked_keepassxc_never_names_vault_unlock(capsys, box, scans, write_config, tmp_path):
+    """#503's review MED-3: the fix is the locked Login's provider's own (roster vault unlock is Bitwarden's)."""
+    from test_keepassxc import make_db
+    db = make_db(tmp_path / "r.kdbx", [{"path": "new-01 ssh", "UserName": "admin", "Password": "pw-new-SECRET"}])
+    write_config(f"providers:\n  kp: {{database: '{db}'}}\n" + MAP.replace('auth: "bw:new-01 ssh"', 'auth: "kp:new-01 ssh"'))
+    rc, out, _ = run(capsys, "setup", "--host", "new-01")
+    assert rc == 1
+    assert "roster vault unlock" not in out
+    assert out.strip().splitlines()[-1].startswith("next: run it in a terminal: KeePassXC has no session roster keeps")
+
+
+def test_setup_past_five_hosts_points_at_plain_check():
+    from roster.cli import setup_next_line
+    hosts = [f"h{i}" for i in range(6)]
+    assert setup_next_line(hosts).endswith("next: roster check (check them)")
+    assert "--host h4" in setup_next_line(hosts[:5])
+
+
+def test_syncing_another_unnamed_map_reports_no_removed_hosts(capsys, box, write_config):
+    """#503's review MED-2: roster's unnamed ssh config was another roster.yml's, so its Hosts weren't removed."""
+    run(capsys, "sync", "--no-vault")
+    other = write_config("groups:\n  lab:\n    hosts:\n      other-01: {ip: 10.0.0.9, user: admin}\n", "other.yml")
+    rc, out, _ = run(capsys, "-c", str(other), "sync", "--no-vault")
+    assert rc == 0
+    assert "removed" not in out and "by hand" not in out
+
+
+def test_a_host_whose_key_went_on_but_whose_mesh_failed_is_not_left_for_setup(capsys, box, scans, monkeypatch):
+    """#503's review LOW-3."""
+    from roster import cli
+    answered("10.0.0.5")
+    monkeypatch.delenv("BW_SESSION")
+    run(capsys, "setup", "--host", "new-01")                 # the vault locked: left
+    monkeypatch.setenv("BW_SESSION", "fake-session-key")
+    monkeypatch.setattr(cli, "enroll", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "setup_mesh", lambda cfg, by: {"new-01": "mesh: a peer didn't answer"})
+    run(capsys, "setup", "--host", "new-01")
+    cfg = load_config(box["path"])
+    assert [g for g in catchup.gaps(cfg) if g.kind == "setup"] == []
 
 
 def run_dies(*argv):
@@ -597,3 +676,6 @@ def test_a_deleted_box_key_is_made_again_and_said(capsys, box, scans, monkeypatc
     assert rc == 1 and str(key) in out                     # check --box flags it before setup runs
     rc, out, _ = run(capsys, "setup")
     assert f"warning: [218] {key} was gone, so this is a new key: every Host the old one was on needs this one" in out
+def test_check_host_on_a_group_points_at_only(capsys, box):
+    said = run_dies("check", "--host", "lab")
+    assert "lab is a group (--only lab takes its Hosts)" in said

@@ -221,6 +221,16 @@ BOX_SETTINGS = {}         # name -> this Box's own settings, from the app's init
 PROVIDER_STATE = {}       # name -> per-run scratch space (e.g. "already unlocked")
 NO_PASSWORD = ("agent", "key", "none")
 MANUAL_UNLOCK = False     # True (`roster serve`): only unlock() unlocks - no session file, no BW_PASSWORD, no prompt
+# How to unlock each provider's vault, the one table every fix line takes it from (T243, #503's review MED-3)
+UNLOCK = {"bw": "run in a terminal: roster vault unlock",
+          "op": "sign in: turn on the 1Password app's CLI integration, or eval $(op signin)",
+          "kp": "run it in a terminal: KeePassXC has no session roster keeps, so each run asks for its database's "
+                "password"}
+
+
+def unlock_fix(provider):
+    """How to unlock PROVIDER's vault (UNLOCK), for a fix line."""
+    return UNLOCK.get(provider, f"unlock {provider}'s vault, then run it again")
 JSON_OUTPUT = False       # True: the command prints --json, so a provider adds no note or question on stderr (T241)
 _secrets = {}
 _secret_lock = threading.Lock()
