@@ -5,6 +5,7 @@
 // message naming the Host, the fix, and the raw text for Details. The wording follows roster's
 // own (roster/src/roster/diagnose.py `login_failure`), which does the same for `host.check`.
 // Nothing here ever sees a password: ssh reads it from askpass, it never reaches the terminal.
+import { Code } from "../backend/serveContract";
 
 /** roster's error codes (docs/serve-api.md), plus the app's own for what only the
  * Session sees: a dropped connection, a Host that hung up before the login, and a lost `serve`. */
@@ -138,7 +139,7 @@ const rules: Rule[] = [
     const offered = i >= 0 ? (lines[i + 1] ?? "").trim().replace(/\.$/, "") : null;
     const at = find(lines, /^Offending \S+ key in (\S+)$/)?.[1];
     return {
-      code: 43,
+      code: Code.HOST_KEY_CHANGED,
       message: `${host}'s host key changed. Not connecting.`,
       data: { offered, ...(at ? { recordedAt: at } : {}) },
     };
@@ -147,7 +148,7 @@ const rules: Rule[] = [
     const unknown = find(lines, /^No \S+ host key is known for /) ?? find(lines, /^The authenticity of host .* can't be established/);
     if (!unknown && !(find(lines, /^Host key verification failed/) && !find(lines, ASKPASS_LINE))) return null;
     const offered = find(lines, /key fingerprint is (SHA256:[^\s.]+)/)?.[1] ?? null;
-    return { code: 44, message: `No recorded host key for ${host}`, ...(offered ? { data: { offered } } : {}) };
+    return { code: Code.HOST_KEY_UNKNOWN, message: `No recorded host key for ${host}`, ...(offered ? { data: { offered } } : {}) };
   },
   (lines, input) => {
     const line = input.askpassLine ?? find(lines, ASKPASS_LINE)?.[0];
@@ -157,7 +158,7 @@ const rules: Rule[] = [
   },
   (lines) => {
     const m = find(lines, /^ssh: Could not resolve hostname (.+?): (.*)$/);
-    return m ? { code: 40, message: `Can't resolve '${m[1]}'` } : null;
+    return m ? { code: Code.NO_DNS, message: `Can't resolve '${m[1]}'` } : null;
   },
   (lines, { host }) => {
     const m = find(lines, /^ssh: connect to host (\S+) port (\d+): (.*)$/);
@@ -165,22 +166,22 @@ const rules: Rule[] = [
     const where = `${host} (${m[1]}:${m[2]})`;
     if (/refused/i.test(m[3] ?? "")) {
       return {
-        code: 41,
+        code: Code.REFUSED,
         message: `${where} refused the connection`,
         fix: "Check the port in roster.yml; is sshd running on the Host?",
       };
     }
-    return { code: 42, message: `${where} didn't answer`, fix: UNREACHABLE_FIX };
+    return { code: Code.TIMEOUT, message: `${where} didn't answer`, fix: UNREACHABLE_FIX };
   },
   (lines, { host }) => {
     const m = find(lines, /^Connection to (\S+) port (\d+) timed out/);
     if (!m && !find(lines, /^Connection timed out during banner exchange/)) return null;
     const where = m ? `${host} (${m[1]}:${m[2]})` : host;
-    return { code: 42, message: `${where} didn't answer`, fix: UNREACHABLE_FIX };
+    return { code: Code.TIMEOUT, message: `${where} didn't answer`, fix: UNREACHABLE_FIX };
   },
   (lines, { host }) => {
     if (!find(lines, /Too many authentication failures/)) return null;
-    return { code: 47, message: `${host} cut the connection after too many key attempts` };
+    return { code: Code.TOO_MANY_AUTH, message: `${host} cut the connection after too many key attempts` };
   },
   (lines, { host, auth }) => {
     // ssh's own line is `user@host: Permission denied (methods).`; a command's output isn't.
@@ -188,9 +189,9 @@ const rules: Rule[] = [
     if (!m) return null;
     const user = m[1];
     if (auth === "password") {
-      return { code: 45, message: `${host} refused the password${user ? ` for user ${user}` : ""}` };
+      return { code: Code.PASSWORD_REFUSED, message: `${host} refused the password${user ? ` for user ${user}` : ""}` };
     }
-    return { code: 46, message: `${host} didn't accept this Box's key${user ? ` for user ${user}` : ""}` };
+    return { code: Code.KEY_REFUSED, message: `${host} didn't accept this Box's key${user ? ` for user ${user}` : ""}` };
   },
   (lines, { host }) => {
     const m = find(lines, /^kex_exchange_identification: (.*)$/);
@@ -205,7 +206,7 @@ const rules: Rule[] = [
     const m = find(lines, /^Unable to negotiate with (\S+) port \d+: (.*)$/);
     if (!m) return null;
     return {
-      code: 48,
+      code: Code.AUTH_FAILED,
       message: `ssh and ${host} couldn't agree on how to talk: ${m[2]}`,
       fix: "The Host is old; its algorithms need allowing in roster's ssh config for it (roster-side).",
     };
@@ -224,7 +225,7 @@ export function classifyExit(input: ExitInput): Problem | null {
     if (found) return { host: input.host, details, ...found };
   }
   return {
-    code: 48,
+    code: Code.AUTH_FAILED,
     host: input.host,
     message: `ssh couldn't open the Session to ${input.host} (code 255)`,
     fix: "See the details: ssh's own message.",

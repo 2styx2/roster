@@ -3,7 +3,7 @@
 // unlocked again; Plugins hear every Session's output; a new Host's key is asked about; shell hooks
 // (ticket 121); and prompt fills (ticket 119), a nested ssh's (ticket 120) read at the shell's C
 // mark against the Inventory as it is then.
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { Latest } from "../app/latest";
 import type { Capabilities } from "../backend/capabilities";
 import type { Host } from "../backend/types";
@@ -25,7 +25,7 @@ export function useTabsConfig(opts: {
   const { tabs, caps, hostByName, lockVault, outputTap } = opts;
   const asksAboutKeys = caps.has("hostKey");
   const canFill = caps.has("fill");
-  const canNestedFill = caps.has("nestedFill");
+  const refuseFill = useMemo(() => (caps.has("nestedFill") ? null : (what: string) => caps.needsNewer("nestedFill", what)), [caps]);
   const shellHooksInit = opts.config?.terminal.shellHooks ?? null;
   const [inventoryNow] = useState(() => new Latest<readonly Host[]>([]));
   useLayoutEffect(() => inventoryNow.set(opts.hosts));
@@ -41,10 +41,10 @@ export function useTabsConfig(opts: {
       fillPrompts: canFill
         ? {
             userOf: (host) => hostByName.get(host)?.ssh.user ?? null,
-            watch: (size, user, nonce) => new PromptWatch(size, user, { hosts: inventoryNow.get, fill: canNestedFill }, nonce),
+            watch: (size, user, nonce) => new PromptWatch(size, user, { hosts: inventoryNow.get, refuseFill }, nonce),
           }
         : null,
     });
     return () => tabs.configure({ outputTap: null });
-  }, [tabs, outputTap, lockVault, asksAboutKeys, shellHooksInit, hostByName, canFill, canNestedFill, inventoryNow]);
+  }, [tabs, outputTap, lockVault, asksAboutKeys, shellHooksInit, hostByName, canFill, refuseFill, inventoryNow]);
 }

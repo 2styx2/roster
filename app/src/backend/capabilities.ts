@@ -17,6 +17,7 @@ import {
   QUICK_CONNECT_API_VERSION,
   SAVE_TO_VAULT_API_VERSION,
   SIGN_OUT_API_VERSION,
+  STORE_API_VERSION,
   UNREVIEW_API_VERSION,
   VAULT_CONFIG_API_VERSION,
   type InventoryInfo,
@@ -45,6 +46,7 @@ const FEATURES = {
   fill: { since: FILL_API_VERSION, what: "Filling a password prompt" },
   nestedFill: { since: NESTED_FILL_API_VERSION, what: "Filling a nested ssh's prompt" },
   itemFields: { since: ITEM_FIELDS_API_VERSION, what: "Fill from this item" },
+  store: { since: STORE_API_VERSION, what: "A plain roster.yml" },
 } as const satisfies Record<string, { since: number; what: string }>;
 
 export type Feature = keyof typeof FEATURES;
