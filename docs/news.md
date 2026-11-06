@@ -46,8 +46,11 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **`roster add --from-vault --json` prints JSON alone**: the vault sync's line ("synced bw (the previous sync was ...)") came first on stdout, so a script couldn't read the list; it goes to stderr now, so stdout is the one JSON document.
 - **No paramiko traceback when a Host never sends its banner**: a check that gave up on a Host that took the connection but never answered (a cancelled `host.check`, a frozen Host) could print paramiko's own `Exception (client): Error reading SSH protocol banner` traceback on stderr, in the CLI's output or serve's log.
+- **1Password items list their URLs primary first** (#500): the list of vault items (`roster add --from-vault` with no NAME) kept 1Password's order, while `--from-vault NAME` took the primary URL, so a listed item's address could differ from the one it filled in. Both use the primary URL first now.
 
 **App**
+
+- **A Bitwarden organization or collection missing a key no longer breaks Save to vault** (#500): one that `bw list organizations` or `bw list collections` printed without its id, its name or (a collection) its organization's id made `roster serve` fail with an internal error when the app listed or picked where to save. Such a row is now left out, since it can't be saved to or named.
 
 - **The Topology map takes the keys back, and `/` starts a new search** (#475): with a Session opened from the map beside it, `:topology` (or `:view topology`, or the map's key) hands the keys back to the map, so a `/` typed next searches the map instead of going to the shell; asking for any open view again does the same. `/` on a map opens its search empty, as the Picker does, so typing a new name no longer adds to the last one.
 - **A slow `:help` no longer opens over the terminal you clicked into** (#438): when a guide took a moment to load, clicking into a terminal (or anywhere outside help) meanwhile still let help open and take the keys once the text came. A click now drops the waiting `:help`, as running a command or opening a finder already did; run `:help` again to open it.
