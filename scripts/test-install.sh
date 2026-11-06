@@ -7,7 +7,9 @@
 #
 # The box starts with nothing but sudo and a user. A stand-in Host on the same box (sshd on 127.0.0.1:2222, user
 # "target", its password in $LAB_PW for an `env:` login) and the team's map (a git repo with roster.yml and
-# bin/roster-pull) let `roster setup` install a real key and `uninstall.sh` take it off again.
+# bin/roster-pull) let `roster setup` install a real key and `uninstall.sh` take it off again. lab-02 is the same
+# sshd as user "target2" with `key_type: ecdsa` (lab-01 has the default Ed25519 key), so this Box has a key of each
+# type (~/.ssh/roster_ed25519 and roster_ecdsa) and uninstall.sh must remove both (#508).
 #   1. install.sh --yes --infra-repo   then a new login shell: roster, ROSTER_CONFIG, `ssh lab-01`, cron, man page,
 #                                      Tab completion
 #   2. install.sh again                hands over to update.sh; nothing added twice
@@ -29,13 +31,15 @@ if [[ ${1:-} == --inside ]]; then           # ---- in the container, as the new 
     git config --global init.defaultBranch main
     mkdir -p /tmp/map/bin && cd /tmp/map || exit 1
     printf '%s\n' 'groups:' '  lab:' '    hosts:' '      lab-01:' '        ip: 127.0.0.1' '        port: 2222' \
-        '        user: target' '        auth: env:LAB_PW' '        type: dev' > roster.yml
+        '        user: target' '        auth: env:LAB_PW' '        type: dev' \
+        '      lab-02:' '        ip: 127.0.0.1' '        port: 2222' '        user: target2' '        auth: env:LAB_PW' \
+        '        type: dev' '        key_type: ecdsa' > roster.yml
     printf '%s\n' '#!/bin/sh' 'cd "$(dirname "$0")/.." && git pull --ff-only -q && roster sync' > bin/roster-pull
     chmod +x bin/roster-pull && git init -q && git add -A && git commit -qm map && git clone -q --bare . /tmp/map.git
     cd ~/roster || exit 1
     export LAB_PW=lab-pass-123
     shell() { bash -lc "cd /; $1" 2>/dev/null; }
-    host_keys() { sudo grep -c roster-managed ~target/.ssh/authorized_keys 2>/dev/null; }
+    host_keys() { sudo cat ~target/.ssh/authorized_keys ~target2/.ssh/authorized_keys 2>/dev/null | grep -c roster-managed; }
 
     echo "== 1. install.sh --yes"
     ./install.sh --yes --infra-repo file:///tmp/map.git; check "install.sh exits 0" '[[ $? == 0 ]]'
@@ -43,7 +47,9 @@ if [[ ${1:-} == --inside ]]; then           # ---- in the container, as the new 
     check "ROSTER_CONFIG is set" '[[ $(shell "echo \$ROSTER_CONFIG") == ~/infra/roster.yml ]]'
     check "roster hosts lists lab-01" 'shell "roster hosts" | grep -q "^lab-01 "'
     check "ssh lab-01 logs in with the key" '[[ $(shell "ssh -o BatchMode=yes lab-01 whoami") == target ]]'
-    check "the Host has this box's key" '[[ $(host_keys) == 1 ]]'
+    check "ssh lab-02 logs in with the ECDSA key" '[[ $(shell "ssh -o BatchMode=yes lab-02 whoami") == target2 ]]'
+    check "this box has a key of each type" '[[ -f ~/.ssh/roster_ed25519 && -f ~/.ssh/roster_ecdsa ]]'
+    check "the Host has this box's two keys" '[[ $(host_keys) == 2 ]]'
     check "the cron job is there" 'crontab -l | grep -q bin/roster-pull'
     check "the cron daemon runs" 'grep -qxE "crond?" /proc/[0-9]*/comm 2>/dev/null'
     check "man page installed" '[[ -f ~/.local/share/man/man1/roster.1 ]]'
@@ -120,7 +126,8 @@ esac
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 printf '%s\n' "FROM $from" \
     "RUN $prep && useradd -m -s /bin/bash newuser && echo 'newuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/newuser \\" \
-    " && useradd -m -s /bin/bash target && echo 'target:lab-pass-123' | chpasswd && (ssh-keygen -A >/dev/null 2>&1 || true)" \
+    " && useradd -m -s /bin/bash target && useradd -m -s /bin/bash target2 \\" \
+    " && printf '%s\\n' target:lab-pass-123 target2:lab-pass-123 | chpasswd && (ssh-keygen -A >/dev/null 2>&1 || true)" \
     "USER newuser" "WORKDIR /home/newuser" > "$tmp/Containerfile"
 "$run" build -q -t "roster-install-test:$distro" -f "$tmp/Containerfile" "$tmp" >/dev/null || exit 1
 tar -C "$root" --transform 's,^,roster/,' -cf "$tmp/roster.tar" \

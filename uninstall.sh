@@ -12,7 +12,7 @@
 #   ./uninstall.sh --prefix DIR  roster is in DIR/bin (as install.sh --prefix DIR put it); or PREFIX=DIR
 #
 # Stages: take this box off its hosts (roster mesh cut --all, roster revoke --all), the auto-update cron job, the
-# lines in shell startup files (and fish's Tab completion file), this box's SSH key and ssh config, the vault session, roster and its man page, and
+# lines in shell startup files (and fish's Tab completion file), this box's SSH keys and ssh config, the vault session, roster and its man page, and
 # the files `roster setup` wrote next to roster.yml. Output of each step goes to ~/.cache/roster-uninstall.log.
 set -uo pipefail
 
@@ -53,6 +53,7 @@ source "$here/install-lib.sh"
 STAGES=("Hosts" "Auto-update" "Shell startup" "SSH files" "Vault" "roster" "Config folder")
 TOTAL=${#STAGES[@]}
 DONE=() SKIPPED=() FAILED=()
+gone_keys=()                    # the key files stage 4 removed (a dry run: would remove)
 
 step() {                        # step "what" cmd...  - output to the log, shown when it fails
     local what=$1; shift
@@ -124,12 +125,70 @@ if [[ -f $CONF_DIR/inventories.json ]]; then
     while IFS= read -r p; do [[ -f $p ]] && yamls+=("$p"); done \
         < <(grep -o '"path": *"[^"]*"' "$CONF_DIR/inventories.json" | sed 's/.*: *"\(.*\)"/\1/')
 fi
-keys=("$HOME/.ssh/roster_ed25519")
-other_keys=()        # a key_path: of a roster.yml: may be a key you use for more than roster, so asked about apart
+# This Box's keys (T256, #508; Q204 (l)): every key roster made here, whatever its type (T239: roster_ecdsa,
+# roster_rsa-4096, ... beside key_path:), a rotation's KEY.old and KEY.new (T240), and a key_path: of another name.
+# One goes only when it's vouched for, as boxkeys.all_keys does: the private key is this user's alone, ssh-keygen -y of
+# it gives its .pub, and that .pub carries this Box's roster-managed: tag. Never a key of the user's own.
+KEY_RE='^roster_(ed25519|ecdsa|ecdsa-256|ecdsa-521|rsa|rsa-[0-9]{4,5})(\.old|\.new)?$'   # boxkeys' file names
+own_keys=()          # each roster.yml's own key: key_path:, else ~/.ssh/roster_<key_type:>
+other_keys=()        # a key_path: of another name: may be a key you use for more than roster, so asked about apart
+key_dirs=("$HOME/.ssh")
 for y in ${yamls[@]+"${yamls[@]}"}; do
     k=$(sed -n 's/^key_path: *["'\'']\{0,1\}\([^"'\'' #]*\).*/\1/p' "$y" | head -1)
     k=${k/#\~/$HOME}
-    [[ -n $k && $k != "${keys[0]}" ]] && ! listed "$k" ${other_keys[@]+"${other_keys[@]}"} && other_keys+=("$k")
+    if [[ -z $k ]]; then
+        t=$(sed -n 's/^key_type: *["'\'']\{0,1\}\([A-Za-z0-9-]*\).*/\1/p' "$y" | head -1 | tr '[:upper:]' '[:lower:]')
+        case ${t:-ed25519} in ecdsa-384) t=ecdsa ;; rsa-3072) t=rsa ;; esac
+        k=$HOME/.ssh/roster_${t:-ed25519}
+    fi
+    listed "$k" ${own_keys[@]+"${own_keys[@]}"} || own_keys+=("$k")
+    listed "${k%/*}" "${key_dirs[@]}" || key_dirs+=("${k%/*}")
+    [[ ${k##*/} =~ $KEY_RE ]] || listed "$k" ${other_keys[@]+"${other_keys[@]}"} || other_keys+=("$k")
+done
+(( ${#own_keys[@]} )) || own_keys=("$HOME/.ssh/roster_ed25519")
+
+holds() {                       # holds KEY: this user's alone, and ssh-keygen -y of it gives KEY.pub
+    local k=$1 m a b c d
+    [[ -f $k && ! -L $k && -O $k && -f $k.pub && ! -L $k.pub ]] || return 1
+    m=$(LC_ALL=C ls -ln -- "$k" 2>/dev/null) && [[ ${m:4:6} == ------ ]] || return 1     # no group or other bits
+    read -r a b _ < <(ssh-keygen -y -P '' -f "$k" < /dev/null 2>/dev/null)
+    read -r c d _ < "$k.pub" 2>/dev/null
+    [[ -n $a && -n $b && $a == "$c" && $b == "$d" ]]
+}
+tag_of() {                      # tag_of PUB -> the Box name in its roster-managed: tag (an older roster's fleet-managed:)
+    local a b c rest
+    read -r a b c rest < "$1" 2>/dev/null || [[ -n ${c:-} ]] || return 1
+    [[ -z $rest && $c =~ ^(roster-managed|fleet-managed):([A-Za-z0-9_-]+)$ ]] && printf '%s' "${BASH_REMATCH[2]}"
+}
+# this Box's names: the ones roster recorded its key lines under (key-name, key-name-INVENTORY), each roster.yml's
+# box_name: (else this box's hostname, as roster names it), and the tag on each roster.yml's own key this Box holds
+box_names=()
+for f in "$CONF_DIR"/key-name "$CONF_DIR"/key-name-*; do
+    [[ -f $f ]] && read -r v < "$f" && [[ -n $v ]] && box_names+=("$v")
+done
+for y in ${yamls[@]+"${yamls[@]}"}; do
+    v=$(sed -n 's/^box_name: *["'\'']\{0,1\}\([^"'\'' #]*\).*/\1/p' "$y" | head -1)
+    if [[ -z $v ]]; then v=$(uname -n 2>/dev/null); v=${v%%.*}; fi
+    [[ -n $v ]] && box_names+=("$(printf '%s' "$v" | sed 's/[^A-Za-z0-9_-]/-/g')")
+done
+have ssh-keygen && for k in "${own_keys[@]}"; do
+    holds "$k" && v=$(tag_of "$k.pub") && box_names+=("$v")
+done
+roster_key_files=() box_keys=() not_vouched=()
+for d in "${key_dirs[@]}"; do
+    for k in "$d"/roster_*; do
+        [[ ${k##*/} =~ $KEY_RE ]] && [[ -e $k || -L $k ]] && roster_key_files+=("$k")
+    done
+done
+for k in ${other_keys[@]+"${other_keys[@]}"}; do
+    for f in "$k" "$k.old" "$k.new"; do [[ -e $f || -L $f ]] && roster_key_files+=("$f"); done
+done
+for k in ${roster_key_files[@]+"${roster_key_files[@]}"}; do
+    if have ssh-keygen && holds "$k" && v=$(tag_of "$k.pub") && listed "$v" ${box_names[@]+"${box_names[@]}"}; then
+        box_keys+=("$k")
+    else
+        not_vouched+=("$k")
+    fi
 done
 
 printf '\n%sroster uninstaller%s\n' "$B" "$N"
@@ -213,10 +272,10 @@ done
 info "open a new terminal (or: exec \$SHELL) to drop them here"
 done_stage
 
-# 4. SSH files: this box's key, roster's ssh config and known hosts
+# 4. SSH files: this box's keys, roster's ssh config and known hosts
 stage 4
 ssh_files=()
-for k in "${keys[@]}"; do ssh_files+=("$k" "$k.pub"); done
+for k in ${box_keys[@]+"${box_keys[@]}"}; do ssh_files+=("$k" "$k.pub"); done
 ssh_files+=("$HOME/.ssh/config.d/roster" "$HOME/.ssh/config.d/roster.inventories" "$HOME/.ssh/roster-inventories")
 for p in "$HOME/.ssh/config.d/roster-"* "$HOME/.ssh/roster_known_hosts"*; do ssh_files+=("$p"); done
 [[ -f $HOME/.ssh/roster-mesh/config ]] && head -n 1 "$HOME/.ssh/roster-mesh/config" | grep -q '^# Written by roster mesh' \
@@ -228,14 +287,20 @@ if (( ! ${#there[@]} )) && ! grep -qiE "$inc_re" "$HOME/.ssh/config" 2>/dev/null
     ok "none here"; done_stage
 else
     go=Y
-    if (( ! REVOKED )); then
+    if (( KEEP_HOSTS )) && (( ${#box_keys[@]} )); then
+        warn "--keep-hosts: this box's keys below still log in to its hosts (their lines stay in authorized_keys there)"
+        info "deleting them here doesn't take them off: only roster revoke --all, or editing each host's"
+        info "authorized_keys by hand, does"
+        go=N
+    elif (( ! REVOKED )); then
         warn "this box's key may still be on hosts. Without the key and ssh config you can't revoke it later"
         info "(roster revoke --all), only by editing each host's authorized_keys"
         go=N
     fi
     for p in ${there[@]+"${there[@]}"}; do info "$(home "$p")"; done
     if ask "Delete these, and the Include line in ~/.ssh/config?" "$go"; then
-        remove "this box's roster key and ssh config" ${there[@]+"${there[@]}"} || fail_stage
+        remove "this box's roster keys and ssh config" ${there[@]+"${there[@]}"} || fail_stage
+        gone_keys=(${box_keys[@]+"${box_keys[@]}"})
         if [[ -f $HOME/.ssh/config ]]; then
             # grep -E has no -i with patterns in drop_lines; ssh's keywords are case-insensitive, so match both
             drop_lines "$HOME/.ssh/config" "${inc_re/Include/[Ii][Nn][Cc][Ll][Uu][Dd][Ee]}" || true
@@ -249,9 +314,20 @@ else
         skip "kept this box's key and ssh config"
     fi
 fi
+# A roster_* key file roster can't vouch for (not this user's alone, no .pub of its own, no tag of this Box's) isn't
+# roster's to delete: said, and kept
+for k in ${not_vouched[@]+"${not_vouched[@]}"}; do
+    listed "$k" ${other_keys[@]+"${other_keys[@]}"} && continue                   # asked about below
+    if ! have ssh-keygen; then
+        info "kept $(home "$k"): no ssh-keygen here to check it's this box's roster key"
+    else
+        info "kept $(home "$k"): not this box's roster key (its .pub isn't this box's roster-managed: key for it)"
+    fi
+done
 # A key_path: elsewhere (~/.ssh/id_ed25519?) may be your own key for other servers too: never deleted by default
 for k in ${other_keys[@]+"${other_keys[@]}"}; do
     [[ -e $k ]] || continue
+    listed "$k" ${box_keys[@]+"${box_keys[@]}"} && continue          # this Box's, tagged: went with the rest
     warn "roster.yml's key_path: is $(home "$k"): if roster made it just for this box, it can go too"
     if (( REVOKED )) && ask "Delete $(home "$k") and its .pub? (no if you use it for anything else)" N; then
         remove "$(home "$k")" "$k" "$k.pub"
@@ -310,11 +386,14 @@ remove "install.sh's kept answers" "$CONF_DIR/install-choices"
 # (tests/test_install_scripts.py reads them from roster's source): the Mesh state, the Inventory list and what a
 # removed Inventory left, the run lock, the key's name and age, a key rotation's record, the vault snapshots
 # (vault-sync/, vault-seen/), and the temp files of a run cut short (bw-session is stage 5's).
-# Kept: a Box key rotation's record (key-rotation, key-rotation-NAME) while a KEY.old or KEY.new is in ~/.ssh:
-# it's what says those key files are roster's (Q204 (d2)); without it a later roster won't use or clean them up.
+# Kept: a Box key rotation's record (key-rotation, key-rotation-NAME) while a KEY.old or KEY.new stage 4 didn't remove
+# (it couldn't vouch for it, or you said no) is in ~/.ssh: it's what says those key files are roster's (Q204 (d2), (l));
+# without it a later roster won't use or clean them up.
 mine=() kept_rotation=()
 rotating=0
-for k in "${keys[@]}" ${other_keys[@]+"${other_keys[@]}"}; do [[ -e $k.old || -e $k.new ]] && rotating=1; done
+for k in ${roster_key_files[@]+"${roster_key_files[@]}"}; do
+    [[ $k == *.old || $k == *.new ]] && [[ -e $k ]] && ! listed "$k" ${gone_keys[@]+"${gone_keys[@]}"} && rotating=1
+done
 shopt -s dotglob
 for p in "$CONF_DIR"/mesh*.json* "$CONF_DIR"/mesh*.new "$CONF_DIR"/inventories.json* "$CONF_DIR"/*.removed-* \
          "$CONF_DIR"/inventory.create.lock "$CONF_DIR"/run.lock "$CONF_DIR"/run-*.lock "$CONF_DIR"/key-created \
