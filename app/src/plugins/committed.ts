@@ -30,9 +30,9 @@ import { guarded } from "../terminal/xtermGuard";
 /** The most text one `terminal_output` or one Done's `output` carries: its last whole lines. */
 export const OUTPUT_MAX = 16 * 1024;
 /** Dones kept between takes: the last ones. */
-export const DONES_MAX = 20;
+const DONES_MAX = 20;
 /** Lines after an `A` that are "prompt" (a prompt over a few rows); later ones have no kind. */
-export const PROMPT_LINES = 3;
+const PROMPT_LINES = 3;
 
 /** The last whole lines of `text` that fit in `max` characters: none when its last line alone is
  * longer (#223: never the whole text, which would break the cap). */
@@ -57,7 +57,7 @@ export interface Done {
 }
 
 /** What the marks say a line is; null: they say nothing (no marks, or not of a kind). */
-export type LineKind = "prompt" | "input" | "output" | null;
+type LineKind = "prompt" | "input" | "output" | null;
 
 /** Lines in a row of the same kind, each ending in a newline. */
 export interface Run {

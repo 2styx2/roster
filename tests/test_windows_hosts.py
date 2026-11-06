@@ -13,6 +13,7 @@ from conftest import FAKES, WINDOWS, stand_in_hosts
 from roster import sshops
 from roster.cli import main
 from roster.config import load_config
+from roster.errors import InventoryError
 
 CASCADE = """\
 defaults: { user: admin }
@@ -39,7 +40,7 @@ def test_os_cascades_from_defaults_to_group_to_host(write_config):
 
 @pytest.mark.parametrize("value", ["linux", "win", "true", "''"])
 def test_os_takes_only_windows_or_posix(write_config, value):
-    with pytest.raises(SystemExit, match="os: must be windows or posix"):
+    with pytest.raises(InventoryError, match="os: must be windows or posix"):
         load_config(write_config(f"defaults: {{ user: admin }}\ngroups:\n  a:\n    hosts:\n"
                                  f"      h1: {{ ip: 10.0.0.5, os: {value} }}\n"))
 
@@ -69,7 +70,7 @@ def test_type_windows_without_os_warns_and_suggests_os_windows(write_config, cap
 def test_a_windows_hosts_ssh_config_never_shares_a_connection(isolated, write_config):
     """A Windows Host's sshd refuses a second session on a shared connection ("No existing session"): its block says
     ControlMaster no, with no ControlPath or ControlPersist to reuse one."""
-    from roster.common import WINDOWS
+    from roster.context import WINDOWS
     from roster.sshops import write_ssh_config
     write_ssh_config(load_config(write_config(CASCADE)))
     text = (isolated["home"] / ".ssh" / "config.d" / "roster").read_text()
@@ -731,9 +732,8 @@ def test_a_command_past_4096_bytes_runs_though_the_hosts_sshd_never_sends_eof(wi
 
 
 def test_a_command_too_long_for_the_script_is_refused_before_anything_is_sent(win, capsys, monkeypatch):
-    from roster import cli
     main(["sync"])
-    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: pytest.fail("something was sent"))
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("something was sent"))
     from roster import winhost
     monkeypatch.setattr(winhost.subprocess, "Popen", lambda *a, **k: pytest.fail("something was sent"))
     with pytest.raises(SystemExit) as e:
@@ -767,10 +767,9 @@ def test_run_on_a_posix_host_marked_windows_says_to_fix_os(win, capfd, monkeypat
 
 @pytest.mark.parametrize("enroll", [True, False])
 def test_run_sudo_on_a_windows_host_is_refused_before_the_vault(write_config, monkeypatch, capsys, enroll):
-    from roster import cli
     write_config(WIN.replace("      dc-01: 10.0.0.5\n", f"      dc-01: {{ ip: 10.0.0.5, enroll: {str(enroll).lower()} }}\n"))
-    monkeypatch.setattr(cli, "get_secret", lambda *a: pytest.fail("the vault was asked"))
-    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: pytest.fail("something ran"))
+    monkeypatch.setattr("roster.run.get_secret", lambda *a: pytest.fail("the vault was asked"))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("something ran"))
     with pytest.raises(SystemExit) as e:
         main(["run", "--sudo", "dc-01", "--", "whoami"])
     assert "[159]" in str(e.value) and "sudo" in str(e.value) and "Administrators" in str(e.value)
@@ -804,7 +803,7 @@ def test_setup_on_a_renamed_box_says_when_a_windows_host_has_no_line_to_retag(wi
     assert main(["setup", "--only", "dc-01"]) == 0
     win.admin_file("dc-01").write_bytes(OTHER)              # the key works some other way: no roster line here
     write_config(WIN.replace("box_name: box\n", "box_name: box2\n"))
-    monkeypatch.setattr("roster.cli.ssh_ok", lambda name: True)
+    monkeypatch.setattr("roster.boxsetup.ssh_ok", lambda name: True)     # sshd takes the key some other way
     capsys.readouterr()
     main(["setup", "--only", "dc-01"])
     out = capsys.readouterr().out

@@ -14,7 +14,9 @@ mod common;
 
 use roster_core::config::PackageSpec;
 use roster_core::package::Packages;
+use roster_core::plugin::By;
 use roster_core::plugin::{Event, Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -228,11 +230,11 @@ impl FakeMesh {
         }
     }
 
-    fn answer(&self, method: &str, params: &Value) -> Result<Value, String> {
+    fn answer(&self, method: &str, params: &Value) -> Result<Value, CallError> {
         let w = self.world();
         let mut job = self.job.lock().unwrap();
         match method {
-            "mesh.job" if !w.jobs => Err("unknown method 'mesh.job' (code -32601)".into()),
+            "mesh.job" if !w.jobs => Err(CallError::rpc(-32601, "unknown method 'mesh.job'")),
             "mesh.job" => {
                 let Some(j) = job.as_mut() else { return Ok(Value::Null) };
                 if params.get("job").is_some_and(|n| n != j.number) {
@@ -275,10 +277,13 @@ impl FakeMesh {
             }
             "mesh.plan" | "mesh.apply" | "mesh.cut" => {
                 if params["background"] != true {
-                    return Err(format!("{method} without background would hold the Plugin (code -1)"));
+                    return Err(CallError::rpc(
+                        -1,
+                        format!("{method} without background would hold the Plugin"),
+                    ));
                 }
                 if job.as_ref().is_some_and(|j| j.left > 0) {
-                    return Err("a Mesh job is still running (code 111)".into());
+                    return Err(CallError::rpc(111, "a Mesh job is still running"));
                 }
                 let action = method.trim_start_matches("mesh.").to_string();
                 let host = params["host"].as_str().map(str::to_string);
@@ -302,13 +307,13 @@ impl FakeMesh {
                 }
                 Ok(v)
             }
-            other => Err(format!("unknown method '{other}' (code -32601)")),
+            other => Err(CallError::rpc(-32601, format!("unknown method '{other}'"))),
         }
     }
 }
 
 impl Serve for FakeMesh {
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
         // serve answers one request at a time.
         let _turn = self.busy.lock().unwrap();
         let answer = self.answer(method, &params);
@@ -398,7 +403,7 @@ impl Run {
     }
 
     fn call(&mut self, handler: u64, args: Value) -> Vec<Value> {
-        let reply = self.host.call(NAME, handler, args);
+        let reply = self.host.call(NAME, handler, args, By::User);
         self.take(reply)
     }
 
@@ -611,7 +616,7 @@ fn it_installs_from_roster_s_repo_with_dir_and_asks_for_exactly_its_permissions(
     let (dir, _) = packages.loadable(&specs, NAME).unwrap();
     let m = common::read_manifest(&dir).unwrap();
     assert_eq!(m.name, NAME);
-    assert_eq!(m.api, 6);
+    assert_eq!(m.api, 7);
     let mut asked: Vec<String> = m.permissions.iter().map(|p| p.to_string()).collect();
     asked.sort();
     let mut want: Vec<String> = ALL.iter().map(|s| s.to_string()).collect();
@@ -810,14 +815,22 @@ fn the_controls_answer_while_roster_serve_is_busy_and_catch_up_after() {
     // for serve wouldn't come back at all, and fails at the ceiling instead of hanging.
     let (host, run_handler) = (Arc::clone(&run.host), handler(&c["run"]));
     let reply = common::within_ceiling("the plan command's answer", move || {
-        host.call(NAME, run_handler, json!({ "args": "plan", "words": ["plan"] }))
+        host.call(
+            NAME,
+            run_handler,
+            json!({ "args": "plan", "words": ["plan"] }),
+            By::User,
+        )
     });
     assert!(reply.error.is_none() && reply.disabled.is_none(), "{reply:?}");
     assert_eq!(of(&reply.ops, "view_open")[0]["id"], "mesh-plan");
     // Asked again before serve answers: it says it's starting, and asks nothing more.
-    let again = run
-        .host
-        .call(NAME, handler(&c["run"]), json!({ "args": "plan", "words": ["plan"] }));
+    let again = run.host.call(
+        NAME,
+        handler(&c["run"]),
+        json!({ "args": "plan", "words": ["plan"] }),
+        By::User,
+    );
     assert!(texts(&again.ops)[0].contains("is starting"));
     std::thread::sleep(Duration::from_millis(2600));
     assert!(run.host.list()[0].disabled.is_none());

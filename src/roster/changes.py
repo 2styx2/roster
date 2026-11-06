@@ -6,11 +6,10 @@ Every git run is non-interactive and time-limited. A backup of what an edit or a
 repo's git dir (never in the working tree, where Publish would pick it up)."""
 
 import os
-import signal
 import subprocess
 from pathlib import Path
 
-from .common import WINDOWS, git_program, kill_tree, program_argv, time_left
+from .common import end_group, git_program, program_argv, time_left
 from .edit import keep_backup, load_text, read_text
 from .errors import (
     COMMIT_FAILED,
@@ -36,18 +35,27 @@ HOST_VIEW = ("group", "ip", "title", "description", "type", "product", "enroll",
              "services")
 
 
-# Which repo git works on is roster.yml's folder's, never one the environment names (a dotfiles GIT_DIR, #409 S3)
+# Which repo git works on is roster.yml's folder's, never one the environment names (a dotfiles GIT_DIR)
 GIT_LOCATION = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR",
                 "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM")
+
+
+NO_PROMPTS = {"GIT_TERMINAL_PROMPT": "0"}     # git never asks on the terminal
+BATCH_SSH = "ssh -o BatchMode=yes"              # nor does the ssh it runs, unless GIT_SSH_COMMAND says otherwise
+
+
+def git_env():
+    """This process's environment without anything that points git at another repo (GIT_LOCATION)."""
+    return {k: v for k, v in os.environ.items() if k not in GIT_LOCATION}
 
 
 def git(repo, *args, timeout=GIT_TIMEOUT, floor=1):
     """Run git in REPO, non-interactive. Past TIMEOUT its whole process group is killed (a push's remote side
     and hooks too, which would otherwise hold the output open) and it's a Problem."""
-    env = {k: v for k, v in os.environ.items() if k not in GIT_LOCATION}
-    env.update({"GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"})
-    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
-    # a repo's own config never runs a program for roster's reads: core.fsmonitor runs on reading the index (#409 S3)
+    env = git_env()
+    env.update({**NO_PROMPTS, "LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"})
+    env.setdefault("GIT_SSH_COMMAND", BATCH_SSH)
+    # a repo's own config never runs a program for roster's reads: core.fsmonitor runs on reading the index
     argv = [git_program(), "-C", str(repo), "-c", "core.fsmonitor=false", *args]
     timeout = round(time_left(timeout, floor), 1)          # held to serve's deadline for the whole request
     try:
@@ -61,28 +69,13 @@ def git(repo, *args, timeout=GIT_TIMEOUT, floor=1):
     try:
         stdout, stderr = p.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        kill_group(p)
+        end_group(p)
         raise Problem(PULL_FAILED, f"git {args[0]} didn't finish within {timeout} s",
                       fix="check the network and your access to the infra repo, then try again") from None
     except BaseException:
-        kill_group(p)
+        end_group(p)
         raise
     return subprocess.CompletedProcess(argv, p.returncode, stdout, stderr)
-
-
-def kill_group(p):
-    """Kill git and whatever it started (ssh, a credential helper): its process group, which Windows doesn't have."""
-    if WINDOWS:                         # no process groups: taskkill the tree
-        kill_tree(p)
-    else:
-        try:
-            os.killpg(p.pid, signal.SIGKILL)
-        except OSError:
-            p.kill()
-    try:
-        p.communicate(timeout=5)
-    except subprocess.TimeoutExpired:
-        pass
 
 
 def out(repo, *args):

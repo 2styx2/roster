@@ -21,6 +21,8 @@ local VIEW = "discover"
 -- What it needs to work at all, and to add what it found.
 local SCANS = { "serve:discover.plan", "serve:discover.start", "serve:discover.status", "serve:discover.stop" }
 local ADDS = "serve:discover.add"
+local SCAN_RUNNING = 120 -- serve's code: a scan is going already
+local METHOD_NOT_FOUND = -32601 -- JSON-RPC's code: this roster serve has no such method
 
 ---@return string[]
 local function missing()
@@ -379,7 +381,7 @@ end
 local function start(targets, force)
   request("discover.start", { targets = targets, ports = settings.ports, force = force }, function(ok, r)
     if not ok then
-      roster.notify("The scan didn't start: " .. model.message(r), model.code(r) == 120 and "warn" or "error")
+      roster.notify("The scan didn't start: " .. model.message(r), model.code(r) == SCAN_RUNNING and "warn" or "error")
       return
     end
     started(r)
@@ -414,7 +416,7 @@ end
 
 -- The question before a scan, from discover.plan's answer.
 confirm = function(ok, plan)
-  if not ok and model.code(plan) == -32601 then
+  if not ok and model.code(plan) == METHOD_NOT_FOUND then
     roster.notify("Not scanned: the roster on this Box is too old to scan from the app (it needs roster "
       .. "serve API 18). Update roster there, or run `roster discover` in a terminal.", "error")
     return
@@ -530,7 +532,7 @@ roster.health.set("discover", {
     -- holds this Plugin's thread while serve is busy (behind a Publish, that's a while).
     request("discover.plan", { targets = { "10.0.0.0/30" } }, function(ok, plan)
       local out
-      if not ok and model.code(plan) == -32601 then
+      if not ok and model.code(plan) == METHOD_NOT_FOUND then
         out = { { level = "error", message = "roster on this Box can't scan from the app (it needs roster serve API 18)",
           fix = "Update roster on this Box; `roster discover` in a terminal works meanwhile" } }
       elseif not ok then

@@ -1,6 +1,6 @@
 ---@meta roster
--- roster's Plugin API, roster.api_version 6: LuaCATS annotations for lua-language-server.
--- Generated from crates/roster-core/src/plugin/api.rs by `cargo run -p roster-core --example gen_plugin_api`; don't edit.
+-- roster's Plugin API, roster.api_version 7: LuaCATS annotations for lua-language-server.
+-- Generated from crates/roster-core/src/plugin/api/ by `cargo run -p roster-core --example gen_plugin_api`; don't edit.
 -- The reference: docs/plugin-api.md (`:help plugin-api`).
 
 --- `roster-plugin.lua`: who the Plugin is and what it asks for
@@ -485,6 +485,11 @@
 ---@field auth roster.LoginRef The same as `ssh.auth`.
 ---@field [string] any Any other key roster.yml gives it.
 
+--- roster serve's error, as a Plugin gets it (since api 7)
+---@class roster.ServeError
+---@field code integer serve's code: roster's own (`2` unknown Host, `4` busy, …) or JSON-RPC's (`-32601` no such method, `-32602` bad params), as serve-api.md lists them.
+---@field message string serve's words, without the function's name or the code; a `cmd:` or `env:` Login reference in them is cut to its kind (`LoginRef`).
+
 --- A Login reference: where a password is, never the password
 ---@alias roster.LoginRef string
 
@@ -597,7 +602,7 @@
 ---@field at? string The step under way (`"dns"`, `"auth"`, ...).
 ---@field host string The Host it checks.
 ---@field result? roster.HostCheck Once `done` or `stopped`: `host.check`'s result. `ok` is false for a stopped check, its later steps `skipped`.
----@field error? roster.ServeError Once `failed`: why.
+---@field error? roster.JobError Once `failed`: why.
 
 --- One step of a `host.check`
 ---@class roster.CheckStep
@@ -729,10 +734,10 @@
 ---@field at? string The Host it's on.
 ---@field stopped boolean `mesh.stop` asked it to stop; the Hosts it hadn't got to are pending.
 ---@field result? roster.MeshResult|roster.MeshCut Once `done`: what the method itself returns.
----@field error? roster.ServeError Once `failed`: why.
+---@field error? roster.JobError Once `failed`: why.
 
---- An error roster serve answered with
----@class roster.ServeError
+--- Why a job in roster serve failed, as plain data in its status
+---@class roster.JobError
 ---@field code integer Its code, in serve-api.md's tables.
 ---@field message string What went wrong.
 ---@field data? table More about it, as its row says.
@@ -1470,7 +1475,7 @@ function roster.inventory.groups() end
 
 --- Reads every Host and group without waiting: `done` gets them.
 --- Permission: inventory.read. Since: api 4.
----@param done fun(list: roster.HostList?, err: string?) Runs once with the answer: every Host and group (`list.hosts`, `list.groups`), or `nil` and why (`roster.inventory.request: MESSAGE (code N)`). Its return value is ignored; an error in it counts like an action's.
+---@param done fun(list: roster.HostList?, err: roster.ServeError|string?) Runs once with the answer: every Host and group (`list.hosts`, `list.groups`), or `nil` and why: roster serve's error as a `ServeError` (`tostring(err)` is `roster.inventory.request: MESSAGE (code N)`), or a string when serve gave no answer. Its return value is ignored; an error in it counts like an action's.
 function roster.inventory.request(done) end
 
 --- Changes a Host's fields, as a Pending change.
@@ -1543,7 +1548,7 @@ function roster.serve.call(method, params) end
 --- Permission: serve:<method> (that method). Since: api 3.
 ---@param method string A roster serve method the Plugin was granted, as `roster.serve.call`'s.
 ---@param params? table The method's params; `nil` or `{}` for none. Data only: no functions.
----@param done fun(result: any, err: string?) Runs once with the answer: the method's `result` (as `roster.serve.call` returns it), or `nil` and why (`roster.serve.request METHOD: MESSAGE (code N)`). Its return value is ignored; an error in it counts like an action's.
+---@param done fun(result: any, err: roster.ServeError|string?) Runs once with the answer: the method's `result` (as `roster.serve.call` returns it), or `nil` and why: roster serve's error as a `ServeError` (`err.code`, `err.message`; `tostring(err)` is `roster.serve.request METHOD: MESSAGE (code N)`), or a string when serve gave no answer. Its return value is ignored; an error in it counts like an action's.
 function roster.serve.request(method, params, done) end
 
 --- HTTP requests to the sites the manifest lists. `nil` unless the Plugin was granted at least one `network:<site>` permission (Permissions). The request runs in roster's core, never in the app's window, and doesn't wait: the function you pass gets the answer later, as a call of its own with a call's budget. Only the sites granted are reached, redirects included; a name that resolves to an address on this computer or a private network is refused unless the manifest lists the address itself, or the name as a private site (`network:private:nas.lan`), which reaches only private addresses. A pinned site (`#sha256:…`) trusts only that certificate. No cookies or credentials of roster's go along, and no proxy but the user's `plugin_proxy`, through which a public name is still looked up here first, refused if it leads inside, and reached only at the address roster checked (the proxy is asked for a tunnel to that address, never the name; a name this computer can't look up isn't sent). At most 4 requests at once, a 256 KB body out, a 1 MB body back, 30 seconds each.

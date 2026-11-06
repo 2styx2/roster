@@ -64,6 +64,12 @@ impl Wiped {
     }
 }
 
+impl From<Vec<u8>> for Wiped {
+    fn from(bytes: Vec<u8>) -> Self {
+        Wiped(bytes)
+    }
+}
+
 impl Write for Wiped {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.extend(buf);

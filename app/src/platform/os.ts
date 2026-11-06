@@ -8,7 +8,6 @@ interface NavigatorLike {
   userAgentData?: { platform?: string };
 }
 
-/** True when the app runs on Windows. */
 export function runsOnWindows(nav: NavigatorLike | undefined = globalThis.navigator as NavigatorLike | undefined): boolean {
   if (!nav) return false;
   const platform = nav.userAgentData?.platform;

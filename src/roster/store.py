@@ -9,14 +9,16 @@ tells them apart (`at(path)`, per file, every time: nothing is cached) and knows
   publish, and nothing nags about git. The backup goes in the git dir when there is one (never into a work tree,
   where `git add -A` would pick it up), else beside the file as roster.yml.bak (as `roster discover --write`'s).
 
-Every caller (serve's edits, `roster discover --write`, the Mesh's cut, `roster check --box`) asks this module and
-never branches on git itself."""
+Every caller (serve's edits, `roster discover --write`, `roster add`, the Mesh's cut, `roster check --box`) asks this
+module and never branches on git itself. A write through write() is followed by this Box's `roster sync` (boxsync.py),
+so no caller has to remember it."""
 
 import subprocess
 from pathlib import Path
 
-from . import changes, edit
-from .common import find_program
+from . import boxsync, changes
+from .common import find_program, replace_file
+from .edit import keep_backup
 from .errors import NOTHING_TO_PUBLISH, ROSTER_ERROR, Problem
 
 REPO, FILE = "repo", "file"
@@ -41,14 +43,23 @@ class Store:
     def backup(self, text):
         """Keep TEXT (what an edit is about to replace) as the backup; returns its path."""
         bak = (self.git_dir / "roster" if self.git_dir is not None else self.path.parent) / (self.path.name + ".bak")
-        return edit.keep_backup(bak, text, self.path)
+        return keep_backup(bak, text, self.path)
 
-    def save(self, old_text, new_text):
+    def _save(self, old_text, new_text):
         """Write an edit of roster.yml: OLD_TEXT (what it held) kept as the backup, then NEW_TEXT all at once (mode
         kept). In a repo that's a Pending change; a plain file is saved. Returns the backup's path."""
         bak = self.backup(old_text)
-        edit.replace_file(self.path, new_text)    # edit's, looked up now (a test stands in for it)
+        replace_file(self.path, new_text, like=self.path, follow=False)
         return bak
+
+    def write(self, old_text, new_text, then=None, sync=None):
+        """_save(), THEN(the backup's path) (what the caller says once it's written), then this Box's `roster sync`:
+        SYNC() (default: boxsync's, from the file as it is now; serve's: from its loaded Inventory). Returns (the
+        backup's path, the sync's `{ok, ...}`); a sync that fails never undoes the write."""
+        bak = self._save(old_text, new_text)
+        if then is not None:
+            then(bak)
+        return bak, boxsync.guarded(sync or (lambda: boxsync.sync_file(self.path)))
 
     def pull(self):
         return {"updated": False, "upstream": None, "commits": 0, "ahead": 0,

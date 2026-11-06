@@ -11,7 +11,7 @@ import { CommittedLines } from "../plugins/committed";
 import { PromptWatch } from "../session/prompt";
 import { XtermPromptScreen } from "../session/promptScreen";
 import { CsiClamp } from "./csiClamp";
-import { catchesThrows } from "./xtermGuard";
+import { catchesThrows, guarded } from "./xtermGuard";
 import { screenWriter, wireOsc52 } from "./osc52";
 
 const terms: Terminal[] = [];
@@ -25,13 +25,27 @@ function term(cols = 10, rows = 3, scrollback = 100) {
   return t;
 }
 const enc = (s: string) => new TextEncoder().encode(s);
-/** Resolves once `t` has taken in everything written before; "stuck" if it never does. */
-function settled(t: Terminal): Promise<"ok" | "stuck"> {
+/** Resolves once `t` has taken in everything written before; a write queue that stopped never
+ * resolves, and the test's timeout fails it. */
+function settled(t: Terminal): Promise<"ok"> {
+  return new Promise((done) => t.write("", () => done("ok")));
+}
+/** `p` resolved: "ok" (a stopped write queue never resolves; the test's timeout fails it). */
+const within = <T>(p: Promise<T>) => p.then(() => "ok");
+/** `bytes` written to a plain xterm: "ok" once it has drawn them, "threw" (with the errors) when
+ * xterm.js throws inside its write queue, which then never draws again. */
+function plainWrite(t: Terminal, bytes: string): Promise<{ ok: boolean; errors: unknown[] }> {
   return new Promise((done) => {
-    const timer = setTimeout(() => done("stuck"), 500);
-    t.write("", () => {
-      clearTimeout(timer);
-      done("ok");
+    const errors: unknown[] = [];
+    const onError = (e: unknown) => {
+      errors.push(e);
+      process.off("uncaughtException", onError);
+      done({ ok: false, errors });
+    };
+    process.on("uncaughtException", onError);
+    t.write(bytes, () => {
+      process.off("uncaughtException", onError);
+      done({ ok: true, errors });
     });
   });
 }
@@ -52,17 +66,16 @@ async function viaTab(t: Terminal, ...chunks: string[]): Promise<string> {
 
 describe("ED 1 at the last column of a screen with no scrollback", () => {
   it("throws inside plain xterm.js 6.0.0 and stops its writes (the bug this works around)", async () => {
-    const errors: unknown[] = [];
-    const onError = (e: unknown) => errors.push(e);
-    process.on("uncaughtException", onError);
-    try {
-      const t = term();
-      t.write("ab\x1b[3;10H\x1b[1Jafter");
-      expect(await settled(t)).toBe("stuck");
-      expect(String(errors[0])).toContain("isWrapped");
-    } finally {
-      process.off("uncaughtException", onError);
-    }
+    const t = term();
+    const { ok, errors } = await plainWrite(t, "ab\x1b[3;10H\x1b[1Jafter");
+    expect(ok).toBe(false);
+    expect(String(errors[0])).toContain("isWrapped");
+    let drawn = false;
+    t.write("more", () => (drawn = true));
+    // Another xterm's write, queued after it, has been drawn: a queue that still ran would have
+    // drawn `more` first.
+    await settled(term());
+    expect(drawn).toBe(false);
   });
 
   it("erases the whole screen in the tab's terminal, and what comes after it is drawn", async () => {
@@ -111,14 +124,9 @@ describe("ED 1 at the last column of a screen with no scrollback", () => {
             for (const ed of ["\x1b[1J", "\x1b[?1J"]) {
               const bytes = `${before}\x1b[${y};${x}H${wrap}${ed}tail`;
               const plain = term(cols, rows, scrollback);
-              const errors: unknown[] = [];
-              const onError = (e: unknown) => errors.push(e);
-              process.on("uncaughtException", onError);
-              plain.write(bytes);
-              const ok = await settled(plain);
-              process.off("uncaughtException", onError);
+              const { ok, errors } = await plainWrite(plain, bytes);
               const got = await viaTab(term(cols, rows, scrollback), bytes);
-              if (ok === "ok") {
+              if (ok) {
                 expect(got, JSON.stringify(bytes)).toBe(screen(plain));
                 compared++;
               } else {
@@ -168,8 +176,6 @@ describe("ED 1 at the last column of a screen with no scrollback", () => {
 
 describe("every xterm a Session's output reaches keeps going after such an ED 1", () => {
   const ED1 = "\x1b[24;80H\x1b[1J";
-  const within = <T>(p: Promise<T>) =>
-    Promise.race([p.then(() => "ok"), new Promise((done) => setTimeout(() => done("stuck"), 500))]);
 
   it("PromptWatch (the fill's prompt check), which still finds sudo's prompt after it", async () => {
     const w = new PromptWatch({ cols: 80, rows: 24 }, "ops");
@@ -233,30 +239,43 @@ describe("a CsiClamp bound to an xterm", () => {
 
 describe("roster's own handlers in an xterm a Session's output reaches", () => {
   const MARK = "\x1b]133;A\x07";
-  const within = <T>(p: Promise<T>) =>
-    Promise.race([p.then(() => "ok"), new Promise((done) => setTimeout(() => done("stuck"), 500))]);
 
-  it("a throw in PromptWatch's OSC 133 handler skips that mark and is logged once", async () => {
+  it("a throw in PromptWatch's OSC 133 handler (here its HopSource's) skips that mark and is logged once", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.spyOn(PromptWatch.prototype as unknown as { mark(d: string): void }, "mark").mockImplementation(() => {
-      throw new Error("secret-ish");
-    });
-    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops");
-    expect(await within(w.write(`${MARK}one${MARK}`))).toBe("ok");
-    expect(await within(w.write("two"))).toBe("ok");
+    const N = "0123456789abcdef01234567";
+    const own = (k: string) => `\x1b]133;${k};roster=${N}\x07`;
+    let calls = 0;
+    const hosts = () => {
+      if (calls++ === 0) throw new Error("secret-ish");
+      return [];
+    };
+    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts, refuseFill: null }, N);
+    w.hookSent();
+    const ssh = async (to: string, before = "") => {
+      expect(await within(w.write(`${before}${own("A")}ops@esx-01:~$ ${own("B")}ssh ${to}`))).toBe("ok");
+      w.typed("\r");
+      expect(await within(w.write(`\r\n${own("C")}`))).toBe("ok");
+    };
+    await ssh("esx-02");
+    expect(w.hop()).toBeNull();
+    await ssh("esx-03", `\r\n${own("D;0")}`);
+    expect(w.hop()).toEqual({ to: "esx-03", known: false });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(warn.mock.calls)).not.toContain("secret");
     w.dispose();
   });
 
-  it("a throw in CommittedLines' OSC 133 handler skips that mark and is logged once", async () => {
+  it("a throw in a handler made safe with guarded (CommittedLines' and PromptWatch's) skips that sequence and is logged once", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.spyOn(CommittedLines.prototype as unknown as { mark(d: string): void }, "mark").mockImplementation(() => {
-      throw new Error("secret-ish");
-    });
-    const c = new CommittedLines({ cols: 80, rows: 24 });
-    expect(await within(c.write(`${MARK}one\r\n${MARK}`))).toBe("ok");
-    expect(await within(c.write("two\r\n"))).toBe("ok");
+    const t = term(40, 3);
+    t.parser.registerOscHandler(
+      133,
+      guarded(t, () => {
+        throw new Error("secret-ish");
+      }),
+    );
+    expect(await within(new Promise<void>((done) => t.write(`one${MARK}two${MARK}three`, done)))).toBe("ok");
+    expect(screen(t)).toContain("onetwothree");
     expect(warn).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(warn.mock.calls)).not.toContain("secret");
   });

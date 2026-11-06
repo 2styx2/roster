@@ -1,12 +1,14 @@
 //! The Plugin API's one source (`roster_core::plugin::api`, ticket 70, decision Q89) against what
 //! a Plugin really gets: for every set of grants, the `roster` module has exactly the functions
-//! and values api.rs declares for them, `roster.plugin` exactly the Plugin type's fields, and
+//! and values plugin/api declares for them, `roster.plugin` exactly the Plugin type's fields, and
 //! the committed reference, stubs and data are what the generator writes.
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::api::{self, Needs};
 use roster_core::plugin::{Limits, Permission, PluginHost, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -15,9 +17,9 @@ use std::sync::Arc;
 struct NoServe;
 
 impl Serve for NoServe {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
         match method {
-            "host.get" => Err("unknown host 'web-9' (code 2)".into()),
+            "host.get" => Err(CallError::rpc(2, "unknown host 'web-9'")),
             _ => Ok(json!({})),
         }
     }
@@ -81,12 +83,12 @@ fn walk(test: &str, permissions: &[&str]) -> (BTreeSet<String>, Vec<String>, Str
     (found, plugin, errors, parts.next().unwrap().to_string())
 }
 
-/// What api.rs says a Plugin granted `permissions` has.
+/// What plugin/api says a Plugin granted `permissions` has.
 fn declared(permissions: &[&str]) -> BTreeSet<String> {
     let serve = permissions.iter().any(|p| p.starts_with("serve:"));
     let network = permissions.iter().any(|p| p.starts_with("network:"));
     let mut out: BTreeSet<String> = api::VALUES.iter().map(|v| v.path.to_string()).collect();
-    for f in api::FUNCTIONS {
+    for f in api::functions() {
         let has = match f.needs {
             Needs::Nothing => true,
             Needs::Permission(p) => permissions.contains(&p),
@@ -129,7 +131,7 @@ fn the_runtime_exposes_exactly_what_the_api_declares_for_every_grant() {
         let missing: Vec<_> = want.difference(&found).collect();
         assert!(
             extra.is_empty() && missing.is_empty(),
-            "with {set:?}, the runtime has {extra:?} that crates/roster-core/src/plugin/api.rs doesn't declare, and lacks {missing:?} that it does: add or remove them in api.rs, then run  {}",
+            "with {set:?}, the runtime has {extra:?} that crates/roster-core/src/plugin/api/ doesn't declare, and lacks {missing:?} that it does: add or remove them in plugin/api, then run  {}",
             api::COMMAND
         );
     }
@@ -158,15 +160,11 @@ fn roster_plugin_has_the_plugin_types_fields_and_errors_reach_pcall_as_strings()
 #[test]
 fn the_committed_reference_stubs_and_data_are_what_the_generator_writes() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for (path, text) in [
-        (api::DOC_PATH, api::markdown()),
-        (api::STUBS_PATH, api::stubs()),
-        (api::JSON_PATH, api::json_text()),
-    ] {
+    for (path, text) in api::generated() {
         let committed = std::fs::read_to_string(root.join(path)).unwrap_or_default();
         assert!(
             committed == text,
-            "{path} is out of date with crates/roster-core/src/plugin/api.rs: run  {}",
+            "{path} is out of date with crates/roster-core/src/plugin/api/: run  {}",
             api::COMMAND
         );
     }
@@ -187,6 +185,7 @@ fn the_pinned_example_answers_an_unknown_host_with_a_notice() {
         "pinned",
         pin["run"]["handler"].as_u64().unwrap(),
         json!({ "args": "web-9", "words": ["web-9"] }),
+        By::User,
     );
     assert!(r.error.is_none(), "{:?}", r.error);
     assert_eq!(

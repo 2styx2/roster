@@ -167,7 +167,7 @@ const inner = `${A}ops@esx-02:~$ ${B}`;
 /** A watch whose Session got roster's hook line before anything was typed, fed `chunks`; Enter
  * is pressed before each chunk that starts the outer shell's C. */
 async function hopping(chunks: string[], fill = true): Promise<PromptWatch> {
-  const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, fill }, N);
+  const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, refuseFill: fill ? null : (what: string) => `${what} needs a newer roster` }, N);
   watches.push(w);
   w.hookSent();
   for (const c of chunks) {
@@ -273,7 +273,7 @@ describe("PromptWatch: a nested ssh's password prompt", () => {
   });
 
   it("doesn't take a line the Host drew by itself, with no Enter from you, for an ssh you ran", async () => {
-    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, fill: true }, N);
+    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, refuseFill: null }, N);
     watches.push(w);
     w.hookSent();
     for (const c of ran("ssh esx-02", SSH_PROMPT)) await w.write(c);
@@ -359,7 +359,7 @@ describe("PromptWatch: a Session whose marks aren't roster's own (fail closed)",
   });
 
   it("doesn't take roster's token from a hook line sent after you typed for proof", async () => {
-    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, fill: true }, N);
+    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, refuseFill: null }, N);
     watches.push(w);
     w.typed("ssh esx-02\r");
     w.hookSent(); // :integrate, typed after the ssh: it may have gone to esx-02's shell
@@ -387,7 +387,7 @@ describe("PromptWatch counts the Session's own marks as the core does (ticket 16
   // The same cases as the core's screen (screen.rs, own_marks_match_the_shared_cases): what xterm.js
   // takes as a mark, each run through both.
   it.each(ownMarks.cases)("$name", async ({ chunks, run }) => {
-    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, fill: true }, ownMarks.token);
+    const w = new PromptWatch({ cols: 80, rows: 24 }, "ops", { hosts: () => INVENTORY, refuseFill: null }, ownMarks.token);
     watches.push(w);
     for (const c of chunks) await w.write(c);
     expect(w.ownRun()).toBe(run);

@@ -5,6 +5,7 @@ import pytest
 from roster.claude import write_claude_files
 from roster.cli import main
 from roster.config import load_config
+from roster.errors import InventoryError
 from roster.resources import COMMON, TYPES, fields, wifi_uri
 
 SECRET = "guest;pass:word"
@@ -68,12 +69,12 @@ def test_fields_are_in_schema_order(write_config):
     ("{type: secret, auth: env:X, ssid: S}", r"unknown field ssid \(a secret has:"),
 ])
 def test_bad_resources_are_refused(write_config, entry, err):
-    with pytest.raises(SystemExit, match=err):
+    with pytest.raises(InventoryError, match=err):
         cfg_with(write_config, f"  r: {entry}\n")
 
 
 def test_resource_name_cant_shadow_a_host(write_config):
-    with pytest.raises(SystemExit, match="a host already has that name"):
+    with pytest.raises(InventoryError, match="a host already has that name"):
         cfg_with(write_config, "  box: {type: secret, auth: env:X}\n")
 
 

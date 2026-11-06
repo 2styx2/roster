@@ -35,19 +35,21 @@ fn an_error_object_comes_back_with_its_code_and_message() {
     );
 }
 
+/// The stub holds both requests and answers them in the reverse of the order they came in, so
+/// whichever is sent first, each answer comes back while the other caller waits.
 #[test]
 fn answers_in_another_order_reach_the_right_caller() {
     let client = std::sync::Arc::new(fake("reverse"));
     let c2 = std::sync::Arc::clone(&client);
     let first = std::thread::spawn(move || c2.call("host.get", json!({"name": "esxi-02"})));
-    std::thread::sleep(std::time::Duration::from_millis(200));
     let second = client.call("host.get", json!({"name": "scan-1"})).unwrap();
     assert_eq!(second["name"], "scan-1");
     assert_eq!(first.join().unwrap().unwrap()["name"], "esxi-02");
 }
 
 /// serve answers concurrently (API 20, decision Q112): four calls at once come back in another
-/// order, with notifications between them, and each still reaches its own caller.
+/// order (the stub's 3rd, 1st, 4th, 2nd of however they came in), with notifications between them,
+/// and each still reaches its own caller.
 #[test]
 fn concurrent_answers_out_of_order_with_notifications_between_reach_the_right_callers() {
     let (tx, rx) = std::sync::mpsc::channel();
@@ -65,9 +67,7 @@ fn concurrent_answers_out_of_order_with_notifications_between_reach_the_right_ca
         .map(|name| {
             let c = std::sync::Arc::clone(&client);
             let name = name.to_string();
-            let t = std::thread::spawn(move || c.call("host.get", json!({ "name": name })));
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            t
+            std::thread::spawn(move || c.call("host.get", json!({ "name": name })))
         })
         .collect();
     let answers: Vec<_> = calls.into_iter().map(|t| t.join().unwrap()).collect();

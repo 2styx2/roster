@@ -6,6 +6,7 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{DemoHost, Limits, Permission, Reply, Source};
 use serde_json::{Value, json};
 use std::sync::Mutex;
@@ -348,7 +349,7 @@ fn a_plugin_in_the_demo_lists_the_demos_sessions() {
         .and_then(|op| op["run"]["handler"].as_u64())
         .expect("its command's handler");
     let call = |host: &DemoHost| {
-        let r = host.call("teacher", handler, Value::Null);
+        let r = host.call("teacher", handler, Value::Null, By::User);
         ok(&r);
         notices(&r.ops)
     };
@@ -434,10 +435,10 @@ fn the_demos_mesh_status_answers_in_real_serves_shape_with_one_host_not_answerin
             "params.grouped and params.brief don't go together (code -32602)",
         ),
     ] {
-        assert_eq!(serve.call("mesh.status", params).unwrap_err(), words);
+        assert_eq!(serve.call("mesh.status", params).unwrap_err().to_string(), words);
     }
     // The rest of the Mesh is still not on the demo.
-    let refused = serve.call("mesh.apply", json!({})).unwrap_err();
+    let refused = serve.call("mesh.apply", json!({})).unwrap_err().to_string();
     assert_eq!(
         refused,
         "mesh.apply isn't on the demo Inventory: the tutorial's demo answers only hosts.list, host.get and mesh.status (code 3)"

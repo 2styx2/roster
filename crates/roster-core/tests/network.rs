@@ -4,7 +4,9 @@
 
 mod common;
 
-use roster_core::plugin::{Limits, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::plugin::By;
+use roster_core::plugin::{Limits, Load, Permission, PluginHost, Reply, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -15,8 +17,10 @@ use std::time::Duration;
 struct NoServe;
 
 impl Serve for NoServe {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
-        Err(format!("unknown method {method}"))
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
+        Err(CallError::Io {
+            message: format!("unknown method {method}"),
+        })
     }
 }
 
@@ -174,10 +178,6 @@ fn serve_one(mut stream: TcpStream, heads: &Mutex<Vec<String>>, gate: &Gate) {
             gate.wait();
             reply("200 OK", "", b"let go")
         }
-        "/slow" => {
-            std::thread::sleep(Duration::from_secs(5));
-            reply("200 OK", "", b"late")
-        }
         _ => reply("404 Not Found", "", b""),
     };
     let _ = stream.write_all(&out);
@@ -297,7 +297,10 @@ fn load_within(
     let grants: Vec<Permission> = permissions.iter().map(|p| Permission::parse(p).unwrap()).collect();
     let folder = plugin_dir(test, permissions, init);
     let (_, reply) = host
-        .load_with(&Source::Dir(folder.to_path_buf()), &grants, &config)
+        .load(
+            &Source::Dir(folder.to_path_buf()),
+            Load::new(&grants).config(config.clone()),
+        )
         .unwrap();
     (host, reply, rx, folder)
 }
@@ -845,7 +848,7 @@ fn the_plugin_isnt_blocked_while_a_request_runs() {
     let host = Arc::new(host);
     let h = Arc::clone(&host);
     let r = common::within_ceiling("the command's answer while a request runs", move || {
-        h.call("fetcher", handler, json!({}))
+        h.call("fetcher", handler, json!({}), By::User)
     });
     assert_eq!(r.ops[0]["text"], "pong");
     assert!(rx.try_recv().is_err(), "the request answered while the server held it");
@@ -868,7 +871,7 @@ fn the_plugin_answers_soon_while_a_request_runs() {
     server.wait_for("/held");
     let handler = reply.ops[0]["run"]["handler"].as_u64().unwrap();
     let started = std::time::Instant::now();
-    let r = host.call("fetcher", handler, json!({}));
+    let r = host.call("fetcher", handler, json!({}), By::User);
     assert_eq!(r.ops[0]["text"], "pong");
     assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
 }
@@ -885,7 +888,7 @@ fn at_most_four_requests_go_at_once() {
     let (_h, reply, _, _folder) = load(
         "in-flight",
         &[&server.site()],
-        json!({ "url": server.url("/slow") }),
+        json!({ "url": server.url("/held") }),
         init,
     );
     let texts: Vec<&str> = reply.ops.iter().map(|o| o["text"].as_str().unwrap()).collect();
@@ -900,11 +903,14 @@ fn an_answer_for_a_plugin_that_was_unloaded_goes_nowhere() {
     let (host, _, rx, _folder) = load(
         "unloaded",
         &[&server.site()],
-        json!({ "url": server.url("/slow") }),
+        json!({ "url": server.url("/held") }),
         init,
     );
+    server.wait_for("/held");
     assert!(host.unload("fetcher"));
-    assert!(rx.recv_timeout(Duration::from_secs(7)).is_err());
+    server.release();
+    // Nothing to wait for but its absence: the answer, which comes at once now, must not arrive.
+    assert!(rx.recv_timeout(Duration::from_secs(1)).is_err());
 }
 
 #[test]
@@ -1368,11 +1374,11 @@ fn load_proxied_with(
     let grants: Vec<Permission> = permissions.iter().map(|p| Permission::parse(p).unwrap()).collect();
     let folder = plugin_dir(test, permissions, FETCH);
     let (_, reply) = host
-        .load_with_proxy(
+        .load(
             &Source::Dir(folder.to_path_buf()),
-            &grants,
-            &json!({ "url": url, "req": req }),
-            proxy,
+            Load::new(&grants)
+                .config(json!({ "url": url, "req": req }))
+                .proxy(proxy),
         )
         .unwrap();
     (reply, rx, host, folder)
@@ -1464,7 +1470,7 @@ fn through_the_tunnel_the_body_the_cap_and_the_timeout_hold() {
         ),
         (
             "tunnel-slow",
-            "/slow",
+            "/held",
             json!({ "timeout": 0.5 }),
             "failed: no answer within 0.5 s",
         ),
@@ -1852,11 +1858,9 @@ fn load_on_lock(test: &str, host: &PluginHost, permissions: &[&str], url: &str, 
     let folder = plugin_dir(test, permissions, init);
     let proxy = proxy.map(|p| roster_core::plugin::network::Proxy::parse(p).unwrap());
     let (_, reply) = host
-        .load_with_proxy(
+        .load(
             &Source::Dir(folder.to_path_buf()),
-            &grants,
-            &json!({ "url": url }),
-            proxy,
+            Load::new(&grants).config(json!({ "url": url })).proxy(proxy),
         )
         .unwrap();
     assert!(reply.error.is_none(), "{:?}", reply.error);
@@ -1927,9 +1931,9 @@ fn removing_a_plugin_forgets_its_counts() {
 fn a_request_stopped_by_an_unload_counts_as_one_with_no_answer() {
     let server = Server::start();
     let (host, _rx) = listening();
-    let _f = load_on_lock("aborted", &host, &[&server.site()], &server.url("/slow"), None);
+    let _f = load_on_lock("aborted", &host, &[&server.site()], &server.url("/held"), None);
     lock(&host);
-    std::thread::sleep(Duration::from_millis(300));
+    server.wait_for("/held");
     host.unload("fetcher");
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while host.requests_by_site("fetcher").first().is_none_or(|c| c.failed == 0) && std::time::Instant::now() < deadline

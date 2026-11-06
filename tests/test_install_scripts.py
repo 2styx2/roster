@@ -205,7 +205,17 @@ STATE_RE = re.compile(r'user_config_dir\(\)\s*/\s*(\([^)]*\)|f?"[^"]*")(\s*/)?')
 
 def roster_state_files() -> dict[str, bool]:
     """Each name roster writes in ~/.config/roster (an Inventory's named `lab`): is it a folder?"""
+    from roster import context
+
     out: dict[str, bool] = {}
+    # the tables roster names its own files in (context.FILES per Inventory, BOX_FILES once per Box)
+    for f in context.FILES.values():
+        if f.folder is context.user_config_dir:
+            out[f.unnamed] = False
+            out[f.named.format("lab")] = False
+    for name in context.BOX_FILES.values():
+        out[name] = name in ("vault-seen", "vault-sync")
+    # and any path still written as user_config_dir() / "NAME" outside them
     for src in (ROOT / "src/roster").rglob("*.py"):
         for m in STATE_RE.finditer(src.read_text(encoding="utf-8")):
             for lit in re.findall(r'f?"([^"]*)"', m.group(1)):

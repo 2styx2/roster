@@ -201,7 +201,7 @@ def render(parser, reference):
 
 
 def main(argv=None):
-    from .cli import build_parser
+    from .cliparser import build_parser
 
     p = argparse.ArgumentParser(prog="python -m roster.manpage", description="Regenerate src/roster/roster.1.")
     p.add_argument("--check", action="store_true", help="exit 1 if the committed page is out of date")

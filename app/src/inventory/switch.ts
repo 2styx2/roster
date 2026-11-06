@@ -3,10 +3,10 @@
 // `inventories.list` and what the switch would affect; App does the switch on confirm (lock the
 // vault, `inventories.use`, start serve again, whose start asks roster again which file to use).
 // The app never reads roster.yml or inventories.json itself (ADR 0001): serve says it all.
-import type { CommandDef } from "../commands/table";
 import type { Inventories } from "../backend/types";
 import { BUILTIN } from "../registry";
 import { countOf } from "../ui/format";
+import type { InventoryCommand } from "./commands";
 
 /** What `:inventory NAME` does now: say why not, or ask. */
 export type SwitchPlan =
@@ -84,7 +84,7 @@ export function afterSwitch(list: Inventories, to: string): string {
   );
 }
 
-export const inventoryCommand: CommandDef = {
+export const inventoryCommand: InventoryCommand = {
   id: "inventory",
   source: BUILTIN,
   area: "Inventory",

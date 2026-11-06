@@ -143,23 +143,15 @@ def isolated(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.chdir(work)
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
-    monkeypatch.setattr(providers, "MANUAL_UNLOCK", False)         # an in-process serve test sets it
-    from roster.providers import bitwarden
-    monkeypatch.setitem(bitwarden._session, "key", None)           # bw's session key, held outside os.environ
-    monkeypatch.setitem(bitwarden._offered, "done", False)         # T241: "keep it unlocked?" asked once a run
-    monkeypatch.setattr(providers, "JSON_OUTPUT", False)           # a --json command sets it
-    from roster import common
-    monkeypatch.setattr(common, "_inventory", None)                # the named Inventory a run picked (ticket 115)
-    monkeypatch.setattr(common, "_config_path", None)              # and its roster.yml
+    providers.reset()                   # each test is a new run: no secret, session or mode of the last one's
+    from roster import context
+    context.use(None)                   # the Inventory a run picked
     if WINDOWS:                         # files the tests write read as on Linux: "\n", not CRLF
         write_text = Path.write_text
         monkeypatch.setattr(Path, "write_text", lambda self, data, encoding=None, errors=None, newline="\n":
                             write_text(self, data, encoding=encoding, errors=errors, newline=newline))
-    providers._secrets.clear()
-    providers.PROVIDER_STATE.clear()
-    providers.PROVIDER_SETTINGS.clear()
-    providers.BOX_SETTINGS.clear()
     yield {"home": home, "work": work}
+    providers.reset()
     providers.PROVIDERS.clear()
     providers.PROVIDERS.update(saved_providers)
     os.environ.clear()

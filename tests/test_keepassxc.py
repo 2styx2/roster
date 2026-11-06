@@ -60,12 +60,11 @@ def test_a_wrong_master_password_says_so_without_echoing_it(kdbx, tmp_path):
 
 
 def test_a_locked_database_is_never_opened_with_a_guess(kdbx, tmp_path, monkeypatch):
-    monkeypatch.setattr(providers, "MANUAL_UNLOCK", True)              # as under `roster serve`
     assert providers.vault_status("kp") == "locked"
-    with pytest.raises(providers.VaultLocked, match="KeePassXC database is locked"):
+    with pytest.raises(providers.VaultLocked, match="no terminal"):   # the CLI with no terminal: 14, not 35 (#437)
         get_secret("kp:esx ssh", "g")
-    monkeypatch.setattr(providers, "MANUAL_UNLOCK", False)             # the CLI with no terminal to ask in
-    with pytest.raises(providers.VaultLocked, match="no terminal"):   # 14, not 35 (#437)
+    providers.only_unlock_unlocks()                                     # as under `roster serve`
+    with pytest.raises(providers.VaultLocked, match="KeePassXC database is locked"):
         get_secret("kp:esx ssh", "g")
     assert argv_log(tmp_path) == ""                                     # keepassxc-cli never ran
 
@@ -76,7 +75,7 @@ def test_lock_forgets_the_master_password_and_every_value(kdbx):
     assert providers.vault_status("kp") == "unlocked"
     providers.lock("kp")
     assert providers.vault_status("kp") == "locked"
-    providers.MANUAL_UNLOCK = True
+    providers.only_unlock_unlocks()
     with pytest.raises(providers.VaultLocked):
         get_secret("kp:esx ssh", "g")
 
@@ -104,12 +103,11 @@ def test_a_key_file_goes_with_the_password(fakes, isolated, tmp_path):
     setup_providers({"path": isolated["work"] / "roster.yml", "providers": {"kp": {"database": str(db)}}})
     with pytest.raises(providers.WrongPassword, match="wrong master password"):   # the key file is missing
         providers.unlock("kp", MASTER)
-    setup_providers({"path": isolated["work"] / "roster.yml",
+    setup_providers({"path": tmp_path / "roster.yml",                 # k.kdbx: relative to roster.yml's folder
                      "providers": {"kp": {"database": "k.kdbx", "key_file": str(tmp_path / "nope.key")}}})
-    providers.PROVIDER_SETTINGS["kp"]["_base"] = tmp_path            # relative to roster.yml's folder
     with pytest.raises(providers.NotLoggedIn, match="key file"):
         providers.unlock("kp", MASTER)
-    providers.PROVIDER_SETTINGS["kp"]["key_file"] = str(key)
+    setup_providers({"path": tmp_path / "roster.yml", "providers": {"kp": {"database": "k.kdbx", "key_file": str(key)}}})
     providers.unlock("kp", MASTER)
     assert get_secret("kp:esx ssh", "g") == "pw-esx"
 
@@ -145,8 +143,8 @@ def test_creates_a_login_entry_with_the_passwords_off_the_command_line(kdbx, tmp
     assert NEW_PW not in log and MASTER not in log
 
 
-def test_creates_in_the_group_set_for_it(kdbx):
-    providers.PROVIDER_SETTINGS["kp"]["group"] = "Lab"
+def test_creates_in_the_group_set_for_it(kdbx, isolated):
+    setup_providers({"path": isolated["work"] / "roster.yml", "providers": {"kp": {"database": str(kdbx), "group": "Lab"}}})
     providers.unlock("kp", MASTER)
     made = providers.create_item("kp", name="box ssh", password=NEW_PW)
     assert made == {"id": "Lab/box ssh", "name": "box ssh", "target": {"id": "group:Lab", "kind": "group", "label": "Lab"}}

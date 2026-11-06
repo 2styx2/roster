@@ -7,12 +7,13 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_FINGERPRINT, FAKE_HOST_PASSWORD, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeBackend } from "./backend/fake";
-import { QUICK_CONNECT_API_VERSION } from "./backend/types";
+
 import { StubTerminal } from "./terminal/StubTerminal";
+import { sinceOf } from "./backend/capabilities";
 
 const hosts = makeHosts(12);
 
-function backendAt(apiVersion = QUICK_CONNECT_API_VERSION) {
+function backendAt(apiVersion = sinceOf("quickConnect")) {
   return fakeBackend({ hosts, apiVersion });
 }
 
@@ -72,7 +73,7 @@ describe("Quick Connect", () => {
   });
 
   it("refuses a key that differs from the recorded one, without Host-only fixes", async () => {
-    const user = await ready(fakeBackend({ hosts, apiVersion: QUICK_CONNECT_API_VERSION, scanKeys: { "10.0.0.43": { recorded: "changed" } } }));
+    const user = await ready(fakeBackend({ hosts, apiVersion: sinceOf("quickConnect"), scanKeys: { "10.0.0.43": { recorded: "changed" } } }));
     await user.keyboard(`{Control>} {/Control}:connect admin@10.0.0.43{Enter}`);
     const p = within(pane("admin@10.0.0.43"));
     expect(await p.findByRole("heading", { name: /couldn't open a session/i })).toBeInTheDocument();
@@ -82,7 +83,7 @@ describe("Quick Connect", () => {
   });
 
   it("isn't offered by a roster older than API 12", async () => {
-    const user = await ready(backendAt(QUICK_CONNECT_API_VERSION - 1));
+    const user = await ready(backendAt(sinceOf("quickConnect") - 1));
     expect(within(screen.getByRole("toolbar", { name: "Commands" })).queryByRole("button", { name: "Quick Connect" })).toBeNull();
     await user.keyboard(`{Control>} {/Control}:connect root@10.0.0.5{Enter}`);
     expect(await screen.findByText(/Quick Connect needs a newer roster \(API version 12/)).toBeInTheDocument();

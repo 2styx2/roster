@@ -4,7 +4,8 @@
 // is typed. Tutorials are a Registry (ADR 0006), so a Plugin ships its own (`roster.tutor.set`).
 // Progress is kept in the State (`tutor`), so `:tutor` resumes at the first lesson not finished.
 import { code, h, keys, link, p, text, type Block, type Inline } from "../help/doc";
-import { keysForLine, type HelpContext, type HelpPage } from "../help/pages";
+import type { HelpContext, HelpPage } from "../help/pages";
+import { keysFor } from "../keymap";
 import { BUILTIN, Registry, type Entry } from "../registry";
 
 /** What the app tells a running tutorial: an event's name and its fields. */
@@ -242,7 +243,7 @@ export function syncTutorPages(tutorials: TutorRegistry, help: Registry<HelpPage
 
 /** The keys bound to `line` after the Leader now, or the command if none is. */
 function keyOr(ctx: HelpContext, line: string): Inline[] {
-  const bound = keysForLine(ctx.keymap, line);
+  const bound = keysFor(ctx.keymap, line, { global: false });
   return bound.length ? [keys(bound[0] as string)] : [code(`:${line}`)];
 }
 

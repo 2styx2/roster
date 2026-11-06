@@ -7,7 +7,7 @@ import pytest
 from conftest import WINDOWS, posix_shell
 
 from roster import providers
-from roster.common import user_config_dir
+from roster.context import user_config_dir
 from roster.providers import Ctx, SecretError, bitwarden, get_secret, setup_providers
 
 
@@ -128,7 +128,7 @@ def test_bitwarden_errors(fakes, monkeypatch):
     monkeypatch.setenv("BW_PASSWORD", "wrong")
     with pytest.raises(SecretError, match="unlock failed"):
         get_secret("bw:Orion servers", "g")
-    providers.PROVIDER_STATE.clear()
+    providers.reset()                  # a new run
     monkeypatch.setenv("BW_PASSWORD", "hunter2")
     with pytest.raises(SecretError, match="no Bitwarden item matches 'Nope'"):
         get_secret("bw:Nope", "g")
@@ -220,13 +220,16 @@ def test_inherited_bitwarden_session_is_moved_out_of_the_env(fakes, monkeypatch)
     assert "BW_SESSION" not in os.environ and bitwarden.session_key() == "fake-session-key"
 
 
-def test_onepassword_sign_in_reaches_op_only_and_lock_forgets_it(isolated, fakes):
+def test_onepassword_sign_in_reaches_op_only_and_lock_forgets_it(isolated, fakes, monkeypatch, tmp_path):
     setup_providers(cfg_with(isolated))
     assert get_secret("op:Network gear", "g") == "pw-netops"          # signed in through `op signin`
     assert not any(v.startswith("OP_SESSION_") for v in os.environ)
     assert not any(v.startswith("OP_SESSION_") for v in _child_env("op"))
     providers.lock("op")
-    assert "env" not in providers.PROVIDER_STATE.get("op", {})
+    log = tmp_path / "op.log"
+    monkeypatch.setenv("FAKE_LOG", str(log))
+    assert get_secret("op:Network gear", "g") == "pw-netops"
+    assert "op signin\n" in log.read_text()                           # the sign-in was forgotten
 
 
 def test_an_inherited_onepassword_sign_in_is_moved_out_of_the_env(isolated, fakes, monkeypatch):
@@ -237,15 +240,19 @@ def test_an_inherited_onepassword_sign_in_is_moved_out_of_the_env(isolated, fake
     assert not any(v.startswith("OP_SESSION_") for v in _child_env("op"))
 
 
-def test_serve_moves_an_inherited_onepassword_sign_in_out_and_lock_forgets_it(isolated, fakes, monkeypatch):
-    from roster import serve as rpc
+def test_serve_moves_an_inherited_onepassword_sign_in_out_and_lock_forgets_it(isolated, fakes, monkeypatch,
+                                                                                tmp_path):
     monkeypatch.setenv("OP_SESSION_test", "tok")
-    rpc.only_vault_unlock_unlocks()
+    providers.only_unlock_unlocks()
     assert "OP_SESSION_test" not in os.environ
-    env = providers.PROVIDER_STATE["op"]["env"]                       # Windows upper-cases env names
-    assert {k.upper(): v for k, v in env.items()} == {"OP_SESSION_TEST": "tok"}
+    log = tmp_path / "op.log"
+    monkeypatch.setenv("FAKE_LOG", str(log))
+    setup_providers(cfg_with(isolated))
+    assert get_secret("op:Network gear", "g") == "pw-netops"
+    assert "op signin" not in log.read_text()                          # op got the inherited sign-in
     providers.lock("op")
-    assert "op" not in providers.PROVIDER_STATE
+    get_secret("op:Network gear", "g")
+    assert "op signin" in log.read_text()                              # the lock forgot it
 
 
 def test_onepassword_items_and_references(isolated, fakes):

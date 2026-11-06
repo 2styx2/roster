@@ -6,7 +6,11 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 ## Unreleased
 
-### New
+### Breaking
+
+**Plugin API 7**
+
+- **roster serve's error is an error object with its code** (decision Q211): what `pcall(roster.serve.call, …)` and `roster.inventory`'s functions raise, and the `why` that `roster.serve.request`'s and `roster.inventory.request`'s `done` get, is a [`ServeError`](plugin-api.md#serveerror) when serve answered with an error: `e.code` (serve's number, `-32601` for a method this roster serve doesn't have) and `e.message` (its words). Switch on `e.code` instead of matching the text. It still reads as the old text, `roster.serve.call METHOD: MESSAGE (code N)`, through `tostring(e)`, `..`, `#` and string methods (`e:find`, `e:match`, `e:sub`), so most Plugins keep working as they are. What changes: `type(e)` is `"table"`, and a function that wants a string (`roster.notify(e)`) needs `tostring(e)` or `e.message`. The first-party Plugins (Discover, the Mesh controls, Topology) and the examples are written for api 7. [Asking roster serve](plugins.md#asking-roster-serve).
 
 **CLI**
 
@@ -29,6 +33,7 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **App**
 
+- **A Plugin action at the start never waits for roster to learn the app's own commands**: the app sends them with every load, call and event instead of once ahead (and retrying when that failed), so a Folders drop right after the start runs at once, and the "couldn't tell roster its own commands; trying again" message is gone.
 - **The app's fixes say `roster setup --host HOST`** (#461): the Fix for a refused key, an unknown host key or a changed one said `roster setup --only HOST`, which also sets up every Host whose group, type or product is called HOST. With a roster at API 29 or newer (v0.6.0 on) the Fix and its Copy button now say `--host HOST`, that Host alone; an older roster, which has no `--host`, still gets `--only`. The Mesh's details for a Link with no host key now point at the `roster setup` its Why names (serve says the flag its own roster takes).
 
 ### Security
@@ -50,6 +55,8 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 **CLI**
 
+- **`roster add --from-vault --json` prints JSON alone**: the vault sync's line ("synced bw (the previous sync was ...)") came first on stdout, so a script couldn't read the list; it goes to stderr now, so stdout is the one JSON document.
+- **No paramiko traceback when a Host never sends its banner**: a check that gave up on a Host that took the connection but never answered (a cancelled `host.check`, a frozen Host) could print paramiko's own `Exception (client): Error reading SSH protocol banner` traceback on stderr, in the CLI's output or serve's log.
 - **`uninstall.sh` removes roster's newer files in `~/.config/roster`**: the run lock (`run.lock`), the key's age and name (`key-created`, `key-name`), a finished key rotation's record and the vault snapshots (`vault-sync/`, `vault-seen/`) were left there, so `uninstall.sh --yes` kept the folder and asked about them as if they were yours. They go with the rest of roster's state now; a key rotation's record stays only while its `.old` or `.new` key is still in `~/.ssh`.
 - **1Password items list their URLs primary first** (#500): the list of vault items (`roster add --from-vault` with no NAME) kept 1Password's order, while `--from-vault NAME` took the primary URL, so a listed item's address could differ from the one it filled in. Both use the primary URL first now.
 - **`roster setup` no longer counts a failed Host as ready too** (#476): one Host that needed its key while the vault was locked said `1 key hosts ready, 0 password-only hosts, 1 failed`; it says `0 … ready … 1 failed` now.

@@ -7,15 +7,19 @@
 
 mod common;
 
+use roster_core::plugin::By;
 use roster_core::plugin::{Event, Limits, Permission, PluginHost, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
 struct NoServe;
 
 impl Serve for NoServe {
-    fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
-        Err(format!("unknown method {method}"))
+    fn call(&self, method: &str, _params: Value) -> Result<Value, CallError> {
+        Err(CallError::Io {
+            message: format!("unknown method {method}"),
+        })
     }
 }
 
@@ -105,7 +109,7 @@ fn a_confirmation_is_the_users_call_and_its_answer_runs_the_plugins_function() {
             .contains("only while the user runs")
     );
 
-    let r = host.call("mesh", command(&reply.ops, "cut"), ARGS());
+    let r = host.call("mesh", command(&reply.ops, "cut"), ARGS(), By::User);
     assert!(r.error.is_none(), "{:?}", r.error);
     let op = &r.ops[0];
     assert_eq!(op["op"], "confirm");
@@ -114,20 +118,21 @@ fn a_confirmation_is_the_users_call_and_its_answer_runs_the_plugins_function() {
     assert_eq!(op["spec"]["typed"], "esx-02");
     let yes = handler(&op["spec"]["run"]);
     let no = handler(&op["spec"]["cancel"]);
-    assert_eq!(host.call("mesh", yes, json!({})).result, "cut");
-    assert_eq!(host.call("mesh", no, json!({})).result, "kept");
+    assert_eq!(host.call("mesh", yes, json!({}), By::User).result, "cut");
+    assert_eq!(host.call("mesh", no, json!({}), By::User).result, "kept");
 
     // Asking again replaces the question: the old answer's functions are gone.
-    let r = host.call("mesh", command(&reply.ops, "cut"), ARGS());
+    let r = host.call("mesh", command(&reply.ops, "cut"), ARGS(), By::User);
     assert!(
-        host.call("mesh", yes, json!({}))
+        host.call("mesh", yes, json!({}), By::User)
             .error
             .unwrap()
             .message
             .contains("gone")
     );
     assert_eq!(
-        host.call("mesh", handler(&r.ops[0]["spec"]["run"]), json!({})).result,
+        host.call("mesh", handler(&r.ops[0]["spec"]["run"]), json!({}), By::User)
+            .result,
         "cut"
     );
 }
@@ -141,7 +146,7 @@ fn a_confirmation_needs_a_run_function() {
     let host = host();
     let folder = plugin_dir("confirm-bad", "", init);
     let (_, reply) = host.load(&Source::Dir(folder.to_path_buf()), &[]).unwrap();
-    let r = host.call("mesh", command(&reply.ops, "bad"), ARGS());
+    let r = host.call("mesh", command(&reply.ops, "bad"), ARGS(), By::User);
     let message = r.error.unwrap().message;
     assert!(
         message.contains("roster.confirm: `run` must be a function"),
@@ -173,7 +178,7 @@ fn progress_is_set_any_time_and_cancel_is_a_function() {
     );
     assert!(status_text(&reply.ops, "e").contains("isn't a name like"));
     let cancel = handler(&reply.ops[0]["spec"]["cancel"]);
-    assert_eq!(host.call("mesh", cancel, json!({})).result, "stopping");
+    assert_eq!(host.call("mesh", cancel, json!({}), By::User).result, "stopping");
 }
 
 #[test]
@@ -196,7 +201,7 @@ fn a_toolbar_control_runs_a_function_or_a_command_line() {
         json!({ "op": "remove", "kind": "toolbar", "id": "topology" })
     );
     let run = handler(&reply.ops[0]["spec"]["run"]);
-    assert_eq!(host.call("mesh", run, json!({})).result, "scanning");
+    assert_eq!(host.call("mesh", run, json!({}), By::User).result, "scanning");
 }
 
 #[test]
@@ -214,11 +219,11 @@ fn section_and_float_actions_are_functions() {
     let (_, reply) = host.load(&Source::Dir(folder.to_path_buf()), &[]).unwrap();
     assert!(reply.error.is_none(), "{:?}", reply.error);
     let dismiss = handler(&reply.ops[0]["spec"]["actions"][0]["run"]);
-    assert_eq!(host.call("mesh", dismiss, json!({})).result, "dismissed");
+    assert_eq!(host.call("mesh", dismiss, json!({}), By::User).result, "dismissed");
     let float = &reply.ops[1]["spec"];
     assert_eq!(float["links"][0]["url"], "https://wiki.example.com/disk-full");
     assert_eq!(
-        host.call("mesh", handler(&float["actions"][0]["run"]), json!({}))
+        host.call("mesh", handler(&float["actions"][0]["run"]), json!({}), By::User)
             .result,
         "went"
     );
@@ -251,7 +256,7 @@ fn roster_cmd_runs_only_in_a_users_call_and_only_what_its_permissions_allow() {
     let (_, reply) = host.load(&Source::Dir(folder.to_path_buf()), &[]).unwrap();
     assert!(reply.error.is_none(), "{:?}", reply.error);
     assert!(status_text(&reply.ops, "load").contains("roster.cmd: only while the user runs"));
-    let r = host.call("mesh", command(&reply.ops, "try"), ARGS());
+    let r = host.call("mesh", command(&reply.ops, "try"), ARGS(), By::User);
     assert!(r.error.is_none(), "{:?}", r.error);
     let out = r.result.as_str().unwrap();
     let line = |l: &str| {
@@ -310,7 +315,7 @@ fn roster_cmd_with_sessions_open_may_open_a_host() {
     let (_, reply) = host
         .load(&Source::Dir(folder.to_path_buf()), &[Permission::SessionsOpen])
         .unwrap();
-    let r = host.call("mesh", command(&reply.ops, "try"), ARGS());
+    let r = host.call("mesh", command(&reply.ops, "try"), ARGS(), By::User);
     let out = r.result.as_str().unwrap();
     assert!(out.contains("open esx-02 => ok"), "{out}");
     assert!(out.contains("connect esx-02 => ok"), "{out}");
@@ -319,7 +324,7 @@ fn roster_cmd_with_sessions_open_may_open_a_host() {
 /// A Plugin that names its commands after roster's own can't run them with `roster.cmd`: the app
 /// tells the core its built-in commands (`PluginHost::set_builtins`), and a word is the Plugin's
 /// own only if no built-in has it (issue #184). Until the app has said, none of its commands runs
-/// (the ones that change trust or writes, api.rs's ROSTER_ONLY, are refused as ever), and a list
+/// (the ones that change trust or writes, plugin/api's ROSTER_ONLY, are refused as ever), and a list
 /// reaches a Plugin already running.
 #[test]
 fn a_plugins_command_named_after_one_of_rosters_isnt_its_own() {
@@ -342,6 +347,7 @@ fn a_plugins_command_named_after_one_of_rosters_isnt_its_own() {
             "mesh",
             command(&reply.ops, "go"),
             json!({ "args": name, "words": [name] }),
+            By::User,
         );
         r.result.as_str().unwrap_or_default().to_string()
     };
@@ -376,7 +382,7 @@ fn a_removed_command_is_no_longer_the_plugins_own() {
     let host = host();
     let folder = plugin_dir("cmd-removed", "", init);
     let (_, reply) = host.load(&Source::Dir(folder.to_path_buf()), &[]).unwrap();
-    let r = host.call("mesh", command(&reply.ops, "go"), ARGS());
+    let r = host.call("mesh", command(&reply.ops, "go"), ARGS(), By::User);
     assert!(r.error.unwrap().message.contains("isn't one a Plugin may run"));
 }
 
@@ -399,12 +405,12 @@ fn going_to_a_session_and_a_line_is_the_users_call() {
         "{load}"
     );
     assert!(load.ends_with(" nil"), "open still needs sessions.open: {load}");
-    let r = host.call("mesh", command(&reply.ops, "go"), ARGS());
+    let r = host.call("mesh", command(&reply.ops, "go"), ARGS(), By::User);
     assert_eq!(
         r.ops,
         [json!({ "op": "session_show", "session": 3, "line": "ERROR disk full" })]
     );
-    let r = host.call("mesh", command(&reply.ops, "bare"), ARGS());
+    let r = host.call("mesh", command(&reply.ops, "bare"), ARGS(), By::User);
     assert_eq!(r.ops, [json!({ "op": "session_show", "session": 3, "line": null })]);
 }
 
@@ -435,16 +441,20 @@ fn a_view_update_may_change_columns_sort_and_actions() {
     assert_eq!(update["sort"], "state");
     assert_eq!(update["columns"][1]["id"], "state");
     let check = handler(&update["actions"][0]["run"]);
-    assert_eq!(host.call("mesh", check, json!({ "row": "a" })).result, "check a");
+    assert_eq!(
+        host.call("mesh", check, json!({ "row": "a" }), By::User).result,
+        "check a"
+    );
     // The table's `open` stays the set's.
     assert_eq!(
-        host.call("mesh", handler(&set["open"]), json!({ "row": "a" })).result,
+        host.call("mesh", handler(&set["open"]), json!({ "row": "a" }), By::User)
+            .result,
         "open a"
     );
     // The set's actions were replaced, so their functions are gone at once (ticket 85), not
     // only when the view is set again or removed.
     let cut = handler(&set["actions"][0]["run"]);
-    let r = host.call("mesh", cut, json!({ "row": "a" }));
+    let r = host.call("mesh", cut, json!({ "row": "a" }), By::User);
     assert!(r.error.is_some_and(|e| e.message.contains("gone")), "{:?}", r.result);
     // A function anywhere else is still an error.
     assert!(status_text(&reply.ops, "e").contains("functions go in roster.views.set"));
@@ -465,20 +475,20 @@ fn a_new_update_or_removing_the_view_drops_the_actions_an_update_gave() {
     let folder = plugin_dir("update-drop", "", init);
     let (_, reply) = host.load(&Source::Dir(folder.to_path_buf()), &[]).unwrap();
     let check = handler(&reply.ops[1]["changes"]["actions"][0]["run"]);
-    assert_eq!(host.call("mesh", check, json!({})).result, "check");
+    assert_eq!(host.call("mesh", check, json!({}), By::User).result, "check");
     // A second update's actions replace the first's.
-    let r = host.call("mesh", command(&reply.ops, "again"), ARGS());
+    let r = host.call("mesh", command(&reply.ops, "again"), ARGS(), By::User);
     let ping = handler(&r.ops[0]["changes"]["actions"][0]["run"]);
     assert!(
-        host.call("mesh", check, json!({}))
+        host.call("mesh", check, json!({}), By::User)
             .error
             .unwrap()
             .message
             .contains("gone")
     );
-    host.call("mesh", command(&reply.ops, "remove"), ARGS());
+    host.call("mesh", command(&reply.ops, "remove"), ARGS(), By::User);
     assert!(
-        host.call("mesh", ping, json!({}))
+        host.call("mesh", ping, json!({}), By::User)
             .error
             .unwrap()
             .message

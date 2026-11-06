@@ -8,9 +8,10 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "./backend/fake";
-import { BackendCallError, BackendStartError, INVENTORIES_API_VERSION, type Backend } from "./backend/types";
+import { BackendCallError, BackendStartError, type Backend } from "./backend/types";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { sinceOf } from "./backend/capabilities";
 
 const LEADER = "{Control>} {/Control}";
 const WORK = "/home/you/work-infra/roster.yml";
@@ -24,7 +25,7 @@ const home = {
 
 const scenario = (more: Partial<FakeScenario> = {}): FakeScenario => ({
   hosts: work,
-  apiVersion: INVENTORIES_API_VERSION,
+  apiVersion: sinceOf("inventories"),
   inventories: {
     named: [
       { name: "work", path: WORK },
@@ -106,7 +107,7 @@ describe("the active Inventory", () => {
     await ready(scenario({ inventories: { named: [], active: null } }));
     expect(statusbar()).not.toHaveTextContent(/Inventory/);
     cleanup();
-    await ready(scenario({ apiVersion: INVENTORIES_API_VERSION - 1 }));
+    await ready(scenario({ apiVersion: sinceOf("inventories") - 1 }));
     expect(statusbar()).not.toHaveTextContent(/Inventory/);
   });
 });

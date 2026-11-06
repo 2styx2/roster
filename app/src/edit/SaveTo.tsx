@@ -5,6 +5,7 @@
 // vault" after a Session's own login (tickets 15, 16).
 import { useEffect, useState } from "react";
 import type { Backend, SaveTarget, SaveTargets } from "../backend/types";
+import { errorText } from "../ui/format";
 
 type Targets = { at: "loading" } | { at: "done"; found: SaveTargets } | { at: "failed"; message: string };
 
@@ -27,7 +28,7 @@ export function useSaveTo(backend: Backend, enabled: boolean, version: number): 
     let current = true;
     backend.saveTargets().then(
       (found) => current && setTargets({ at: "done", found }),
-      (e: unknown) => current && setTargets({ at: "failed", message: e instanceof Error ? e.message : String(e) }),
+      (e: unknown) => current && setTargets({ at: "failed", message: errorText(e) }),
     );
     return () => {
       current = false;

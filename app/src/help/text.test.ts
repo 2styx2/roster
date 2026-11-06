@@ -7,7 +7,7 @@ import { defaultOptions, keymapOf } from "../keymap";
 import { builtinRegistries } from "../registries";
 import type { FinderContext } from "../finder/sources";
 import { helpCommand, helpgrepFinder, HelpView } from "./command";
-import { helpContext } from "./pages";
+import { helpContext, pageBody } from "./pages";
 import { HelpText } from "./text";
 
 /** A loader the test answers by hand. */
@@ -28,7 +28,7 @@ function deferred() {
 function viewWith(text: HelpText): HelpView {
   const r = builtinRegistries();
   const v = new HelpView(text);
-  const ctx = helpContext(r, { keymap: keymapOf(r.keymap.list()), options: defaultOptions, config: defaultConfig, configPath: null, state: {}, activeTheme: null });
+  const ctx = helpContext(r, { keymap: keymapOf(r.keymap.list()), options: defaultOptions, config: defaultConfig, configPath: null, state: {}, activeTheme: null, text });
   v.setContext(() => ctx);
   return v;
 }
@@ -36,6 +36,17 @@ function viewWith(text: HelpText): HelpView {
 const flush = () => vi.advanceTimersByTimeAsync(0);
 
 describe("HelpText", () => {
+  it("draws a guide from the text it has now, after a restart too", async () => {
+    const text = new HelpText(() => Promise.resolve({ config: "# Your init.lua\n\nThe first text." }));
+    const ctx = viewWith(text).context()!;
+    await text.load();
+    expect(JSON.stringify(pageBody(ctx, "config"))).toContain("The first text.");
+    text.restart(() => Promise.resolve({ config: "# Your init.lua\n\nThe second text." }));
+    expect(pageBody(ctx, "config")).toEqual([]);
+    await text.load();
+    expect(JSON.stringify(pageBody(ctx, "config"))).toContain("The second text.");
+  });
+
   it("loads once, however many ask, and tells its listeners", async () => {
     const d = deferred();
     const text = new HelpText(d.loader);

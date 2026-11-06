@@ -31,10 +31,13 @@ The first argument picks a behaviour:
   hang               never answers host.get; a `$/cancel` (ticket 108) is echoed back as the notification
                      test.cancelled {params, had_id} so a test can see the client sent it
   checks             speaks API 21: host.check {background: true} starts a check job (counted in inventory.info's
-                     `checks`), host.check_job says running twice, then done with the waiting form's result
+                     `checks`); the first host.check_job says running, then the job ends (its job.progress
+                     notification goes out after that answer), and host.check_job says done with the waiting
+                     form's result
   stuck-check HOW    as checks, but the check never ends; host.check {background: true} says `joined: true` when HOW
                      is `joined` (serve API 22), and each jobs.stop is counted in inventory.info's `stops`; asking
                      again for the same Host joins its check, and a stopped check's host.check_job says `stopped`
+                     (its job.progress notification goes out after jobs.stop's answer)
   slow-exit FILE     once stdin closes, takes 1.5 s to wind down (as serve stopping a Mesh job and recording
                      it), then writes FILE and exits on its own
 Arguments after it are echoed back by inventory.info as `argv`, so tests can see what was passed.
@@ -77,6 +80,7 @@ STOPPED = {"host": "esxi-02", "ok": False, "steps": [
     {"step": "inventory", "status": "ok", "message": "root@10.0.0.10"},
     {"step": "ssh-config", "status": "skipped", "message": "the check was stopped"}]}
 checks, polls, stops = [], [], []
+pushes = []             # notifications to send once the answer that queued them is out
 slow = set()            # first-run: inventory.create calls waiting for their $/cancel
 
 
@@ -128,13 +132,18 @@ def answer(req):
         if mode == "stuck-check" and any(s["job"] == req["params"]["job"] for s in stops):
             return {"result": {"kind": "check", "job": req["params"]["job"], "state": "stopped", "done": 1, "total": 8,
                                "at": None, "host": "esxi-02", "result": STOPPED}}
-        if len(polls) < 3 or mode == "stuck-check":
+        if len(polls) < 2 or mode == "stuck-check":
+            if mode == "checks":
+                pushes.append({"kind": "check", "job": req["params"]["job"], "action": "check", "state": "done",
+                               "done": 8, "total": 8, "at": None, "host": "esxi-02"})
             return {"result": {"kind": "check", "job": req["params"]["job"], "state": "running", "done": len(polls),
                                "total": 8, "at": "dns", "host": "esxi-02"}}
         return {"result": {"kind": "check", "job": req["params"]["job"], "state": "done", "done": 8, "total": 8,
                            "at": None, "host": "esxi-02", "result": CHECKED}}
     if m == "jobs.stop":
         stops.append(req["params"])
+        pushes.append({"kind": "check", "job": req["params"]["job"], "action": "check", "state": "stopped",
+                       "done": 1, "total": 8, "at": None, "host": "esxi-02"})
         return {"result": {**req["params"], "stopping": True}}
     if m == "hosts.list":
         if mode == "die-on-hosts":
@@ -284,6 +293,9 @@ for line in sys.stdin:
             print(json.dumps({"jsonrpc": "2.0", "id": r["id"], "result": {"watching": True}}), flush=True)
             continue
         print(json.dumps({"jsonrpc": "2.0", "id": r["id"], **answer(r)}), flush=True)
+        for params in pushes:
+            print(json.dumps({"jsonrpc": "2.0", "method": "job.progress", "params": params}), flush=True)
+        pushes.clear()
 
 if mode == "slow-exit":
     import time

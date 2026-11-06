@@ -14,6 +14,7 @@ import { countOf } from "../ui/format";
 import { hostFacts, serviceRows } from "./details";
 import { ViewContent } from "../view/ViewContent";
 import type { DetailsSectionDef } from "../view/views";
+import { keepFocus } from "../ui/keepFocus";
 
 export interface HostDetailsProps {
   host: Host;
@@ -35,7 +36,6 @@ const OutGlyph = () => (
   </svg>
 );
 
-const keepFocus = (e: React.MouseEvent) => e.preventDefault();
 
 export function HostDetails({ host, groups, onOpen, onClose, cmdlineKeys, leader, sections = [] }: HostDetailsProps) {
   const facts = hostFacts(host, groups);

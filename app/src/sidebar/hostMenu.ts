@@ -4,8 +4,9 @@
 // commands. Every item is a command line from the command table, the same one its old button or
 // its key runs, so nothing here is a menu-only action (Q36). What this roster can't do (no Live
 // Inventory, no `:edit`) and Folders' item without the Folders Plugin are left out, not greyed.
+import type { Capabilities } from "../backend/capabilities";
 import type { CommandLine } from "../keymap";
-import type { SidebarRow } from "./Sidebar";
+import type { SidebarRow } from "./model";
 
 export type MenuEntry =
   | {
@@ -21,10 +22,8 @@ export interface HostMenuOptions {
   /** The Host is in the Inventory, and whether it's reviewed (else the row is a Folder's entry for a
    * Host roster doesn't have). */
   reviewed: boolean | null;
-  /** The Live Inventory (API 8): rename, move, remove. */
-  live: boolean;
-  /** `:edit` (API 5). */
-  edit: boolean;
+  /** What roster can do: the Live Inventory (rename, move, remove), `:edit`. */
+  caps: Pick<Capabilities, "has">;
   /** The `folder` command is there (the Folders Plugin). */
   folders: boolean;
   /** The keys bound to a command line ("host rename"), or null. */
@@ -48,11 +47,11 @@ export function hostMenu(row: SidebarRow, o: HostMenuOptions): MenuEntry[] {
     [
       { label: "Details", command: `info ${host}`, keys: o.keys("details") },
       { label: "Check", command: `check ${host}` },
-      ...(o.edit ? [{ label: "Edit…", command: `edit ${host}`, keys: o.keys("edit") }] : []),
+      ...(o.caps.has("edit") ? [{ label: "Edit…", command: `edit ${host}`, keys: o.keys("edit") }] : []),
     ],
     [
       ...own,
-      ...(o.live
+      ...(o.caps.has("live")
         ? [
             { label: "Rename…", command: `host rename ${host}`, keys: o.keys("host rename") },
             { label: "Move to another group…", command: `host move ${host}`, keys: o.keys("host move") },
@@ -60,7 +59,7 @@ export function hostMenu(row: SidebarRow, o: HostMenuOptions): MenuEntry[] {
         : []),
       ...(o.folders ? [{ label: "Add to a Folder…", command: `folder add ${host}`, keys: o.keys("folder add") }] : []),
     ],
-    o.live ? [{ label: "Remove from the Inventory…", command: `host remove ${host}`, keys: o.keys("host remove") }] : [],
+    o.caps.has("live") ? [{ label: "Remove from the Inventory…", command: `host remove ${host}`, keys: o.keys("host remove") }] : [],
   ];
   return groups.filter((g) => g.length > 0).flatMap((g, i) => (i === 0 ? g : [{ separator: true } as const, ...g]));
 }

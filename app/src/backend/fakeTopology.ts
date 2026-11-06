@@ -4,14 +4,16 @@
 // crates/roster-core/tests/plugin_topology.rs recorded from the Lua and checks this does the same.
 // Change the Lua, record the transcript again, and change this to match.
 import type { FakePlugin, FakeRoster } from "./fakePlugins";
-import type { Host, HostList } from "./types";
+import { BackendCallError, type Host, type HostList } from "./types";
+import { errorText } from "../ui/format";
+import { FIRST_PARTY } from "./fakeManifests";
 
 type Obj = Record<string, unknown>;
 type Edge = { id: string; from: string; to: string; dir?: string; style?: string; tone?: string; cut?: boolean; label?: string };
 type Cluster = { id: string; title: string; mesh?: boolean; members: string[] };
 type Link = { from: string; to: string; kind?: string; via?: string; skip?: string };
 
-export const TOPOLOGY_PERMISSIONS = ["inventory.read", "serve:mesh.status", "serve:host.check", "serve:mesh.cut", "serve:mesh.job", "serve:host.check_job"];
+export const TOPOLOGY_PERMISSIONS = FIRST_PARTY.topology.permissions;
 
 const BOX = ":box";
 const MAX_HOSTS = 4999;
@@ -24,7 +26,7 @@ const keys = (o: unknown) => Object.keys((o ?? {}) as Obj).sort();
 /** Leaves out what's nil, as a Lua table does. */
 const plain = <T extends Obj>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null)) as T;
 
-export function settingsOf(config: Obj): { settings: { leader: string; refresh: number }; problems: string[] } {
+function settingsOf(config: Obj): { settings: { leader: string; refresh: number }; problems: string[] } {
   const settings = { leader: "T", refresh: 60 };
   const problems: string[] = [];
   if (config.leader !== undefined) {
@@ -64,7 +66,7 @@ interface Structure {
 
 const bump = (m: Map<string, number>, k: string, by = 1) => m.set(k, (m.get(k) ?? 0) + by);
 
-export function structure(hosts: readonly Host[], groups: Record<string, { title?: string }>, mesh: Obj | null): Structure {
+function structure(hosts: readonly Host[], groups: Record<string, { title?: string }>, mesh: Obj | null): Structure {
   const s: Structure = {
     hosts: new Map(),
     order: [],
@@ -291,7 +293,7 @@ export function structure(hosts: readonly Host[], groups: Record<string, { title
   return s;
 }
 
-export function graphOf(s: Structure, live: Map<string, Set<number>>, down: Map<string, string>, ended: Set<string>) {
+function graphOf(s: Structure, live: Map<string, Set<number>>, down: Map<string, string>, ended: Set<string>) {
   const mesh = s.mesh ?? {};
   const cutPending = (mesh.cut_pending ?? {}) as Record<string, string[]>;
   const pending = (mesh.pending ?? {}) as Record<string, string>;
@@ -360,7 +362,7 @@ export function textOf(s: Structure, why: { reads: boolean; mesh: boolean; error
   return lines.join("\n\n");
 }
 
-export function detailsOf(s: Structure, name: string): Obj | null {
+function detailsOf(s: Structure, name: string): Obj | null {
   const m = s.mesh;
   if (!m) return null;
   const excluded = (m.excluded as Record<string, string> | undefined)?.[name];
@@ -396,7 +398,7 @@ function diff(before: Map<string, string> | null, items: Obj[]): [Obj[], string[
   return [changed, gone, now];
 }
 
-export function groupClusters(s: Structure, word: string): string[] {
+function groupClusters(s: Structure, word: string): string[] {
   const w = word.toLowerCase();
   let base: string | undefined;
   for (const c of s.clusters) {
@@ -411,19 +413,11 @@ export function groupClusters(s: Structure, word: string): string[] {
   return s.clusters.filter((c) => c.id === base || c.id === `${base}/peers` || c.id === `${base}/out`).map((c) => c.id);
 }
 
-const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** plugins/topology, as its Lua. */
 export function topologyPlugin(): FakePlugin {
   return {
-    manifest: {
-      name: "topology",
-      version: "1.3.0",
-      description: "The Topology view: this Box, your Hosts by group, the Mesh and its Links as a map",
-      author: "roster",
-      api: 6,
-      permissions: TOPOLOGY_PERMISSIONS,
-    },
+    manifest: FIRST_PARTY.topology,
     load(roster: FakeRoster) {
       const { settings, problems } = settingsOf(roster.plugin.config);
       for (const p of problems) roster.notify(`${p}; using the default`, "warn");
@@ -450,7 +444,7 @@ export function topologyPlugin(): FakePlugin {
       let hosts: Host[] | null = null;
       let groups: Record<string, { title?: string }> = {};
 
-      const ask = (method: string, params: Obj, done: (r: unknown, why?: string) => void) => {
+      const ask = (method: string, params: Obj, done: (r: unknown, why?: unknown) => void) => {
         try {
           if (!roster.serve) throw new Error("roster.serve: no serve permission");
           roster.serve.request(method, params, (r, why) => done(r, why));
@@ -562,7 +556,7 @@ export function topologyPlugin(): FakePlugin {
             roster.notify(`Cut ${cutting.host}: roster serve lost track of it; :topology shows where the Mesh is now.`, "warn");
             return cutOver();
           }
-          if (j.state === "running") {
+          if (j.state === "running" || j.state === "stopping") {
             roster.progress.set("topology-cut", { title: `Cutting ${cutting.host} from the Mesh`, done: j.done ?? 0, total: j.total ?? 0 });
             if (cutting.again) cutPoll();
             return;
@@ -941,7 +935,7 @@ export function topologyServe(world: TopologyWorld): (method: string, params: Ob
         };
       }
       default:
-        throw new Error(`unknown method '${method}' (code -32601)`);
+        throw new BackendCallError(`unknown method '${method}'`, -32601);
     }
   };
 }

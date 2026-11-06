@@ -9,7 +9,7 @@ import { App } from "./App";
 import { FAKE_PASSWORD, fakeBackend, fixtures, makeHosts, type FakeScenario } from "./backend/fake";
 import type { Backend } from "./backend/types";
 import { defaultOptions } from "./keymap";
-import { manualClock } from "./lock/manualClock";
+import { manualClock } from "./ui/manualClock";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
 

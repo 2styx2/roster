@@ -6,10 +6,12 @@ hosts, and a typed password goes to ssh through the askpass channel exactly like
 paramiko Host from test_changes (and the real ssh, where the test says so): no network."""
 # ruff: noqa: F811 (test_changes' fixtures, imported by name, are the tests' arguments)
 
+import json
 import os
 import shutil
 import socket
 import subprocess
+from pathlib import Path
 
 import paramiko
 import pytest
@@ -182,3 +184,22 @@ def test_ssh_refuses_a_key_that_changed_after_the_question(app, sshd, unknown):
     r = run_ssh(spec, "true")
     assert r.returncode == 255 and "Host key verification failed" in r.stderr
     assert sshd.attempts == []
+
+
+QUICK_VECTORS = json.loads((Path(__file__).parent / "vectors" / "quick-target.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("case", QUICK_VECTORS["labels"], ids=lambda c: c["label"])
+def test_a_quick_connects_label_is_the_apps(case):
+    """tests/vectors/quick-target.json, which app/src/quick/target.test.ts reads too: serve names a Quick Connect in
+    its messages as the app shows it."""
+    from roster import serve as rpc
+    assert rpc.quick_label(case["user"], case["address"], case["port"]) == case["label"]
+
+
+def test_a_quick_connects_user_rule_is_the_apps():
+    from roster import serve as rpc
+    for user in QUICK_VECTORS["users"]["valid"]:
+        assert rpc.QUICK_USER.fullmatch(user), user
+    for user in QUICK_VECTORS["users"]["invalid"]:
+        assert not rpc.QUICK_USER.fullmatch(user), user

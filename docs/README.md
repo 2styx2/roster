@@ -54,6 +54,7 @@ Everything about roster, the CLI and the app, in one place. The pages marked **:
 | Page | What it's for |
 |---|---|
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Branches, pull requests, commits, and what docs a change needs |
+| [architecture.md](architecture.md) | How the code is laid out, its layers, where new code goes, what's generated, and the standards a pull request is held to |
 | [development.md](development.md) | Working on the CLI: checks, the module map, trying it safely |
 | [../app/README.md](../app/README.md) | Working on the app: the module map, the two builds, fixtures |
 | [releasing.md](releasing.md) | Cutting a Release |

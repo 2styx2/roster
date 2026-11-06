@@ -48,17 +48,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-/// The most a request's body may be.
 pub const MAX_REQUEST_BODY: usize = 256 * 1024;
 /// The most a response's body may be; a longer one fails the request.
 pub const MAX_RESPONSE_BODY: usize = 1024 * 1024;
 /// The longest a request may take in all, and the default.
 pub const MAX_TIMEOUT: Duration = Duration::from_secs(30);
-/// The longest to wait for a connection.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// How many requests one Plugin may have in flight.
 pub const MAX_IN_FLIGHT: usize = 4;
-/// How many redirects a request follows.
 pub const MAX_REDIRECTS: usize = 5;
 /// How many of one Plugin's lookups through the proxy may be waiting on this computer's resolver
 /// at once, counting those a request already gave up on (the OS lookup runs on to its own end).
@@ -83,7 +79,6 @@ const CARRIED_ELSEWHERE: &[&str] = &[
 ];
 /// What roster calls itself, unless the Plugin says otherwise.
 const USER_AGENT: &str = concat!("roster/", env!("CARGO_PKG_VERSION"));
-/// The most headers a request may set.
 pub const MAX_HEADERS: usize = 50;
 /// Headers a Plugin may not set: they steer the connection, not the request.
 pub const FORBIDDEN_HEADERS: &[&str] = &[
@@ -100,7 +95,6 @@ pub const FORBIDDEN_HEADERS: &[&str] = &[
     "proxy-authenticate",
     "proxy-connection",
 ];
-/// The methods a request may use.
 pub const METHODS: &[&str] = &["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
 
 /// One site a Plugin may reach, as `network:SITE` names it.
@@ -136,7 +130,6 @@ impl Pin {
         Some(Pin(out))
     }
 
-    /// The fingerprint of a certificate's DER bytes.
     pub fn of(der: &[u8]) -> Pin {
         let digest = ring::digest::digest(&ring::digest::SHA256, der);
         let mut out = [0u8; 32];
@@ -516,7 +509,6 @@ pub fn check_together(sites: &[Site]) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether any of `sites` allows `url`.
 pub fn allowed(sites: &[Site], url: &Url) -> bool {
     site_for(sites, url).is_some()
 }
@@ -598,59 +590,9 @@ impl Resolve for Checked {
     }
 }
 
-/// The user's proxy for Plugins' requests (`plugin_proxy` in init.lua, decision Q116): an
-/// `http://HOST:PORT` address and nothing else, never credentials. A Plugin can't set or see it.
-/// Only requests to public names go through it; a `private:` site and an address go direct.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Proxy {
-    /// `http://HOST:PORT/`, as the URL parser writes it (it leaves out port 80).
-    url: Url,
-    /// The port as written, 80 too.
-    port: u16,
-}
+pub use crate::proxy::Proxy;
 
 impl Proxy {
-    /// `http://HOST:PORT`: an http scheme, a host (a name, an IPv4 address or an IPv6 one in
-    /// `[ ]`), and a port written out; no user or password, path, query or fragment. A trailing
-    /// `/` is allowed, and the name is case-insensitive.
-    pub fn parse(text: &str) -> Result<Proxy, String> {
-        let bad = |why: &str| {
-            Err(format!(
-                "{why} (a proxy is http://HOST:PORT, such as http://10.0.0.5:3128)"
-            ))
-        };
-        let Some(rest) = text.strip_prefix("http://") else {
-            return bad("only an http:// proxy (https still goes through it end to end, as a tunnel)");
-        };
-        let rest = rest.strip_suffix('/').unwrap_or(rest);
-        if rest.contains('@') {
-            // Never repeat what was written: it may hold a password.
-            return bad("a proxy carries no user or password: roster never sends credentials to one");
-        }
-        if rest.contains(['/', '?', '#']) {
-            return bad("only http://HOST:PORT, with no path or query");
-        }
-        // The port is what follows the last ':' outside [ ].
-        let (host, port) = match rest.rfind(':') {
-            Some(i) if !rest[i..].contains(']') => (&rest[..i], &rest[i + 1..]),
-            _ => return bad("it needs its port: http://HOST:PORT"),
-        };
-        if host.is_empty() {
-            return bad("which host?");
-        }
-        let port = match port.parse::<u16>() {
-            Ok(n) if n > 0 && !port.starts_with('+') => n,
-            _ => return bad("the port is a number from 1 to 65535"),
-        };
-        let Ok(url) = Url::parse(&format!("http://{host}:{port}/")) else {
-            return bad("that isn't a host name or address");
-        };
-        if url.host().is_none() {
-            return bad("which host?");
-        }
-        Ok(Proxy { url, port })
-    }
-
     /// Whether a request to `url` goes through the proxy: only to a public name. An address and
     /// a `private:` site's name are on a network the proxy isn't for.
     pub fn carries(&self, sites: &[Site], url: &Url) -> bool {
@@ -721,17 +663,6 @@ impl Proxy {
             Some(200..=299) => Ok(stream),
             Some(code) => Err(refused(format!("it answered {code}"))),
             None => Err(refused("its answer wasn't HTTP".into())),
-        }
-    }
-}
-
-/// The proxy as the user wrote it, for the user's own messages (init.lua's). Never in a message a
-/// Plugin hears: a Plugin doesn't see where the user's proxy is.
-impl fmt::Display for Proxy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.url.host() {
-            Some(host) => write!(f, "http://{host}:{}", self.port),
-            None => f.write_str("http://"),
         }
     }
 }
@@ -820,10 +751,10 @@ pub struct Setup {
 /// How a Plugin used one site, for `:plugins` (decision Q116): counts and a time, never a path,
 /// a query, a header or a body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "SiteRequests"))]
 pub struct SiteCount {
     /// The site as its permission names it (`api.example.com`, `private:nas.lan`).
     pub site: String,
-    /// Requests sent.
     pub requests: u64,
     /// Of those, the ones that got no answer (an HTTP error status is an answer).
     pub failed: u64,
@@ -1842,44 +1773,22 @@ mod tests {
         );
     }
 
+    /// tests/fixtures/addresses.json, which the fake Backend's port (fakePlugins.ts) is tested on too.
     #[test]
     fn private_and_special_addresses_are_not_public() {
-        for ip in [
-            "127.0.0.1",
-            "10.1.2.3",
-            "172.16.0.1",
-            "172.31.255.255",
-            "192.168.1.1",
-            "169.254.169.254",
-            "100.64.0.1",
-            "0.0.0.0",
-            "224.0.0.1",
-            "255.255.255.255",
-            "192.0.2.1",
-            "::1",
-            "::",
-            "fe80::1",
-            "fd00::1",
-            "fc00::1",
-            "ff02::1",
-            "::ffff:127.0.0.1",
-            "::ffff:10.0.0.1",
-            "::127.0.0.1",
-            "64:ff9b::a00:1",
-            "2002:7f00:1::",
-            "2001:db8::1",
-            "fec0::1",
-        ] {
-            assert!(!is_public(ip.parse().unwrap()), "{ip} must not count as public");
-        }
-        for ip in [
-            "45.10.20.30",
-            "172.32.0.1",
-            "2a05:1234::1",
-            "::ffff:45.10.20.30",
-            "2002:2d0a:141e::",
-        ] {
-            assert!(is_public(ip.parse().unwrap()), "{ip} is public");
+        let table: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/addresses.json")).unwrap();
+        for (key, public) in [("not_public", false), ("public", true)] {
+            let list = table[key].as_array().unwrap();
+            assert!(!list.is_empty(), "{key}");
+            for ip in list {
+                let ip = ip.as_str().unwrap();
+                assert_eq!(
+                    is_public(ip.parse().unwrap()),
+                    public,
+                    "{ip}: public should be {public}"
+                );
+            }
         }
     }
 
