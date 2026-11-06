@@ -342,6 +342,12 @@ export const VAULT_STATUSES = ["locked", "unlocked", "not-logged-in", "missing-c
 /** Login references with no password behind them (`prompt` has none saved either, but it's a provider of its own). */
 export const NO_PASSWORD_AUTHS = ["agent", "key", "none"] as const;
 
+/** A job's `state` (`mesh.job`, `discover.status`, `host.check_job`, `job.progress`): `running` while it runs, `over` once it's over. */
+export const JOB_STATES = {
+  running: ["running", "stopping"],
+  over: ["done", "stopped", "failed"],
+} as const;
+
 /** `data.path` for a roster.yml path roster won't repeat (a -c value shaped like a token). */
 export const PATH_NOT_REPEATED = "(not repeated)";
 

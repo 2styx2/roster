@@ -48,6 +48,11 @@ pub const INVENTORY_ERROR: i64 = 1;
 /// address and port). The app asks the user (`host.scan_key {host}`, then [`Backend::trust_host_key`]).
 pub const HOST_KEY_UNKNOWN: i64 = 44;
 const METHOD_NOT_FOUND: i64 = -32601;
+/// A job's states while it runs (src/roster/jobs.py `RUNNING`; `job_states` in
+/// docs/serve-contract.json, which a `contract` test holds this to). Any other is over.
+const JOB_RUNNING: &[&str] = &["running", "stopping"];
+/// The over state of a job that failed: its `error` says why.
+const JOB_FAILED: &str = "failed";
 
 /// Where a Quick Connect goes (ticket 14): `user@address:port`, a box that isn't in the Inventory,
 /// and the SHA256 fingerprint of the host key the user was shown (`host.scan_key {address, port}`).
@@ -215,10 +220,11 @@ impl CheckEnds {
         if method != "job.progress" || params.get("kind").and_then(Value::as_str) != Some("check") {
             return;
         }
-        if matches!(
-            params.get("state").and_then(Value::as_str),
-            Some("running" | "stopping")
-        ) {
+        if params
+            .get("state")
+            .and_then(Value::as_str)
+            .is_some_and(|s| JOB_RUNNING.contains(&s))
+        {
             return;
         }
         let id = job_id(params.get("job").unwrap_or(&Value::Null));
@@ -474,8 +480,8 @@ impl Backend {
         loop {
             let r = self.call("host.check_job", json!({ "job": job }))?;
             match r.get("state").and_then(Value::as_str) {
-                Some("running" | "stopping") => {}
-                Some("failed") => {
+                Some(s) if JOB_RUNNING.contains(&s) => {}
+                Some(JOB_FAILED) => {
                     let e = r.get("error").cloned().unwrap_or(Value::Null);
                     return Err(CallError::Rpc {
                         code: e.get("code").and_then(Value::as_i64).unwrap_or(-32603),
@@ -879,6 +885,13 @@ mod contract {
         assert_eq!(c["codes"]["UNKNOWN_HOST"], crate::plugin::code::UNKNOWN_HOST);
         assert_eq!(c["codes"]["ROSTER_ERROR"], crate::plugin::code::ROSTER_ERROR);
         assert_eq!(c["json_rpc"]["INVALID_PARAMS"], crate::plugin::code::INVALID_PARAMS);
+    }
+
+    #[test]
+    fn the_job_states_are_rosters() {
+        let c = contract();
+        assert_eq!(c["job_states"]["running"], json!(JOB_RUNNING));
+        assert!(c["job_states"]["over"].as_array().unwrap().contains(&json!(JOB_FAILED)));
     }
 
     #[test]

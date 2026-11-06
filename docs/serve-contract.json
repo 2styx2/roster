@@ -202,5 +202,9 @@
   "login_fields": ["ip", "user", "port", "auth"],
   "vault_statuses": ["locked", "unlocked", "not-logged-in", "missing-cli", "unsupported"],
   "no_password_auths": ["agent", "key", "none"],
-  "path_not_repeated": "(not repeated)"
+  "path_not_repeated": "(not repeated)",
+  "job_states": {
+    "running": ["running", "stopping"],
+    "over": ["done", "stopped", "failed"]
+  }
 }

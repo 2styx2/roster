@@ -262,7 +262,7 @@ def handlers():
 
 def contract():
     """What the app and the Rust core read from roster serve, as data (docs/serve-contract.json)."""
-    from roster import diagnose, edit, errors, providers, serve
+    from roster import diagnose, edit, errors, jobs, providers, serve
     roster_codes, rpc_codes = codes_by_name()
     methods = {}
     for name, m in sorted(serve.METHODS.items()):
@@ -281,6 +281,7 @@ def contract():
         "vault_statuses": list(dict.fromkeys(serve.STATUS_WORDS.values())),
         "no_password_auths": list(providers.NO_PASSWORD),
         "path_not_repeated": errors.PATH_NOT_REPEATED,
+        "job_states": {"running": list(jobs.RUNNING), "over": list(jobs.OVER)},
     }
 
 
@@ -382,6 +383,8 @@ def contract_ts(c):
         array("VAULT_STATUSES", "Where a vault stands, in `vault.status`'s words.", c["vault_statuses"]),
         array("NO_PASSWORD_AUTHS", "Login references with no password behind them (`prompt` has none saved either, "
               "but it's a provider of its own).", c["no_password_auths"]),
+        record("JOB_STATES", "A job's `state` (`mesh.job`, `discover.status`, `host.check_job`, `job.progress`): "
+               "`running` while it runs, `over` once it's over.", c["job_states"]),
         f"/** `data.path` for a roster.yml path roster won't repeat (a -c value shaped like a token). */\n"
         f"export const PATH_NOT_REPEATED = {ts_value(c['path_not_repeated'])};\n",
         "export type CodeName = keyof typeof Code;\n",
