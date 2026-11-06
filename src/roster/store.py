@@ -45,7 +45,7 @@ class Store:
         bak = (self.git_dir / "roster" if self.git_dir is not None else self.path.parent) / (self.path.name + ".bak")
         return keep_backup(bak, text, self.path)
 
-    def save(self, old_text, new_text):
+    def _save(self, old_text, new_text):
         """Write an edit of roster.yml: OLD_TEXT (what it held) kept as the backup, then NEW_TEXT all at once (mode
         kept). In a repo that's a Pending change; a plain file is saved. Returns the backup's path."""
         bak = self.backup(old_text)
@@ -53,10 +53,10 @@ class Store:
         return bak
 
     def write(self, old_text, new_text, then=None, sync=None):
-        """save(), THEN(the backup's path) (what the caller says once it's written), then this Box's `roster sync`:
+        """_save(), THEN(the backup's path) (what the caller says once it's written), then this Box's `roster sync`:
         SYNC() (default: boxsync's, from the file as it is now; serve's: from its loaded Inventory). Returns (the
         backup's path, the sync's `{ok, ...}`); a sync that fails never undoes the write."""
-        bak = self.save(old_text, new_text)
+        bak = self._save(old_text, new_text)
         if then is not None:
             then(bak)
         return bak, boxsync.guarded(sync or (lambda: boxsync.sync_file(self.path)))

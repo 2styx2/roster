@@ -1400,18 +1400,19 @@ def vault_forget_typed(state, params):
     return {"forgotten": forget_held(state, hid)}
 
 
-def save_held(state, repo, hid, password, item, change, what):
+def save_held(state, repo, hid, password, item, change, what, then=None):
     """Q43's order, once a held password's Session logged in with it: the Vault item (ITEM: make_item's other
     arguments), then CHANGE(path) -> (old_text, new_text) written as a Pending change, the item taken back out if that
-    fails (WHAT: what then wasn't done); then the password is forgotten. Returns (the item, the backup's path)."""
+    fails (WHAT: what then wasn't done); THEN(backup) once it's written, and this Box synced; then the password is
+    forgotten. Returns (the item, the backup's path, the sync's answer)."""
     made = make_item(state, password=password, **item)
     try:                                        # until roster.yml is written, any failure takes the item back out
         old_text, new_text = change(repo.path)
-        backup = repo.save(old_text, new_text)
+        backup, synced = repo.write(old_text, new_text, then=then, sync=lambda: resynced(state))
     except BaseException as e:
         raise take_back(state, made, write_failed(what, repo.path, e)) from None
     forget_held(state, hid)
-    return made, backup
+    return made, backup, synced
 
 
 # Making or deleting a Vault item, one at a time per provider (State.item_lock): bw keeps its local cache in one
@@ -1491,17 +1492,20 @@ def quick_save(state, params):
     state.fresh()
     repo = store.at(state.path)
     _, _, h = edit.added(repo.path, group, name, fields)      # a dry run: the name and group, before the vault
-    made, backup = save_held(state, repo, hid, password,
-                             {"provider": provider, "item": item, "user": q["user"], "address": q["address"],
-                              "port": q["port"], "save_to": save_to},
-                             lambda path: edit.added(path, group, name, fields)[:2], f"{name} wasn't added")
     warnings = []
-    try:                                        # the key the user confirmed for this Session, never a fresh scan
-        record_host_key(h, q["key_type"], q["base64"])
-    except Exception as e:
-        warnings.append(f"{name} was added, but its host key couldn't be recorded in {current().known_hosts_label} "
-                        f"({failure_text(e)}) - the first Session to it will ask about the key")
-    synced = resynced(state)
+
+    def record_key(_backup):                    # the key the user confirmed for this Session, never a fresh scan
+        try:
+            record_host_key(h, q["key_type"], q["base64"])
+        except Exception as e:                  # the Host is added: the first Session asks about the key instead
+            warnings.append(f"{name} was added, but its host key couldn't be recorded in "
+                            f"{current().known_hosts_label} ({failure_text(e)}) - the first Session to it will ask "
+                            "about the key")
+    made, backup, synced = save_held(state, repo, hid, password,
+                                     {"provider": provider, "item": item, "user": q["user"], "address": q["address"],
+                                      "port": q["port"], "save_to": save_to},
+                                     lambda path: edit.added(path, group, name, fields)[:2], f"{name} wasn't added",
+                                     then=record_key)
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "item": made,
             "warnings": warnings, "sync": synced}
 
@@ -1537,11 +1541,11 @@ def host_save_login(state, params):
     wanted = {"auth": f"{provider}:{item}"}
     repo = store.at(state.path)
     edit.edited(repo.path, name, wanted)        # a dry run: the edit must be possible before the vault is touched
-    made, backup = save_held(state, repo, hid, password,
-                             {"provider": provider, "item": item, "user": h["ssh"]["user"], "address": h["ip"],
-                              "port": h["ssh"]["port"], "save_to": save_to},
-                             lambda path: edit.edited(path, name, wanted)[:2], f"{name}'s Login wasn't changed")
-    synced = resynced(state)
+    made, backup, synced = save_held(state, repo, hid, password,
+                                     {"provider": provider, "item": item, "user": h["ssh"]["user"],
+                                      "address": h["ip"], "port": h["ssh"]["port"], "save_to": save_to},
+                                     lambda path: edit.edited(path, name, wanted)[:2],
+                                     f"{name}'s Login wasn't changed")
     return {"changed": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "item": made,
             "warnings": [], "sync": synced}
 
