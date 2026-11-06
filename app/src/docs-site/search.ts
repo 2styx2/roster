@@ -1,12 +1,14 @@
 // The docs website's search (ticket 65): `:help`'s topic finder and `:helpgrep` in one box, over
-// the index the site build writes (search-index.js, from the same pages). Pure, and it imports only
-// the finders' scoring and helpgrep's matching, so the page script that ships it stays small.
+// the index the site build writes (search-topics.js and the search-text-N.js shards, from the same
+// pages; T260). Pure, and it imports only the finders' scoring and helpgrep's matching, so the page
+// script that ships it stays small.
 import { searchItems } from "../finder/search";
 import type { FinderItem } from "../finder/sources";
 import { grepTerms, grepTexts } from "../help/grep";
 
-/** What search-index.js holds: every topic, every place text sits, and every text. Arrays rather
- * than objects, as it's the biggest file the site has. */
+/** What the search searches: every topic, every place text sits, and every text. Arrays rather
+ * than objects, as it's the most the site has to load. The build writes it as SearchTopics and
+ * the text shards; joinIndex puts it back together. */
 export interface SearchIndex {
   /** tag, label, path (what the topic finder shows faint; "" for none), address. */
   topics: [tag: string, label: string, path: string, href: string][];
@@ -14,6 +16,21 @@ export interface SearchIndex {
   places: [href: string, where: string][];
   /** place (into `places`), text. Not headings: each is a topic already (topicIndex). */
   texts: [place: number, text: string][];
+}
+
+/** search-topics.js (`window.rosterSearchTopics`): what the box loads first, so topics are found
+ * while the text is still on its way. */
+export interface SearchTopics {
+  topics: SearchIndex["topics"];
+  places: SearchIndex["places"];
+  /** The text shards in order (`search-text-0.js`, …): each sets `window.rosterSearchText[i]`, a
+   * slice of the texts, and the slices in order are every text. */
+  shards: string[];
+}
+
+/** The index from its topics and its text shards (in shards' order); none yet is no text. */
+export function joinIndex(t: SearchTopics, shards: readonly SearchIndex["texts"][] = []): SearchIndex {
+  return { topics: t.topics, places: t.places, texts: shards.flat() };
 }
 
 export interface TopicResult {
