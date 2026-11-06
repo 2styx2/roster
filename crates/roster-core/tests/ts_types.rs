@@ -138,8 +138,24 @@ fn generated() -> String {
         decl::<CreateError>(&cfg),
         decl::<CheckStarted>(&cfg),
         decl::<OpenedSession>(&cfg),
-        // Plugins (plugin/).
+        decl::<roster_core::session::Exit>(&cfg),
+        decl::<roster_core::session::ExitMessage>(&cfg),
+        decl::<roster_core::shell::PlatformInfo>(&cfg),
+        decl::<roster_core::shell::FoldersFile>(&cfg),
+        // Plugins and Packages (plugin/, package/).
         decl::<roster_core::plugin::By>(&cfg),
+        decl::<roster_core::plugin::Manifest>(&cfg),
+        decl::<roster_core::plugin::Described>(&cfg),
+        decl::<roster_core::plugin::ManifestRead>(&cfg),
+        decl::<roster_core::plugin::Loaded>(&cfg),
+        decl::<roster_core::plugin::Reply>(&cfg),
+        decl::<roster_core::plugin::PluginError>(&cfg),
+        decl::<roster_core::shell::DemoReply>(&cfg),
+        decl::<roster_core::plugin::network::SiteCount>(&cfg),
+        decl::<roster_core::plugin::folder::DataUse>(&cfg),
+        decl::<roster_core::package::Status>(&cfg),
+        decl::<roster_core::package::Update>(&cfg),
+        decl::<roster_core::package::Checked>(&cfg),
     ];
     format!(
         "// Generated from roster-core's Rust types by crates/roster-core/tests/ts_types.rs: don't edit.\n\

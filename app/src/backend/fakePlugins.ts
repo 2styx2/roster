@@ -902,7 +902,7 @@ export function fakePluginHost(
       running.set(manifest.name, r);
       const config = path.startsWith(CORE.builtin_prefix) && settings ? settings : configs.get(path);
       const reply = run(manifest.name, r, () => p.load(module(r, config)), true);
-      return { manifest, dir: path, reply };
+      return { manifest, dir: path, reply, refused: [] };
     },
     async pluginCall(plugin, handler, args, user = true, names) {
       told(names);

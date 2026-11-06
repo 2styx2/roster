@@ -4,6 +4,7 @@
 // clipboard itself.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { FoldersFile, PlatformInfo } from "../config/core.gen";
 import type { ConfigOpened, ConfigReport, ImportPreview } from "../config/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -15,7 +16,7 @@ export function tauriPlatform(): Platform {
   return {
     loadState: () => invoke<unknown>("state_load"),
     saveState: (state) => invoke("state_save", { state }),
-    windowsBuild: async () => (await invoke<{ windowsBuild: number | null }>("platform_info")).windowsBuild,
+    windowsBuild: async () => (await invoke<PlatformInfo>("platform_info")).windowsBuild,
     clipboard: {
       readText: async () => (await readText()) ?? "",
       writeText: (text) => writeText(text),
@@ -48,7 +49,7 @@ export function tauriPlatform(): Platform {
     // roster-core config/folders.rs: read once at start, to move its Folders into the Folders
     // Plugin (ticket 61). The app never writes it now.
     folders: {
-      read: () => invoke<{ path: string; text: string | null }>("folders_read"),
+      read: () => invoke<FoldersFile>("folders_read"),
     },
   };
 }

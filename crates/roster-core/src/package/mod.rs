@@ -64,6 +64,7 @@ pub type Lock = BTreeMap<String, LockEntry>;
 /// A Package as `:packages` lists it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PackageStatus"))]
 pub struct Status {
     pub name: String,
     /// As init.lua writes it (`owner/repo`).
@@ -81,6 +82,7 @@ pub struct Status {
     /// Installed: the lock pins the commit the clone is at. Not yet: waiting for the install prompt.
     pub pinned: bool,
     /// The settings init.lua hands it (`roster.plugin.config`).
+    #[cfg_attr(feature = "ts", ts(type = "Record<string, unknown>"))]
     pub config: Json,
     /// Something the user should know (init.lua names another version than the lock).
     pub note: Option<String>,
@@ -91,6 +93,7 @@ pub struct Status {
 /// A newer commit for a Package, as `:packages update` shows it before applying it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PackageUpdate"))]
 pub struct Update {
     pub from: String,
     pub to: String,
@@ -108,6 +111,7 @@ pub struct Update {
 
 /// One Package's answer to [`Packages::check`]: an update, an error, or neither (up to date).
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PackageChecked"))]
 pub struct Checked {
     pub name: String,
     pub update: Option<Update>,

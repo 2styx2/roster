@@ -138,11 +138,29 @@ impl std::ops::Deref for PluginTarget {
     }
 }
 
-/// A demo's reply nobody asked for, with the demo's number so an old demo's never reaches a new one.
+/// A demo's reply nobody asked for (`plugin-demo-reply`), with the demo's number so an old demo's
+/// never reaches a new one.
 #[derive(serde::Serialize, Clone)]
-struct DemoReply {
-    demo: u64,
-    reply: plugin::Reply,
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginDemoReply"))]
+pub struct DemoReply {
+    pub demo: u64,
+    pub reply: plugin::Reply,
+}
+
+/// `folders.yml`'s path and text (null: no file yet).
+#[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "FoldersFile"))]
+pub struct FoldersFile {
+    pub path: String,
+    pub text: Option<String>,
+}
+
+/// Facts about this machine the terminal needs: the Windows build, for xterm's `windowsPty`.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct PlatformInfo {
+    pub windows_build: Option<u32>,
 }
 
 /// A password typed for a Session, if one was: moved into serve's request, which is wiped once sent.
@@ -344,10 +362,13 @@ impl Shell {
 
     /// `folders.yml`'s path and text (null: no file yet), next to init.lua (decision Q46): read at
     /// start, for the Folders Plugin to move its Folders in once (ticket 61). Never written now.
-    pub fn folders_read(&self) -> Result<Value, String> {
+    pub fn folders_read(&self) -> Result<FoldersFile, String> {
         let dir = self.config_dir()?;
         let text = config::folders::read(&dir).map_err(|e| e.to_string())?;
-        Ok(json!({ "path": config::folders::path(&dir).display().to_string(), "text": text }))
+        Ok(FoldersFile {
+            path: config::folders::path(&dir).display().to_string(),
+            text,
+        })
     }
 
     /// Open a Session to `host` in a PTY of `size` ([`Backend::open_session`]): `session.prepare`
@@ -438,9 +459,10 @@ impl Shell {
         self.state_file()?.save(state).map_err(|e| e.to_string())
     }
 
-    /// Facts about this machine the terminal needs: the Windows build, for xterm's `windowsPty`.
-    pub fn platform_info(&self) -> Value {
-        json!({ "windowsBuild": crate::platform::windows_build() })
+    pub fn platform_info(&self) -> PlatformInfo {
+        PlatformInfo {
+            windows_build: crate::platform::windows_build(),
+        }
     }
 
     /// The Config as the app starts with it, and the error if init.lua couldn't be used. Waits
@@ -550,13 +572,13 @@ impl Shell {
     }
 
     /// `:plugins install PATH`, step 1: the manifest, for the permission prompt. Runs none of its code.
-    pub fn plugin_manifest(&self, path: &str) -> Result<Value, String> {
+    pub fn plugin_manifest(&self, path: &str) -> Result<plugin::ManifestRead, String> {
         let (source, _, shown) = self.plugin_source(path)?;
         let plugin::Source::Dir(dir) = source else {
             return Err(format!("{path} is built into roster"));
         };
-        let m = plugin::read_manifest(&dir).map_err(|e| e.to_string())?;
-        Ok(json!({ "manifest": m, "dir": shown }))
+        let manifest = plugin::read_manifest(&dir).map_err(|e| e.to_string())?;
+        Ok(plugin::ManifestRead { manifest, dir: shown })
     }
 
     /// `:plugins types PATH` (ticket 74): writes the Plugin API's stubs for this app's version as
@@ -575,7 +597,7 @@ impl Shell {
         settings: Option<Value>,
         builtins: Option<Vec<String>>,
         on_demo: Option<u64>,
-    ) -> Result<Value, String> {
+    ) -> Result<plugin::Loaded, String> {
         let (grants, refused) = Permission::parse_grants(grants);
         let host = self.plugin_host(builtins, on_demo)?;
         // The user's proxy for its requests to public names, from the Config in effect (decision
@@ -592,7 +614,12 @@ impl Shell {
         let (manifest, reply) = host
             .load(&source, plugin::Load::new(&grants).config(handed).proxy(proxy))
             .map_err(|e| e.to_string())?;
-        Ok(json!({ "manifest": manifest, "dir": shown, "reply": reply, "refused": refused }))
+        Ok(plugin::Loaded {
+            manifest,
+            dir: shown,
+            reply,
+            refused,
+        })
     }
 
     /// Runs a Plugin's handler as `by`'s call (the user's when the app doesn't say).

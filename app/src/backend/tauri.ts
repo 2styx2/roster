@@ -4,7 +4,7 @@
 // imported when running inside Tauri (see index.ts).
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { CallErrorWire, OpenedSession, PluginCallBy } from "../config/core.gen";
+import type { CallErrorWire, OpenedSession, PluginCallBy, PluginDemoReply, SessionExitMessage } from "../config/core.gen";
 import {
   BackendCallError,
   BackendStartError,
@@ -52,7 +52,6 @@ import {
   type SignInStep,
   type VaultStatus,
   type SessionEvents,
-  type SessionExit,
   type SessionHandle,
   type SiteRequests,
   type PluginData,
@@ -91,7 +90,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 }
 
 /** One Session's channel: raw output bytes (an ArrayBuffer), then `{exit}` as JSON. */
-type SessionMessage = ArrayBuffer | Uint8Array | number[] | { exit: SessionExit };
+type SessionMessage = ArrayBuffer | Uint8Array | number[] | SessionExitMessage;
 
 function sessionChannel(events: SessionEvents): Channel<SessionMessage> {
   const ch = new Channel<SessionMessage>();
@@ -279,7 +278,7 @@ export function tauriBackend(): Backend {
         pluginUnload: (plugin) => call<boolean>("plugin_unload", { plugin, onDemo }),
         pluginForget: (plugin) => call<boolean>("plugin_forget", { plugin, onDemo }),
         onPluginReply(onReply) {
-          const stop = listen<{ demo: number; reply: PluginReply }>("plugin-demo-reply", (e) => {
+          const stop = listen<Omit<PluginDemoReply, "reply"> & { reply: PluginReply }>("plugin-demo-reply", (e) => {
             if (e.payload.demo === id) onReply(e.payload.reply);
           });
           return () => void stop.then((f) => f());

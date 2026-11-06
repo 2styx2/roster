@@ -799,6 +799,240 @@ export type OpenedSession = {
 };
 
 /**
+ * How a Session ended.
+ */
+export type SessionExit = {
+  /**
+   * The exit code; `None` when a signal ended it.
+   */
+  code: number | null,
+  /**
+   * True when the app closed it ([`SessionManager::close`]): the code is then meaningless
+   * (on Windows, closing gives `0xC000013A`).
+   */
+  closed: boolean,
+};
+
+/**
+ * The message a Session's channel ends with, after its output: `{"exit": {code, closed}}`.
+ */
+export type SessionExitMessage = {
+  exit: SessionExit,
+};
+
+/**
+ * Facts about this machine the terminal needs: the Windows build, for xterm's `windowsPty`.
+ */
+export type PlatformInfo = {
+  windowsBuild: number | null,
+};
+
+/**
+ * `folders.yml`'s path and text (null: no file yet).
+ */
+export type FoldersFile = {
+  path: string,
+  text: string | null,
+};
+
+/**
  * Whose call a run is (decision Q98, issue #183), as the app says it with each call.
  */
 export type PluginCallBy = "user" | "carried" | "app";
+
+/**
+ * What a Plugin's manifest says about it: shown in the install prompt before any of its code runs.
+ */
+export type PluginManifest = {
+  name: string,
+  version: string,
+  description: string,
+  author: string | null,
+  /**
+   * The `roster.api_version` it was written for.
+   */
+  api: number,
+  permissions: Array<PluginPermission>,
+};
+
+/**
+ * A permission as the manifest asks for it, with what it allows and why it's risky (decision Q81).
+ */
+export type PluginPermission = {
+  name: string,
+  summary: string,
+  risk: string | null,
+};
+
+/**
+ * `:plugins install PATH`'s first step: the manifest, and the folder as the app keeps it.
+ */
+export type PluginManifestRead = {
+  manifest: PluginManifest,
+  dir: string,
+};
+
+/**
+ * What a load gives back: the manifest, the folder as the app keeps it, the load's reply, and the
+ * grants the core no longer takes, each with why (`serve:x.y: …`): it runs without them.
+ */
+export type PluginLoaded = {
+  manifest: PluginManifest,
+  dir: string,
+  reply: PluginReply,
+  refused: Array<string>,
+};
+
+/**
+ * The answer to a load, a call or an event, for one Plugin.
+ */
+export type PluginReply = {
+  plugin: string,
+  /**
+   * What the function returned, as data (a finder's items, say).
+   */
+  result: unknown,
+  /**
+   * The UI changes the Plugin asked for, in order (docs/plugins.md, "Ops"): untrusted data,
+   * which the app's plugins/ops.ts checks.
+   */
+  ops: unknown[],
+  error: PluginErrorInfo | null,
+  /**
+   * Set when the Plugin is now disabled, with why: the frontend takes its UI away.
+   */
+  disabled: string | null,
+  /**
+   * The events the Plugin listens for now, in [`api::EVENTS`]' order, when that's news to the app:
+   * always at load, then only after a call, event or answer that changed it (#223, decision
+   * Q185: the app keeps a command's output for `command_done` only while a Plugin listens).
+   */
+  listens?: Array<string>,
+};
+
+/**
+ * What went wrong in a Plugin: shown as `recent-alerts: init.lua:12: message`.
+ */
+export type PluginErrorInfo = {
+  plugin: string,
+  file: string | null,
+  line: number | null,
+  message: string,
+};
+
+/**
+ * A demo's reply nobody asked for (`plugin-demo-reply`), with the demo's number so an old demo's
+ * never reaches a new one.
+ */
+export type PluginDemoReply = {
+  demo: number,
+  reply: PluginReply,
+};
+
+/**
+ * How a Plugin used one site, for `:plugins` (decision Q116): counts and a time, never a path,
+ * a query, a header or a body.
+ */
+export type SiteRequests = {
+  /**
+   * The site as its permission names it (`api.example.com`, `private:nas.lan`).
+   */
+  site: string,
+  requests: number,
+  /**
+   * Of those, the ones that got no answer (an HTTP error status is an answer).
+   */
+  failed: number,
+  /**
+   * When the last one was sent, in milliseconds since 1970.
+   */
+  last: number,
+};
+
+/**
+ * How full a Plugin's data folder is, for `:plugins` (ticket 98): what the caps count, never
+ * what the files hold.
+ */
+export type PluginData = { "state": "none" } | { "state": "used", files: number, bytes: number, } | { "state": "problem", message: string, };
+
+/**
+ * A Package as `:packages` lists it.
+ */
+export type PackageStatus = {
+  name: string,
+  /**
+   * As init.lua writes it (`owner/repo`).
+   */
+  source: string,
+  /**
+   * The git URL that means.
+   */
+  url: string,
+  /**
+   * The folder in the repo the Plugin loads from (`plugins/topology`); none for the top.
+   */
+  dir: string | null,
+  /**
+   * What init.lua asks for: `tag v1.0.0`, `branch main`, `commit 1a2b3c4`, `default branch`.
+   */
+  wants: string,
+  /**
+   * The commit its clone is at, if it has one.
+   */
+  commit: string | null,
+  /**
+   * The commit `roster.lock` pins, if it pins one for this source.
+   */
+  locked: string | null,
+  /**
+   * Installed: the lock pins the commit the clone is at. Not yet: waiting for the install prompt.
+   */
+  pinned: boolean,
+  /**
+   * The settings init.lua hands it (`roster.plugin.config`).
+   */
+  config: Record<string, unknown>,
+  /**
+   * Something the user should know (init.lua names another version than the lock).
+   */
+  note: string | null,
+  /**
+   * Why it couldn't be cloned or checked out.
+   */
+  error: string | null,
+};
+
+/**
+ * A newer commit for a Package, as `:packages update` shows it before applying it.
+ */
+export type PackageUpdate = {
+  from: string,
+  to: string,
+  /**
+   * `1a2b3c4 Subject`, newest first (at most [`MAX_LOG`]).
+   */
+  log: Array<string>,
+  /**
+   * `git diff --stat`.
+   */
+  stat: string,
+  /**
+   * The diff itself, cut to [`MAX_DIFF`].
+   */
+  diff: string,
+  truncated: boolean,
+  /**
+   * The new version's manifest (its permissions are compared with what was asked before).
+   */
+  manifest: PluginManifest | null,
+  manifestError: string | null,
+};
+
+/**
+ * One Package's answer to [`Packages::check`]: an update, an error, or neither (up to date).
+ */
+export type PackageChecked = {
+  name: string,
+  update: PackageUpdate | null,
+  error: string | null,
+};

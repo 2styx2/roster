@@ -4,7 +4,22 @@
 // what each version added is in capabilities.ts. The params and results serve keeps as Pydantic
 // models (servemodels.py: `hosts.list`, `host.get`) come generated in serveContract.ts; the
 // others are written here by hand until their methods move to models (decision Q113).
-import type { BackendInfo as CoreBackendInfo, BackendProblem, CheckStarted } from "../config/core.gen";
+import type {
+  BackendInfo as CoreBackendInfo,
+  BackendProblem,
+  CheckStarted,
+  PackageChecked,
+  PackageStatus,
+  PackageUpdate,
+  PluginData,
+  PluginErrorInfo,
+  PluginLoaded as CorePluginLoaded,
+  PluginManifest,
+  PluginPermission,
+  PluginReply as CorePluginReply,
+  SessionExit,
+  SiteRequests,
+} from "../config/core.gen";
 import type { CORE } from "../plugins/core.gen";
 import type { QuickTarget } from "../quick/target";
 import DEMO from "../../../crates/roster-core/tests/fixtures/demo-mesh.json";
@@ -696,13 +711,6 @@ export interface TermSize {
   rows: number;
 }
 
-export interface SessionExit {
-  /** The exit code (ssh's 255 when it couldn't connect); null when a signal ended it. */
-  code: number | null;
-  /** True when the app closed it; the code then means nothing. */
-  closed: boolean;
-}
-
 /** Where a Session's output goes: bytes in order, then exactly one exit. */
 export interface SessionEvents {
   output(data: Uint8Array): void;
@@ -1080,29 +1088,6 @@ export interface Backend {
   packagesClean(): Promise<string[]>;
 }
 
-/** A Package as roster-core's `package::Status` describes it. */
-export interface PackageStatus {
-  name: string;
-  /** As init.lua writes it (`owner/repo`). */
-  source: string;
-  /** The git URL that means. */
-  url: string;
-  /** The folder in the repo the Plugin loads from (`plugins/topology`); null for the repo's top (Q94). */
-  dir: string | null;
-  /** `tag v1.0.0`, `branch main`, `commit 1a2b3c4` or `default branch`. */
-  wants: string;
-  /** The commit its clone is at. */
-  commit: string | null;
-  /** The commit roster.lock pins. */
-  locked: string | null;
-  /** Installed: the lock pins the commit the clone is at. */
-  pinned: boolean;
-  /** init.lua's settings for it (`roster.plugin.config`). */
-  config: Record<string, unknown>;
-  note: string | null;
-  error: string | null;
-}
-
 /** The demo's Plugin host (`Backend.demoPlugins`): the Plugin methods, on the demo's own host. */
 export type DemoPluginHost = Pick<Backend, "pluginManifest" | "pluginTypes" | "pluginLoad" | "pluginCall" | "pluginEvent" | "pluginSessions" | "pluginUnload" | "pluginForget" | "onPluginReply"> & {
   close(): Promise<void>;
@@ -1114,93 +1099,9 @@ export function notOnDemo(method: string): string {
   return DEMO.refusal.replace("{method}", method);
 }
 
-/** A newer commit, shown before it's applied. */
-export interface PackageUpdate {
-  from: string;
-  to: string;
-  /** `1a2b3c4 Subject`, newest first. */
-  log: string[];
-  stat: string;
-  diff: string;
-  truncated: boolean;
-  manifest: PluginManifest | null;
-  manifestError: string | null;
-}
-
-/** One Package's answer to `packagesCheck`: an update, an error, or neither (up to date). */
-export interface PackageChecked {
-  name: string;
-  update: PackageUpdate | null;
-  error: string | null;
-}
-
-/** A permission as the manifest asks for it, with what it allows and why it's risky (decision Q81). */
-export interface PluginPermission {
-  name: string;
-  summary: string;
-  risk: string | null;
-}
-
-export interface PluginManifest {
-  name: string;
-  version: string;
-  description: string;
-  author: string | null;
-  /** The `roster.api_version` it was written for. */
-  api: number;
-  permissions: PluginPermission[];
-}
-
-/** An error in a Plugin: `recent-alerts: init.lua:12: message`. */
-export interface PluginErrorInfo {
-  plugin: string;
-  file: string | null;
-  line: number | null;
-  message: string;
-}
-
 /** Whose call a Plugin's run is: the user's (true), the user's carried one hop (a command the
  * Plugin's `roster.cmd` ran from the user's call), or the app's (false). Decision Q98, issue #183. */
 export type PluginCaller = boolean | "carried";
-
-/** How a Plugin used one network site since the app started, as the core counts it (decision
- * Q116): counts and a time only, never a path, a query, a header or a body. */
-export interface SiteRequests {
-  /** The site as its permission names it, after `network:`. */
-  site: string;
-  requests: number;
-  /** Of those, the ones that got no answer (an HTTP error status is an answer). */
-  failed: number;
-  /** When the last one was sent, in ms since 1970. */
-  last: number;
-}
-
-/** How full a Plugin's data folder is, as the core counts it (ticket 98): files and bytes as
- * the caps (1,000 files, 10 MB) count them, never what they hold. `none`: nothing written yet;
- * `problem`: it can't be counted (it's a link, or it can't be read). */
-export type PluginData = { state: "none" } | { state: "used"; files: number; bytes: number } | { state: "problem"; message: string };
-
-/** What `pluginLoad` gives back. */
-export interface PluginLoaded {
-  manifest: PluginManifest;
-  dir: string;
-  reply: PluginReply;
-  /** The grants the core no longer takes, each with why ("serve:x.y: …"): it runs without them. */
-  refused?: string[];
-}
-
-/** What a Plugin answered: its function's result, the UI changes it asked for (untrusted data:
- * plugins/ops.ts checks them), an error, and whether it's now disabled. */
-export interface PluginReply {
-  plugin: string;
-  result: unknown;
-  ops: unknown[];
-  error: PluginErrorInfo | null;
-  disabled: string | null;
-  /** The events the Plugin listens for now, when that's news (always at load; then only after a
-   * call, event or answer that changed it; null or absent otherwise): #223, decision Q185. */
-  listens?: PluginEventName[] | null;
-}
 
 /** An open Session as the core's `roster.sessions.list()` gets it: a Quick Connect Session's host is null. */
 export interface OpenSession {
@@ -1211,3 +1112,13 @@ export interface OpenSession {
 }
 
 export type PluginEventName = (typeof CORE.events)[number]["name"];
+
+// What the core sends about Plugins, Packages and a Session's end: roster-core's own types
+// (core.gen.ts, generated by crates/roster-core/tests/ts_types.rs), never a copy here.
+export type { PackageChecked, PackageStatus, PackageUpdate, PluginData, PluginErrorInfo, PluginManifest, PluginPermission, SessionExit, SiteRequests };
+
+/** What a Plugin answered (the core's `Reply`), its `listens` named as the events they are. */
+export type PluginReply = Omit<CorePluginReply, "listens"> & { listens?: PluginEventName[] | null };
+
+/** What `pluginLoad` gives back (the core's `Loaded`). */
+export type PluginLoaded = Omit<CorePluginLoaded, "reply"> & { reply: PluginReply };

@@ -76,6 +76,7 @@ fn check_name(name: &str) -> Result<(), String> {
 /// what the files hold.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "state", rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginData"))]
 pub enum DataUse {
     /// No data folder yet (nothing written), or no data folder at all.
     None,

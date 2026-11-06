@@ -179,6 +179,7 @@ pub struct Event {
 
 /// What went wrong in a Plugin: shown as `recent-alerts: init.lua:12: message`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginErrorInfo"))]
 pub struct PluginError {
     pub plugin: String,
     pub file: Option<String>,
@@ -222,11 +223,15 @@ pub(crate) struct Outcome {
 
 /// The answer to a load, a call or an event, for one Plugin.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginReply"))]
 pub struct Reply {
     pub plugin: String,
     /// What the function returned, as data (a finder's items, say).
+    #[cfg_attr(feature = "ts", ts(type = "unknown"))]
     pub result: Json,
-    /// The UI changes the Plugin asked for, in order (docs/plugins.md, "Ops").
+    /// The UI changes the Plugin asked for, in order (docs/plugins.md, "Ops"): untrusted data,
+    /// which the app's plugins/ops.ts checks.
+    #[cfg_attr(feature = "ts", ts(type = "unknown[]"))]
     pub ops: Vec<Json>,
     pub error: Option<PluginError>,
     /// Set when the Plugin is now disabled, with why: the frontend takes its UI away.
@@ -234,6 +239,7 @@ pub struct Reply {
     /// The events the Plugin listens for now, in [`api::EVENTS`]' order, when that's news to the app:
     /// always at load, then only after a call, event or answer that changed it (#223, decision
     /// Q185: the app keeps a command's output for `command_done` only while a Plugin listens).
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub listens: Option<Vec<String>>,
 }
 
@@ -252,6 +258,7 @@ impl Reply {
 
 /// What a Plugin's manifest says about it: shown in the install prompt before any of its code runs.
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginManifest"))]
 pub struct Manifest {
     pub name: String,
     pub version: String,
@@ -260,14 +267,36 @@ pub struct Manifest {
     /// The `roster.api_version` it was written for.
     pub api: u32,
     #[serde(serialize_with = "described")]
+    #[cfg_attr(feature = "ts", ts(as = "Vec<Described>"))]
     pub permissions: Vec<Permission>,
 }
 
+/// A permission as the manifest asks for it, with what it allows and why it's risky (decision Q81).
 #[derive(Serialize)]
-struct Described {
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginPermission"))]
+pub struct Described {
     name: String,
     summary: String,
     risk: Option<String>,
+}
+
+/// `:plugins install PATH`'s first step: the manifest, and the folder as the app keeps it.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginManifestRead"))]
+pub struct ManifestRead {
+    pub manifest: Manifest,
+    pub dir: String,
+}
+
+/// What a load gives back: the manifest, the folder as the app keeps it, the load's reply, and the
+/// grants the core no longer takes, each with why (`serve:x.y: …`): it runs without them.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "PluginLoaded"))]
+pub struct Loaded {
+    pub manifest: Manifest,
+    pub dir: String,
+    pub reply: Reply,
+    pub refused: Vec<String>,
 }
 
 fn described<S: serde::Serializer>(ps: &[Permission], s: S) -> Result<S::Ok, S::Error> {

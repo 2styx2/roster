@@ -9,9 +9,9 @@ use roster_core::detect::BackendError;
 use roster_core::package;
 use roster_core::plugin;
 use roster_core::rpc::CallError;
-use roster_core::session::{Hop, SessionEvent, SessionId, Size};
-use roster_core::shell::{Emit, Places, Shell};
-use serde_json::{Value, json};
+use roster_core::session::{ExitMessage, Hop, SessionEvent, SessionId, Size};
+use roster_core::shell::{Emit, FoldersFile, Places, PlatformInfo, Shell};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -108,7 +108,7 @@ async fn host_key_trust(core: Core<'_>, host: String, fingerprint: String) -> Re
 }
 
 #[tauri::command]
-async fn folders_read(core: Core<'_>) -> Result<Value, String> {
+async fn folders_read(core: Core<'_>) -> Result<FoldersFile, String> {
     blocking(core, |s| s.folders_read()).await
 }
 
@@ -123,7 +123,7 @@ async fn plugin_demo_stop(core: Core<'_>, id: u64) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn plugin_manifest(core: Core<'_>, path: String) -> Result<Value, String> {
+async fn plugin_manifest(core: Core<'_>, path: String) -> Result<plugin::ManifestRead, String> {
     blocking(core, move |s| s.plugin_manifest(&path)).await
 }
 
@@ -140,7 +140,7 @@ async fn plugin_load(
     settings: Option<Value>,
     builtins: Option<Vec<String>>,
     on_demo: Option<u64>,
-) -> Result<Value, String> {
+) -> Result<plugin::Loaded, String> {
     blocking(core, move |s| {
         s.plugin_load(&path, &grants, settings, builtins, on_demo)
     })
@@ -240,7 +240,9 @@ fn session_sink(events: Channel<InvokeResponseBody>) -> impl Fn(SessionEvent) + 
     move |event| {
         let body = match event {
             SessionEvent::Output(bytes) => InvokeResponseBody::Raw(bytes),
-            SessionEvent::Exit(exit) => InvokeResponseBody::Json(json!({ "exit": exit }).to_string()),
+            SessionEvent::Exit(exit) => {
+                InvokeResponseBody::Json(serde_json::to_string(&ExitMessage { exit }).expect("an exit is JSON"))
+            }
         };
         // Only fails once the window is gone; the Session is closed at exit anyway.
         let _ = events.send(body);
@@ -315,7 +317,7 @@ fn state_save(core: Core<'_>, state: Value) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn platform_info(core: Core<'_>) -> Value {
+fn platform_info(core: Core<'_>) -> PlatformInfo {
     core.platform_info()
 }
 

@@ -246,12 +246,20 @@ impl From<Size> for PtySize {
 
 /// How a Session ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "SessionExit"))]
 pub struct Exit {
     /// The exit code; `None` when a signal ended it.
     pub code: Option<u32>,
     /// True when the app closed it ([`SessionManager::close`]): the code is then meaningless
     /// (on Windows, closing gives `0xC000013A`).
     pub closed: bool,
+}
+
+/// The message a Session's channel ends with, after its output: `{"exit": {code, closed}}`.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "SessionExitMessage"))]
+pub struct ExitMessage {
+    pub exit: Exit,
 }
 
 /// What a Session's sink receives: output in order, then exactly one Exit.

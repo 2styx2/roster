@@ -751,6 +751,7 @@ pub struct Setup {
 /// How a Plugin used one site, for `:plugins` (decision Q116): counts and a time, never a path,
 /// a query, a header or a body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "SiteRequests"))]
 pub struct SiteCount {
     /// The site as its permission names it (`api.example.com`, `private:nas.lan`).
     pub site: String,
