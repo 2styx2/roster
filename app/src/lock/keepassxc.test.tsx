@@ -20,7 +20,7 @@ describe("the lock screen names KeePassXC", () => {
   it("asks for KeePassXC's master password, says when it's wrong, and unlocks", async () => {
     const user = start(fixtures["keepassxc"] as FakeScenario);
     const dialog = await screen.findByRole("dialog", { name: "Locked" });
-    expect(await within(dialog).findByText("Unlock KeePassXC to continue.")).toBeInTheDocument();
+    expect(await within(dialog).findByLabelText("KeePassXC master password")).toBeInTheDocument();
     await user.type(within(dialog).getByLabelText(/master password/i), "nope{Enter}");
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Wrong master password");
     await user.type(within(dialog).getByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
@@ -65,7 +65,7 @@ describe("the KeePassXC database from init.lua", () => {
     const config = withDatabase(MINE);
     render(<App backend={backend} terminalView={StubTerminal} platform={memoryPlatform({ config })} config={config} />);
     const dialog = await screen.findByRole("dialog", { name: "Locked" });
-    expect(await within(dialog).findByText("Unlock KeePassXC to continue.")).toBeInTheDocument();
+    expect(await within(dialog).findByLabelText("KeePassXC master password")).toBeInTheDocument();
     expect(backend.vaultSettings()).toEqual({ kp: { database: MINE } });
     await user.type(within(dialog).getByLabelText(/master password/i), `${FAKE_PASSWORD}{Enter}`);
     expect(await screen.findByRole("main", { name: /workspace/i })).toBeInTheDocument();
@@ -110,7 +110,7 @@ describe("the KeePassXC database from init.lua", () => {
     const backend = fakeBackend({ ...scenario(), apiVersion: 9, vault: { status: "locked", provider: "kp" } });
     const config = withDatabase(MINE);
     render(<App backend={backend} terminalView={StubTerminal} platform={memoryPlatform({ config })} config={config} />);
-    expect(await screen.findByText("Unlock KeePassXC to continue.")).toBeInTheDocument();
+    expect(await screen.findByLabelText("KeePassXC master password")).toBeInTheDocument();
     expect(backend.vaultSettings()).toBeNull();
   });
 });

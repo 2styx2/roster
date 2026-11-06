@@ -19,6 +19,8 @@ const ICONS = {
   apply: "M2 8h9M8 5l3 3-3 3M13.5 3.5v9",
   // An edge broken by a cross, as a cut edge is drawn in a graph (a Mesh cut).
   cut: "M1.5 8h3.5M11 8h3.5M6.5 5.5l3 5M9.5 5.5l-3 5",
+  // An arrow coming round to start again: reconnect an ended Session (round 20).
+  reconnect: "M12.75 8a4.75 4.75 0 11-1.4-3.36M12.5 2.5v2.75H9.75",
   // Three nodes joined, as the toolbar's map: show it on a graph (Topology's section, T99).
   map: "M3.75 9.75a1.75 1.75 0 110 3.5 1.75 1.75 0 010-3.5zM12.25 9.75a1.75 1.75 0 110 3.5 1.75 1.75 0 010-3.5zM8 2.25a1.75 1.75 0 110 3.5 1.75 1.75 0 010-3.5zM5.5 11.5h5M4.7 10L7.1 5.6M11.3 10L8.9 5.6",
 } as const;

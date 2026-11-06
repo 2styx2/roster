@@ -526,15 +526,15 @@ export type Edge = "top" | "bottom";
 export type StatusBarPiece = {
   shown: boolean,
   /**
-   * Segment ids in order ("backend", "box", "inventory", "hosts", "path", "changes", "hints", "mode"); null: all.
+   * Segment ids in order ("backend", "box", "session", "inventory", "hosts", "path", "changes", "hints", "mode"); null: all.
    */
   segments: Array<string> | null,
 };
 
 /**
  * The toolbar (decision Q65): `true`, `false`, or its controls in order (`{ "add", "find" }`,
- * ids from the app's toolbar registry: "sidebar", "find", "quick", "add", "changes", "publish", "details", and the
- * ones not shown by default, "cmdline", "keys", "help", "lock", "mode"); null: the default set.
+ * ids from the app's toolbar registry: "sidebar", "find", "quick", "add", "changes", "publish", "details", "lock",
+ * and the ones not shown by default, "cmdline", "keys", "help", "mode"); null: the default set.
  */
 export type ToolbarPiece = {
   shown: boolean,

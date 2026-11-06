@@ -13,6 +13,7 @@ import { builtinRegistries } from "./registries";
 import { StubTerminal } from "./terminal/StubTerminal";
 import type { Registries } from "./registries";
 import type { FakePlugin } from "./backend/fakePlugins";
+import { onMessageLine } from "./test-messageLine";
 
 const LEADER = "{Control>} {/Control}";
 
@@ -151,7 +152,7 @@ describe(":check with no Host", () => {
   it(":check % checks the Host of the Session on screen, and says when there's none", async () => {
     const { user, boxChecks } = await ready({ hosts: makeHosts(12), apiVersion: 16 });
     await command(user, "check %");
-    expect(await screen.findByText(":check % needs a Session on screen")).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine(":check % needs a Session on screen"))).toBeInTheDocument();
     const host = makeHosts(12).hosts[0]!.name;
     await command(user, `connect ${host}`);
     await command(user, "check %");

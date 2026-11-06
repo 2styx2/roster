@@ -16,6 +16,9 @@ export interface ToolbarContext {
   sidebarShown: boolean;
   /** roster can Quick Connect (API 12, ticket 14). */
   quickConnect: boolean;
+  /** This roster can add Hosts (API 6); left out, it can. On one too old to, Add a Host isn't
+   * offered (round 19: a live + that only refused contradicted the pane). */
+  canAdd?: boolean;
   /** The Host details panel is on screen (ticket 18). */
   detailsShown?: boolean;
   /** roster.yml is a plain file (T212): every edit is saved, so there are no Pending changes to show. */
@@ -29,6 +32,9 @@ export interface ToolbarControlDef extends Entry {
   label(ctx: ToolbarContext): string;
   /** A visible word beside the icon; left out, the control is the icon alone. */
   text?: string;
+  /** The word goes (the icon stays) while this holds: Find when the Sidebar's own Find is on
+   * screen, so the window doesn't offer the same thing twice in words. */
+  iconOnly?(ctx: ToolbarContext): boolean;
   /** Its icon; left out (a Plugin's control may), the control is its text alone. */
   icon?: ToolbarIcon;
   command: CommandLine;
@@ -65,18 +71,20 @@ export const builtinControls: readonly ToolbarControlDef[] = [
     byDefault: true,
     pressed: (c) => c.sidebarShown,
   }),
-  control({ id: "find", label: () => "Find a Host", text: "Find", icon: "find", command: "find", byDefault: true }),
+  // Find is the Sidebar's own field while the Sidebar shows; the title bar offers it only when it
+  // doesn't (Q306).
+  control({ id: "find", label: () => "Find a Host", text: "Find", icon: "find", command: "find", byDefault: true, when: (c) => !c.sidebarShown }),
   // Quick Connect (ticket 14): the Picker, ready for user@address[:port].
   control({
     id: "quick",
     label: () => "Quick Connect",
-    text: "Connect",
+    // An icon, as Add Host is (Q306, Q310): its name is in the tooltip with its keys.
     icon: "quick",
     command: "quick",
     byDefault: true,
     when: (c) => c.quickConnect,
   }),
-  control({ id: "add", label: () => "Add a Host", text: "Add Host", icon: "add", command: "host add", byDefault: true }),
+  control({ id: "add", label: () => "Add a Host", icon: "add", command: "host add", byDefault: true, when: (c) => c.canAdd !== false }),
   control({
     id: "changes",
     label: (c) => (c.pendingCount > 0 ? `Pending changes: ${c.pendingCount}` : "Pending changes"),
@@ -84,8 +92,10 @@ export const builtinControls: readonly ToolbarControlDef[] = [
     icon: "changes",
     command: "changes",
     byDefault: true,
+    // Only while there's something to review: an empty "Changes" is noise (Q306);
+    // a plain roster.yml has no Pending changes at all (T212).
+    when: (c) => !c.plain && c.pendingCount > 0,
     count: (c) => (c.pendingCount > 0 ? c.pendingCount : null),
-    when: (c) => !c.plain,
   }),
   control({
     id: "publish",
@@ -110,7 +120,8 @@ export const builtinControls: readonly ToolbarControlDef[] = [
   control({ id: "keys", label: () => "Key bindings", icon: "keys", command: "keys" }),
   // `:help`'s topic finder (ticket 37).
   control({ id: "help", label: () => "Help", icon: "help", command: "help" }),
-  control({ id: "lock", label: () => "Lock", icon: "lock", command: "lock" }),
+  // Locks now (␣ L): by the window's buttons, where the Sidebar's footer used to offer it.
+  control({ id: "lock", label: () => "Lock", icon: "lock", command: "lock", byDefault: true }),
   control({ id: "mode", label: () => "Focus mode", icon: "mode", command: "mode" }),
 ];
 
@@ -141,11 +152,15 @@ const PATHS: Record<ToolbarIcon, React.ReactNode> = {
   ),
   add: <path d="M8 3v10M3 8h10" />,
   // This Box's square, an edge, and a dashed node: a box that isn't on the map (yet).
+  // Round 20: the ring dominates (8.2 across, the square 3.2 and solid, the edge between), so at
+  // 14 px the three parts read as Box → Host, not as ⚯ (two like rings joined: "glasses").
   quick: (
     <>
-      <rect x="1.75" y="6" width="4" height="4" rx="0.8" />
-      <path d="M6.5 8h3" />
-      <circle cx="12.25" cy="8" r="2.5" strokeDasharray="1.6 1.3" />
+      <rect x="1" y="6.4" width="3.2" height="3.2" rx="0.5" fill="currentColor" stroke="none" />
+      <path d="M4.85 8h1.6" />
+      {/* The connecting node: an open ring, its 50° gap at the upper right (Q318 a; round 9:
+          dashed read as "oo"). Centre (11.2, 8), radius 4.1. */}
+      <path d="M15.053 6.598A4.1 4.1 0 1 1 12.602 4.147" />
     </>
   ),
   // Two lines, the second changed: a diff.
@@ -234,7 +249,7 @@ export function Toolbar({ controls, ctx, keysFor, leader, run, side }: ToolbarPr
             key={c.id}
             type="button"
             tabIndex={-1}
-            className={`toolbar-button${c.text ? " with-text" : ""}`}
+            className={`toolbar-button${c.text && !c.iconOnly?.(ctx) ? " with-text" : ""}`}
             aria-label={label}
             aria-pressed={pressed}
             title={hints && keys ? `${label} (${keys.replace(LEADER, leader)})` : label}
@@ -243,7 +258,7 @@ export function Toolbar({ controls, ctx, keysFor, leader, run, side }: ToolbarPr
             onClick={() => run(c.command)}
           >
             {c.icon && <ToolbarIconSvg name={c.icon} />}
-            {c.text && <span className="toolbar-text">{c.text}</span>}
+            {c.text && !c.iconOnly?.(ctx) && <span className="toolbar-text">{c.text}</span>}
             {count !== null && <span className="toolbar-count">{count}</span>}
           </button>
         );

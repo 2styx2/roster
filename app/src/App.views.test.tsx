@@ -11,6 +11,7 @@ import { FAKE_PASSWORD, fakeBackend, makeHosts } from "./backend/fake";
 import type { FakePlugin } from "./backend/fakePlugins";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { onMessageLine } from "./test-messageLine";
 
 const LEADER = "{Control>} {/Control}";
 const PATH = "~/plugins/scan";
@@ -140,7 +141,7 @@ describe("a Plugin's view", () => {
   it("says so for a view that isn't there", async () => {
     const user = await ready();
     await user.keyboard(`${LEADER}:view nope{Enter}`);
-    expect(await screen.findByText("There's no view nope: :view lists them")).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine("There's no view nope: :view lists them"))).toBeInTheDocument();
   });
 });
 
@@ -272,7 +273,7 @@ describe("a Plugin's section in Host details", () => {
     await user.keyboard(`${LEADER}:plugins remove scan{Enter}`);
     await screen.findByText("Removed scan");
     await user.keyboard(`${LEADER}:view scan{Enter}`);
-    expect(await screen.findByText("There's no view scan: :view lists them")).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine("There's no view scan: :view lists them"))).toBeInTheDocument();
     await user.keyboard(`${LEADER}:info linux-1-000{Enter}`);
     const details = await screen.findByRole("complementary", { name: "Details of linux-1-000" });
     expect(within(details).queryByRole("region", { name: /Open ports/ })).toBeNull();

@@ -152,7 +152,7 @@ describe("Finders in Focus", () => {
     expect(visibleSession()).toBe(`Session ${h2}`);
   });
 
-  it("␣ t opens the Sidebar's tree as a finder: Folders and the Inventory, with paths", async () => {
+  it("␣ t opens the Sidebar's tree as a finder: Folders and the Inventory, with paths (the section only when there are two)", async () => {
     const { user } = await ready();
     await user.keyboard(`${LEADER}m`);
     await user.keyboard(`${LEADER}t`);
@@ -160,7 +160,7 @@ describe("Finders in Focus", () => {
     await user.keyboard(h1);
     const first = within(finder()).getAllByRole("option")[0]!;
     expect(first).toHaveAttribute("data-label", h1);
-    expect(first).toHaveTextContent(/Inventory › subnet-/);
+    expect(first.querySelector(".finder-path")).toHaveTextContent(/^subnet-\d+$/);
     await user.keyboard("{Enter}");
     expect(await within(output()).findByText(new RegExp(`Connected to ${h1}`))).toBeInTheDocument();
     expect(view()).toBe("focus");
@@ -342,3 +342,16 @@ function keys(seq: string): string {
     })
     .join("");
 }
+
+describe("Tab through the Sidebar", () => {
+  it("moves on from the tree to the next control, not back where it came from", async () => {
+    const { user } = await ready();
+    const find = within(screen.getByRole("navigation", { name: "Sidebar" })).getByRole("button", { name: /^Find a Host, / });
+    find.focus();
+    await user.tab();
+    expect(screen.getByRole("tree")).toHaveFocus();
+    await user.tab();
+    // Past the tree, the pane's first control (the first Host on its map), in Terminal mode again.
+    expect(within(screen.getByRole("region", { name: "In the Inventory" })).getAllByRole("button")[0]).toHaveFocus();
+  });
+});

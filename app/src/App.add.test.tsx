@@ -12,6 +12,7 @@ import type { Backend } from "./backend/types";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
 import { chooseInMenu, inventoryRow, menuLabels } from "./test-menu";
+import { onMessageLine } from "./test-messageLine";
 import { advanceTimers, fakeTimeouts, pass } from "./test-timers";
 
 const LEADER = "{Control>} {/Control}";
@@ -79,12 +80,18 @@ describe("The Inventory heading's + (iteration 3 feedback: add-Host was hard to 
     expect(plus()).toHaveAttribute("title", "Add a Host");
   });
 
-  it("stays on a roster too old to add Hosts, and says so instead of opening a form", async () => {
+  it("isn't offered on a roster too old to add Hosts, here or in the title bar (round 19)", async () => {
     const { user } = await ready({ ...(fixtures.add as FakeScenario), apiVersion: 5 });
-    const why = "Adding a Host needs a newer roster (API version 6; this one speaks 5)";
-    expect(plus()).toHaveAttribute("title", why);
-    await user.click(plus());
-    expect(screen.getByRole("status")).toHaveTextContent(why);
+    // A live + that only refused contradicted the screen: neither + is there.
+    expect(within(heading()).queryByRole("button", { name: "Add a Host" })).toBeNull();
+    expect(document.querySelector('[data-control="add"]')).toBeNull();
+    // Its keys still answer, in plain words and the text colour (a slip, not a warning).
+    await user.keyboard(`${LEADER}+`);
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Adding Hosts here needs a newer roster. Update roster on this Box, or add them to roster.yml.");
+    expect(status).not.toHaveTextContent(/API/);
+    expect(status).toHaveClass("slip");
+    expect(within(status).getByText("roster.yml", { selector: "code" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Add a Host" })).toBeNull();
   });
 });
@@ -287,7 +294,7 @@ describe("the add form", () => {
   it("needs a roster that can add Hosts", async () => {
     const { user } = await ready({ ...(fixtures.edit as FakeScenario), apiVersion: 5 });
     await user.keyboard(`${LEADER}:host add{Enter}`);
-    expect(await screen.findByText(/Adding a Host needs a newer roster \(API version 6; this one speaks 5\)/)).toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent("Adding Hosts here needs a newer roster.");
   });
 });
 
@@ -297,7 +304,7 @@ describe("marking a Host reviewed", () => {
     // The confirmation's whole text shows with every message on (ticket 111).
     await user.keyboard(`${LEADER}:messages all{Enter}`);
     await user.keyboard(`${LEADER}:connect ${UNREVIEWED}{Enter}`);
-    expect(await screen.findByText(`${UNREVIEWED} isn't reviewed yet, so it can't be opened. :review ${UNREVIEWED} marks it reviewed.`)).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine(`${UNREVIEWED} isn't reviewed yet, so it can't be opened. :review ${UNREVIEWED} marks it reviewed.`))).toBeInTheDocument();
     const before = await backend.getHost(UNREVIEWED);
     await user.keyboard(`${LEADER}:review ${UNREVIEWED}{Enter}`);
     expect(await screen.findByText(`Marked ${UNREVIEWED} reviewed, as a Pending change. It can be opened now.`)).toBeInTheDocument();
@@ -380,7 +387,7 @@ describe("un-reviewing a Host (issue #78, item 5)", () => {
   it("says when roster is too old to un-review (API 9)", async () => {
     const { user, backend } = await ready({ ...current, apiVersion: 8 });
     await user.keyboard(`${LEADER}:host unreview ${REVIEWED}{Enter}`);
-    expect(await screen.findByText(/:host unreview needs a newer roster \(API version 9; this one speaks 8\)/)).toBeInTheDocument();
+    expect(await screen.findByText(onMessageLine(/:host unreview needs a newer roster\. Update roster on this Box\./))).toBeInTheDocument();
     expect((await backend.getHost(REVIEWED)).reviewed).toBe(true);
   });
 });
@@ -515,5 +522,25 @@ describe("Fill from this item (#437, vault.item_fields, API 29)", () => {
     const panel = await openForm(user);
     await user.click(within(panel).getByLabelText("An existing vault item"));
     expect(within(panel).queryByRole("button", { name: "Fill from this item" })).toBeNull();
+  });
+});
+
+describe("the Picker with nothing matching (round 19)", () => {
+  it("offers Add a Host with its keys, and those keys open the form from there", async () => {
+    const { user } = await ready();
+    await user.keyboard(`${LEADER}f`);
+    await user.keyboard("zzzz");
+    const next = document.querySelector(".picker-empty-next") as HTMLElement;
+    expect(next).toHaveTextContent(/Add a Host/);
+    expect(next.querySelector(".keycap")).not.toBeNull();
+    await user.keyboard(`${LEADER}+`);
+    expect(await form()).toBeInTheDocument();
+  });
+
+  it("isn't offered on a roster too old to add Hosts", async () => {
+    const { user } = await ready({ ...(fixtures.add as FakeScenario), apiVersion: 5 });
+    await user.keyboard(`${LEADER}f`);
+    await user.keyboard("zzzz");
+    expect(screen.queryByRole("button", { name: "Add a Host" })).toBeNull();
   });
 });

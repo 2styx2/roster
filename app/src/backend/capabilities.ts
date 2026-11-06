@@ -1,6 +1,7 @@
 // What the connected roster serve can do, from its `api_version`: one place that knows which
 // feature needs which version, and the one way the app says a feature needs a newer roster.
 import { FORMS, SINCE } from "./serveContract";
+import type { Slip } from "../ui/messages";
 import type { InventoryInfo } from "./types";
 
 /** Each feature: the first API version with it (the serve method's, from serveContract.ts), and
@@ -25,7 +26,7 @@ const FEATURES = {
   /** serve answers concurrently and its jobs push `job.progress` (decision Q112). */
   jobs: { since: SINCE["jobs.list"], what: "Plugins' job progress" },
   inventories: { since: SINCE["inventories.list"], what: ":inventory" },
-  fill: { since: SINCE["session.fill"], what: "Filling a password prompt" },
+  fill: { since: SINCE["session.fill"], what: "Filling password prompts" },
   nestedFill: { since: FORMS["session.fill"][1], what: "Filling a nested ssh's prompt" },
   itemFields: { since: SINCE["vault.item_fields"], what: "Fill from this item" },
   /** `inventory.info`'s `store` (a plain file or a team repo) came with `inventory.create`. */
@@ -48,9 +49,11 @@ export interface Capabilities {
   /** serve's API version; 0 while it isn't up. */
   readonly api: number;
   has(feature: Feature): boolean;
-  /** Why `feature` can't run here: "`what` needs a newer roster (API version N; this one speaks M)".
-   * `as` names it otherwise (`:unreview` refused for want of `review`). */
-  needsNewer(feature: Feature, as?: string): string;
+  /** Why `feature` can't run here, said calmly in the app's words (round 20, decision Q334): "`what`
+   * needs a newer roster. Update roster on this Box.", in the text colour, with serve's API numbers
+   * ("API version N; this one speaks M") kept for `:messages` only. `as` names it otherwise
+   * (`:unreview` refused for want of `review`). */
+  needsNewer(feature: Feature, as?: string): Slip;
 }
 
 export function capabilities(info: Pick<InventoryInfo, "api_version"> | null | undefined): Capabilities {
@@ -58,6 +61,13 @@ export function capabilities(info: Pick<InventoryInfo, "api_version"> | null | u
   return {
     api,
     has: (f) => api >= FEATURES[f].since,
-    needsNewer: (f, as) => `${as ?? FEATURES[f].what} needs a newer roster (API version ${FEATURES[f].since}; this one speaks ${api})`,
+    needsNewer: (f, as) => {
+      const what = as ?? FEATURES[f].what;
+      return {
+        kind: "slip",
+        text: `${what} needs a newer roster. Update roster on this Box.`,
+        logged: `${what} needs a newer roster (API version ${FEATURES[f].since}; this one speaks ${api}). Update roster on this Box.`,
+      };
+    },
   };
 }

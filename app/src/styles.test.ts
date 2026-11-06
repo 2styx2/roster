@@ -168,12 +168,11 @@ describe("the Sidebar's row buttons (decision Q88)", () => {
   });
 });
 
-describe("the Picker's ⓘ (decision Q88, T72)", () => {
-  it("shows on the selected row only: no hover rule reveals it", () => {
+describe("the Picker's details (decision Q88, T72, round 16)", () => {
+  it("is one key in the footer for the selected Host, never a control on a row", () => {
     const all = rules(stylesCss);
-    const hover = all.filter(([sel]) => sel.includes(":hover") && /\.picker-row/.test(sel));
-    for (const [sel] of hover) expect(sel, sel).not.toMatch(/\.picker-info/);
-    expect(all.some(([sel, body]) => sel.includes(".picker-row.selected .picker-info") && /visibility:\s*visible/.test(body))).toBe(true);
+    for (const [sel] of all) expect(sel, sel).not.toMatch(/\.picker-row[^,]*\.picker-info/);
+    expect(all.some(([sel]) => sel.includes(".picker-footer .picker-info-hint"))).toBe(true);
   });
 });
 
@@ -193,5 +192,92 @@ describe("Plugins' UI (ticket 73)", () => {
     expect(tag).toMatch(/font-variant-numeric\s*:\s*tabular-nums/);
     expect(tag).toMatch(/text-overflow\s*:\s*ellipsis/);
     expect(tag).not.toMatch(/--accent/);
+  });
+});
+
+describe("the Key bindings panel's rows (round 18)", () => {
+  const body = (selector: string) =>
+    rules(stylesCss)
+      .filter(([s, , at]) => at.length === 0 && s.split(",").some((x) => x.trim() === selector))
+      .map(([, b]) => b)
+      .join(";");
+  it("are one line each: the description is cut with an ellipsis, the keys never wrap", () => {
+    expect(stylesCss).toMatch(/\.keys-panel tbody tr:not\(\.group\)\s*\{\s*display:\s*flex;/);
+    const desc = body(".keys-panel td:first-child");
+    expect(desc).toMatch(/white-space\s*:\s*nowrap/);
+    expect(desc).toMatch(/text-overflow\s*:\s*ellipsis/);
+    expect(body(".keys-keys")).toMatch(/white-space\s*:\s*nowrap/);
+    expect(body(".keys-list")).toMatch(/flex-wrap\s*:\s*nowrap/);
+  });
+});
+
+describe("the status bar's order of giving way (rounds 18, 19, 21)", () => {
+  it("cuts nothing by CSS: FitBar gives every segment way by its own forms (round 21)", () => {
+    // Round 21: the Backend's label was cut to a stub ("WSL:…") and this Box's middle-cut name cut
+    // again at its end, both clipped by the bar's edge at 480. FitBar steps them (FitBar.test.tsx).
+    expect(stylesCss).toMatch(/\.statusbar \.path \{ flex: none; \}/);
+    expect(stylesCss).toMatch(/\.statusbar > \* \{ flex: none; \}/);
+    expect(stylesCss).not.toMatch(/\.statusbar \.(?:backend|box|session-seg) \{[^}]*flex:/);
+    expect(stylesCss).not.toMatch(/\.statusbar-cut \{[^}]*text-overflow/);
+  });
+});
+
+describe("a Host finder row's group and type (round 23)", () => {
+  it("are set as the Picker's: Inter, muted, the small size", () => {
+    const host = rules(stylesCss).filter(([s, , at]) => at.length === 0 && /\.finder-row\.host-row > :is\(\.finder-path, \.finder-type\)/.test(s)).map(([, b]) => b).join(";");
+    expect(host).toMatch(/font-family:\s*var\(--font-ui\)/);
+  });
+});
+
+describe("the key question's `:help host-keys` (round 23)", () => {
+  it("is its own line under the advice, so the advice's leading stays even", () => {
+    const link = rules(stylesCss).filter(([s, , at]) => at.length === 0 && s.trim() === ".key-help-link").map(([, b]) => b).join(";");
+    expect(link).toMatch(/display:\s*block/);
+    expect(link).toMatch(/margin:\s*6px 0 0 -5px/);
+  });
+});
+
+describe("the Key bindings cursor (round 23)", () => {
+  it("is drawn as the Picker's selected row: raised, with a 1px accent outline, not the hover fill", () => {
+    const named = rules(stylesCss).filter(([s, , at]) => at.length === 0 && /tr\.named/.test(s)).map(([, b]) => b).join(";");
+    expect(named).toMatch(/background:\s*var\(--raised\)/);
+    expect(named).toMatch(/box-shadow:\s*inset 0 0 0 1px var\(--accent\)/);
+    expect(named).not.toMatch(/var\(--hover\)/);
+  });
+});
+
+describe("Key bindings in a short window (round 21)", () => {
+  it("gives the list the room: no footer and tighter rows at 360 px tall or less", () => {
+    const short = rules(stylesCss).filter(([, , at]) => at.some((a) => /max-height:\s*360px/.test(a)));
+    const body = (sel: string) => short.filter(([s]) => s.split(",").map((x) => x.trim()).includes(sel)).map(([, b]) => b).join(";");
+    expect(body(".keys-panel .panel-foot")).toMatch(/display:\s*none/);
+    expect(body(".keys-panel td")).toMatch(/padding-block:\s*4px/);
+  });
+});
+
+describe("the Finder's list", () => {
+  it("stacks its rows: it never takes the Picker's column grid", () => {
+    // Round 2 made .picker-list a grid; the Finder, which reuses the class, laid every row side by side.
+    expect(stylesCss).toMatch(/\.picker-list\.finder-list\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column/);
+  });
+});
+
+describe("the Sidebar's cursor and menus (round 19)", () => {
+  const body = (selector: string) =>
+    rules(stylesCss)
+      .filter(([s, , at]) => at.length === 0 && s.split(",").map((x) => x.trim()).includes(selector))
+      .map(([, b]) => b)
+      .join(";");
+  it("outlines a heading's whole row, so its + sits inside the cursor", () => {
+    expect(body(".sb-heading.cursor")).toMatch(/box-shadow:\s*inset 0 0 0 1px var\(--accent\)/);
+    expect(stylesCss).not.toMatch(/\.sb-heading\.cursor\s*>\s*\.sb-heading-button/);
+  });
+  it("draws a menu's group split as a rule you can see, the border's tone", () => {
+    expect(body(".row-menu-sep")).toMatch(/background:\s*var\(--line-strong\)/);
+  });
+  it("never shrinks a menu item's label: only its command hint gives way (round 23)", () => {
+    expect(body(".row-menu-label")).toMatch(/flex:\s*0 0 auto/);
+    expect(body(".row-menu-cmd")).toMatch(/flex:\s*0 1 auto/);
+    expect(body(".row-menu-cmd")).toMatch(/min-width:\s*0/);
   });
 });

@@ -26,6 +26,7 @@ A fast, keyboard-first desktop app that gets you onto any Host in your team's ro
 | [docs/plugins.md](../docs/plugins.md), [docs/plugin-api.md](../docs/plugin-api.md), [plugins/](../plugins/README.md) | Writing a Plugin, its API, and roster's first-party Plugins |
 | [docs/news.md](../docs/news.md) | What's new in each Release, and on `dev` |
 | [docs/app/design/taste.md](../docs/app/design/taste.md) | roster's own design identity: what makes it look and feel like ours |
+| [PRODUCT.md](../PRODUCT.md), [DESIGN.md](../DESIGN.md) | The product record and the visual system (tokens, rules, components) that the `impeccable` design skill reads; `taste.md` and the code win when they disagree |
 | [docs/app/decisions.md](../docs/app/decisions.md) | Every design question we asked and the answer |
 | [docs/adr/](../docs/adr/) | Architecture decisions for the CLI and the app (0001–0002 roster serve and ssh, 0003–0006 the app, 0007 one repo, 0008 the docs website and PDF) |
 | [docs/app/spec/](../docs/app/spec/) | Product specs. Start with [0001](../docs/app/spec/0001-roster-app.md) |
@@ -103,7 +104,9 @@ app/src/session/      Sessions: tabs.ts (store: open/close/select/reconnect/repl
                       what the app knows), attempt.ts (one Session start's own state: its output window, watch, hooks),
                       status.ts (what a Session's status means: live, connecting, its words), commands.ts (the Session
                       commands and SessionContext, what they ask of the app), actions.ts (what they do), useTabsConfig.ts, integrate.ts (what `:integrate` says), SessionsMain.tsx (the
-                      terminals or the empty workspace), Sessions.tsx
+                      terminals or the empty workspace, and the bottom line), RecentMap.tsx (the idle pane's map of
+                      recent Hosts), useRecent.ts (the Recent list once a Session logs in; the window's title),
+                      reveal.ts (what a focus move in the connect card scrolls into view), Sessions.tsx
                       (terminal panes + the basic tab strip for `sessions = "tabs"`), prompt.ts (a password prompt at
                       the cursor, for the fill key's offer, ticket 119; and the Host a nested ssh is on, ticket 120),
                       sshTarget.ts (where a nested `ssh` command line goes, by ssh's rules and the Inventory),
@@ -269,7 +272,10 @@ app/src/ui/           Keys.tsx (keycaps for every key hint), StateDot.tsx (state
                       format.ts (counts, errorText), latest.ts (Latest and useLatest: what code outside React calls back into),
                       completion.ts (Tab's common prefix, and `matching`: completion's ranking for every command),
                       hints.ts (whether key hints show), typing.ts (whether a key went to a field), clock.ts (time
-                      for whatever waits; manualClock.ts the tests')
+                      for whatever waits; manualClock.ts the tests'), MessageText.tsx (a message's commands, files
+                      and keys in Iosevka or as keycaps; messageParts.ts splits the text), FitBar.tsx (the status
+                      bar that gives way in order), PathText.tsx and path.ts (a path cut by whole folders),
+                      useMediaMatch.ts
 app/src/styles.css    the whole look, written only against Theme tokens (no colour literals); styles.test.ts lints it
                       (no text in `--faint` or `--tone`, nothing under 11 px, :hover only for a real pointer)
 app/assets/           logo-icon.svg (app icon master: Gap orbit, transparent) + the small cut, one per size on its own pixel grid (logo-icon-small-16/20/24.svg, logo-icon-small.svg for 32 px), logo.svg / logo-small.svg (on the Ink tile, for a README or avatar), logo-mark*.svg (Theme colours, no tile), logo-mono*.svg (one colour); `npm run icons` renders src-tauri/icons

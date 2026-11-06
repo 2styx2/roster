@@ -635,11 +635,12 @@ export function PluginNotices({ notices, onClose, onAction }: { notices: readonl
       {notices.map((n) => (
         <div
           key={n.id}
-          className={`config-toast${n.level === "error" ? " error" : ""}`}
+          className={`config-toast${n.level === "error" ? " error" : n.level === "info" ? " info" : ""}`}
           role={n.level === "info" ? "status" : "alert"}
           aria-label={`From ${n.plugin}`}
         >
           <div className="config-toast-head">
+            <span className="notice-node" aria-hidden="true" />
             <span className="config-toast-title">{n.text}</span>
             <button type="button" className="config-toast-close" aria-label="Close" onClick={() => onClose(n.id)}>
               <CloseGlyph />

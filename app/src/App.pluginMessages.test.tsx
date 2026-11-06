@@ -48,7 +48,8 @@ async function ready(state: Record<string, unknown> = {}) {
 }
 
 const messageLine = () => document.querySelector(".message-line") as HTMLElement;
-const seen = () => (messageLine().classList.contains("visually-hidden") ? "" : (messageLine().textContent ?? ""));
+// What's shown: a quiet message is only spoken (a visually hidden span in the always-there line).
+const seen = () => (messageLine().querySelector(".visually-hidden") ? "" : (messageLine().textContent ?? ""));
 const tick = () => (vi.isFakeTimers() ? pass(0) : new Promise((r) => setTimeout(r, 0)));
 const run = async (user: ReturnType<typeof userEvent.setup>, line: string) => {
   await user.keyboard(`${LEADER}:${line}{Enter}`);

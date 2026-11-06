@@ -5,10 +5,8 @@ import { BackendCallError, type Host } from "../backend/types";
 import { resolveOpen, webUrl } from "../details/details";
 import type { Platform } from "../platform/types";
 import { parseQuickTarget } from "../quick/target";
-import { usedHost } from "../state/appState";
-import type { StateStore } from "../state/store";
 import { errorText } from "../ui/format";
-import { quiet, type Message } from "../ui/messages";
+import { quiet, slip, type Message } from "../ui/messages";
 import type { SessionContext } from "./commands";
 import { INTEGRATE_SAYS } from "./integrate";
 import type { Tab, Tabs, TabsSnapshot } from "./tabs";
@@ -17,7 +15,7 @@ import type { Tab, Tabs, TabsSnapshot } from "./tabs";
 function notReviewedMessage(name: string, canReview: boolean): string {
   return canReview
     ? `${name} isn't reviewed yet, so it can't be opened. :review ${name} marks it reviewed.`
-    : `${name} isn't reviewed yet, so it can't be opened. Review it in roster first.`;
+    : `${name} isn't reviewed yet, so it can't be opened. Add reviewed: true to it in roster.yml (:help adding-hosts).`;
 }
 
 export type SessionActions = Omit<SessionContext, "saveSession"> & {
@@ -25,7 +23,7 @@ export type SessionActions = Omit<SessionContext, "saveSession"> & {
    * here and again in the Tauri shell. */
   openWeb(host: string, service: string, url: string): void;
   /** Says why "Save to vault" can't open for the Session on screen, or null when it can. */
-  whyNoSave(tab: Tab | undefined): string | null;
+  whyNoSave(tab: Tab | undefined): Message | null;
 };
 
 export function sessionActions(o: {
@@ -33,20 +31,21 @@ export function sessionActions(o: {
   sessions: TabsSnapshot;
   hostByName: ReadonlyMap<string, Host>;
   caps: Capabilities;
-  store: StateStore;
   platform: Platform;
   say(m: Message): void;
   /** The Host `:open SERVICE` means: Host details', else the selected one. */
   currentHost(): string | null;
   /** The Picker, with Quick Connect first. */
   openQuickPicker(): void;
+  /** The keys that open the Picker ("␣ f"), if the keymap has them. */
+  findKeys: string | null;
 }): SessionActions {
   const { tabs, sessions, hostByName, caps, say } = o;
   const onScreen = sessions.tabs.find((t) => t.id === sessions.active);
   const openHost = (host: string, here: boolean) => {
     const current = tabs.snapshot().active;
+    // The Host goes on the Recent list once its Session logs in (useRecent, round 21), not here.
     if (!(here && current !== null && tabs.reconnect(current, host))) tabs.open(host);
-    o.store.update((s) => usedHost(s, host));
   };
   const openWeb = (host: string, service: string, url: string) => {
     const checked = webUrl(url);
@@ -81,8 +80,11 @@ export function sessionActions(o: {
       if (tab) tabs.select(tab.id);
       else cmds.connect(to.host);
     },
-    reconnect: () => {
-      if (sessions.active !== null) tabs.reconnect(sessions.active);
+    reconnect: (n = null) => {
+      const id = n === null ? sessions.active : (sessions.tabs[n - 1]?.id ?? null);
+      if (id === null) return;
+      if (id !== sessions.active) tabs.select(id);
+      tabs.reconnect(id);
     },
     selectRelative: (delta) => tabs.selectRelative(delta),
     selectNth: (n) => tabs.selectNth(n),
@@ -96,9 +98,11 @@ export function sessionActions(o: {
       void tabs.integrate(onScreen.id).then((r) => say(INTEGRATE_SAYS[r](label)));
     },
     fillPrompt: () => {
-      if (!caps.has("fill")) return say(caps.needsNewer("fill"));
+      // No Session first: with none open, there's nothing to fill on any roster (round 20); `␣ p`
+      // then says how to open one.
       const id = sessions.active;
-      if (id === null) return say("No Session to fill");
+      if (id === null) return say(slip(o.findKeys ? `No Session to fill. Open one with ${o.findKeys}.` : "No Session to fill. Open one with :open HOST."));
+      if (!caps.has("fill")) return say(caps.needsNewer("fill"));
       tabs.fill(id).then(
         (host) => say(quiet(`Filled ${host}'s password`)),
         (e: unknown) => {

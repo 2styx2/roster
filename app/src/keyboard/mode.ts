@@ -60,5 +60,8 @@ export function press(state: KeyState, chord: string, ctx: PressContext): PressR
   if (tables.some((t) => Object.keys(t).some((k) => k.startsWith(prefix)))) {
     return { state: { mode: "app", pending: [...state.pending, chord] }, consumed: true };
   }
+  // Tab and Shift+Tab, when nothing binds them, move focus as everywhere else (out of the Sidebar's
+  // tree to the next control), so keyboard focus is never trapped in App mode.
+  if (chord === "Tab" || chord === "Shift+Tab") return { state: appMode, consumed: false };
   return { state: appMode, consumed: true };
 }

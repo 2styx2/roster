@@ -4,7 +4,7 @@ import type { CommandLine } from "../keymap";
 import { hopWords, type Breadcrumb } from "../session/breadcrumb";
 import type { ActionIcon } from "../ui/icons";
 import { formatCount } from "../ui/format";
-import { DOT_WORDS, type Dot } from "../ui/dot";
+import { DOT_WORDS, type Dot, type Light } from "../ui/dot";
 
 export type { Dot } from "../ui/dot";
 
@@ -20,6 +20,10 @@ export interface RowAction {
   title?: string;
   /** Its keys in keymap notation ("␣ +"), added to the tooltip while the hints are shown. */
   keys?: string;
+  /** What it says in the row's menu, which is named after the row: short, without the row's own
+   * names ("Close", "Rename…"); `label` then goes to the item's tooltip (round 22: "Remove esx-02
+   * from Lab" was cut to "Remove …"). `label` if left out. */
+  short?: string;
 }
 
 export interface SidebarRow {
@@ -30,6 +34,9 @@ export interface SidebarRow {
    * commands such as `folder add` act on the Host under the cursor. */
   host?: string;
   dot?: Dot;
+  /** Its Host has a Session that's connected or connecting: the node takes the accent. At rest a
+   * node is muted, whatever its shape (taste.md: the accent means live, decision Q301). */
+  lit?: Light;
   /** A short status after the label ("connecting…", "ended (code 0)"). */
   note?: string;
   /** The end of the label that must stay in view when the rest is cut off (a Session's " (2)"). */
@@ -40,6 +47,8 @@ export interface SidebarRow {
   hop?: Breadcrumb;
   /** Right-aligned: how many Hosts a Folder or group holds. Formatted, and never cut off. */
   count?: number;
+  /** A Session's number, the one `␣ 1`–`9` jumps to: right-aligned and faint, a key hint (Q312). */
+  index?: number;
   /** A small badge ("unreviewed"). It gives way to the name: shown raised, selected or under the
    * cursor, and always in the tooltip. */
   badge?: string;
@@ -103,6 +112,18 @@ export interface SidebarSection {
   folded?: boolean;
 }
 
+/** What a row's own command said went wrong, said under the row (round 20). */
+export interface RowSlipData {
+  row: string;
+  text: string;
+  /** The row's name where the text says it: set in Iosevka, as data (taste.md). */
+  name?: string;
+}
+
+/** How long after a row's command a message it causes is still that row's (a slow refusal from
+ * roster serve included). */
+export const ROW_SLIP_MS = 8000;
+
 export interface OpenMenu {
   row: string;
   at: { x: number; y: number } | null;
@@ -146,12 +167,34 @@ export function cursorIn(section: SidebarSection, cursor: string): boolean {
 /** A section's heading as a cursor stop. */
 function headingRow(section: SidebarSection): SidebarRow {
   const id = headingId(section.id);
-  return { id, label: section.title, level: -1, foldable: true, folded: section.folded ?? false, command: `togglefold ${id}` };
+  return {
+    id,
+    label: section.title,
+    level: -1,
+    foldable: true,
+    folded: section.folded ?? false,
+    command: `togglefold ${id}`,
+    // Its buttons (the Inventory's +) are its menu too, so Shift+F10 works on every row with
+    // actions (round 18). The heading draws them itself; a heading row is never drawn as a row.
+    ...(section.actions?.length ? { actions: section.actions } : {}),
+  };
 }
 
 /** Every cursor stop, top to bottom (the order j/k walk): each heading, then its shown rows. */
 export function allRows(sections: readonly SidebarSection[]): SidebarRow[] {
   return sections.flatMap((s) => [headingRow(s), ...(s.folded ? [] : s.rows)]);
+}
+
+/** App mode's first stop: where the cursor was left, else the Session on screen, else the first
+ * Host (round 18: it began on a section heading, FOLDERS with no Session open), else the top. */
+export function firstStop(rows: readonly SidebarRow[], selected: string | null): string | null {
+  return (
+    (selected !== null && rows.some((r) => r.id === selected) ? selected : null) ??
+    rows.find((r) => r.raised)?.id ??
+    rows.find((r) => r.host !== undefined && r.dot !== undefined)?.id ??
+    rows[0]?.id ??
+    null
+  );
 }
 
 /** Where j, k, gg and G take the cursor. */

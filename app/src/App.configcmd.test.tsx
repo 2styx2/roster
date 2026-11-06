@@ -4,7 +4,7 @@
 // configurable thing shows (the Key bindings panel, the theme finder, the layout pieces). The
 // memory Platform stands in for the core's config dir (roster-core config/editor.rs has the
 // file's own tests). Fake Backend, stub terminal; user-event writes Ctrl+Space as {Control>} {/Control}.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
@@ -131,14 +131,71 @@ describe("Option names where configurable things show", () => {
     await user.keyboard(`${LEADER}K`);
     const panel = screen.getByRole("complementary", { name: "Key bindings" });
     const rowOf = (label: RegExp) => within(panel).getAllByRole("row").find((r) => label.test(r.textContent ?? ""))!;
-    expect(within(rowOf(/^Leader: take the keys back/)).getByText("leader", { selector: "code" })).toBeInTheDocument();
-    expect(rowOf(/^Lock/)).toHaveTextContent("keys.leader");
-    expect(rowOf(/^Copy/)).toHaveTextContent("keys.terminal");
-    expect(within(panel).getByText(/in init\.lua: the name is under each one/)).toBeInTheDocument();
+    // A binding's option name shows in the panel's footer while the pointer is on its row.
+    // The command first, so a one-line footer never cuts it (round 20).
+    const foot = panel.querySelector(".panel-foot");
+    expect(foot?.firstElementChild).toHaveTextContent(/^:config$/);
+    expect(foot).toHaveTextContent(":config opens init.lua. ↓ or point at a binding for its name there.");
+    const optionOf = async (label: RegExp) => {
+      await user.hover(rowOf(label));
+      return panel.querySelector(".panel-foot .keys-option")?.textContent;
+    };
+    expect(await optionOf(/^Leader: leave the terminal/)).toBe("leader");
+    expect(await optionOf(/^Lock/)).toBe("keys.leader");
+    expect(await optionOf(/^Copy/)).toBe("keys.terminal");
+    await user.unhover(rowOf(/^Copy/));
+    // A short window has no footer (round 21): the row's tooltip names the option too.
+    expect(rowOf(/^Copy/).querySelector("td")).toHaveAttribute("title", expect.stringMatching(/\nIn init\.lua: keys\.terminal$/));
     // The filter finds bindings by option name.
     await user.type(within(panel).getByRole("searchbox"), "keys.terminal");
     expect(within(panel).queryByText(/^Lock$/)).toBeNull();
     expect(within(panel).getByText("Copy")).toBeInTheDocument();
+    // With a filter, the first match is named without pointing.
+    expect(panel.querySelector(".panel-foot .keys-option")).toHaveTextContent("keys.terminal");
+  });
+
+  it("the Key bindings footer names the binding ↑ and ↓ move to, focus staying in the filter (round 22)", async () => {
+    const { user } = await ready();
+    await user.keyboard(`${LEADER}K`);
+    const panel = screen.getByRole("complementary", { name: "Key bindings" });
+    const filter = within(panel).getByRole("searchbox");
+    const rows = () => within(panel).getAllByRole("row").filter((r) => !r.classList.contains("group"));
+    const option = () => panel.querySelector(".panel-foot .keys-option")?.textContent;
+    expect(option()).toBeUndefined();
+    // ↓ from the filter names the first binding drawn, then the next; ↑ goes back. Each move
+    // brings the named row (the cursor, round 23) into view, never jumping past it.
+    const scrolled: Element[] = [];
+    const spy = vi.fn(function (this: Element, opts?: ScrollIntoViewOptions | boolean) {
+      expect(opts).toEqual({ block: "nearest" });
+      scrolled.push(this);
+    });
+    const before = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = spy;
+    onTestFinished(() => {
+      Element.prototype.scrollIntoView = before;
+    });
+    await user.keyboard("{ArrowDown}");
+    expect(filter).toHaveFocus();
+    expect(rows()[0]).toHaveClass("named");
+    expect(scrolled.at(-1)).toBe(rows()[0]);
+    expect(panel.querySelectorAll("tr.named")).toHaveLength(1);
+    const first = option();
+    expect(first).toBeTruthy();
+    await user.keyboard("{ArrowDown}");
+    expect(rows()[1]).toHaveClass("named");
+    expect(scrolled.at(-1)).toBe(rows()[1]);
+    expect(panel.querySelectorAll("tr.named")).toHaveLength(1);
+    await user.keyboard("{ArrowUp}{ArrowUp}");
+    expect(rows()[0]).toHaveClass("named");
+    expect(option()).toBe(first);
+    // With a filter the first match is named; ↓ moves past it.
+    await user.type(filter, "keys.terminal");
+    const shown = rows();
+    expect(shown.length).toBeGreaterThan(1);
+    expect(shown[0]).toHaveClass("named");
+    await user.keyboard("{ArrowDown}");
+    expect(rows()[1]).toHaveClass("named");
+    expect(rows()[0]).not.toHaveClass("named");
   });
 
   it("the theme finder names the option for the Theme under the cursor", async () => {

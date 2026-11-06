@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Picker } from "./Picker";
+import { marked, Picker } from "./Picker";
+import { renderToStaticMarkup } from "react-dom/server";
 import type { Host, HostList } from "../backend/types";
 
 function host(name: string, more: Partial<Host> = {}): Host {
@@ -101,6 +102,20 @@ describe("Picker", () => {
     expect(onOpen).toHaveBeenCalledWith(list.hosts[1]);
   });
 
+  it("underlines what the query matched, a term whole where it appears, else its letters", () => {
+    const html = (n: React.ReactNode) => renderToStaticMarkup(<>{n}</>);
+    expect(html(marked("esx-02", "x-0"))).toBe("es<mark>x-0</mark>2");
+    expect(html(marked("proxmox-3-002", "pm3"))).toBe("<mark>p</mark>rox<mark>m</mark>ox-<mark>3</mark>-002");
+    expect(html(marked("router", "zz"))).toBe("router");
+  });
+
+  it("in a prose finder, underlines only terms found whole and two letters or more (round 19)", () => {
+    const html = (n: React.ReactNode) => renderToStaticMarkup(<>{n}</>);
+    expect(html(marked("Keep your Hosts in a Folder", "host key", true))).toBe("Keep your <mark>Host</mark>s in a Folder");
+    expect(html(marked("Trusting a new host key", "host key", true))).toBe("Trusting a new <mark>host</mark> <mark>key</mark>");
+    expect(html(marked("Themes", "t", true))).toBe("Themes");
+  });
+
   it("marks unreviewed Hosts and won't open them", async () => {
     const { user, onOpen } = setup();
     const row = rows().find((r) => r.dataset.host === "scan-99")!;
@@ -110,8 +125,96 @@ describe("Picker", () => {
     expect(onOpen).not.toHaveBeenCalled();
     // The notice, beside the hidden count that a screen reader hears.
     expect(screen.getAllByRole("status").map((s) => s.textContent).join(" ")).toMatch(/scan-99 isn't reviewed/i);
-    await user.click(screen.getByText("scan-99"));
+    await user.click(screen.getByTitle("scan-99"));
     expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("puts an unreviewed Host's badge beside its name, with no column of its own (round 18)", () => {
+    setup();
+    const row = rows().find((r) => r.dataset.host === "scan-99")!;
+    const badge = within(row).getByText("unreviewed");
+    // In the name's cell, so rows without a badge give that room to the name and the group.
+    expect(badge.parentElement).toHaveClass("host-cell");
+    expect(badge.parentElement?.querySelector(".host-name")).toHaveTextContent("scan-99");
+    // The sizer row (the columns' widths) has no badge cell.
+    expect(document.querySelector(".picker-sizer .badge")).toBeNull();
+  });
+
+  it("gives the Quick Connect row Quick Connect's own glyph, and says what to type (round 18, 19)", async () => {
+    const { user } = setup({ onQuick: vi.fn() });
+    expect(screen.getByRole("combobox")).toHaveAttribute("placeholder", "Find a Host, or type user@address");
+    await user.keyboard("root@10.0.0.9");
+    const quick = rows()[0]!;
+    expect(quick).toHaveTextContent(/Quick Connect/);
+    // Not a Host's closed ring (a password login): the title bar's square, edge and open ring.
+    expect(quick.querySelector("svg.dot")).toBeNull();
+    const glyph = quick.querySelector(".quick-node svg");
+    expect(glyph?.querySelector("rect")).not.toBeNull();
+    expect(glyph?.querySelectorAll("path")).toHaveLength(2);
+  });
+
+  describe("with nothing matching (round 19)", () => {
+    const next = () => document.querySelector(".picker-empty-next");
+    it("offers Add a Host with its keys, and user@address in Iosevka, where each can be done", async () => {
+      const onAdd = vi.fn();
+      const { user } = setup({ onQuick: vi.fn(), onAdd, addKeys: "␣ +" });
+      await user.keyboard("zzzz");
+      expect(next()).toHaveTextContent(/Add a Host.*, or type user@address to connect to a machine that isn't in the Inventory\./);
+      expect(next()?.querySelector("code")).toHaveTextContent(/^user@address$/);
+      expect(next()?.querySelector(".keycap")).not.toBeNull();
+      await user.click(screen.getByRole("button", { name: "Add a Host" }));
+      expect(onAdd).toHaveBeenCalledOnce();
+    });
+    it("says only what this roster can do", async () => {
+      const { user } = setup({ onAdd: vi.fn() });
+      await user.keyboard("zzzz");
+      expect(next()).toHaveTextContent(/^Add a Host\.$/);
+      expect(next()?.querySelector("code")).toBeNull();
+    });
+    it("without either, says what was searched", async () => {
+      const { user } = setup();
+      await user.keyboard("zzzz");
+      expect(screen.queryByRole("button", { name: "Add a Host" })).toBeNull();
+      expect(next()).toHaveTextContent(/Backspace widens the search/);
+    });
+  });
+
+  describe("edge stubs with nine or more Sessions (Q316 a, extended by Q332)", () => {
+    const live = new Map([
+      ["esxi-02", "current" as const],
+      ["proxmox-01", "live" as const],
+    ]);
+    const stubOf = (name: string) => screen.getByRole("option", { name: new RegExp(`^${name}`) }).querySelector("line.stub");
+    it("keeps every live Host's stub with fewer Sessions", () => {
+      setup({ live });
+      expect(stubOf("esxi-02")).not.toBeNull();
+      expect(stubOf("proxmox-01")).not.toBeNull();
+    });
+    it("drops other live Hosts' stubs, keeping their colour, and keeps the on-screen Host's", () => {
+      setup({ live, manySessions: true });
+      expect(stubOf("esxi-02")).not.toBeNull();
+      expect(stubOf("proxmox-01")).toBeNull();
+      expect(screen.getByRole("option", { name: /^proxmox-01/ }).querySelector("svg.dot")).toHaveClass("on");
+    });
+  });
+
+  it("keeps a Host with no type's group in its own column, cut as every row's is (round 21)", () => {
+    render(
+      <Picker
+        hosts={{ ...list, hosts: [host("bare", { ip: "", type: "", group: "a-long-group-name" }), ...list.hosts] }}
+        recent={[]}
+        vim
+        onOpen={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const bare = screen.getByRole("option", { name: /^bare/ });
+    // Round 19 widened it over the empty type cell, which showed a second cut length in the column.
+    expect(bare.querySelector(".host-group")).not.toHaveClass("wide");
+    expect(getComputedStyle(bare.querySelector(".host-group")!).gridColumnEnd).not.toBe("span 2");
+    expect(bare.querySelector(".host-type")).toBeNull();
+    // The empty address keeps its cell, so the group starts at its own column as on every row.
+    expect(bare.querySelector(".host-ip")).not.toBeNull();
   });
 
   it("closes with Esc, even from the list", async () => {
