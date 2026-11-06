@@ -86,6 +86,22 @@ describe("the Lock", () => {
     expect((await backend.vaultStatus()).status).toBe("unlocked");
   });
 
+  it("says so when that lock fails, rather than leaving serve unlocked unsaid", async () => {
+    const scenario: FakeScenario = { hosts: makeHosts(12), slowUnlock: { failAfterMs: 20, completesAfterMs: 80 } };
+    fakeTimeouts();
+    const real = fakeBackend(scenario);
+    const backend = { ...real, lockVault: () => Promise.reject(new Error("serve didn't answer")) };
+    const user = userEvent.setup({ advanceTimers });
+    render(<App backend={backend} clock={manualClock()} />);
+    await screen.findByText(/12 hosts/i);
+    await unlock(user);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/didn't answer in time/i);
+    await pass(1_000);
+    realTimeouts();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Locking the vault failed: serve didn't answer");
+    expect(lockScreen()).not.toBeNull();
+  });
+
   it("explains a vault CLI that isn't logged in, with the command to run", async () => {
     const { user } = await start(fixtures["not-logged-in"]);
     expect((await screen.findAllByText("bw login", { selector: "code" })).length).toBeGreaterThan(0);

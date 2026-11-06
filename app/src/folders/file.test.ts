@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseFoldersYml } from "./file";
+import { foldersSettings, parseFoldersYml } from "./file";
 
 const TEXT = `# my folders
 Lab ESXi:
@@ -27,5 +27,24 @@ describe("folders.yml", () => {
     expect(parseFoldersYml("Lab:\n  - a\nlab: []\n")).toEqual({ error: { line: 3, message: "there are two Folders named lab" } });
     expect(parseFoldersYml("Lab:\n  x: 1\n")).toMatchObject({ error: { line: 2 } });
     expect(parseFoldersYml("- a\n")).toMatchObject({ error: { line: 1 } });
+  });
+});
+
+describe("what the Folders Plugin is handed to move in", () => {
+  const fixed = { list: () => [] };
+  const state = { load: () => Promise.resolve(), get: () => [{ name: "Old", hosts: ["esx-02"] }] };
+
+  it("moves folders.yml's Folders in when there's one, else the State's", async () => {
+    const file = { read: () => Promise.resolve({ path: "folders.yml", text: TEXT }) };
+    expect(await foldersSettings(fixed, file, state)).toMatchObject({ import_from: "folders.yml", import: [{ name: "Lab ESXi" }, { name: "Night shift" }] });
+    const none = { read: () => Promise.resolve({ path: "folders.yml", text: null }) };
+    expect(await foldersSettings(fixed, none, state)).toMatchObject({ import_from: "the State", import: [{ name: "Old" }] });
+  });
+
+  it("moves nothing in when folders.yml can't be read, and says why", async () => {
+    const file = { read: () => Promise.reject(new Error("permission denied")) };
+    const out = await foldersSettings(fixed, file, state);
+    expect(out.import).toBeUndefined();
+    expect(out.import_error).toBe("folders.yml can't be read (permission denied): fix it and they move in at the next start");
   });
 });

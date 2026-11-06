@@ -337,6 +337,13 @@ describe("running", () => {
     expect(await manager.remove("hosts")).toMatch(/built into roster/);
   });
 
+  it("removing it says so when its data folder couldn't go", async () => {
+    const { manager, backend } = setup({ [ALERTS]: alerts() }, { ...installed });
+    await manager.start();
+    backend.pluginForget = () => Promise.reject(new Error("the folder is in use"));
+    expect(await manager.remove("recent-alerts")).toBe("Removed recent-alerts. recent-alerts's data folder stays (the folder is in use): one installed again finds it");
+  });
+
   it("the Host count is the built-in hosts Plugin, and revoking its permission takes it away", async () => {
     const { manager, registries } = setup();
     await manager.start();

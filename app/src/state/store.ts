@@ -66,6 +66,7 @@ export class StateStore {
 
   private save() {
     const state = this.state;
+    // Every save writes the whole State, so the next change saves what this one couldn't.
     this.saving = this.saving.then(() => this.platform.saveState(state)).catch(() => {});
   }
 

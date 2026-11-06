@@ -393,7 +393,7 @@ export class PluginManager {
         }
         await this.loadPath(entry.path, entry.granted, entry.name);
       } catch (e) {
-        this.problems.set(entry.name, String(e instanceof Error ? e.message : e));
+        this.problems.set(entry.name, errorText(e));
         this.changed();
       }
     }
@@ -403,6 +403,7 @@ export class PluginManager {
 
   private serially<T>(work: () => Promise<T>): Promise<T> {
     const next = this.packageWork.then(work, work);
+    // Its caller hears how it went (it gets `next`); the queue only waits for it.
     this.packageWork = next.catch(() => undefined);
     return next;
   }
@@ -457,6 +458,7 @@ export class PluginManager {
     const entry = this.installed().find((e) => e.path === path);
     if (!p.pinned || !entry) {
       if (this.isDeclined(p)) {
+        // A clone that stays is never loaded, and the next start discards it again.
         await this.backend.packagesDiscard(p.name).catch(() => undefined);
         return;
       }
@@ -541,13 +543,16 @@ export class PluginManager {
         return `Couldn't clean the Packages: ${errorText(e)}`;
       }
       const paths = new Set(gone.map((n) => `${PACKAGE_PREFIX}${n}`));
+      const stays: string[] = [];
       for (const entry of this.installed().filter((e) => paths.has(e.path))) {
         await this.forget(entry.name);
-        await this.backend.pluginForget(entry.name).catch(() => false);
+        const kept = await this.dataFolderKept(entry.name);
+        if (kept) stays.push(kept);
       }
       this.saveInstalled(this.installed().filter((e) => !paths.has(e.path)));
       this.changed();
-      return gone.length === 0 ? "Nothing to clean: init.lua names every Package" : `Removed ${gone.join(", ")}`;
+      if (gone.length === 0) return "Nothing to clean: init.lua names every Package";
+      return [`Removed ${gone.join(", ")}`, ...stays].join(". ");
     });
   }
 
@@ -605,6 +610,7 @@ export class PluginManager {
     if (pkg && prompt.kind === "install") {
       if (!allow) {
         this.saveCancelled([...this.cancelledInstalls().filter((d) => d.name !== pkg.name), { name: pkg.name, url: pkg.url, dir: pkg.dir }]);
+        // A clone that stays is never loaded, and the next start discards it again (syncPackage).
         await this.backend.packagesDiscard(pkg.name).catch(() => undefined);
         this.changed();
         return;
@@ -695,12 +701,21 @@ export class PluginManager {
       this.packages = this.packages.map((p) => (p.name === pkg ? { ...p, commit: null, locked: null, pinned: false } : p));
     }
     await this.forget(name);
-    // Its data folder goes with it (decision Q93): a Plugin installed again starts empty.
-    await this.backend.pluginForget(name).catch(() => false);
+    const kept = await this.dataFolderKept(name);
     this.saveInstalled(this.installed().filter((e) => e.name !== name));
     this.changed();
     const stillNamed = pkg !== null && this.packages.some((p) => p.name === pkg);
-    return stillNamed ? `Removed ${name}. init.lua still names it: :packages install ${pkg} brings it back` : null;
+    const notes = [...(kept ? [kept] : []), ...(stillNamed ? [`init.lua still names it: :packages install ${pkg} brings it back`] : [])];
+    return notes.length ? [`Removed ${name}`, ...notes].join(". ") : null;
+  }
+
+  /** Deletes a removed Plugin's data folder (decision Q93: one installed again starts empty);
+   * what to say when it couldn't, or null. */
+  private async dataFolderKept(name: string): Promise<string | null> {
+    return this.backend.pluginForget(name).then(
+      () => null,
+      (e: unknown) => `${name}'s data folder stays (${errorText(e)}): one installed again finds it`,
+    );
   }
 
   /** Unloads a Plugin and forgets what the manager knew of it (not its State entry). */
@@ -770,6 +785,7 @@ export class PluginManager {
   private async send(name: PluginEventName, payload: Record<string, unknown>): Promise<void> {
     if (name === "session_open" || name === "session_exit") await this.sessionsSent;
     if (this.loaded.size === 0) return;
+    // An event the core couldn't deliver is one no Plugin heard; the next one goes as usual.
     const replies = await this.backend.pluginEvent(name, payload, this.builtins()).catch(() => []);
     for (const r of replies) {
       this.used(r.plugin, `heard ${name}`);
@@ -912,7 +928,8 @@ export class PluginManager {
       return;
     }
     const { manifest, reply } = result;
-    // Stopped while it loaded: the core's copy goes too, and nothing of it is shown.
+    // Stopped while it loaded: the core's copy goes too, and nothing of it is shown. An unload the
+    // core refuses leaves a copy nothing calls; a load by that name replaces it there.
     if (this.stopped) return void (await this.backend.pluginUnload(manifest.name).catch(() => false));
     await this.unload(manifest.name, false);
     const asked = manifest.permissions.map((p) => p.name);
@@ -932,6 +949,7 @@ export class PluginManager {
       this.loaded.delete(name);
     }
     this.forgetUi(name);
+    // A copy the core keeps is one nothing calls now; a load by that name replaces it there.
     if (tellCore) await this.backend.pluginUnload(name).catch(() => false);
   }
 

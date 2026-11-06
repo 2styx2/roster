@@ -130,7 +130,10 @@ export function useVault(
       } catch {
         if (stale()) return; // status unknown: lock anyway, it's harmless on a locked vault
       }
-      await backend.lockVault().catch(() => {});
+      // A lock that fails here may leave serve unlocked behind a locked app: the lock screen says so.
+      await backend.lockVault().catch((e: unknown) =>
+        setView((cur) => (cur.state === "locked" ? { ...cur, error: `Locking the vault failed: ${errorText(e)}` } : cur)),
+      );
     },
     [backend],
   );
