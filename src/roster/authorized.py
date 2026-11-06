@@ -6,6 +6,7 @@ roster-managed name) is box_key_re's."""
 import shlex
 import subprocess
 from dataclasses import dataclass, field
+from typing import Any
 
 from . import boxkeys, keyline, sshops, winhost
 from .common import program_argv
@@ -18,9 +19,9 @@ from .providers import get_secret
 # ---------------------------------------------------------------- which lines are this Box's
 
 
-def box_public_keys(cfg):
+def box_public_keys(cfg: dict[str, Any]) -> list[list[str]]:
     """[[type, key, comment...]] of each of this Box's public keys that's there and reads as one."""
-    out = []
+    out: list[list[str]] = []
     for key in boxkeys.all_keys(cfg):
         try:
             parts = key.pub.read_text().split()
@@ -31,16 +32,16 @@ def box_public_keys(cfg):
     return out
 
 
-def box_key_re(cfg):
+def box_key_re(cfg: dict[str, Any]) -> str:
     """What matches this Box's key lines in authorized_keys: its tag (cfg's tag_re), or one of this Box's own public
     keys (one per key type, T239: boxkeys.all_keys) with a roster-managed tag of any Box name (T217, #412): a Box
     renamed since (box_name:, or the hostname) still finds its lines under the earlier name, and never another Box's,
     whose keys differ. The tag alone without a public key."""
-    alts = [cfg["tag_re"]] + [key_ere(words[0], words[1]) for words in box_public_keys(cfg)]
+    alts: list[str] = [cfg["tag_re"]] + [key_ere(words[0], words[1]) for words in box_public_keys(cfg)]
     return "|".join(dict.fromkeys(alts))
 
 
-def key_tag_name(cfg):
+def key_tag_name(cfg: dict[str, Any]) -> str | None:
     """The Box name in this Box's public keys' comment (ssh-keygen -C, as it was made, or as setup re-tagged it): its
     own key's first, then the other key types' (T239). None when no comment is a roster-managed tag (a key of the
     user's own)."""
@@ -50,7 +51,7 @@ def key_tag_name(cfg):
     return None
 
 
-def key_named(cfg):
+def key_named(cfg: dict[str, Any]) -> str | None:
     """The Box name this Box's key lines on this Inventory's Hosts carry: what the last `roster setup` that reached
     every key Host tagged them with (the Inventory's key-name file), else the key's own comment (a key made by roster
     names the Box as it was then). None: not known (a key of the user's own, never set up since T217)."""
@@ -91,11 +92,11 @@ KEY_MODE = ("if [ -z \"$ESXI\" ]; then chmod 600 \"$f.roster\"; "
 BACKUP = "if [ -n \"$ESXI\" ] && [ -x /sbin/auto-backup.sh ]; then /sbin/auto-backup.sh >/dev/null 2>&1 || true; fi; "
 
 
-def key_script_head(user):
+def key_script_head(user: str) -> str:
     return f"set -e; U={shlex.quote(user)}; " + AK_FILE
 
 
-def taken_guard(name_re, own):
+def taken_guard(name_re: str | None, own: str) -> str:
     """T226 (#435, 2): when a line NAME_RE matches holds a key OWN doesn't (another Box's key under the name this Box
     is being renamed to), ROSTER_TAKEN, and the script stops there with nothing changed."""
     if name_re is None:
@@ -104,7 +105,8 @@ def taken_guard(name_re, own):
             f"echo {keyline.TAKEN}; exit 0; fi; ")
 
 
-def add_key_script(pub, tag_re, user, taken=None, own=None, others=None):
+def add_key_script(pub: str, tag_re: str, user: str, taken: str | None = None, own: str | None = None,
+                   others: str | None = None) -> str:
     """Drops the lines TAG_RE matches (this same box's), appends the current one. Safe to re-run. TAKEN (this Box's
     name's tag_re, on a renamed Box): a line it matches with a key OWN (this Box's keys; PUB's when None) doesn't
     match stops it (ROSTER_TAKEN). OTHERS (T239): after the write, ROSTER_OTHERS when a line OTHERS matches (this
@@ -120,7 +122,7 @@ def add_key_script(pub, tag_re, user, taken=None, own=None, others=None):
             "[ -n \"$ESXI\" ] || chmod 700 \"$d\"; " + later + f"echo {keyline.OK}")
 
 
-def retag_key_script(pub, user, taken=None, own=None):
+def retag_key_script(pub: str, user: str, taken: str | None = None, own: str | None = None) -> str:
     """T217: this Box's key lines (PUB's key under any roster-managed name, options and all) get PUB's tag, in place:
     their options stay, every other line stays as it is (never matched by name: #423's review L2), and nothing is
     added; a second copy of one (#423's S2) goes, as the install's rewrite took it. ROSTER_NONE FILE when there's
@@ -149,7 +151,7 @@ def retag_key_script(pub, user, taken=None, own=None):
             KEY_MODE + KEEP_LABEL + "mv -f \"$f.roster\" \"$f\"; " + RELABEL + BACKUP + f"echo {keyline.OK}")
 
 
-def remove_key_script(tag_re, user):
+def remove_key_script(tag_re: str, user: str) -> str:
     # each line it takes says its tag's name first (ROSTER_TAG NAME), so revoke can say when one had another name
     return (key_script_head(user) + f"[ -f \"$f\" ] || {{ echo {keyline.OK}; exit 0; }}; " + REPLACE_AK +
             f"grep -E -- {shlex.quote(tag_re)} \"$f\" | sed -n '{keyline.SED_NAMES}' || true; "
@@ -157,18 +159,18 @@ def remove_key_script(tag_re, user):
             KEEP_LABEL + "mv -f \"$f.roster\" \"$f\"; " + RELABEL + BACKUP + f"echo {keyline.OK}")
 
 
-def remove_script(tag_re, user):
+def remove_script(tag_re: str, user: str) -> str:
     """The POSIX key-removal command for the Login's USER: sh with the script as its argument."""
     return "sh -c " + shlex.quote(remove_key_script(tag_re, user))
 
 
-def over_ssh(h, script, timeout=None):
+def over_ssh(h: dict[str, Any], script: str, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
     """Run SCRIPT on key Host H over `ssh NAME` with this Box's key, never a shared connection."""
     return subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"], script]),
                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
 
 
-def failure(h, r):
+def failure(h: dict[str, Any], r: subprocess.CompletedProcess[str]) -> str:
     """Why a key script R didn't finish on H."""
     if winhost.looks_windows(r.stdout + r.stderr):
         return str(winhost.windows_hint(h["name"]))
@@ -181,7 +183,8 @@ class NameTaken(RuntimeError):
     """T226 (#435, 2): a Host's key file has another key's line under the name this Box is being renamed to."""
 
 
-def enroll(h, pub, tag_re, taken=None, own=None, keep_others=False):
+def enroll(h: dict[str, Any], pub: str, tag_re: str, taken: str | None = None, own: str | None = None,
+           keep_others: bool = False) -> list[str]:
     """Put this Box's key line PUB on Host H, logging in with its Login's password: the notes to show under its `ok`
     (on a Windows Host, the file it wrote and any warning). RuntimeError when it can't; NameTaken when TAKEN (this Box's
     name's tag_re, on a renamed Box) is given and another key's line (one OWN, this Box's keys, doesn't match) is under
@@ -240,11 +243,11 @@ class Done:
     the warnings a Windows Host's script gave (KEY_FILE), and for revoke the tag names of the lines it took."""
 
     why: object = None
-    warnings: list[str] = field(default_factory=list)
-    names: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list[str])
+    names: list[str] = field(default_factory=list[str])
 
 
-def retag(h, pub, taken=None, own=None):
+def retag(h: dict[str, Any], pub: str, taken: str | None = None, own: str | None = None) -> Done:
     """Re-tag this Box's key lines on key Host H with PUB's tag (T217), in place, found by its public key under any
     roster-managed name, over `ssh NAME` with the key itself. TAKEN: the new name's tag_re, which matches another
     key's line there when the name is another Box's."""
@@ -271,7 +274,7 @@ def retag(h, pub, taken=None, own=None):
 
 # ---------------------------------------------------------------- revoke: the line off
 
-def revoke(h, tag_re):
+def revoke(h: dict[str, Any], tag_re: str) -> Done:
     """Take this Box's key (TAG_RE) off Host H by its name (`ssh NAME`, never a shared connection). A Windows Host
     (os: windows) gets the PowerShell script (winhost), on stdin."""
     if is_windows(h):

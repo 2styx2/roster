@@ -5,6 +5,7 @@ TimedOut) takes the code of where it happened: 3, a lookup's 35, a sign-in's 59.
 
 Messages are safe to show: they carry item NAMES (and dates, URIs), never a value."""
 
+from collections.abc import Iterable
 from typing import Any
 
 from .. import errors
@@ -54,7 +55,7 @@ class NoItemFields(Unsupported):
     code = errors.NO_ITEM_FIELDS
     fix = "give the address and user yourself (roster add: --ip and --user)"
 
-    def __init__(self, message, provider):
+    def __init__(self, message: str, provider: str) -> None:
         super().__init__(message)
         self.data = {"provider": provider}
 
@@ -104,7 +105,7 @@ class LoginError(SecretError):
 
     code = errors.SIGN_IN_FAILED
 
-    def __init__(self, message, step=None):
+    def __init__(self, message: str, step: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.step = step
 
@@ -169,7 +170,7 @@ class ItemNotFound(SecretError):
 
     code = errors.ITEM_NOT_FOUND
 
-    def __init__(self, message, item, near=()):
+    def __init__(self, message: str, item: str, near: Iterable[str] = ()) -> None:
         super().__init__(message)
         self.item, self.near = item, list(near)
 
@@ -180,7 +181,8 @@ class SeveralItems(SecretError):
 
     code = errors.SEVERAL_ITEMS
 
-    def __init__(self, message, item, matches, exact, total=None):
+    def __init__(self, message: str, item: str, matches: list[dict[str, Any]], exact: bool,
+                 total: int | None = None) -> None:
         super().__init__(message)
         self.item, self.matches, self.exact, self.total = item, matches, exact, total
 
@@ -190,7 +192,7 @@ class NoField(SecretError):
 
     code = errors.NO_FIELD
 
-    def __init__(self, message, item, field):
+    def __init__(self, message: str, item: str, field: str) -> None:
         super().__init__(message)
         self.item, self.field = item, field
 
@@ -209,7 +211,7 @@ class ItemExists(SecretError):
     code = errors.ITEM_EXISTS
     fix = "point the Login at the existing item, or pick another name (`<host> <what it opens>`)"
 
-    def __init__(self, message, item, matches):
+    def __init__(self, message: str, item: str, matches: list[dict[str, Any]]) -> None:
         super().__init__(message)
         self.item, self.matches = item, matches
         self.data = {"matches": matches}

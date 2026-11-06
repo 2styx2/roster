@@ -299,7 +299,7 @@ def manual_unlock():
     return MANUAL_UNLOCK
 
 
-def get_secret(ref, group):
+def get_secret(ref: str | None, group: str | None) -> str | None:
     """Resolve an auth reference via its provider. Cached for this run, never written anywhere."""
     if ref in (None, "") or ref in NO_PASSWORD:
         return None

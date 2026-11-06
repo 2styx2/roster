@@ -2,6 +2,7 @@
 finished, and the Mesh apply `roster setup` and `setup --rotate` run (mesh.run, then its lines)."""
 
 import sys
+from typing import Any
 
 from . import mesh
 from .common import plural, say
@@ -61,7 +62,7 @@ def warn_cut(cut):
         say(f"cut pending on {plural(len(peers), 'Host')} for {host}: {', '.join(peers)}")
 
 
-def apply(cfg):
+def apply(cfg: dict[str, Any]) -> dict[str, str]:
     """The Mesh applied, its lines said: {host: why} for what it left pending."""
     r = mesh.run(cfg, apply=True, say=say)
     show_mesh(r)

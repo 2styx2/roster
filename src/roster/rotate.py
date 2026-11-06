@@ -26,6 +26,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -109,20 +110,21 @@ def one_key_config(m: Member, keys: list[Path]) -> str:
     """A one-Host ssh config for M: its address, user and port, roster's known_hosts for its Inventory (its key must
     be recorded), and only KEYS, offered in order."""
     h = m.h
-    opts = [("HostName", h["ip"]), ("User", h["ssh"]["user"]), ("Port", h["ssh"]["port"]),
-            ("UserKnownHostsFile", token_path(m.ctx.known_hosts)), ("StrictHostKeyChecking", "yes"),
-            ("BatchMode", "yes"), ("ConnectTimeout", 10), ("ControlMaster", "no"), ("ControlPath", "none"),
-            ("IdentitiesOnly", "yes")] + [("IdentityFile", token_path(k)) for k in keys]
+    opts: list[tuple[str, object]] = [
+        ("HostName", h["ip"]), ("User", h["ssh"]["user"]), ("Port", h["ssh"]["port"]),
+        ("UserKnownHostsFile", token_path(m.ctx.known_hosts)), ("StrictHostKeyChecking", "yes"),
+        ("BatchMode", "yes"), ("ConnectTimeout", 10), ("ControlMaster", "no"), ("ControlPath", "none"),
+        ("IdentitiesOnly", "yes"), *[("IdentityFile", token_path(k)) for k in keys]]
     return "\n".join(sshconfig.host_block(h["name"], opts)) + "\n"
 
 
 class Connect:
     """ssh to a Member with exactly the keys given, through a config file of its own (removed after)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.dir = Path(tempfile.mkdtemp(prefix="roster-rotate-"))
 
-    def close(self):
+    def close(self) -> None:
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def config(self, m: Member, keys: list[Path]) -> Path:
@@ -131,7 +133,7 @@ class Connect:
         os.chmod(f, 0o600)
         return f
 
-    def run(self, m: Member, keys: list[Path], command: str, timeout: int = 120) -> subprocess.CompletedProcess:
+    def run(self, m: Member, keys: list[Path], command: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
         conf = self.config(m, keys)
         try:
             return subprocess.run(program_argv(["ssh", "-F", ssh_path(conf), m.name, command]),
@@ -146,7 +148,7 @@ class Connect:
             return False, str(e)
         return r.returncode == 0, (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1][:200]
 
-    def script(self, m: Member, keys: list[Path], posix: str, mode: str, tag_re: str, pub: str = ""):
+    def script(self, m: Member, keys: list[Path], posix: str, mode: str, tag_re: str, pub: str = "") -> list[str]:
         """Run the key script (POSIX: the sh script POSIX; Windows: winhost's MODE with TAG_RE and PUB) over KEYS:
         the lines it took (remove), or []; Unreached when ssh failed, RuntimeError when the script did."""
         if is_windows(m.h):
@@ -166,6 +168,9 @@ class Connect:
 
 
 # ---------------------------------------------------------------- which keys, which Hosts
+
+Groups = list[tuple[Context, dict[str, Any]]]
+
 
 def group(cfg: dict[str, Any]) -> list[tuple[Context, dict[str, Any]]]:
     """This run's Inventory, then every other named Inventory one of whose key files is one of this one's (Q188 (d):
@@ -194,9 +199,10 @@ def group(cfg: dict[str, Any]) -> list[tuple[Context, dict[str, Any]]]:
     return out
 
 
-def members(groups) -> list[Member]:
+def members(groups: Groups) -> list[Member]:
     """Every key Host of GROUPS, those of one key file sharing its one Slot."""
-    out, slots = [], {}
+    out: list[Member] = []
+    slots: dict[Path, Slot] = {}
     for ctx, c in groups:
         for h in sorted(c["hosts"].values(), key=lambda h: h["name"]):
             if h["enroll"] and h["reviewed"]:
@@ -213,7 +219,7 @@ def comment(slot: Slot, cfg: dict[str, Any]) -> str:
     return w[2] if len(w) == 3 and keyline.tag_box(w[2]) else cfg["tag"]
 
 
-def make_new(slot: Slot, cfg: dict[str, Any], say) -> None:
+def make_new(slot: Slot, cfg: dict[str, Any], say: Callable[[str], None]) -> None:
     """The new key beside SLOT's (KEY.new), of its type, with the old one's comment."""
     target = new_of(slot.key)
     for f in (target, pub_of(target)):
@@ -259,7 +265,7 @@ def delete_old(slot: Slot) -> None:
         f.unlink(missing_ok=True)
 
 
-def old_lines_re(m: Member, groups, new_words: list[str]) -> str:
+def old_lines_re(m: Member, groups: Groups, new_words: list[str]) -> str:
     """This Box's key lines on M that aren't its new key's: each of this Box's public keys but the new one, only those
     boxkeys.all_keys vouches for (KEY.old included only when this user's and its .pub is its own: #482's LOW-4), with
     a roster-managed tag of any Box name. Never a roster-mesh: line."""
@@ -273,7 +279,7 @@ def old_lines_re(m: Member, groups, new_words: list[str]) -> str:
     return "|".join(alts)
 
 
-def old_keys(m: Member, groups) -> list[Path]:
+def old_keys(m: Member, groups: Groups) -> list[Path]:
     """The private keys of this Box that M may still let in (the slot's old one first, then every other type's):
     what the old-key login offers, in order. Never the new one."""
     out = [m.slot.old] if m.slot.old is not None else []
@@ -286,8 +292,8 @@ def old_keys(m: Member, groups) -> list[Path]:
 
 # ---------------------------------------------------------------- the run
 
-def read_all(groups) -> dict[Context, Record]:
-    out = {}
+def read_all(groups: Groups) -> dict[Context, Record]:
+    out: dict[Context, Record] = {}
     for ctx, _ in groups:
         try:
             out[ctx] = read(ctx)
@@ -330,7 +336,8 @@ def hosts_for(cfg: dict[str, Any], host: str | None, key_type: str | None) -> se
     return hosts
 
 
-def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = False, say=print) -> dict[str, Any]:
+def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = False,
+        say: Callable[[str], None] = print) -> dict[str, Any]:
     """`roster setup --rotate`: see the module's text. Returns {done: [label], pending: {label: why}, failed: {label:
     why}, notes: {label: note}, groups: [(inv, cfg)]}."""
     groups = group(cfg)
@@ -491,7 +498,8 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
             entries[str(key)]["swapped"] = slot.done = True
         save_all()
         sync(groups, say)
-        done, notes = [], {}
+        done: list[Member] = []
+        notes: dict[str, str] = {}
         for m in proven:                         # pass 2: the old lines off, over the new key
             ere = old_lines_re(m, groups, news[m.slot.key])
             try:
@@ -528,11 +536,11 @@ def label(ctx: Context, name: str) -> str:
     return name if ctx.name == current().name else f"{ctx.name or '(unnamed)'}: {name}"
 
 
-def labels(recs, groups) -> dict[str, str]:
+def labels(recs: dict[Context, Record], groups: Groups) -> dict[str, str]:
     return {label(ctx, n): why for ctx, _ in groups for n, why in sorted(recs[ctx].pending.items())}
 
 
-def sync(groups, say) -> None:
+def sync(groups: Groups, say: Callable[[str], None]) -> None:
     """Each Inventory's ssh config, written again: its Hosts' key now, and the old one too where pending."""
     for ctx, c in groups:
         write_ssh_config(c, ctx)

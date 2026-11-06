@@ -25,7 +25,8 @@ What the script prints, one per line: `FILE <path>` (a file it wrote, or read fo
 import base64
 import re
 import subprocess
-from typing import IO, cast
+from collections.abc import Iterable, Sequence
+from typing import IO, Any, cast
 
 from . import context, keyline
 from .common import program_argv
@@ -671,14 +672,14 @@ def exit_code(code):
     return code if 0 <= code <= (0xFFFFFFFF if context.WINDOWS else 255) else 1
 
 
-def looks_windows(text):
+def looks_windows(text: str) -> bool:
     """Is TEXT what a Windows Host says to a POSIX command (cmd.exe's or PowerShell's 'sh' is not recognized)?"""
     low = text.lower()
     return ("'sh' is not recognized" in low or "the term 'sh' is not recognized" in low
             or "sh : the term 'sh'" in low)
 
 
-def windows_hint(name):
+def windows_hint(name: str) -> HostRefused:
     """The error for a POSIX script a Windows Host couldn't run (code 155)."""
     return HostRefused(LOOKS_LIKE_WINDOWS, f"{name} looks like a Windows Host (its shell says 'sh' is not recognized): "
                                            "set os: windows for it (or its group) in roster.yml, run `roster sync`, "
@@ -689,13 +690,14 @@ class Result:
     """What the script said: the files it wrote or read, its warnings, and whether the file is the administrators'
     (a key there logs in as every administrator on the Host: Microsoft's design)."""
 
-    def __init__(self, files, warnings, admins=False, tags=(), noline=False, taken=False):
+    def __init__(self, files: list[str], warnings: list[str], admins: bool = False, tags: Iterable[str] = (),
+                 noline: bool = False, taken: bool = False) -> None:
         self.files, self.warnings, self.admins = files, warnings, admins
         self.tags, self.noline = list(tags), noline       # remove: the names of the lines taken; retag: none found
         self.taken = taken                                # add, retag: another key's line under the new name
 
 
-def admins_note(name):
+def admins_note(name: str) -> str:
     return (f"a key in this file logs in as every administrator on {name}, not only this Login's user (Windows' "
             "administrators share one key file)")
 
@@ -734,7 +736,8 @@ class SshFailed(RuntimeError):
     """over_key: ssh itself failed (no login), so no script ran."""
 
 
-def over_key(h, mode, tag_re, timeout=60, pub="", taken="", own="", ssh_opts=()):
+def over_key(h: dict[str, Any], mode: str, tag_re: str, timeout: float = 60, pub: str = "", taken: str = "",
+             own: str = "", ssh_opts: Sequence[str] = ()) -> Result:
     """Run MODE's script on key Host H with this Box's key (`ssh NAME`, never a shared connection): a Result, or
     RuntimeError (SshFailed when ssh itself failed). PUB: the key line retag writes; TAKEN, OWN: script's. SSH_OPTS:
     ssh's own options before the Host (the Box key rotation's `-F CONFIG`, one key: T240)."""
@@ -751,7 +754,7 @@ def over_key(h, mode, tag_re, timeout=60, pub="", taken="", own="", ssh_opts=())
     return outcome(h["name"], r.returncode, out, err)
 
 
-def install(h, pub, tag_re, password, taken="", own=""):
+def install(h: dict[str, Any], pub: str, tag_re: str, password: str | None, taken: str = "", own: str = "") -> Result:
     """Add this Box's key line PUB on Windows Host H, logging in with PASSWORD (paramiko; None: an agent's key).
     TAKEN, OWN: script's."""
     from .sshops import password_exec

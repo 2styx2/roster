@@ -5,7 +5,9 @@ wouldn't reach are skipped, and a Host whose key line another Box's name holds i
 
 import concurrent.futures as cf
 import sys
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
+from typing import Any
 
 from . import authorized, boxkeys, boxlock, keyline, mesh, meshview, rotation
 from .authorized import TAKEN, NameTaken, NoLine, box_key_re, box_public_keys, enroll, key_named
@@ -13,7 +15,7 @@ from .boxkeys import ensure_key, public_key_line
 from .claude import write_claude_files
 from .common import die, plural, replace_file, say
 from .config import selected
-from .context import current
+from .context import Context, current
 from .errors import KEY_FILE, UNKNOWN_HOST, Exit, Problem, tagged
 from .keyline import key_ere
 from .providers import get_secret
@@ -23,12 +25,12 @@ LEFT_OUT = ("left out of this Box's ssh config: another named Inventory ahead of
             "so `ssh {name}` reaches that one; skipped (`roster inv use` this Inventory to reach it)")
 
 
-def skip_left_out(hosts, to_stderr=False):
+def skip_left_out(hosts: list[dict[str, Any]], to_stderr: bool = False) -> list[dict[str, Any]]:
     """HOSTS without the key Hosts a plain `ssh NAME` wouldn't reach (ticket 115): another named Inventory's Host by
     that name is the one in this Box's ssh config, or this Inventory's part of it doesn't have NAME (not synced here),
     so roster must never ssh to it by name. Each skipped one is said."""
     from .sshops import left_out, not_reached, sync_fix
-    keep = []
+    keep: list[dict[str, Any]] = []
     for h in hosts:
         why = not_reached(h["name"]) if h["enroll"] else None
         if why:
@@ -40,7 +42,7 @@ def skip_left_out(hosts, to_stderr=False):
     return keep
 
 
-def name_taken(cfg):
+def name_taken(cfg: dict[str, Any]) -> str:
     from .errors import BOX_NAME_TAKEN
     return tagged(Problem(BOX_NAME_TAKEN, f"another key's line there is tagged {cfg['tag']}: another Box already uses "
                                           "that name, and this Box's setup and revoke would take that line too (one "
@@ -49,7 +51,7 @@ def name_taken(cfg):
 
 
 @contextmanager
-def locked(what, contexts=None):
+def locked(what: str, contexts: list[Context] | None = None) -> Generator[None, None, None]:
     """The Box-wide lock (boxlock, T240) of each of CONTEXTS' Inventories (default: this run's) while the body runs;
     a run that can't get it stops (205) before anything."""
     held = boxlock.held(what, contexts)
@@ -63,7 +65,8 @@ def locked(what, contexts=None):
         held.__exit__(None, None, None)
 
 
-def setup(cfg, only=None, host=None, dry_run=False, key_type=None, force=False):
+def setup(cfg: dict[str, Any], only: str | None = None, host: str | None = None, dry_run: bool = False,
+          key_type: str | None = None, force: bool = False) -> int:
     """`roster setup`, holding the Box-wide lock unless DRY_RUN (read-only)."""
     if dry_run:
         return setup_run(cfg, only, host, dry_run, key_type, force)
@@ -71,7 +74,8 @@ def setup(cfg, only=None, host=None, dry_run=False, key_type=None, force=False):
         return setup_run(cfg, only, host, dry_run, key_type, force)
 
 
-def setup_run(cfg, only, host, dry_run, override, force):
+def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: bool, override: str | None,
+              force: bool) -> int:
     # `--host NAME` (Q198; `roster add --setup` too): exactly that Host, never what --only NAME would match too
     # (a group, type or product by that name)
     if host is not None and host not in cfg["hosts"]:
@@ -100,7 +104,7 @@ def setup_run(cfg, only, host, dry_run, override, force):
         ensure_key(key, cfg["tag"])
     pubs = {key.type.name: public_key_line(key, cfg["tag"]) for key in keys}
 
-    def pub(h):
+    def pub(h: dict[str, Any]) -> str:
         return pubs[h["key_type"]]
     # every key of this Box: a line of any of them under the new name is this Box's own, never "taken"
     own = "|".join(key_ere(*words[:2]) for words in box_public_keys(cfg))
@@ -110,7 +114,7 @@ def setup_run(cfg, only, host, dry_run, override, force):
     key_hosts = skip_left_out([h for h in hosts if h["enroll"] and h["name"] not in no_answer])
     pw_hosts = [h for h in hosts if not h["enroll"]]
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-        works = dict(zip([h["name"] for h in key_hosts], ex.map(lambda h: ssh_ok(h["name"]), key_hosts), strict=True))
+        works = dict(zip([h["name"] for h in key_hosts], ex.map(ssh_ok, [h["name"] for h in key_hosts]), strict=True))
     todo = [h for h in key_hosts if not works[h["name"]]]
     say(f"key login    {len(key_hosts) - len(todo)} already work, {len(todo)} need the key installed")
     # box_name: (or the hostname) changed since this Box's key went on its Hosts: the lines there still
@@ -138,8 +142,10 @@ def setup_run(cfg, only, host, dry_run, override, force):
     # and install take a name's lines) would take that Box's line, so that Host is left, said, unless --force
     taken = cfg["tag_re"] if was not in (None, cfg["box"]) and not force else None
     if retag:
+        def retag_one(h: dict[str, Any]) -> authorized.Done:
+            return authorized.retag(h, pub(h), taken, own)
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-            for h, done in zip(retag, ex.map(lambda h: authorized.retag(h, pub(h), taken, own), retag), strict=True):
+            for h, done in zip(retag, ex.map(retag_one, retag), strict=True):
                 for w in done.warnings:
                     print(f"warning: [{KEY_FILE}] {h['name']}: {w}", file=sys.stderr, flush=True)
                 why = done.why
@@ -212,7 +218,7 @@ def setup_run(cfg, only, host, dry_run, override, force):
     return 1 if failed else 0
 
 
-def setup_mesh(cfg, narrowed_by):
+def setup_mesh(cfg: dict[str, Any], narrowed_by: str | None) -> dict[str, str]:
     """Setup's own Mesh apply (Q63), once the Box key works on the Hosts: never with a narrowed run (NARROWED_BY, the
     flag), never one that would take a member out for its key type. {host: why} for what it left pending."""
     if not mesh.graph(cfg)["links"]:
@@ -231,7 +237,8 @@ def setup_mesh(cfg, narrowed_by):
     return {n: f"mesh: {why}" for n, why in meshview.apply(cfg).items()}
 
 
-def key_type_for_run(cfg, hosts, value):
+def key_type_for_run(cfg: dict[str, Any], hosts: list[dict[str, Any]],
+                     value: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """`setup --key-type TYPE` (T239): CFG and HOSTS with TYPE for HOSTS' key Logins, this run only (their key file,
     and so the IdentityFile this run's ssh config gives them); a note says roster.yml still says otherwise."""
     try:
@@ -250,14 +257,14 @@ def key_type_for_run(cfg, hosts, value):
     return cfg, [changed.get(h["name"], h) for h in hosts]
 
 
-def warn_overlaps(cfg):
+def warn_overlaps(cfg: dict[str, Any]) -> None:
     """The same machine in two named Inventories (ticket 115): a warning each, never an error."""
     from .health import overlaps
     for w in overlaps(cfg):
         say(f"warning: {w['message']} (fix: {w['fix']})")
 
 
-def warn_os(hosts):
+def warn_os(hosts: Sequence[dict[str, Any]]) -> None:
     """A Host with type: windows but no os: (T195, code 154): roster treats it as POSIX and runs sh scripts there, so
     say how to mark it. A warning only: roster never infers os: from type:, a free label."""
     from .errors import WINDOWS_TYPE_NO_OS

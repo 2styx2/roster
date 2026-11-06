@@ -52,7 +52,7 @@ def key_type_out(h):
     return bool(h["enroll"]) and h.get("key_type", boxkeys.DEFAULT) != boxkeys.DEFAULT
 
 
-def key_type_dropped(cfg):
+def key_type_dropped(cfg: dict[str, Any]) -> list[str]:
     """The Hosts the Mesh holds entries on now (mesh.json's members) that key_type leaves out: an apply would take
     those entries off (MED-2), so setup leaves the Mesh to an explicit `roster mesh`."""
     excluded = graph(cfg)["excluded"]
@@ -76,7 +76,7 @@ CLOSED = "serve closed: stopped part way (the next roster mesh finishes it)"   #
 
 # ---------------------------------------------------------------- who reaches whom (no connections)
 
-def graph(cfg):
+def graph(cfg: dict[str, Any]) -> dict[str, Any]:
     """The Mesh roster.yml asks for: {links: [{from, to, kind, via?, skip?}], excluded: {host: why}, sources, visit}.
     kind is "key" (the peer takes the source's key) or "password" (ssh asks the person). via: the Host the source
     goes through to reach the peer (a Link's `via:`, which wins over the same pair without one). A link from a

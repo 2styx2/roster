@@ -48,7 +48,7 @@ def write_roster_md(cfg: dict[str, Any], ctx: Context | None = None, only_if_the
     return True
 
 
-def write_claude_files(cfg):
+def write_claude_files(cfg: dict[str, Any]) -> None:
     """This Inventory's ROSTER.md, its import in CLAUDE.md and Claude Code's settings beside roster.yml, then every
     other Inventory's ROSTER.md that what it says changed for (refresh_roster_md)."""
     from . import named  # Pydantic: only once it's used, never at roster's start

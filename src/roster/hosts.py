@@ -48,7 +48,7 @@ def placeholder_user(h: dict[str, Any]) -> bool:
 ZONE_RE = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,31}\Z")
 
 
-def ip_of(v):
+def ip_of(v: Any) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     """V as an ipaddress address (an IPv6 zone checked), or None when it isn't an IP address."""
     try:
         ip = ipaddress.ip_address(v)
