@@ -14,7 +14,7 @@ export function manifestOf(lua: string): Manifest {
   const text = (key: string) => {
     const m = new RegExp(`\\b${key}\\s*=\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(code);
     if (!m) throw new Error(`roster-plugin.lua has no ${key}`);
-    return m[1]!.replace(/\\(.)/g, "$1");
+    return (m[1] ?? "").replace(/\\(.)/g, "$1");
   };
   const api = /\bapi\s*=\s*(\d+)/.exec(code)?.[1];
   const list = /\bpermissions\s*=\s*\{([^}]*)\}/.exec(code)?.[1] ?? "";
@@ -24,7 +24,7 @@ export function manifestOf(lua: string): Manifest {
     description: text("description"),
     author: text("author"),
     api: Number(api),
-    permissions: [...list.matchAll(/"([^"]+)"/g)].map((m) => m[1]!),
+    permissions: [...list.matchAll(/"([^"]+)"/g)].flatMap((m) => (m[1] ? [m[1]] : [])),
   };
 }
 
