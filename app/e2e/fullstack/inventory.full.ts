@@ -91,8 +91,8 @@ describe("the Inventory's edits as Pending changes", () => {
     await add.getByRole("group", { name: "Confirm the host key" }).getByRole("button", { name: "Trust it and add" }).waitFor();
     await page.keyboard.press("Enter");
     await status("Added lab-02 to lab").waitFor();
-    await row("lab-02").waitFor();
-    expect(await row("lab-02").getAttribute("aria-label")).toContain("not Published yet");
+    // the row comes with the reload, its Pending mark with the changes' refresh after it
+    await expect.poll(() => row("lab-02").getAttribute("aria-label")).toContain("not Published yet");
     expect(onDisk()).toContain("lab-02:");
   });
 
