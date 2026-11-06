@@ -140,12 +140,16 @@ describe("running", () => {
     const { manager, registries, backend } = setup({ "/p/counter": counter }, installed);
     await manager.start();
     const slow = backend.pluginSessions.bind(backend);
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
     vi.spyOn(backend, "pluginSessions").mockImplementation(async (open) => {
-      await new Promise((r) => setTimeout(r, 20));
+      await held;
       return slow(open);
     });
     manager.sessions([{ session: 4, host: "esx-02" }]);
-    await manager.event("session_open", { session: 4, host: "esx-02" });
+    const heard = manager.event("session_open", { session: 4, host: "esx-02" });
+    release();
+    await heard;
     expect(registries.status.get("n")?.text).toBe("open 1");
   });
 
