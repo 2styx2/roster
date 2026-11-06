@@ -14,6 +14,7 @@ import { recentAlerts, type RecentAlertsOptions } from "./backend/fakeRecentAler
 import { SAVE_TO_VAULT_API_VERSION } from "./backend/types";
 import { memoryPlatform, type MemoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { advanceTimers, fakeTimeouts, pass } from "./test-timers";
 
 const LEADER = "{Control>} {/Control}";
 const URL = "https://git.example.com/someone/recent-alerts.git";
@@ -46,7 +47,7 @@ interface Ready {
 }
 
 async function ready(pk = packages(), repaints = false): Promise<Ready> {
-  const user = userEvent.setup();
+  const user = userEvent.setup({ advanceTimers });
   const backend = fakeBackend({ hosts, packages: pk, apiVersion: SAVE_TO_VAULT_API_VERSION, repaints });
   const platform = memoryPlatform();
   render(<App backend={backend} terminalView={StubTerminal} platform={platform} />);
@@ -183,6 +184,7 @@ describe("allowed", () => {
   // Ticket 73 (#126): on Windows each Details click added a copy of the alert. The float narrowed
   // the terminal, and ConPTY prints a resized Session's whole screen again, ERROR line and all.
   it("a Session that prints its screen again after a resize (ConPTY) doesn't add its alerts again", async () => {
+    fakeTimeouts();
     const r = await installed(packages(), true);
     await connect(r);
     r.backend.print(HOST, "mounting\r\nERROR: disk /dev/sda1 full\r\n");
@@ -190,7 +192,8 @@ describe("allowed", () => {
     // Focus and back: two resizes, two repaints of the screen.
     await r.user.keyboard(`${LEADER}m`);
     await r.user.keyboard(`${LEADER}m`);
-    await new Promise((done) => setTimeout(done, 500));
+    // Long past what the repaints take to reach the Plugin.
+    await pass(1_000);
     expect(screen.getByText("⚠ 1")).toBeInTheDocument();
     expect(within(section()).getAllByText("ERROR: disk /dev/sda1 full")).toHaveLength(1);
     // What's new still counts.
@@ -251,6 +254,7 @@ describe("allowed", () => {
 
 describe("trust", () => {
   it("revoked in :plugins, its alerts go and no more output reaches it, at once", async () => {
+    fakeTimeouts();
     const r = await installed();
     await connect(r);
     r.backend.print(HOST, "ERROR one\r\n");
@@ -262,7 +266,8 @@ describe("trust", () => {
     expect(await screen.findByText("Allow terminal.read in :plugins to see alerts.")).toBeInTheDocument();
     expect(screen.queryByText("⚠ 1")).toBeNull();
     r.backend.print(HOST, "ERROR two\r\n");
-    await new Promise((done) => setTimeout(done, 400));
+    // Long past what output takes to reach a Plugin.
+    await pass(1_000);
     expect(events.mock.calls.filter(([name]) => name === "terminal_output")).toEqual([]);
     expect(screen.queryByText("ERROR two")).toBeNull();
   });

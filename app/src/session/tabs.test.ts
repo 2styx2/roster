@@ -15,6 +15,7 @@ const text = (chunks: Uint8Array[]) => chunks.map((c) => new TextDecoder().decod
  * here is a timer set after theirs, so it runs after the step that's due, however late a busy
  * machine runs them. 10 ms alone wasn't: woken late, it was due before their next step (T146). */
 const settle = async () => {
+  if (vi.isFakeTimers()) return void (await vi.advanceTimersByTimeAsync(10));
   await new Promise((r) => setTimeout(r, 10));
   for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
 };
@@ -1104,6 +1105,7 @@ describe("filling a password prompt (ticket 119)", () => {
   // Ticket 155 (#284): after a refusal the app sends the Session nothing of its own: no retry, no
   // shell hook line, no Enter. (The core types only its probe, which holds no Enter: pty_fill.rs.)
   it("sends the Session nothing after a refused fill, pressed again or left alone", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const backend = fakeBackend({ ...unlocked, hosts });
     let ev: SessionEvents | null = null;
     const writes: string[] = [];
@@ -1136,11 +1138,11 @@ describe("filling a password prompt (ticket 119)", () => {
     await expect(tabs.fill(id)).rejects.toThrow(/No password prompt/);
     // sudo redraws its prompt (Windows' ConPTY does), and the login goes quiet there.
     await print("\x1b[?25l\r[sudo] password for admin: \x1b[K\x1b[?25h");
-    await new Promise((r) => setTimeout(r, IDLE_MS * 2));
+    await vi.advanceTimersByTimeAsync(IDLE_MS * 2);
     // The offer is back; a serve refusal (a code) typed nothing either.
     await expect(tabs.fill(id)).rejects.toThrow(/changed since/);
     await expect(tabs.fill(id)).rejects.toThrow(/printed what roster typed/);
-    await new Promise((r) => setTimeout(r, IDLE_MS * 2));
+    await vi.advanceTimersByTimeAsync(IDLE_MS * 2);
     expect(fills).toBe(3);
     expect(writes).toEqual([]);
   });

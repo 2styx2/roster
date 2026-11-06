@@ -1,19 +1,20 @@
 // The Lock (ticket 04): the app opens locked, unlocks with the master password, and locks again on
 // <leader> L or after the idle timeout. All through the fake Backend.
 import { describe, expect, it } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_PASSWORD, fakeBackend, fixtures, makeHosts, type FakeScenario } from "./backend/fake";
 import { defaultOptions } from "./keymap";
 import { manualClock } from "./lock/manualClock";
+import { advanceTimers, fakeTimeouts, pass, realTimeouts } from "./test-timers";
 
 const MIN = 60_000;
 
 async function start(scenario: FakeScenario = { hosts: makeHosts(12) }) {
   const backend = fakeBackend(scenario);
   const clock = manualClock();
-  const user = userEvent.setup();
+  const user = userEvent.setup({ advanceTimers });
   render(<App backend={backend} clock={clock} />);
   await screen.findByText(/12 hosts|0 hosts/i);
   return { user, backend, clock };
@@ -69,12 +70,15 @@ describe("the Lock", () => {
     // roster-core gives up on a call after 60 s, but serve carries on: the UI stays locked, so serve
     // must not be left holding an unlocked vault.
     const scenario: FakeScenario = { hosts: makeHosts(12), slowUnlock: { failAfterMs: 20, completesAfterMs: 80 } };
+    fakeTimeouts();
     const { user, backend } = await start(scenario);
     await unlock(user);
     expect(await screen.findByRole("alert")).toHaveTextContent(/didn't answer in time/i);
     expect(lockScreen()).not.toBeNull();
-    await new Promise((r) => setTimeout(r, 150));
-    await waitFor(async () => expect((await backend.vaultStatus()).status).toBe("locked"));
+    // Past the unlock serve finished anyway (80 ms), and the lock the app sent after it.
+    await pass(1_000);
+    realTimeouts();
+    expect((await backend.vaultStatus()).status).toBe("locked");
     expect(lockScreen()).not.toBeNull();
     delete scenario.slowUnlock;
     await unlock(user);

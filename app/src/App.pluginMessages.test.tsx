@@ -2,7 +2,7 @@
 // Q126, Neovim's model): an error, a warning or an answer shows; a routine confirmation
 // (`roster.echo(text, { quiet = true })`) and an info notice are quiet by default. Quiet, a screen
 // reader still hears it and `:messages` keeps it; `ui.messages = "all"` brings it back.
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
@@ -11,6 +11,7 @@ import type { FakePlugin } from "./backend/fakePlugins";
 import { memoryPlatform } from "./platform/memory";
 import { STATE_KEY } from "./plugins/manager";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { advanceTimers, fakeTimeouts, pass } from "./test-timers";
 
 const LEADER = "{Control>} {/Control}";
 const PATH = "~/plugins/pins";
@@ -35,7 +36,7 @@ const pins: FakePlugin = {
 };
 
 async function ready(state: Record<string, unknown> = {}) {
-  const user = userEvent.setup();
+  const user = userEvent.setup({ advanceTimers });
   const platform = memoryPlatform({
     state: { version: 1, recentHosts: [], folded: [], [STATE_KEY]: [{ path: PATH, name: "pins", granted: [], asked: [] }], ...state },
   });
@@ -48,7 +49,7 @@ async function ready(state: Record<string, unknown> = {}) {
 
 const messageLine = () => document.querySelector(".message-line") as HTMLElement;
 const seen = () => (messageLine().classList.contains("visually-hidden") ? "" : (messageLine().textContent ?? ""));
-const tick = () => new Promise((r) => setTimeout(r, 0));
+const tick = () => (vi.isFakeTimers() ? pass(0) : new Promise((r) => setTimeout(r, 0)));
 const run = async (user: ReturnType<typeof userEvent.setup>, line: string) => {
   await user.keyboard(`${LEADER}:${line}{Enter}`);
   await tick();
@@ -114,7 +115,9 @@ describe("a Plugin's messages, quiet by default", () => {
 // A quiet notice from a timer, an event or a request's answer arrives when nothing was asked, so it
 // never takes the place of what the line shows; `:messages` keeps it.
 describe("a background quiet message keeps a visible line", () => {
-  const wait = () => new Promise((r) => setTimeout(r, 600));
+  // The Plugin's `pin later` notifies after 400 ms: on fake timeouts, it comes when the test says.
+  beforeEach(fakeTimeouts);
+  const wait = () => pass(400);
 
   it("an info notice from a timer leaves an error on the line, and :messages keeps both", async () => {
     const user = await ready();
