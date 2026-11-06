@@ -551,7 +551,7 @@ The Hosts the last \fBroster setup\fR that reached them didn't finish, by name (
 When roster made or rotated each of this Box's keys, for \fBkey_max_age:\fR
 .TP
 \fB~/.config/roster/run.lock\fR
-The lock one run that changes Hosts at a time holds (a named Inventory's: \fBrun\-NAME.lock\fR): its pid and command, nothing secret
+The lock one run that changes Hosts at a time holds, one for every Inventory on this Box: its pid and command, nothing secret (\fBrun\-NAME.lock\fR, an older roster's lock per Inventory, isn't used any more)
 .TP
 \fB~/.ssh/roster_known_hosts\fR
 Host keys recorded on first contact (a named Inventory's: \fB~/.ssh/roster_known_hosts\-NAME\fR)

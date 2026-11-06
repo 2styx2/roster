@@ -634,11 +634,14 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
         sync(groups, say)
         done: list[Member] = []
         notes: dict[str, str] = {}
+        abandoned: list[str] = []                # every key file's new keys moved aside (item 1)
+        for key in slots:
+            gone: list[Any] = entries[str(key)].get("abandoned") or []
+            abandoned += [str(a) for a in gone]
         for m in proven:                         # pass 2: the old lines off, over the new key
             # never a new key's line, whichever key file's (two rotated together can share an account), nor one
             # another entry on the account logs in with; the new keys moved aside, any key file's
-            ere = old_lines_re(m, groups, news[m.slot.key],
-                               [a for k in slots for a in entries[str(k)].get("abandoned") or []],
+            ere = old_lines_re(m, groups, news[m.slot.key], abandoned,
                                kept_keys(m, groups, elsewhere, set(slots)) + list(news.values()))
             try:
                 taken = conn.script(m, [m.slot.key], remove_key_script(ere, m.h["ssh"]["user"]), "remove", ere) \
