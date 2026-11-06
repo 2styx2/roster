@@ -19,6 +19,7 @@ pub mod rpc;
 mod screen;
 pub mod serve_api;
 pub mod session;
+pub mod shell;
 pub mod slot;
 pub mod state;
 mod wcwidth;

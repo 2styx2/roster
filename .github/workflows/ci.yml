@@ -283,6 +283,53 @@ jobs:
       - run: npx vite build
       - run: python3 ../scripts/check-bundle-size.py dist
 
+  # The whole stack (app/e2e/fullstack, docs/app/dev/testing.md "Full stack"): the real app in headless Chromium,
+  # roster-core's bridge in place of the Tauri shell, `uv run roster serve` and stand-in Hosts with sshd in
+  # containers. Optional: it gates nothing while it settles in (continue-on-error), and the other jobs don't wait
+  # for it.
+  app-fullstack:
+    name: App full stack (bridge, serve, stand-in Hosts)
+    runs-on: ubuntu-26.04
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.cli == 'true'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+        working-directory: app
+      - run: npx playwright-core install --with-deps --only-shell chromium
+        working-directory: app
+      # The runner image has docker and podman; the suite takes podman when it's there ($CONTAINER_CLI picks).
+      - name: npm run e2e:full
+        working-directory: app
+        run: |
+          mkdir -p "$RUNNER_TEMP/fullstack-dump"
+          E2E_DUMP_DIR="$RUNNER_TEMP/fullstack-dump" npm run e2e:full
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fullstack-dump
+          path: ${{ runner.temp }}/fullstack-dump
+          retention-days: 14
+
   app-rust:
     name: App Rust (fmt, clippy, cargo test)
     runs-on: ubuntu-26.04
