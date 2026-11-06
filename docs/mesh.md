@@ -144,7 +144,7 @@ The Mesh never wrote anything on a Windows Host (sh isn't there), so nothing is 
 
 ## Hosts with another key type
 
-A source's Mesh key is of the source's own `key_type:` ([FIPS Hosts](adding-hosts.md#fips-hosts); T245, decision Q212), made on the Host as before, so a FIPS-mode Host (which refuses Ed25519, and may not even make an Ed25519 key) is a source, a peer and a hop like any other. The key's file is `id_ed25519` for the default type, as before, and `id_<type>` for the others (`id_ecdsa`, `id_rsa`, `id_rsa-4096`); its line on each peer is tagged as always (`roster-mesh:SOURCE@OWNER`), whatever its type.
+A source's Mesh key is of the source's own `key_type:` ([FIPS Hosts](adding-hosts.md#fips-hosts)), made on the Host as before, so a FIPS-mode Host (which refuses Ed25519, and may not even make an Ed25519 key) is a source, a peer and a hop like any other. The key's file is `id_ed25519` for the default type, as before, and `id_<type>` for the others (`id_ecdsa`, `id_rsa`, `id_rsa-4096`); its line on each peer is tagged as always (`roster-mesh:SOURCE@OWNER`), whatever its type.
 
 **Changing a source's `key_type:`** makes the Mesh out of date. The next `roster mesh` replaces the source's Mesh key with one of the new type, as `--rotate` would (`orion-3: replace key (rsa, its key_type)`), puts its line on every peer in place of the old one, and deletes the old key's files. `--dry-run` shows it first. Another Box's (or Inventory's) Mesh key on a shared source is used as it is, whatever its type (T199).
 
