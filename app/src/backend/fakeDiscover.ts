@@ -6,6 +6,7 @@
 import type { FakePlugin, FakeRoster, FakeServe } from "./fakePlugins";
 import { BackendCallError } from "./types";
 import { FIRST_PARTY } from "./fakeManifests";
+import { Code } from "./serveContract";
 
 const DEFAULT_LEADER = "y d";
 const MAX_ROWS = 10000;
@@ -646,11 +647,11 @@ export function fakeDiscoverServe(net: FakeNet): FakeServe {
       throw new BackendCallError(`params: ${JSON.stringify(targets)} isn't an IP address or network (e.g. 10.0.0.0/24)`, -32602);
     const total = (targets as string[]).reduce((a, t) => a + addressCount(t), 0);
     const limit = force ? MAX : LIMIT;
-    if (total > limit) throw new BackendCallError(`that's ${count(total)} addresses; a scan visits at most ${count(limit)}${force ? "" : " without force"}`, 121);
+    if (total > limit) throw new BackendCallError(`that's ${count(total)} addresses; a scan visits at most ${count(limit)}${force ? "" : " without force"}`, Code.TOO_MANY_ADDRESSES);
     return [targets as string[], total] as const;
   };
   const status = (since = 0) => {
-    if (!scan) throw new BackendCallError("no scan has started in this roster serve", 122);
+    if (!scan) throw new BackendCallError("no scan has started in this roster serve", Code.NO_SCAN);
     const seen = Math.ceil((scan.found.length * scan.done) / Math.max(scan.total, 1));
     const all = scan.found.slice(0, seen);
     return {
@@ -673,7 +674,7 @@ export function fakeDiscoverServe(net: FakeNet): FakeServe {
         return { targets, addresses: total, ports: 47, scanner: net.scanner ?? "nmap", limit: LIMIT, max: MAX };
       }
       case "discover.start": {
-        if (scan && scan.state === "running") throw new BackendCallError(`a scan of ${scan.targets.join(", ")} is going already`, 120, { scan: scan.id } as never);
+        if (scan && scan.state === "running") throw new BackendCallError(`a scan of ${scan.targets.join(", ")} is going already`, Code.SCAN_RUNNING, { scan: scan.id } as never);
         const [targets, total] = valid(params.targets, params.force === true);
         scan = { id: `scan-${++n}`, targets, done: 0, total, state: "running", found: net0.filter((f) => targets.some((t) => inRange(f.address, t))) };
         return status();
@@ -687,18 +688,18 @@ export function fakeDiscoverServe(net: FakeNet): FakeServe {
         return s;
       }
       case "discover.stop": {
-        if (!scan) throw new BackendCallError("no scan has started in this roster serve", 122);
+        if (!scan) throw new BackendCallError("no scan has started in this roster serve", Code.NO_SCAN);
         const stopping = scan.state === "running";
         if (stopping) scan.state = "stopped";
         return { scan: scan.id, stopping };
       }
       case "discover.add": {
-        if (!scan || params.scan !== scan.id) throw new BackendCallError(`no scan ${JSON.stringify(params.scan)} here`, 122);
+        if (!scan || params.scan !== scan.id) throw new BackendCallError(`no scan ${JSON.stringify(params.scan)} here`, Code.NO_SCAN);
         const group = typeof params.group === "string" ? params.group : "discovered-20261031";
         const current = scan;
         const added = (params.addresses as string[]).map((a) => {
           const f = current.found.find((x) => x.address === a);
-          if (!f || f.known || f.added) throw new BackendCallError(`${a}: not found by this scan, or in the Inventory already`, 123);
+          if (!f || f.known || f.added) throw new BackendCallError(`${a}: not found by this scan, or in the Inventory already`, Code.CANT_ADD);
           f.added = f.name;
           return { address: a, name: f.name ?? a };
         });

@@ -99,7 +99,7 @@ import {
 } from "./worstCase";
 import { capabilities, sinceOf } from "./capabilities";
 import { setupHost } from "../errors/catalog";
-import { SINCE } from "./serveContract";
+import { Code, SINCE } from "./serveContract";
 
 /** The fake's named Inventories (FakeScenario.inventories). */
 export interface FakeInventories {
@@ -509,7 +509,7 @@ export const fixtures: Record<string, FakeScenario> = {
       "nas-01 ssh": { address: "10.19.9.50", port: 2222, user: "root" },
       "old box ssh": { address: "10.19.1.2", port: 22, user: "admin" },
       "nas-01 web": { note: "its URI isn't a network address (androidapp:), so it gives no address" },
-      "printer ssh": { code: 186, message: "op can't give an item's address and user without roster reading its password" },
+      "printer ssh": { code: Code.NO_ITEM_FIELDS, message: "op can't give an item's address and user without roster reading its password" },
     },
   },
   /** Issue #78: today's roster (api 9), which can also un-review a Host. */
@@ -811,10 +811,10 @@ export function demoServe(demo: HostList): FakeServe {
     if (method === "mesh.status") return demoMeshStatus(params);
     if (method === "host.get") {
       const host = demo.hosts.find((h) => h.name === params.name);
-      if (!host) throw new BackendCallError(`No Host named '${String(params.name)}' on the demo Inventory`, 2);
+      if (!host) throw new BackendCallError(`No Host named '${String(params.name)}' on the demo Inventory`, Code.UNKNOWN_HOST);
       return host;
     }
-    throw new BackendCallError(notOnDemo(method), 3);
+    throw new BackendCallError(notOnDemo(method), Code.ROSTER_ERROR);
   };
 }
 
@@ -1539,7 +1539,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
   };
   /** host.scan_key / host.trust_key at an address that doesn't answer (roster's 42). */
   const unanswered = (h: Host) =>
-    new BackendCallError(`${h.name} (${h.ip}:${h.ssh.port}) didn't answer within 5 s`, 42, {
+    new BackendCallError(`${h.name} (${h.ip}:${h.ssh.port}) didn't answer within 5 s`, Code.TIMEOUT, {
       fix: "retry later; is the Host up and the network path open? If not, a rate limiter on the network can cause this: wait a few minutes, don't retry in a loop",
       details: "timed out",
     });
@@ -1784,7 +1784,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
           stopCreate = resolve;
         });
         stopCreate = null;
-        throw new BackendCallError("inventory.create was stopped while git cloned the repo: nothing was kept", 5);
+        throw new BackendCallError("inventory.create was stopped while git cloned the repo: nothing was kept", Code.CANCELLED);
       }
       if (params.how === "repo" && params.source?.includes("nope")) {
         throw new BackendCallError(`git couldn't clone ${params.source}`, NewInventoryError.cloneFailed, {
@@ -1810,7 +1810,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       if (options?.settled) settled.push(name);
       await wait();
       const h = hosts.find((x) => x.name === name);
-      if (!h) throw new BackendCallError(`unknown host '${name}'`, 2);
+      if (!h) throw new BackendCallError(`unknown host '${name}'`, Code.UNKNOWN_HOST);
       return h;
     },
     vaultStatus: () =>
@@ -1881,7 +1881,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         if (vaultNow() !== "unlocked") throw new BackendCallError(VAULT_LOCKED, VaultError.locked);
         const said = scenario.itemFields?.[item];
         if (said === undefined) {
-          throw new BackendCallError(`no vault item matches '${item}'`, 32, {
+          throw new BackendCallError(`no vault item matches '${item}'`, Code.ITEM_NOT_FOUND, {
             near: [],
             fix: "check the item's name in the vault, or use its id",
           });
@@ -1947,7 +1947,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       const prompted = auth === "password" && h.ssh.auth === "prompt" && caps.has("saveToVault");
       if (auth === "password" && h.ssh.auth === "prompt" && !prompted) {
         // An older roster can't ask: its prompt provider has no terminal under serve.
-        throw new BackendCallError(`needs input (password for group '${h.group}') but there's no terminal to ask in (ssh Login of ${host})`, 35);
+        throw new BackendCallError(`needs input (password for group '${h.group}') but there's no terminal to ask in (ssh Login of ${host})`, Code.LOOKUP_FAILED);
       }
       if (prompted) {
         if (!typed) {
@@ -2087,7 +2087,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       const box = scenario.quickBoxes?.[to.address];
       const where = `${to.address}:${to.port}`;
       if (box?.unreachable) {
-        throw new BackendCallError(`${label} (${where}) didn't answer within 5 s`, 42, {
+        throw new BackendCallError(`${label} (${where}) didn't answer within 5 s`, Code.TIMEOUT, {
           fix: "retry later; is the Host up and the network path open?",
           details: "timed out",
         });
@@ -2253,7 +2253,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
         if (!h) {
           const steps = CHECK_STEPS.map((step, i) =>
             i === 0
-              ? { step, status: "fail" as const, code: 2, message: `unknown host '${host}'`, fix: "check the name" }
+              ? { step, status: "fail" as const, code: Code.UNKNOWN_HOST, message: `unknown host '${host}'`, fix: "check the name" }
               : { step, status: "skipped" as const, message: "an earlier step failed" },
           );
           return { host, ok: false, steps };
@@ -2302,7 +2302,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     async verifyLogin(host, changes) {
       await wait();
       const h = hosts.find((x) => x.name === host);
-      if (!h) throw new BackendCallError(`unknown host '${host}'`, 2);
+      if (!h) throw new BackendCallError(`unknown host '${host}'`, Code.UNKNOWN_HOST);
       const result = scenario.verifyResults?.[host] ?? passingVerify(host);
       if (result.ok) verified.add(loginKey(host, { ...fieldsOf(h), ...changes }));
       return result;
@@ -2310,7 +2310,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     async updateHost(host, changes) {
       await wait();
       const h = hosts.find((x) => x.name === host);
-      if (!h) throw new BackendCallError(`unknown host '${host}'`, 2);
+      if (!h) throw new BackendCallError(`unknown host '${host}'`, Code.UNKNOWN_HOST);
       const now = fieldsOf(h);
       const wanted = Object.fromEntries(Object.entries(changes).filter(([k, v]) => now[k as keyof HostFields] !== v));
       if (Object.keys(wanted).length === 0) return { changed: false, host: h, backup: null };
@@ -2403,7 +2403,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     async scanKey(address, port) {
       await wait();
       if (scenario.quickBoxes?.[address]?.unreachable) {
-        throw new BackendCallError(`${address} (${address}:${port}) didn't answer within 5 s`, 42, {
+        throw new BackendCallError(`${address} (${address}:${port}) didn't answer within 5 s`, Code.TIMEOUT, {
           fix: "retry later; is the Host up and the network path open?",
           details: "timed out",
         });
@@ -2490,7 +2490,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     async reviewHost(host, reviewed = true) {
       await wait();
       const h = hosts.find((x) => x.name === host);
-      if (!h) throw new BackendCallError(`unknown host '${host}'`, 2);
+      if (!h) throw new BackendCallError(`unknown host '${host}'`, Code.UNKNOWN_HOST);
       if (h.reviewed === reviewed) return { changed: false, host: h, backup: null };
       const updated = { ...h, reviewed };
       hosts = hosts.map((x) => (x.name === host ? updated : x));
@@ -2499,14 +2499,14 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     async removeHost(host) {
       await wait();
       const h = hosts.find((x) => x.name === host);
-      if (!h) throw new BackendCallError(`unknown host '${host}'`, 2);
+      if (!h) throw new BackendCallError(`unknown host '${host}'`, Code.UNKNOWN_HOST);
       hosts = hosts.filter((x) => x.name !== host);
       return { removed: host, group: h.group, backup: BACKUP, sync: synced() };
     },
     async renameHost(host, to) {
       await wait();
       const h = hosts.find((x) => x.name === host);
-      if (!h) throw new BackendCallError(`unknown host '${host}'`, 2);
+      if (!h) throw new BackendCallError(`unknown host '${host}'`, Code.UNKNOWN_HOST);
       if (!NAME.test(to)) throw new BackendCallError(`bad host name '${to}' (use letters, digits, . _ -)`, AddError.invalidHost, { field: "name" });
       if (to === host) return { changed: false, host: h, backup: null };
       const there = hosts.find((x) => x.name === to);
@@ -2524,7 +2524,7 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
     async moveHost(host, group) {
       await wait();
       const h = hosts.find((x) => x.name === host);
-      if (!h) throw new BackendCallError(`unknown host '${host}'`, 2);
+      if (!h) throw new BackendCallError(`unknown host '${host}'`, Code.UNKNOWN_HOST);
       if (!(group in groups)) throw unknownGroup(group, groups);
       if (h.group === group) return { changed: false, host: h, backup: null, pinned: [] };
       const moved = { ...h, group };
