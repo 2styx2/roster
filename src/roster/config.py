@@ -18,6 +18,7 @@ from .common import (
     NAME_RE,
     SSH_UNSAFE,
     die,
+    die_message,
     oneline,
     use_inventory,
     user_config_dir,
@@ -112,13 +113,17 @@ def token_shaped(value: str | Path) -> bool:
 
 
 def typed_token(path: str | Path) -> bool:
-    """PATH as typed is token_shaped (#489 M1, #494 L3). In an absolute value (after ~ is expanded) the folders at
-    its start that exist are left out first, so a long real folder name (a temp folder, C:/Users/NAME/…) never
-    counts. A relative value is tested whole, every part but . and .., whether it exists or not: a token typed as
-    a folder is caught even when an older roster already made that folder."""
+    """PATH as typed is token_shaped (#489 M1, #494 L3, #498). A relative value is tested whole, every part but . and
+    .., whether it exists or not: a token typed as a folder is caught even when an older roster already made that
+    folder. In an absolute value (after ~ is expanded) the folders at its start are left out first, so a long real
+    folder name (a temp folder, C:/Users/NAME/…) never counts: inside the cwd or $HOME, only up to the deeper of
+    them, and all the rest is tested, so `$PWD/TOKEN/…` and `~/TOKEN/…` are caught too; elsewhere, the folders at
+    its start that exist."""
     text = os.path.expanduser(str(path))
     if not Path(text).is_absolute():
         return token_shaped(str(path))
+    if (rest := _past_cwd_or_home(text)) is not None:
+        return token_shaped(rest)
     parts = re.split(r"[\\/]", text)
     for k in range(len(parts) - 1, 0, -1):
         if Path("/".join(parts[:k]) or "/").is_dir():
@@ -126,15 +131,43 @@ def typed_token(path: str | Path) -> bool:
     return token_shaped(text)
 
 
+def _past_cwd_or_home(text: str) -> str | None:
+    """What absolute TEXT has past the deeper of the cwd and $HOME (as given or resolved) that it's inside, or None
+    when it's inside neither. A base that is a drive's or the file system's root doesn't count: it isn't a limit."""
+    bases = set()
+    for where in (Path.cwd, Path.home):
+        try:
+            base = where()
+            both = (base, base.resolve())
+        except (OSError, RuntimeError):     # a cwd that was deleted, no home to be found
+            continue
+        for b in both:
+            if b != Path(b.anchor):
+                bases.add(os.path.normcase(str(b)).rstrip("\\/"))
+    typed = os.path.normcase(text)
+    inside = [b for b in bases if typed == b or typed[len(b):len(b) + 1] in ("/", "\\") and typed.startswith(b)]
+    if not inside:
+        return None
+    return text[len(max(inside, key=len)):].lstrip("\\/")
+
+
 def shown_path(path) -> str | None:
     """roster.yml's PATH (as given: -c, $ROSTER_CONFIG, a named Inventory's) as roster may print it, resolved; None
-    when it mustn't be (#479, #484 M1/L1/L3, #489 M1). A file that's there is shown. One that isn't is shown only
-    when its folder exists and it isn't typed_token (#494): `roster -cTOKEN hosts` reads an op session token that
-    starts with -c as `-c TOKEN`, and a bw key or an op token can be typed after -c by mistake. Every message, fix line and JSON field naming the path goes through this."""
+    when it mustn't be (#479, #484 M1/L1/L3, #489 M1, #498): never when it's typed_token, whether a file is there or
+    not (a token-named folder or file an older roster's init made is still a token), else when the file or its folder
+    is there. `roster -cTOKEN hosts` reads an op session token that starts with -c as `-c TOKEN`, and a bw key or an
+    op token can be typed after -c by mistake. Every message, fix line and JSON field naming the path goes through
+    this, the loader's own errors included."""
+    if typed_token(path):
+        return None
     full = Path(path).expanduser().resolve()
-    if full.exists() or (full.parent.is_dir() and not typed_token(path)):
+    if full.exists() or full.parent.is_dir():
         return str(full)
     return None
+
+
+HIDDEN_FILE = f"the roster.yml at {HIDDEN_PATH}"
+RENAME_HINT = "rename the folder (or file) whose name looks like a token, then give roster its new path"
 
 
 def load_inventory(path):
@@ -146,6 +179,11 @@ def load_inventory(path):
             die(f"no config file at {HIDDEN_PATH} - check -c PATH (or $ROSTER_CONFIG); make one: "
                 "roster -c PATH init --blank (or --inventory file:PATH|repo:URL|ssh-config)")
         die(f"{shown} not found - make one: roster -c {shown} init --blank (or --inventory file:PATH|repo:URL|ssh-config)")
+    if shown is None:                       # #498: it's there, in a token-named folder (or named like one itself)
+        try:
+            return parse_inventory(path.read_text(), path, shown=HIDDEN_FILE)
+        except SystemExit as e:
+            die(f"{die_message(e)}\n{RENAME_HINT}")
     return parse_inventory(path.read_text(), path)
 
 
@@ -165,18 +203,20 @@ def parse_config(text, path):
     return parse_inventory(text, path).as_config()
 
 
-def parse_inventory(text, path):
+def parse_inventory(text, path, shown=None):
     """roster.yml's TEXT (read from PATH, or as it would be there), loaded and checked into an Inventory. A check
-    the code below doesn't make the models do, and their error is roster's own (die), naming the key."""
+    the code below doesn't make the models do, and their error is roster's own (die), naming the key. Its errors
+    name the file as SHOWN, else as shown_path has it (#498): never a token typed as a folder."""
     from pydantic import ValidationError  # only when roster.yml is loaded: it costs more than roster's start
 
     from .models import Inventory, problem
+    path, name = Path(path), shown or shown_path(path) or HIDDEN_FILE
     try:
         raw = yaml.safe_load(text)
     except yaml.YAMLError as e:
-        die(f"{path} is not valid YAML:\n{e}")
+        die(f"{name} is not valid YAML:\n{e}")
     if raw is not None and not isinstance(raw, dict):
-        die(f"{path} isn't a mapping of settings and groups: at its top level, so it isn't a roster.yml")
+        die(f"{name} isn't a mapping of settings and groups: at its top level, so it isn't a roster.yml")
     raw = raw or {}
     defaults = {**HOST_DEFAULTS, **(raw.get("defaults") or {})}
     names = web_login_names(raw)
@@ -248,16 +288,16 @@ def parse_inventory(text, path):
             m["description"] = m["description"] or oneline(m.get("notes"))   # old name for it
             hosts[hname] = m
     if not hosts and not blank_shape(raw):
-        die(f"{path} defines no hosts")
+        die(f"{name} defines no hosts")
     box = re.sub(r"[^A-Za-z0-9_-]", "-", str(raw.get("box_name") or socket.gethostname().split(".")[0]))
     key_path = str(raw.get("key_path") or f"~/.ssh/{boxkeys.parse(box_type).file_name}")
     if SSH_UNSAFE.search(key_path):         # it goes into the ssh config: a quote or newline would add directives
-        die(f"{path}: key_path can't hold a quote or a control character (a newline, a tab)")
+        die(f"{name}: key_path can't hold a quote or a control character (a newline, a tab)")
     key = Path(os.path.expanduser(key_path))
     for m in hosts.values():                # T239: each Host's key file, for its own key type (boxkeys)
         m["key_file"] = str(boxkeys.key_file(key, box_type, m["key_type"]))
         if m["key_type"] != box_type and Path(m["key_file"]) == key:
-            die(f"{path}: key_path ({key_path}) is where roster keeps the {m['key_type']} key that {m['name']} uses "
+            die(f"{name}: key_path ({key_path}) is where roster keeps the {m['key_type']} key that {m['name']} uses "
                 f"(key_type: {m['key_type']}): remove key_path (roster then keeps this Box's {box_type} key at "
                 f"~/.ssh/{boxkeys.parse(box_type).file_name}) or point it at another file")
     # matches this box's key line in authorized_keys, including tags from older versions, and a line that ends in CRLF
@@ -266,7 +306,7 @@ def parse_inventory(text, path):
     try:                                    # T240: how old this Box's key may get before check --box warns
         max_age = boxkeys.parse_age(raw.get("key_max_age", boxkeys.MAX_AGE))
     except ValueError as e:
-        die(f"{path}: key_max_age: {e}")
+        die(f"{name}: key_max_age: {e}")
     try:
         return Inventory.model_validate(
             {"path": path, "box": box, "tag": f"{KEY_TAG}:{box}", "tag_re": tag_re, "key": key, "key_type": box_type,
@@ -277,7 +317,7 @@ def parse_inventory(text, path):
              "providers": providers_conf(raw), "provider_dirs": list(raw.get("provider_dirs") or []),
              "rate_limited": rate_limited(raw.get("rate_limited")), "key_max_age": max_age})
     except ValidationError as e:
-        die(f"{path}: {problem(e)}")
+        die(f"{name}: {problem(e)}")
 
 
 def key_type(where, v):
