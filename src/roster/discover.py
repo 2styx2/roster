@@ -402,7 +402,7 @@ def write_discovered(cfg_path, group, entries, note, needs_user, today):
             say(f"backup       {(shown and shown_path(backup)) or f'its backup at {HIDDEN_PATH}'}")
         say(f"wrote        {len(entries)} hosts into group '{group}' in {shown or HIDDEN_FILE}")
     if path.exists():                             # saved as serve's edits are (store.py), repo or plain file
-        _, synced = store.at(path).write(text, new_text, then=wrote)
+        _, synced = store.at(path, hidden=shown is None).write(text, new_text, then=wrote)
     else:                                         # a new one is private (0600), as `roster init`'s
         replace_file(path, new_text, 0o600, follow=False)
         wrote()

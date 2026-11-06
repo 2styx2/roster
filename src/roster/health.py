@@ -97,7 +97,7 @@ def check_box(cfg, error, askpass, api_version=None):
     out.append(check("askpass", "ok" if askpass[0] else "error", askpass[1],
                      None if askpass[0] else "restart `roster serve` (the app's :source does not); if it fails "
                                              "again, its stderr says why"))
-    out += repo(cfg["path"] if cfg else None)
+    out += repo(cfg["path"] if cfg else None, bool(cfg and cfg.get("hidden")))
     return out
 
 
@@ -350,19 +350,24 @@ def session_check(name, used, who, status, saved, why):
 
 # ---------------------------------------------------------------- the infra repo
 
-def repo(path):
+def repo(path, hidden=False):
     """How roster.yml is kept (store.py, T212): a plain file is a note, no warning; in a repo, its git as this Box last
-    saw it (no fetch): clean, Pending changes, or other changes."""
+    saw it (no fetch): clean, Pending changes, or other changes. HIDDEN: the Inventory's, so its repo isn't named
+    (#529)."""
     if path is None:
         return []
-    kept = store.at(path, for_show=True)
+    kept = store.at(path, for_show=True, hidden=hidden)
     if kept.kind == store.FILE:
         return [check("repo", "ok", kept.note)]
     try:
         r = changes.Repo(path)
     except Problem as e:
+        if hidden:                      # its message and fix name the file and its work tree (#529)
+            return [check("repo", "warn", "roster.yml's git repo (not repeated) changed while roster looked at it; "
+                                          "edits in the app need it", "run `roster check --box` again", "E38")]
         return [check("repo", "warn", f"{e.message}; edits in the app need it", e.fix, "E38")]
     out = []
+    top, git_c = ("its git repo (not repeated)", "git") if hidden else (str(r.top), f"git -C {r.top}")
     diff = changes.diff(path)
     if diff["count"] and diff["diff"]:
         out.append(check("repo", "warn", f"{count(diff['count'], 'Pending change')} to roster.yml, not "
@@ -370,15 +375,15 @@ def repo(path):
                          ":publish"))
     others = [f for f in changes.dirty_files(r) if f != r.rel]
     if others:
-        out.append(check("repo", "warn", f"other uncommitted files in {r.top}: {names(others)}",
-                         f"commit or discard them in a terminal (git -C {r.top} status); Publish refuses until then",
+        out.append(check("repo", "warn", f"other uncommitted files in {top}: {names(others)}",
+                         f"commit or discard them in a terminal ({git_c} status); Publish refuses until then",
                          "E47"))
     last = diff["last_commit"]
     if last and last.get("upstream") and last.get("pushed") is False:
         out.append(check("repo", "warn", f"this Box has commits that aren't on {last['upstream']} (as last fetched)",
-                         f"push them, or look in a terminal: git -C {r.top} status", "E49"))
+                         f"push them, or look in a terminal: {git_c} status", "E49"))
     if not out:
-        out.append(check("repo", "ok", f"clean: {r.top}"))
+        out.append(check("repo", "ok", f"clean: {top}"))
     return out
 
 

@@ -817,7 +817,7 @@ def add_host(cfg, name, got, auth, group, enroll, asking, os=None, title=None, t
     where = f"group '{group}'"
     try:
         r = addhost.add(path, group, name, fields, dry_run=dry_run, new_address=True,
-                        on_write=lambda done: written(cfg, name, where, group, done))
+                        on_write=lambda done: written(cfg, name, where, group, done), hidden=bool(cfg.get("hidden")))
     except Problem as e:
         refuse(e)
     if dry_run:

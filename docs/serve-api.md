@@ -65,6 +65,7 @@ A Plugin can never send `$/cancel` (it isn't a method a Plugin may be granted), 
 |---|---|---|---|---|
 | `inventory.info` | none | `{path, box, host_count, providers: [names], store, roster_version, api_version}` |  | 1 |
 | `inventory.info` | none | `store: {kind, note, repo}` (T212): how `roster.yml` is kept, as the disk and git say now. `kind` is `repo` (committed in a git repo with a remote: edits are Pending changes until `changes.publish`) or `file` (a plain file: every edit is saved straight to it, and there's nothing to pull or publish); `note` says which in a sentence; `repo` is the git work tree it's in (`null` outside one) |  | 28 |
+| `inventory.info` | none | `path` (#529) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a token, which roster names nowhere (the app says to rename it); `store.repo` is too then (still `null` outside a repo), and `store.note` names neither |  | 31 |
 | `inventory.create` | `{how: blank\|file\|repo, folder, source?, name?}`: `folder` absolute (or `~/...`); `source` the `roster.yml` to copy (`file`) or the git URL (`repo`); `name` when the folder's name is taken (`141` with `data.field: "name"`) or isn't one (`142`, as `roster inv add` refuses it) | `{path, name, how, hosts, restart: true}`: `path` the new `roster.yml`, `hosts` how many it has; the app restarts serve (as after `inventories.use`) | `5`, `140`-`143`, `170`-`172`, `174` | 28 |
 | `hosts.list` | none | `{hosts: [Host, ...], groups: {name: {title, description}}, error}`, hosts in `roster.yml` order. `error` (API 8) is `null`, or why `roster.yml` as it is now doesn't load while these are the last good ones |  | 1 |
 | `host.get` | `{name}` (exact Host name) | one Host | `2` | 1 |
@@ -379,6 +380,7 @@ One person may have several Inventories, the team's for work and their own for h
 | Method | Params | Result | Errors | Since API |
 |---|---|---|---|---|
 | `inventories.list` | none | `{inventories: [{name, path, active, exists}], active, name, path}`: `active` is the active Inventory's name (or `null`), `name` the named Inventory this serve runs on (`null` when its `roster.yml` isn't one) and `path` its `roster.yml` (`null` when none was found). With no named Inventories, `inventories` is `[]` | `143` | 27 |
+| `inventories.list` | none | `path` (#529) is `"(not repeated)"` when this serve's `roster.yml` is in a folder (or has a name) that looks like a token (as `inventory.info`'s) | `143` | 31 |
 | `inventories.use` | `{name}` | `{active, path, restart: true}`: `path` is its `roster.yml` | `140`, `143` | 27 |
 
 <!-- END generated:methods -->
@@ -407,7 +409,7 @@ One person may have several Inventories, the team's for work and their own for h
 | `164` | `roster vault bw`: a bw command that changes the vault, writes it out (`export`) or a file (`receive`, `get attachment`, `--output`) or acts on the account, without `--write`; bw didn't run. A CLI error, never a serve answer |
 | `165` | `roster vault bw`: a bw command (or an option before it) roster vault bw doesn't know, or `--write` among bw's arguments; bw didn't run. A CLI error |
 | `166` | `roster vault bw`: `bw serve`, or `--session` on bw's command line, always refused; bw didn't run. A CLI error |
-| `170` | `roster init`: a `roster.yml` is there already, so it's kept as it is and nothing is written (T212). A CLI error so far |
+| `170` | `roster init`: a `roster.yml` is there already, so it's kept as it is and nothing is written (T212). A CLI error so far. `inventory.create` answers it too when this serve runs on an Inventory, or one was made meanwhile; `data.path` names it, `"(not repeated)"` for one in a folder that looks like a token (#529) |
 | `171` | `roster init`: the `roster.yml` to import isn't there or doesn't load, or a cloned repo has none at its top; nothing written (or the clone is kept, and said). A CLI error so far |
 | `172` | `roster init`: git couldn't clone the team's repo (not installed, a bad URL or access, or the folder isn't empty). A CLI error so far |
 | `173` | `roster init`: the ssh config to import Hosts from can't be read; nothing written. A CLI error so far |
@@ -461,6 +463,7 @@ A Pending change is an edit to `roster.yml` made on this box and not Published y
 | `host.update` | `{host, changes}` | `{changed, host, backup, warnings, sync}`: the edit written into `roster.yml`, `host` as it loads now, `backup` the file as it was, `warnings` what failed after the write (recording a moved Host's key), `sync: {ok, error?, fix?}` (T150) the `roster sync` after it, as `changes.publish`'s (left out when nothing changed) | `2`, `70`, `74`, `75` | 5 |
 | `changes.diff` | none | `{path, repo, diff, hosts: [{host, change: changed\|added\|removed, fields}], groups: [{group, change}], count, message, last_commit}`: git's diff of `roster.yml` against the last commit, the commit message `changes.publish` would write, and `last_commit: {commit, subject, upstream, pushed}` (the branch's last commit, and whether its upstream has it as this box last fetched) | `70` | 5 |
 | `changes.diff` | none | `kind` (T212): `repo`, or `file` for a plain file, whose edits are saved already: then `repo: null`, `diff: ""`, `count: 0` and `last_commit: null`, never an error |  | 28 |
+| `changes.diff` | none | `path` and `repo` (#529) are `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a token (as `inventory.info`'s; `repo` stays `null` for a plain file) | `70` | 31 |
 | `changes.discard` | none | `{discarded, backup, sync?}`: `roster.yml` back as the last commit has it (index and working tree), then `roster sync` (`sync`, T150, as `changes.publish`'s; left out when there was nothing to discard) | `70` | 5 |
 | `changes.discard` | none | a plain file (T212) has nothing to discard: `{discarded: false, backup: null}` |  | 28 |
 | `changes.publish` | `{message?}` | `{commit, upstream, message, hosts, groups: [{group, change}], pulled, sync: {ok, error?, fix?}}`: commits `roster.yml` alone and pushes it to the branch's upstream, then runs `roster sync` | `1`, `70`, `73`, `90`-`96` | 7 |
@@ -518,6 +521,7 @@ Removing, renaming and moving Hosts and adding, renaming and deleting groups (ti
 | `group.delete` | `{group, to?}` | `{deleted, moved, to, backup, sync}`: the group's entry taken out, and every `links:` entry that names it. A group that still has Hosts is refused (`102`, `data.hosts`) unless `to` names the group they move to first (as `host.move` moves them) | `1`, `70`, `74`, `101`-`103` | 8 |
 | `inventory.reload` | none | `{changed, host_count, error, sync?}`: `:source` for `roster.yml`, read again now; `sync` (T150, Q137) the `roster sync` after a changed file that loads |  | 8 |
 | `inventory.watch` | `{auto}` | `{watching, auto, path?}`: start noticing outside edits of `roster.yml`; `auto` (the app's `auto_reload`) applies them |  | 8 |
+| `inventory.watch` | `{auto}` | `path` (#529) is `"(not repeated)"` when `roster.yml` is in a folder (or has a name) that looks like a token (as `inventory.info`'s) |  | 31 |
 
 <!-- END generated:methods -->
 

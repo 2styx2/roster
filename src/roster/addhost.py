@@ -30,7 +30,7 @@ from .errors import (
 from .hosts import ip_of, item_of, provider_of
 
 
-def add(path, group, name, fields, sync=None, dry_run=False, new_address=False, on_write=None):
+def add(path, group, name, fields, sync=None, dry_run=False, new_address=False, on_write=None, hidden=False):
     """Host NAME (FIELDS: edit.NEW_FIELDS, already checked with edit.check_new) added to GROUP of roster.yml at PATH,
     the group made when it's new. Returns `{host, group, new_group, lines, kind, note, backup, sync}`: the Host as
     it loads now, the lines the write changes (`- ` the ones it replaces, `+ ` the ones it writes), how roster.yml is kept (store.py: `repo` or `file`, and its note), the backup and
@@ -42,7 +42,7 @@ def add(path, group, name, fields, sync=None, dry_run=False, new_address=False, 
     ON_WRITE(result) runs once the Host is written, before the sync (the CLI says what it wrote there, so the sync's
     own lines come after it, as after `discover --write`; serve marks there that the Host is in, so nothing after it
     takes its new vault item back out)."""
-    kept = store.at(path)
+    kept = store.at(path, hidden=hidden)       # HIDDEN: the Inventory's, so store's errors don't name it (#529)
     old, new, h = edit.added(kept.path, group, name, fields)
     other = same_address(load_config(kept.path), h) if new_address else None
     if other is not None:
