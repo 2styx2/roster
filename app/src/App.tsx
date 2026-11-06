@@ -19,7 +19,7 @@ import { useWorkspaceLife } from "./app/useWorkspaceLife";
 import { WindowFrame } from "./chrome/WindowFrame";
 import { useTabsConfig } from "./session/useTabsConfig";
 import { useWorkspaceTheme } from "./theme/useWorkspaceTheme";
-import { useMessages } from "./ui/useMessages";
+import { useMessages, type MessageDivert } from "./ui/useMessages";
 import { usePluginBridge, type PluginHandlers } from "./app/usePluginBridge";
 import { type Backend } from "./backend/types";
 import { useConnection } from "./app/useConnection";
@@ -56,7 +56,7 @@ import { BindingsPanel } from "./keyboard/BindingsPanel";
 import { bindingRows } from "./keyboard/bindings";
 import { terminalMode } from "./keyboard/mode";
 import { useAppKeys } from "./keyboard/useAppKeys";
-import { defaultOptions, keyHint, keymapOf, type CommandLine as Line, type Options } from "./keymap";
+import { defaultOptions, keyHint, keymapOf, listKeyFor, type CommandLine as Line, type Options } from "./keymap";
 import { TypedPasswordsContext } from "./lock/forgetOnLock";
 import type { Clock } from "./ui/clock";
 import { LockGate } from "./lock/LockScreen";
@@ -75,7 +75,10 @@ import { sessionActions } from "./session/actions";
 import type { SessionContext } from "./session/commands";
 import { SessionsMain } from "./session/SessionsMain";
 import { Tabs } from "./session/tabs";
+import { connectPhase } from "./session/status";
+import { useRecent, useWindowTitle } from "./session/useRecent";
 import { hostMenu } from "./sidebar/hostMenu";
+import { hostDot, hostLights } from "./sidebar/sections";
 import type { SidebarRow } from "./sidebar/model";
 import { sidebarContext } from "./sidebar/context";
 import { Sidebar } from "./sidebar/Sidebar";
@@ -91,9 +94,10 @@ import { useDemo, type TutorLink } from "./tutor/useDemo";
 import { shownControls, type ToolbarContext } from "./chrome/toolbar";
 import { countOf } from "./ui/format";
 import { HintsShown } from "./ui/hints";
-import { Keys } from "./ui/Keys";
-import { MESSAGES_VIEW, shownText, spokenText } from "./ui/messages";
+import { MESSAGES_VIEW, quiet, shownText, spokenText } from "./ui/messages";
+import { MessageText } from "./ui/MessageText";
 import { useFocusReturn } from "./ui/useFocusReturn";
+import { useMediaMatch } from "./ui/useMediaMatch";
 import { GraphMemory } from "./graph/memory";
 import type { ViewContext } from "./view/commands";
 import { isShown, otherMode, placed, type Place } from "./view/layout";
@@ -198,7 +202,9 @@ function Workspace({
   const appearance = derived?.appearance ?? appearanceProp;
   const terminalOptions = derived?.terminalOptions ?? defaultTerminalOptions;
 
-  const { message, say, log: messageLog, choice: messagesChoice } = useMessages(registries, store, config?.ui.messages ?? null);
+  // A Sidebar row's own command's trouble goes under the row (round 20): the Sidebar's model says which.
+  const [divert] = useState(() => new Latest<MessageDivert | null>(null));
+  const { message, say, log: messageLog, choice: messagesChoice } = useMessages(registries, store, config?.ui.messages ?? null, divert);
 
   const commandList = useSyncExternalStore(registries.commands.subscribe, registries.commands.list);
   const bindingList = useSyncExternalStore(registries.keymap.subscribe, registries.keymap.list);
@@ -214,6 +220,10 @@ function Workspace({
 
   const [tabs] = useState(() => new Tabs(backend));
   const sessions = useSyncExternalStore(tabs.subscribe, tabs.snapshot);
+  /** Hosts with a Session that's connected or connecting (not ended or refused): their nodes are
+   * lit wherever a Host is listed (taste.md: the accent means live, Q301). */
+  const liveHosts = useMemo(() => hostLights(sessions), [sessions]);
+  useWindowTitle(sessions);
   const { focus, mainRef, treeRef } = useFocusReturn();
   const { conn, info, caps, hosts, connect, reloadHosts } = useConnection(backend, tabs, say, config ? JSON.stringify([config.backend, config.rosterCommand]) : null);
   const ready = conn.state === "ready";
@@ -384,6 +394,8 @@ function Workspace({
 
   const terminal = useTerminalEnv({ options: terminalOptions, theme, keymap, platform, viewMode, layout, say });
   const sidebar = useSidebarModel({ registries, layout, sessions, hosts, hostByName, options, appState, store, caps, pending: inventory.pending, addKeys: keyHint(keymap, "host add") });
+  useLayoutEffect(() => divert.set(sidebar.divert));
+  const recent = useRecent({ sessions, store, hosts, recentHosts: appState.recentHosts });
   const staysInAppMode = (line: Line) => commands.get(line.split(" ")[0] ?? "")?.staysInAppMode ?? false;
   const unlocked = ready && !vault.locked;
   const keys = useAppKeys({
@@ -397,6 +409,12 @@ function Workspace({
     run,
   });
   const { keyState, setMode } = keys;
+  // In a narrow window the Sidebar floats over the terminal: it steps aside while a Session is in
+  // front and you're in the terminal (or over the idle pane, whose map and Find are then what shows),
+  // unless `sidebar` (␣ e) showed it over this one.
+  // A short window: the idle map keeps three Hosts, so its Find stays above the status bar.
+  const short = useMediaMatch("(max-height: 460px)");
+  const sidebarTucked = sidebar.shown && sidebar.narrow && keyState.mode !== "app" && !sidebar.peek;
 
   const [pickerTime] = useState(pickerTimer);
   const pickerShown = overlay.value === "picker" && !vault.locked;
@@ -449,11 +467,11 @@ function Workspace({
     sessions,
     hostByName,
     caps,
-    store,
     platform,
     say,
     currentHost: () => details.panel.value ?? selectedHost(),
     openQuickPicker: () => overlay.open("quick"),
+    findKeys: keyHint(keymap, "find"),
   });
   const inventoryCmds = inventoryActions({
     backend,
@@ -511,7 +529,19 @@ function Workspace({
     },
   };
   const sidebarCtx = sidebarContext(sidebar, {
-    toggleSidebar: () => toggle("sidebar"),
+    toggleSidebar: () => {
+      if (sidebarTucked || (sidebar.narrow && sidebar.peek)) {
+        const peeking = sidebar.peek;
+        sidebar.togglePeek();
+        return say(
+          quiet(
+            peeking ? "Sidebar tucked away" : "Sidebar shown",
+            peeking ? "Sidebar tucked away while the window is narrow" : "Sidebar shown over the terminal until you switch Sessions",
+          ),
+        );
+      }
+      toggle("sidebar");
+    },
     keysToApp: (app) => setMode(app ? { mode: "app", pending: [] } : terminalMode),
     staysInAppMode,
     run,
@@ -584,7 +614,14 @@ function Workspace({
     [sessions, hosts, hostByName, options.sessions, appState, sectionDefs],
   );
   const detailsHost = details.host;
-  const toolbarCtx: ToolbarContext = { pendingCount, sidebarShown: sidebar.shown, quickConnect: caps.has("quickConnect"), detailsShown: detailsHost !== undefined, plain };
+  const toolbarCtx: ToolbarContext = {
+    pendingCount,
+    sidebarShown: sidebar.shown,
+    quickConnect: caps.has("quickConnect"),
+    canAdd: caps.has("add"),
+    detailsShown: detailsHost !== undefined,
+    plain,
+  };
   const toolbarControls = unlocked && isShown(layout, "toolbar") ? shownControls(toolbarDefs, layout.controls, toolbarCtx) : [];
   const frame = (content: ReactNode) => (
     <TypedPasswordsContext.Provider value={typed}>
@@ -639,7 +676,19 @@ function Workspace({
 
   const appMode = keyState.mode === "app" && overlay.value === null;
   const spokenMessage = spokenText(message, messagesChoice.all());
+  const shownMessage = shownText(message, messagesChoice.all());
+  const slipShown = typeof message !== "string" && message.kind === "slip";
   const findKeys = keyHint(keymap, "find");
+  // The Session on screen, for the status bar's segment: its node as in the Sidebar.
+  const statusSession = (() => {
+    if (!onScreenTab) return null;
+    const ended = onScreenTab.status.state === "ended" || onScreenTab.status.state === "failed";
+    const known = hostByName.get(onScreenTab.host);
+    const connecting = connectPhase(onScreenTab) !== null;
+    const dot = ended ? "ended" : connecting ? "connecting" : (onScreenTab.auth ?? (known ? hostDot(known) : "key"));
+    return { label: onScreenTab.label, dot, lit: !ended && !connecting } as const;
+  })();
+  const cursorRow = sidebar.cursorRow();
   const progress = <PluginProgressItems progress={pluginSnap.progress} onCancel={(id) => say(plugins.cancelProgress(id))} />;
   /** The pieces the layout places at `at`, in order. The title bar is drawn by `frame` above
    * every screen (the lock and error screens too). */
@@ -661,6 +710,10 @@ function Workspace({
             pendingKeys={keyState.pending}
             progress={progress}
             run={run}
+            vim={options.vim}
+            session={statusSession}
+            sessionCount={sessions.tabs.length}
+            cursorHasMenu={Boolean(cursorRow?.menu || cursorRow?.actions?.length)}
           />
         );
       }
@@ -705,6 +758,8 @@ function Workspace({
     finders: finderSources,
     finderCtx,
     say,
+    live: liveHosts,
+    addKeys: keyHint(keymap, "host add"),
     helpFromLine: (line: string, caret: number, topic: string) => help.fromLine(line, caret, () => run(`help ${topic}`)),
     openQuick: (to: QuickTarget) => tabs.openQuick(to),
   };
@@ -715,6 +770,7 @@ function Workspace({
       <div
         className={`body sidebar-${sidebar.side}`}
         {...(sidebar.shown ? { "data-sidebar": "" } : {})}
+        {...(sidebarTucked ? { "data-tucked": "" } : {})}
         {...(bodyPanels.includes("d") ? { "data-docked": "" } : {})}
         {...(bodyPanels.includes("f") ? { "data-full": "" } : {})}
       >
@@ -727,13 +783,27 @@ function Workspace({
             onSelect={sidebar.setSelected}
             leaderHint={options.leader}
             findKeys={findKeys}
-            run={runFromUi}
+            run={(line) => {
+              // The row it's for (the one just clicked, or whose menu is open, else the cursor's)
+              // hears what its command says went wrong, under it (round 20).
+              sidebar.runFromRow();
+              runFromUi(line);
+            }}
+            slip={sidebar.slip}
+            onSlipDone={sidebar.clearSlip}
             treeRef={treeRef}
             menu={sidebar.menu}
             onMenu={sidebar.setMenu}
             rowMenu={(row: SidebarRow) => {
               const h = row.host === undefined ? undefined : hostByName.get(row.host);
-              return hostMenu(row, { reviewed: h ? h.reviewed : null, caps, folders: commands.get("folder") !== undefined, keys: (command) => keyHint(keymap, command) });
+              return hostMenu(row, {
+                reviewed: h ? h.reviewed : null,
+                caps,
+                folders: commands.get("folder") !== undefined,
+                keys: (command) => keyHint(keymap, command),
+                hasSession: h !== undefined && liveHosts.has(h.name),
+                openKeys: listKeyFor(keymap.list, "choose"),
+              });
             }}
             onTreeFocus={keys.treeFocused}
             onTreeBlur={keys.treeBlurred}
@@ -745,6 +815,24 @@ function Workspace({
           tabStrip={options.sessions === "tabs"}
           noHostsIn={conn.hosts.hosts.length === 0 ? { path: conn.info.inventory.path, caps } : null}
           findKeys={findKeys}
+          addHost={sidebar.addHost}
+          recent={{ box: conn.info.inventory.box, hosts: short ? recent.hosts.slice(0, 3) : recent.hosts, title: recent.title }}
+          dotOf={hostDot}
+          quietFind={sidebar.shown && !sidebarTucked}
+          bottomLine={
+            // The bottom line, as Neovim's: the message row, where the command line types too, so
+            // opening it never resizes the pane or the terminal (round 10); its completions float above.
+            <div className="bottom-line">
+              <Overlays at="line" {...overlayProps} />
+              {/* Quiet (ticket 111), a routine confirmation's short form ("Sidebar hidden") stays in the
+                  line as visually hidden text, so a screen reader still hears what changed. Its line
+                  is always there, as Neovim's message row is: a message coming or going never resizes
+                  the pane (or the terminal, which would tell the remote side). */}
+              <div className={`message-line${slipShown ? " slip" : ""}`} role="status" title={shownMessage || undefined}>
+                {spokenMessage ? <span className="visually-hidden">{spokenMessage}</span> : <MessageText text={shownMessage} files={slipShown} />}
+              </div>
+            </div>
+          }
           panes={{
             tabs,
             snapshot: sessions,
@@ -752,6 +840,8 @@ function Workspace({
             terminalView,
             terminalEnv: terminal.env,
             reconnectKeys: keyHint(keymap, "reconnect"),
+            closeKeys: keyHint(keymap, "close"),
+            say,
             run,
             errorRows,
             copy,
@@ -864,12 +954,6 @@ function Workspace({
             />,
           )}
       </div>
-      <Overlays at="line" {...overlayProps} />
-      {/* Quiet (ticket 111), a routine confirmation's short form ("Sidebar hidden") stays in the
-          line as visually hidden text, so a screen reader still hears what changed. */}
-      <div className={spokenMessage ? "message-line visually-hidden" : "message-line"} role="status">
-        {shownText(message, messagesChoice.all()) || spokenMessage}
-      </div>
       {pieces("bottom")}
       {/* Progress needs a place without the status bar (Focus hides it, ticket 85): a corner. */}
       {pluginSnap.progress.length > 0 && !(["top", "bottom"] as const).some((at) => placed(layout, at).includes("statusbar")) && (
@@ -881,20 +965,10 @@ function Workspace({
       <Overlays at="dialog" {...overlayProps} />
     </div>
   );
-  const lockKey = keyHint(keymap, "lock");
-  const lockHint = (
-    <>
-      Locks after {options.idleLockMinutes} minutes idle.
-      {lockKey && (
-        <span className="key-hint">
-          {" "}
-          <Keys keys={lockKey} leader={options.leader} /> locks now.
-        </span>
-      )}
-    </>
-  );
+  // The lock screen is the mark, this Box and one field (taste.md): how long until it locks again
+  // is :help lock's to say, not a line under the field.
   return frame(
-    <LockGate vault={vault} hint={lockHint} errorRows={errorRows} copy={copy}>
+    <LockGate vault={vault} box={conn.info.inventory.box} errorRows={errorRows} copy={copy}>
       {shell}
     </LockGate>,
   );

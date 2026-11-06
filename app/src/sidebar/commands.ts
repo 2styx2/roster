@@ -58,7 +58,7 @@ export const sidebarCommands: readonly SidebarCommand[] = [
     id: "menu",
     source: BUILTIN,
     area: "Sidebar",
-    label: () => "The menu of the Host under the cursor: open, details, check, edit, rename, move, remove",
+    label: () => "The Host's menu",
     staysInAppMode: true,
     run: (ctx) => ctx.rowMenu(),
   },

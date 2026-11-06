@@ -123,7 +123,7 @@ export const hostCommand: InventoryCommand = {
   label: (arg) => {
     const [sub, host] = words(arg);
     if (sub === "add") return host ? `Add a Host to ${host}` : "Add a Host";
-    if (sub === "remove") return host ? `Remove ${host} from the Inventory (asks first)` : "Remove a Host from the Inventory (asks first)";
+    if (sub === "remove") return host ? `Remove ${host} from the Inventory (asks first)` : "Remove a Host (asks first)";
     if (sub === "rename") return host ? `Rename ${host}` : "Rename a Host";
     if (sub === "move") return host ? `Move ${host} to another group` : "Move a Host to another group";
     if (sub === "review") return host ? `Mark ${host} reviewed` : "Mark a Host reviewed, so it can be opened";
@@ -173,7 +173,7 @@ export const editCommand: InventoryCommand = {
   area: "Inventory",
   arg: "host",
   optionalArg: true,
-  label: (h) => (h ? `Edit ${h}` : "Edit a Host: title, description, type, address, user, Login"),
+  label: (h) => (h ? `Edit ${h}` : "Edit a Host"),
   run: (ctx, h) => ctx.edit(h ?? null),
 };
 

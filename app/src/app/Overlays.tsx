@@ -11,6 +11,7 @@ import { keyHint, type Keymap, type Options } from "../keymap";
 import { Picker } from "../picker/Picker";
 import type { QuickTarget } from "../quick/target";
 import type { TabsSnapshot } from "../session/tabs";
+import type { Light } from "../ui/dot";
 
 export type Overlay = "picker" | "quick" | { cmdline: string; caret?: number } | { finder: string; query?: string } | null;
 
@@ -35,6 +36,11 @@ export interface OverlaysProps {
   completion: Omit<CompletionContext, "hostNames" | "sessions">;
   finders: readonly FinderSourceDef[];
   finderCtx: FinderContext | null;
+  /** Hosts with a Session that's connected or connecting: their nodes are lit in the Picker too
+   * (taste.md: the accent means live, Q301). */
+  live: ReadonlyMap<string, Light | "connecting">;
+  /** The keys of `host add`, for the Picker's Add a Host (when this roster can add one). */
+  addKeys: string | null;
   /** The line has no command to help with: why. */
   say(m: string): void;
   /** `:help TOPIC` from the command line: the line comes back as it was when help closes. */
@@ -112,6 +118,9 @@ export function Overlays(p: OverlaysProps) {
         : {})}
       hosts={p.hosts}
       recent={p.recent}
+      live={p.live}
+      manySessions={p.sessions.tabs.length >= 9}
+      {...(p.caps.has("add") ? { onAdd: () => closeAndRun("host add"), addKeys: p.addKeys } : {})}
       vim={options.vim}
       keymap={keymap}
       onClose={close}

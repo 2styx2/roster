@@ -15,8 +15,9 @@ export interface SessionContext {
   quickConnect(target: string | null): void;
   /** Goes to the Host's open Session if there is one, else opens one (as `connect`). */
   open(host: string): void;
-  /** Reconnects the current tab if its Session has ended or was refused. */
-  reconnect(): void;
+  /** Reconnects Session `n` (1-based, going to it) if it has ended or was refused; with none, the
+   * one on screen. */
+  reconnect(n?: number | null): void;
   /** The Session on screen: its Host, and whether it's a Quick Connect (not on a Host); null with none. */
   sessionOnScreen(): { host: string; quick: boolean } | null;
   /** The Session `delta` places after the current one, wrapping. */
@@ -90,7 +91,8 @@ export const sessionCommands = {
     source: BUILTIN,
     area: "Hosts",
     arg: "host",
-    label: (h) => (h ? `Connect to ${h} in this tab` : "Open a Host in this tab, if its Session has ended"),
+    // One title with the Picker's key for it (picker.chooseHere, round 20).
+    label: (h) => (h ? `Connect to ${h} in this tab` : "Reopen here, if its Session ended"),
     run: (ctx, h) => ctx.connect(h ?? "", true),
   },
   quick: {
@@ -103,14 +105,23 @@ export const sessionCommands = {
     run: (ctx, t) => ctx.quickConnect(t ?? null),
   },
   save: command("save", "Sessions", "Save to vault: the password typed for this Session, once it logged in", (ctx) => ctx.saveSession()),
-  fill: command("fill", "Sessions", "Fill sudo's (or a nested ssh's) password prompt on screen from the Host's Login in the vault", (ctx) => ctx.fillPrompt()),
+  fill: command("fill", "Sessions", "Fill a password prompt from the vault", (ctx) => ctx.fillPrompt()),
   integrate: command(
     "integrate",
     "Sessions",
     "Turn on shell integration in this Session's shell: one line that marks its prompts and says its folder",
     (ctx) => ctx.integrate(),
   ),
-  reconnect: command("reconnect", "Sessions", "Reconnect an ended Session", (ctx) => ctx.reconnect()),
+  reconnect: {
+    id: "reconnect",
+    source: BUILTIN,
+    area: "Sessions",
+    // A number: that Session (the Sidebar's ended rows, round 20); none: the one on screen.
+    arg: "number",
+    optionalArg: true,
+    label: (n) => (n ? `Reconnect Session ${n}, if it has ended` : "Reconnect an ended Session"),
+    run: (ctx, n) => ctx.reconnect(n === undefined ? null : Number(n)),
+  },
   next: command("next", "Sessions", "Next Session", (ctx) => ctx.selectRelative(1)),
   prev: command("prev", "Sessions", "Previous Session", (ctx) => ctx.selectRelative(-1)),
   session: {

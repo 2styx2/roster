@@ -220,6 +220,84 @@ def yaml_line(e: yaml.YAMLError) -> int | None:
     return None if mark is None else mark.line + 1
 
 
+def shown_value(v) -> str:
+    """V's YAML shape in words, for a key of the wrong shape: `a number (3)`, `text ('lab')`, `a list`, `nothing`."""
+    if v is None:
+        return "nothing (null)"
+    if isinstance(v, bool):
+        return f"{str(v).lower()} (true/false)"
+    if isinstance(v, int | float):
+        return f"a number ({v})"
+    if isinstance(v, str):
+        return f"text ({oneline(v)[:40]!r})"
+    return "a list" if isinstance(v, list) else "a mapping" if isinstance(v, dict) else type(v).__name__
+
+
+def key_line(text: str, keys: tuple[Any, ...]) -> int | None:
+    """The line (from 1) of the key at KEYS (`groups`, `lab`) in roster.yml's TEXT, or None when it isn't found."""
+    try:
+        node = yaml.compose(text)
+    except yaml.YAMLError:
+        return None
+    line = None
+    for k in keys:
+        if not isinstance(node, yaml.MappingNode):
+            return line
+        hit = next(((kn, vn) for kn, vn in node.value if str(kn.value) == str(k)), None)
+        if hit is None:
+            return line
+        line, node = hit[0].start_mark.line + 1, hit[1]
+    return line
+
+
+def wrong_shape(named: str, text: str, keys: tuple[Any, ...], v: Any, want: str) -> NoReturn:
+    """Stop loading: the key at KEYS holds V, where roster.yml wants WANT (what goes there, with an example). The
+    message names the file (NAMED: as shown_path has it) and the key's line in TEXT, as a YAML error's does."""
+    line = key_line(text, keys)
+    raise InventoryError(f"{named}{f' at line {line}' if line else ''}: {'.'.join(map(str, keys))}: must be {want}, "
+                         f"not {shown_value(v)}", line=line)
+
+
+MAPPING_KEYS = {"defaults": "a mapping of settings every Host takes (user: admin, port: 22)",
+                "groups": "a mapping of group name: {user:, hosts: {...}}",
+                "providers": "a mapping of vault name: {its settings}",
+                "bitwarden": "a mapping of settings (sync: true)",
+                "resources": "a mapping of name: { type, ... } (guest-wifi: {type: wifi, ssid: Guest, auth: bw:guest})",
+                "web_login_names": "a mapping of your own name: one of " + ", ".join(WEB_LOGINS)}
+LIST_KEYS = {"provider_dirs": "a list of folders (- providers)",
+             "links": "a list of { from: HOST-OR-GROUP, to: HOST-OR-GROUP, both: true|false, via: HOST }",
+             "rate_limited": "a list of networks, e.g. [10.0.0.0/8, 192.0.2.7]"}
+
+
+def check_shapes(raw: dict[Any, Any], text: str, named: str) -> None:
+    """The keys the loader walks into (#537): each mapping or list where roster.yml wants one, else an
+    InventoryError naming the file (NAMED), the key's path (groups.lab), its line in TEXT and what goes there. A null is an empty
+    one, as it always was. A key's own values (a port, a service, links:) are checked where they're read."""
+    for key, want in MAPPING_KEYS.items():
+        if raw.get(key) is not None and not isinstance(raw[key], dict):
+            wrong_shape(named, text, (key,), raw[key], want)
+    for key, want in LIST_KEYS.items():
+        if raw.get(key) is not None and not isinstance(raw[key], list):
+            wrong_shape(named, text, (key,), raw[key], want)
+    for name, conf in (raw.get("providers") or {}).items():
+        if conf is not None and not isinstance(conf, dict):
+            wrong_shape(named, text, ("providers", name), conf, "a mapping of that vault's settings")
+    for g, group in (raw.get("groups") or {}).items():
+        if group is None:
+            continue
+        if not isinstance(group, dict):
+            wrong_shape(named, text, ("groups", g), group, "a mapping of the group's settings and hosts "
+                        "(user: deploy, hosts: {web-01: 10.0.0.5})")
+        hosts = group.get("hosts")
+        if hosts is not None and not isinstance(hosts, dict):
+            wrong_shape(named, text, ("groups", g, "hosts"), hosts, "a mapping of host name: address or {ip: ...} "
+                        "(web-01: 10.0.0.5)")
+        for h, host in (hosts or {}).items():
+            if host is not None and not isinstance(host, dict | str):
+                wrong_shape(named, text, ("groups", g, "hosts", h), host, "an address (10.0.0.5) or a mapping of its "
+                            "settings ({ip: 10.0.0.5, user: admin})")
+
+
 def checked_inventory(text, path, named):
 
     from pydantic import ValidationError  # only when roster.yml is loaded: it costs more than roster's start
@@ -232,6 +310,7 @@ def checked_inventory(text, path, named):
     if raw is not None and not isinstance(raw, dict):
         bad(f"{named} isn't a mapping of settings and groups: at its top level, so it isn't a roster.yml")
     raw = raw or {}
+    check_shapes(raw, text, named)
     defaults = {**HOST_DEFAULTS, **(raw.get("defaults") or {})}
     names = web_login_names(raw)
     hosts, groups = {}, {}
@@ -357,8 +436,6 @@ def rate_limited(v):
     default) when nobody listed any. Returns them as text, one address as a /32 or /128."""
     if v is None:
         return []
-    if not isinstance(v, list):
-        bad("rate_limited: must be a list of networks, e.g. [10.0.0.0/8, 192.0.2.7]")
     nets = []
     for entry in v:
         text = str(entry).strip()
@@ -423,8 +500,6 @@ def load_links(raw, hosts, groups):
     links = raw.get("links")
     if links is None:
         return []
-    if not isinstance(links, list):
-        bad("links: must be a list of { from: HOST-OR-GROUP, to: HOST-OR-GROUP, both: true|false, via: HOST }")
     out, hops = [], {}                         # hops: (source, peer) -> (entry, the Host it goes through)
 
     def members(name):
@@ -645,8 +720,6 @@ def refuse_broken(h, name):
 def web_login_names(raw):
     """roster.yml's `web_login_names:`, a team's own names for roster's login types: {own name: type}."""
     names = raw.get("web_login_names") or {}
-    if not isinstance(names, dict):
-        bad("web_login_names: must be a mapping of your own name: one of " + ", ".join(WEB_LOGINS))
     out = {}
     for k, v in names.items():
         k = str(k)

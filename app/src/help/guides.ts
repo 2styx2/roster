@@ -17,6 +17,8 @@ export interface Guide {
   /** From the repo's root: `docs/app/config.md`. Relative links resolve against it. */
   path: string;
   title: string;
+  /** The topic finder's name for it when the title is longer than 24 characters (HelpPage.short). */
+  short?: string;
   /** One line, for the index and the topic finder. */
   summary: string;
   part: Part;
@@ -34,6 +36,7 @@ export const guides: readonly Guide[] = [
     id: "start",
     path: "docs/app/start.md",
     title: "Getting started with roster",
+    short: "Getting started",
     summary: "New to roster? Start here: open a Host, find any command, make it yours",
     part: "Getting started",
     order: 1,
@@ -94,6 +97,7 @@ export const guides: readonly Guide[] = [
     id: "themes-guide",
     path: "docs/app/themes.md",
     title: "Themes: the bundled ones and their tokens",
+    short: "Theme tokens",
     summary: "The bundled Themes, their colour tokens, and making your own",
     part: "Make it yours",
     order: 23,
@@ -102,9 +106,11 @@ export const guides: readonly Guide[] = [
     id: "errors-guide",
     path: "docs/app/errors.md",
     title: "Connection errors: every way a Session can fail",
+    short: "When a Session fails",
     summary: "Every connection error: what happened, the cause, where it lives, the fix",
     part: "Reference",
     order: 61,
+    aliases: { "host-keys": "errors-guide#checking-a-host-key" },
   },
   {
     id: "cli",
@@ -127,6 +133,7 @@ export const guides: readonly Guide[] = [
     id: "mesh",
     path: "docs/mesh.md",
     title: "The Mesh: Hosts that reach each other",
+    short: "The Mesh",
     summary: "mesh: and links: in roster.yml, via: jump Hosts, seen_as: addresses, roster mesh, cut, drift in roster check, ESXi and mesh_dir:, appliances",
     part: "Reference",
     order: 72,
@@ -189,6 +196,7 @@ export const guides: readonly Guide[] = [
     id: "plugin-types",
     path: "examples/plugins/types/roster.lua",
     title: "roster.lua: the Plugin API's types",
+    short: "Plugin API types",
     summary: "The LuaCATS annotations for lua-language-server: completion and type checks for Plugins",
     part: "Extending",
     order: 83,

@@ -72,11 +72,16 @@ KB = 1000
 # code growth again; the help chunk 1,100 / 335, about 10 % above too (#431's review F6), so code or a dependency pulled
 # into its imports shows; it's text loaded on the first :help (Neovim ships 5.4 MB of help, read a page at a time), so a
 # docs PR that takes it over raises it with its reason, as the search index's is.
+# CSS 90 -> 120 raw, 16.5 -> 22 gzipped on 2026-11-06 (#418, the UI pass, owner's call: raise the budget rather than
+# cut the redesign): six surfaces redesigned over 23 rounds (the connect card, key questions, row menus, finders, the
+# idle map, the status bar) took it to 108,816 bytes raw / 19,785 gzipped. A dead-rule pass (T178's method) found
+# one rule that matches nothing (.picker-detail .host-ip, 87 bytes), but a worst-case screenshot wasn't pixel-identical
+# without it, so it stays. The app's own stylesheets, not a dependency; about 10 % above.
 # docs/app/performance.md "Bundle size" keeps the same history; change both together.
 BUDGETS = {
     "js": {"raw": 1700, "gzip": 480},
     "help": {"raw": 1100, "gzip": 335},
-    "css": {"raw": 90, "gzip": 16.5},
+    "css": {"raw": 120, "gzip": 22},
     "fake": {"raw": 199, "gzip": 67},
 }
 LABELS = {"js": "Startup JS", "help": "Help chunk JS", "css": "CSS", "fake": "Fake Backend JS"}

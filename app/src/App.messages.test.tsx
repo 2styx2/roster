@@ -39,7 +39,8 @@ async function ready({ config, state }: { config?: Config; state?: Record<string
 
 const messageLine = () => document.querySelector(".message-line") as HTMLElement;
 /** What a sighted user sees on the message line: nothing while it's visually hidden. */
-const seen = () => (messageLine().classList.contains("visually-hidden") ? "" : (messageLine().textContent ?? ""));
+// What's shown: a quiet message is only spoken (a visually hidden span in the always-there line).
+const seen = () => (messageLine().querySelector(".visually-hidden") ? "" : (messageLine().textContent ?? ""));
 
 describe("the message line", () => {
   it("is quiet by default: a toggle shows nothing, and a screen reader still hears what changed", async () => {

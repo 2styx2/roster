@@ -10,6 +10,7 @@ Source of truth: the roster checkout in WSL (e.g. `~/work/roster`). Build copy: 
 # 1. one-way sync (rsync is in WSL; ~0.7 s for a small tree): what app/scripts/app-sync.sh does
 rsync -a --delete \
   --include /Cargo.toml --include /Cargo.lock --include /rustfmt.toml --include /.gitattributes \
+  --include /LICENSE --include /THIRD-PARTY-NOTICES \
   --include /app/ --include /crates/ --include /examples/ --exclude '/*' \
   --exclude .git --exclude node_modules --exclude /target --exclude dist \
   --exclude app/src-tauri/gen \

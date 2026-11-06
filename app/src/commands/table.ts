@@ -13,7 +13,7 @@ import { matching } from "../ui/completion";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import { sessionCommands as s, type SessionContext } from "../session/commands";
 import { sidebarCommands, type SidebarContext } from "../sidebar/commands";
-import type { Message } from "../ui/messages";
+import { slip, type Message } from "../ui/messages";
 import { viewCommands, type ViewContext } from "../view/commands";
 
 /** What any command can ask of the app, whatever its feature. */
@@ -159,7 +159,7 @@ const builtinCommands: readonly CommandDef[] = [
     id: "details",
     source: BUILTIN,
     area: "Hosts",
-    label: () => "Show or hide Host details for the selected Host",
+    label: () => "Host details on or off",
     run: (ctx) => ctx.details(null),
   },
 ];
@@ -184,7 +184,7 @@ export function parseLine(commands: Commands, line: string): ParsedLine {
   const [name, ...rest] = line.trim().split(/\s+/).filter(Boolean);
   if (!name) return { kind: "empty" };
   const command = commands.get(name);
-  if (!command) return { kind: "error", message: `Not a command: ${name}` };
+  if (!command) return { kind: "error", message: `Not a command: ${name}. :help commands lists them.` };
   const arg = rest.length ? rest.join(" ") : undefined;
   if (!command.arg) {
     return arg === undefined ? { kind: "ok", command, arg } : { kind: "error", message: `${name} takes no argument` };
@@ -203,7 +203,8 @@ export function parseLine(commands: Commands, line: string): ParsedLine {
 /** Runs a command line; a bad one is said, not thrown. Returns the command that ran. */
 export function runLine(commands: Commands, ctx: CommandContext, line: string): CommandDef | undefined {
   const parsed = parseLine(commands, line);
-  if (parsed.kind === "error") ctx.say(parsed.message);
+  // A slip in the typing, not a failure: said plainly (round 18).
+  if (parsed.kind === "error") ctx.say(slip(parsed.message));
   if (parsed.kind !== "ok") return undefined;
   parsed.command.run(ctx, parsed.arg);
   return parsed.command;

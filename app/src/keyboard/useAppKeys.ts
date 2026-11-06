@@ -105,7 +105,12 @@ export function useAppKeys(opts: {
     setMode({ mode: "app", pending: [] });
   };
   const treeBlurred = (to: Element | null) => {
-    if (keyRef.current.mode === "app" && to !== null && !inAnyLayer(OVER_THE_TREE, to)) setMode(terminalMode);
+    if (keyRef.current.mode === "app" && to !== null && !inAnyLayer(OVER_THE_TREE, to)) {
+      // Focus is already on its way to `to` (Tab on): nothing to put back, or the restore that
+      // follows Terminal mode, running before it lands, would pull it back to where it came from.
+      opts.focus.setBeforeTree(null);
+      setMode(terminalMode);
+    }
   };
   return { keyState, setMode, mode: () => keyRef.current.mode, treeFocused, treeBlurred };
 }

@@ -13,8 +13,14 @@ export interface Topic {
   anchor?: string;
   /** What the topic finder shows. */
   label: string;
-  /** The page's title, for an entry on it. */
+  /** The page's title, for an entry or a heading on it: the finder's middle column, always a page
+   * (round 20: an entry's description there made it mean two things). */
   path?: string;
+  /** What an entry says it is, its first 80 characters ("Pick Bitwarden cloud…" for `E31`): the
+   * finder puts it after the title ("E31 · Pick…"), muted. */
+  note?: string;
+  /** What in `note` is code (`roster sync`): set in Iosevka there (round 19, the paste rule). */
+  codes?: string[];
   /** A page, a heading on one, an entry (an option, a command, an error…), or another name. */
   kind: "page" | "heading" | "entry" | "alias";
 }
@@ -29,6 +35,18 @@ export const headingTag = (page: string, anchor: string): string => (anchor.incl
 const clip = (s: string, max: number): string => (s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s);
 
 /** The topics on a page's blocks, in page order: each heading below the title, and each entry. */
+/** The code spans in `inlines`, in order. */
+function codesIn(inlines: readonly Inline[]): string[] {
+  return inlines.flatMap((i) => (i.t === "code" ? [i.text] : i.t === "strong" || i.t === "em" || i.t === "link" ? codesIn(i.children) : []));
+}
+
+/** What the topic finder titles an entry: its tag when that's a name people type (`E31`,
+ * `keys.picker`, `:connect`), else what the entry says it is (its term, a table row's first cell),
+ * never a page-local slug (`deprecated#a-removal-of-…`, round 19). */
+function entryLabel(anchor: string, said: string): string {
+  return anchor.includes("#") && said.trim() ? said.replace(/\s+/g, " ").trim() : anchor;
+}
+
 export function blockTags(page: string, title: string, blocks: readonly Block[]): PageTag[] {
   const out: PageTag[] = [];
   for (const b of blocks) {
@@ -37,10 +55,15 @@ export function blockTags(page: string, title: string, blocks: readonly Block[])
       out.push({ tag, anchor: tag, label: plain(b.text), path: title, kind: "heading" });
     } else if (b.t === "defs") {
       for (const d of b.items) {
-        if (d.anchor) out.push({ tag: d.anchor, anchor: d.anchor, label: d.anchor, path: clip(plain(d.body), 80) || title, kind: "entry" });
+        if (!d.anchor) continue;
+        const note = clip(plain(d.body), 80);
+        const codes = note ? codesIn(d.body) : [];
+        out.push({ tag: d.anchor, anchor: d.anchor, label: entryLabel(d.anchor, plain(d.term)), path: title, ...(note ? { note } : {}), ...(codes.length ? { codes } : {}), kind: "entry" });
       }
     } else if (b.t === "table" && b.anchors) {
-      for (const a of b.anchors) if (a) out.push({ tag: a, anchor: a, label: a, path: title, kind: "entry" });
+      b.anchors.forEach((a, i) => {
+        if (a) out.push({ tag: a, anchor: a, label: entryLabel(a, plain(b.rows[i]?.[0] ?? [])), path: title, kind: "entry" });
+      });
     }
   }
   return out;

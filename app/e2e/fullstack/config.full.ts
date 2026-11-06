@@ -34,6 +34,8 @@ beforeAll(async () => {
   await page.getByRole("group", { name: "Inventory" }).getByRole("treeitem", { name: /^lab-01,/ }).waitFor();
   await app.ex("connect lab-01");
   await page.getByRole("alertdialog", { name: "Trust lab-01's host key?" }).waitFor();
+  // The question opens on Cancel (owner, Q319 g): Shift+Tab to Trust and connect, then Enter.
+  await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Enter");
   await app.terminalShows(/^lab-01:~\$$/m);
 });

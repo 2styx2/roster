@@ -6,7 +6,7 @@ import type { Backend, BackendInfo, Host, HostList } from "../backend/types";
 import type { ChangesStep } from "../edit/ChangesPanel";
 import { afterPull } from "../edit/pull";
 import { countOf, errorText } from "../ui/format";
-import { quiet, type Message } from "../ui/messages";
+import { ADD_HOSTS_TOO_OLD, quiet, slip, type Message } from "../ui/messages";
 import type { InventoryContext } from "./commands";
 import { afterChange, reviewedMessage } from "./said";
 import { nothingPending } from "./store";
@@ -61,7 +61,8 @@ export function inventoryActions(o: {
       o.openForm({ kind: "edit", host });
     },
     addHost: (inGroup) => {
-      if (!caps.has("add")) return say(caps.needsNewer("add"));
+      // In the app's words, with the way that works (round 19): the + controls aren't offered then.
+      if (!caps.has("add")) return say(slip(ADD_HOSTS_TOO_OLD));
       const at = o.selectedHost();
       o.openForm({ kind: "add", group: inGroup ?? (at && hostByName.get(at)?.group) ?? Object.keys(o.hosts?.groups ?? {})[0] ?? "" });
     },

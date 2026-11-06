@@ -47,7 +47,6 @@ describe("a Host row's menu (T166, Q156)", () => {
     expect(menu()).toHaveAccessibleName("linux-1-000");
     expect(items()).toEqual([
       "Open",
-      "New Session",
       "Details",
       "Check",
       "Edit…",
@@ -84,7 +83,7 @@ describe("a Host row's menu (T166, Q156)", () => {
   it("leaves out what this roster can't do (no Live Inventory)", async () => {
     await ready(5);
     rightClick(item("linux-1-000"));
-    expect(items()).toEqual(["Open", "New Session", "Details", "Check", "Edit…", "Add to a Folder…"]);
+    expect(items()).toEqual(["Open", "Details", "Check", "Edit…", "Add to a Folder…"]);
   });
 
   it("is a keyboard menu: arrows, Home/End, a letter, Esc puts focus back", async () => {
@@ -94,11 +93,13 @@ describe("a Host row's menu (T166, Q156)", () => {
     // Opened by the pointer: focus is on the menu, no item yet.
     expect(menu()).toHaveFocus();
     await user.keyboard("{ArrowDown}");
-    expect(within(menu()).getByRole("menuitem", { name: /^Open/ })).toHaveFocus();
+    // The click opens a Session (asynchronously), so the first item is Open or, once that Session
+    // is there, "Go to its Session".
+    expect(within(menu()).getByRole("menuitem", { name: /^(Open|Go to its Session)\b/ })).toHaveFocus();
     await user.keyboard("{ArrowUp}");
     expect(within(menu()).getByRole("menuitem", { name: /^Remove/ })).toHaveFocus();
     await user.keyboard("{Home}");
-    expect(within(menu()).getByRole("menuitem", { name: /^Open/ })).toHaveFocus();
+    expect(within(menu()).getByRole("menuitem", { name: /^(Open|Go to its Session)\b/ })).toHaveFocus();
     await user.keyboard("{End}");
     expect(within(menu()).getByRole("menuitem", { name: /^Remove/ })).toHaveFocus();
     await user.keyboard("c");
@@ -115,7 +116,7 @@ describe("a Host row's menu (T166, Q156)", () => {
     expect(rowOf("linux-1-000")).toHaveClass("cursor");
     await user.keyboard("{ContextMenu}");
     expect(menu()).toHaveAccessibleName("linux-1-000");
-    expect(within(menu()).getByRole("menuitem", { name: /^Open/ })).toHaveFocus();
+    expect(within(menu()).getByRole("menuitem", { name: /^(Open|Go to its Session)\b/ })).toHaveFocus();
     // Esc goes back to the tree, still in App mode.
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).toBeNull();
@@ -129,13 +130,50 @@ describe("a Host row's menu (T166, Q156)", () => {
     expect(await screen.findByRole("complementary", { name: "Details of linux-1-000" })).toBeInTheDocument();
   });
 
-  it("says so on a row that isn't a Host", async () => {
+  it("says so on a row with no menu (a section heading)", async () => {
     const { user } = await ready();
     await user.keyboard(LEADER);
-    // The cursor starts on the first row: the Sessions heading or the Inventory's.
+    // Up to the top: the Sessions heading, which has no actions.
+    await user.keyboard("kkkkkkkk");
     await user.keyboard("{ContextMenu}");
     expect(screen.queryByRole("menu")).toBeNull();
-    expect(await screen.findByText(/Only a Host's row has a menu/)).toBeInTheDocument();
+    expect(await screen.findByText(/This row has no menu/)).toBeInTheDocument();
+  });
+
+  it("opens a heading's menu of its buttons' actions from Shift+F10 (round 18)", async () => {
+    const { user } = await ready();
+    await user.keyboard(LEADER);
+    // From the first Host up to the Inventory heading, whose + is Add a Host.
+    await user.keyboard("kk");
+    expect(screen.getByRole("treeitem", { name: "Inventory" }).closest(".sb-heading")).toHaveClass("cursor");
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    expect(menu()).toHaveAccessibleName("Inventory");
+    expect(items()).toEqual(["New group", "Add a Host"]);
+  });
+
+  it("opens a group's menu from Shift+F10, each item hinting its whole command (round 18)", async () => {
+    const { user } = await ready();
+    await user.keyboard(LEADER);
+    // The first Host's group is the row above it.
+    await user.keyboard("k");
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    expect(menu()).toHaveAccessibleName("subnet-1");
+    const hints = within(menu()).getAllByRole("menuitem").map((m) => m.querySelector(".row-menu-cmd")?.textContent);
+    // The argument's shape where the group's name goes, not a "…" that reads as cut (round 19).
+    expect(hints).toEqual([":host add GROUP", ":group rename GROUP", ":group delete GROUP"]);
+    // The row under the menu drops its accent outline: the focused item is the cursor now.
+    expect(document.querySelector(".sidebar")).toHaveAttribute("data-menu");
+  });
+
+  it("opens a group's menu with its own actions", async () => {
+    const { user } = await ready();
+    rightClick(within(inventory()).getByRole("treeitem", { name: /^subnet-1/ }));
+    // Short words (round 22): the menu is named after the group, the item's tooltip names it.
+    expect(menu()).toHaveAccessibleName("subnet-1");
+    const add = within(menu()).getByRole("menuitem", { name: "Add a Host…" });
+    expect(add).toHaveAttribute("title", "Add a Host to subnet-1");
+    expect(items().some((i) => /subnet-1/.test(i ?? ""))).toBe(false);
+    await user.keyboard("{Escape}");
   });
 
   it("closes on a click outside, and on Tab", async () => {
@@ -182,20 +220,25 @@ describe("a Host row's menu (T166, Q156)", () => {
     await user.click(row);
     expect(within(row.closest("li") as HTMLElement).queryAllByRole("button")).toEqual([]);
     rightClick(row);
-    expect(within(menu()).getByRole("menuitem", { name: /Remove linux-1-000 from Lab/ })).toBeInTheDocument();
+    // Round 22: the item says it short; the names are in its tooltip and description.
+    const item = within(menu()).getByRole("menuitem", { name: "Remove from Folder" });
+    expect(item).toHaveAttribute("title", "Remove linux-1-000 from Lab");
+    expect(item).toHaveAttribute("aria-description", "Remove linux-1-000 from Lab");
   });
 });
 
 describe("a Host row's menu with worst-case names (break-ui)", () => {
-  it("a long Plugin action keeps its whole text in its name and tooltip, cut on screen", async () => {
+  it("a long Plugin action says it short, its whole text (names and all) in its tooltip and description", async () => {
     const { user } = await ready();
     const folder = "Racks-in-the-second-building-north-wing-cold-aisle-טבלה-🧪";
     await user.keyboard(`${LEADER}:folder add linux-1-000 ${folder}{Enter}`);
     const folders = await screen.findByRole("group", { name: "Folders" });
     rightClick(await within(folders).findByRole("treeitem", { name: /^linux-1-000/ }));
-    const action = within(menu()).getByRole("menuitem", { name: `Remove linux-1-000 from ${folder}` });
-    const label = action.querySelector(".row-menu-label") as HTMLElement;
-    expect(label).toHaveAttribute("title", `Remove linux-1-000 from ${folder}`);
-    expect(label).toHaveAttribute("dir", "auto");
+    const action = within(menu()).getByRole("menuitem", { name: "Remove from Folder" });
+    expect(action).toHaveAttribute("title", `Remove linux-1-000 from ${folder}`);
+    expect(action).toHaveAttribute("aria-description", `Remove linux-1-000 from ${folder}`);
+    // Its hint names no Host or Folder: the shape of the command line.
+    expect(action.querySelector(".row-menu-cmd")).toHaveTextContent(":folder remove HOST NAME");
+    expect(action.querySelector(".row-menu-label")).toHaveAttribute("dir", "auto");
   });
 });

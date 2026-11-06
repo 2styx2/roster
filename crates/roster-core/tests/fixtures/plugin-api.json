@@ -7226,6 +7226,12 @@
           "type": "string"
         },
         {
+          "doc": "What it says in the row's menu (a right-click, or the Menu key on the row), which is named after the row: a few words without the row's own names (`\"Unpin\"`, `\"Remove from Folder\"`), at most 40 characters; `label` is then its tooltip there. `label` if left out.",
+          "name": "short",
+          "required": false,
+          "type": "string"
+        },
+        {
           "doc": "Its icon; `info` if left out.",
           "name": "icon",
           "required": false,
