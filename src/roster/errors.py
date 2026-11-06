@@ -248,6 +248,10 @@ NO_TERMINAL_FOR_PASSWORD = 223  # add --save-to-vault: no terminal to ask the ne
 PASSWORDS_DIFFER = 224      # add --save-to-vault: the password and its confirmation differ (or none was typed)
 ITEM_LEFT = 225             # add --save-to-vault: the vault item was made but roster.yml wasn't written: delete it
 
+# The lock on the Host (T263, #534, decision Q214 (d); catalog rows 288-289)
+HOST_KEYS_BUSY = 226        # another Box's run held the Host's lock on this account's key file: nothing was changed
+NO_HOST_LOCK = 227          # a warning: the key file was rewritten without the Host lock (no flock there)
+
 
 # The vault's own state, not an item's: the codes a provider's failure keeps wherever it's reported
 VAULT_CODES = (WRONG_PASSWORD, NOT_LOGGED_IN, CLI_MISSING, UNSUPPORTED, VAULT_LOCKED, ALREADY_SIGNED_OUT,
@@ -320,6 +324,19 @@ class HostRefused(Problem, RuntimeError):
     def __str__(self):
         return tagged(self)
 
+
+
+def host_keys_busy(lock: str) -> HostRefused:
+    """226 (T263): another run held the Host's lock (LOCK, the lock file there) past keyline.LOCK_WAIT."""
+    return HostRefused(HOST_KEYS_BUSY, f"another Box (or another roster run) is changing this account's keys there "
+                                       f"({lock} is held): nothing was changed; run it again in a moment")
+
+
+def no_host_lock(why: str, host: str | None = None) -> str:
+    """227 (T263): the warning line for a rewrite that ran without the Host lock, WHY (the key script's NOLOCK); HOST
+    named first where the line doesn't stand under that Host's own."""
+    return (f"warning: [{NO_HOST_LOCK}] {f'{host}: ' if host else ''}{why}, so roster rewrote its key file without a lock there: another Box's run "
+            "at the same moment could drop one of the two lines (that Box's next setup puts it back)")
 
 
 class Exit(SystemExit):

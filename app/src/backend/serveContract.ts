@@ -151,6 +151,8 @@ export const Code = {
   NO_TERMINAL_FOR_PASSWORD: 223,
   PASSWORDS_DIFFER: 224,
   ITEM_LEFT: 225,
+  HOST_KEYS_BUSY: 226,
+  NO_HOST_LOCK: 227,
 } as const;
 
 /** JSON-RPC's own error codes, which serve answers with too. */

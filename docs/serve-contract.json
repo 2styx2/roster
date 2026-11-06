@@ -205,7 +205,9 @@
     "MESH_DIR_UNSAFE": 222,
     "NO_TERMINAL_FOR_PASSWORD": 223,
     "PASSWORDS_DIFFER": 224,
-    "ITEM_LEFT": 225
+    "ITEM_LEFT": 225,
+    "HOST_KEYS_BUSY": 226,
+    "NO_HOST_LOCK": 227
   },
   "json_rpc": {
     "PARSE_ERROR": -32700,
