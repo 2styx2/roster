@@ -229,9 +229,10 @@ def keyed(cfg: dict[str, Any], h: dict[str, Any]) -> bool:
 
 
 def not_set_up(cfg: dict[str, Any], h: dict[str, Any]) -> bool:
-    """Is H a key Host where setup hasn't put this Box's key, by roster's record? (`roster run` then watches its one
-    login, to name the fix if it fails)"""
-    return bool(h["enroll"]) and not keyed(cfg, h)
+    """Should `roster run` watch H's one login (to name the fix if it fails) rather than hand over to ssh? Only for a
+    key Host this Box has never reached, or one the last setup didn't finish: one whose login has worked before keeps
+    run's exec, record or not (#510's second review LOW-5: a fleet set up before the key-types record)."""
+    return bool(h["enroll"]) and (not has_answered(h) or h["name"] in setup_left(cfg))
 
 
 def vault_item(h: dict[str, Any]) -> str | None:
@@ -260,7 +261,10 @@ def explain(cfg: dict[str, Any], h: dict[str, Any], stderr: str, password: bool 
     ANSWERED: has_answered(H) as it was before the login (taken now when None). Never a value: the item by name."""
     from . import diagnose
     login_failure, unreachable_fix = cast(Any, diagnose).login_failure, cast(Any, diagnose).unreachable_fix
-    name, addr, user, low = h["name"], h["ip"], h["ssh"]["user"], stderr.lower()
+    name, addr, user = h["name"], h["ip"], h["ssh"]["user"]
+    # ssh's own words, without ssh -v's lines (#510's second review LOW-6: a server's pre-banner text is logged as
+    # `debug1: kex_exchange_identification: banner line N`, which isn't a dropped connection)
+    low = "\n".join(line for line in stderr.splitlines() if not line.startswith(("debug", "OpenSSH_"))).lower()
     answered = has_answered(h) if answered is None else answered
     nist_only = nist_offered(stderr)
     item = vault_item(h)
@@ -295,10 +299,13 @@ def explain(cfg: dict[str, Any], h: dict[str, Any], stderr: str, password: bool 
                            "locked after failed logins (faillock): ask its admin, and don't retry in a loop",
                            details=stderr)
         if h.get("enroll", True) and not (nist_only and h.get("key_type") == "ed25519"):
-            if not keyed(cfg, h):
-                return Problem(errors.NO_KEY_YET, f"no key on {name} yet", fix=setup_fix([name]), details=stderr)
-            return Problem(errors.KEY_GONE, f"this Box's key no longer logs in to {name} (taken off there?)",
-                           fix=f"roster setup --host {name} puts it back", details=stderr)
+            if keyed(cfg, h):
+                return Problem(errors.KEY_GONE, f"this Box's key no longer logs in to {name} (taken off there?)",
+                               fix=f"roster setup --host {name} puts it back", details=stderr)
+            if answered and name not in setup_left(cfg):    # reached before, no record: a setup before the record
+                return Problem(errors.KEY_GONE, f"this Box's key isn't on {name} by roster's record (never set up "
+                               "from this Box, or taken off)", fix=setup_fix([name]), details=stderr)
+            return Problem(errors.NO_KEY_YET, f"no key on {name} yet", fix=setup_fix([name]), details=stderr)
     return login_failure(h, password, stderr, cfg.get("rate_limited") or [], nist_only=nist_only)
 
 

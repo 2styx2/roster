@@ -377,9 +377,24 @@ function Main {
         if ($mine -ne $adminFile -and -not $created) { User-AclWarnings $mine $me }
         if ($created -or $new -cne $old) { Write-Keys $mine $new $secure }
         if ($mine -eq $adminFile) { Set-AdminAcl $mine; Say 'SCOPE admins' }
+        # #509 item 4: this account's other key file, the user file sshd read before it joined Administrators (a
+        # plain user can't read the admin file, so that one isn't looked in, as remove warns): this Box's lines there
+        # count for OTHERS too (none of them logs in now), and the cleanup ($Sweep) takes TagRe's from it as well,
+        # after the file sshd reads is written. One it can't read is left alone, unsaid
+        $other = if ($mine -eq $adminFile) { $userFile } else { $null }
+        $otherText = $null
+        if ($other) { try { $otherText = Read-Keys $other } catch { $otherText = $null } }
+        if ($Sweep -and $null -ne $otherText) {
+            $swept = New-Text $otherText $null
+            if ($swept -cne $otherText) {
+                Assert-Folder (Split-Path -Parent $other) $me @($me, $Admins, $System)
+                Write-Keys $other $swept $null
+            }
+        }
         # T245 (#471's NIT-1): this Box's other lines (another key type's) still there, which setup takes off once
         # the new line has logged in, and only then
-        if ($Others -and @($new -split '\n' | Where-Object { $_.TrimEnd() -cmatch $Others -and -not ($_.TrimEnd() -cmatch $TagRe) }).Count) {
+        if ($Others -and (@($new -split '\n' | Where-Object { $_.TrimEnd() -cmatch $Others -and -not ($_.TrimEnd() -cmatch $TagRe) }).Count -or
+                          ($null -ne $otherText -and @($otherText -split '\n' | Where-Object { $_.TrimEnd() -cmatch $Others }).Count))) {
             Say 'OTHERS'
         }
         Say "FILE $mine"
@@ -435,19 +450,22 @@ try { Main } catch {
 MODES = ("add", "remove", "check", "retag")
 
 
-def script(mode, tag_re, pub="", taken="", own="", others=""):
+def script(mode, tag_re, pub="", taken="", own="", others="", sweep=False):
     """The PowerShell script for MODE (add PUB, remove, or check this Box's key, matched by TAG_RE; retag: the lines
     TAG_RE matches, this Box's key under any roster name, get PUB's tag in place, NOLINE when there's none): sent on
     stdin. TAKEN and OWN (add and retag on a renamed Box, T226): a line TAKEN (the new name's tag) matches that OWN
-    (this Box's key) doesn't is another Box's, and the script says TAKEN and changes nothing. OTHERS (add): it
-    says OTHERS when a line OTHERS matches (this Box's, any key) and TAG_RE doesn't is still there after the add."""
+    (this Box's key) doesn't is another Box's, and the script says TAKEN and changes nothing. OTHERS (add, T245): it
+    says OTHERS when a line OTHERS matches (this Box's, any key) and TAG_RE doesn't is still there after the add, or
+    any line OTHERS matches is in this account's other key file (an administrator's user file, #509 item 4). SWEEP
+    (add, setup's cleanup): TAG_RE's lines go from that other file too."""
     if mode not in MODES:
         raise ValueError(mode)
     # Is-Mine trims each line first, and .NET reads [[:space:]] as a set of its letters: the plain end of line
     tag_re, taken, own, others = (keyline.powershell(x) for x in (tag_re, taken, own, others))
     header = (f"$Mode = {ps_literal(mode)}\n$Pub = {ps_literal(pub)}\n$TagRe = {ps_literal(tag_re)}\n"
               f"$Taken = {ps_literal(taken)}\n$Own = {ps_literal(own)}\n$Others = {ps_literal(others)}\n"
-              f"$TagEnd = {ps_literal(keyline.PS_TAG_END)}\n$NameEnd = {ps_literal(keyline.PS_NAME_END)}\n")
+              f"$TagEnd = {ps_literal(keyline.PS_TAG_END)}\n$NameEnd = {ps_literal(keyline.PS_NAME_END)}\n"
+              f"$Sweep = {'$true' if sweep else '$false'}\n")
     return header + SCRIPT
 
 
@@ -744,14 +762,14 @@ class SshFailed(RuntimeError):
 
 
 def over_key(h: dict[str, Any], mode: str, tag_re: str, timeout: float = 60, pub: str = "", taken: str = "",
-             own: str = "", ssh_opts: Sequence[str] = ()) -> Result:
+             own: str = "", ssh_opts: Sequence[str] = (), sweep: bool = False) -> Result:
     """Run MODE's script on key Host H with this Box's key (`ssh NAME`, never a shared connection): a Result, or
-    RuntimeError (SshFailed when ssh itself failed). PUB: the key line retag writes; TAKEN, OWN: script's. SSH_OPTS:
-    ssh's own options before the Host (the Box key rotation's `-F CONFIG`, one key: T240)."""
+    RuntimeError (SshFailed when ssh itself failed). PUB: the key line retag writes; TAKEN, OWN, SWEEP: script's.
+    SSH_OPTS: ssh's own options before the Host (the Box key rotation's `-F CONFIG`, one key: T240)."""
     try:
         r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", *ssh_opts, h["name"],
                                          remote_command()]),
-                           input=framed(script(mode, tag_re, pub, taken, own)).encode(), capture_output=True,
+                           input=framed(script(mode, tag_re, pub, taken, own, sweep=sweep)).encode(), capture_output=True,
                            timeout=timeout)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"{h['name']} didn't finish within {timeout} s") from None

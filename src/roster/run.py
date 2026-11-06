@@ -128,27 +128,36 @@ def refuse_secret(e, h):
 # ssh's own words for a login that failed, as opposed to a remote command's (#510's review NIT-3)
 SSH_SAID = re.compile(r"(^|\n)(\S+@\S+: permission denied \(|ssh: |kex_exchange_identification|host key verification "
                       r"failed|@@@@)", re.IGNORECASE)
-VERBOSE = ("debug1:", "debug2:", "debug3:", "OpenSSH_", "Authenticated to ", "Transferred: ", "Bytes per second")
+VERBOSE = ("debug1:", "debug2:", "debug3:", "OpenSSH_")
+KEPT = 400                  # ssh -v's lines up to the login kept for the cause, at most
 
 
 def run_explained(cfg, h, command):
-    """`roster run` on a Host setup hasn't put this Box's key on, by roster's record (catchup.not_set_up): ssh -v as a
-    child, not in roster's place, its stderr passed on as it comes (but -v's own lines, kept for the FIPS check) so a
-    failed login (exit 255, in ssh's words) gets one more line: its cause and the one fix (`no key on NAME yet:
-    roster setup --host NAME`). Still one connection, never a retry."""
+    """`roster run` on a Host this Box never reached, or one setup didn't finish (catchup.not_set_up): ssh -v as a
+    child, not in roster's place, its stderr passed on as it comes, but for -v's own lines up to the login, which are
+    kept (bounded: KEPT lines at most) for the cause; after the login everything is passed on as it is. A failed login
+    (exit 255, in ssh's own words) gets one more line: its cause and the one fix (`no key on NAME yet: roster setup
+    --host NAME`). Still one connection, never a retry."""
     answered = catchup.has_answered(h)      # before the login: accept-new records a new host key (HIGH-1)
     kept = []
     p = subprocess.Popen(program_argv(["ssh", "-v", "-o", "BatchMode=yes", h["name"], command]), stderr=subprocess.PIPE)
 
     def tee():
+        logged_in = False
         for line in iter(p.stderr.readline if p.stderr else (lambda: b""), b""):
-            kept.append(line)
-            if line.decode(errors="replace").startswith(VERBOSE):
-                continue
+            text = line.decode(errors="replace")
+            if not logged_in:
+                if len(kept) < KEPT:
+                    kept.append(line)
+                if text.startswith(("debug1: Authenticated to ", "Authenticated to ")):
+                    logged_in = True        # the command's own stderr from here on, passed on whole (NIT-8)
+                    continue
+                if text.startswith(VERBOSE):
+                    continue
             if hasattr(sys.stderr, "buffer"):
                 sys.stderr.buffer.write(line)
             else:
-                sys.stderr.write(line.decode(errors="replace"))
+                sys.stderr.write(text)
             sys.stderr.flush()
     t = threading.Thread(target=tee, daemon=True)
     t.start()

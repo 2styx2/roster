@@ -805,8 +805,9 @@ def test_check_before_setup_with_accept_new_is_still_a_to_do(capsys, box, ssh_sa
     ssh_says(DENIED)
     rc, out, _ = run(capsys, "check", "--host", "new-01")
     assert "new-01  ssh:todo" in out and "[211] no key on new-01 yet" in out
-    rc, out, _ = run(capsys, "check", "--host", "new-01")      # and again, now its host key is known
-    assert "[211] no key on new-01 yet" in out and "[212]" not in out
+    rc, out, _ = run(capsys, "check", "--host", "new-01")      # again: its host key is known now, still no record
+    assert "isn't on new-01 by roster's record (never set up from this Box, or taken off)" in out
+    assert "roster setup --host new-01" in out and "taken off there?" not in out
 
 
 def test_run_before_setup_with_accept_new_says_no_key_yet(capsys, box, ssh_says, monkeypatch):
@@ -913,3 +914,51 @@ def test_sudo_s_per_command_refusal_isnt_not_in_sudoers(box):
     said = sudo_failure(load_config(box["path"])["hosts"]["new-01"],
                         "Sorry, user admin is not allowed to execute '/usr/bin/id' as root on new-01.")
     assert "not in sudoers" not in said and "not for that command" in said
+
+
+
+# ---------------------------------------------------------------- #510's second review
+
+def test_a_pre_banner_debug_line_isnt_the_rate_limiter(box):
+    """LOW-6: ssh -v logs a line a server sends before its version as `debug1: kex_exchange_identification: banner
+    line N`; only ssh's own non-debug words count."""
+    from roster import errors
+    cfg = load_config(box["path"])
+    stderr = ("OpenSSH_9.6p1, OpenSSL 3.0.13\n"
+              "debug1: kex_exchange_identification: banner line 0: Welcome to the lab switch\n"
+              "debug1: kex: algorithm: curve25519-sha256\n"
+              "debug1: kex: host key algorithm: ssh-ed25519\n"
+              "admin@10.0.0.6: Permission denied (publickey,password).")
+    p = catchup.explain(cfg, cfg["hosts"]["new-01"], stderr, answered=False)
+    assert p.code == errors.NO_KEY_YET
+
+
+def test_a_host_set_up_before_the_record_whose_key_went_is_not_a_to_do(capsys, box, ssh_says):
+    """LOW-5 (a): it answered before, setup finished there, but no key-types row (a roster before T245): not on it
+    by roster's record, never a plain "no key yet"."""
+    run(capsys, "sync", "--no-vault")
+    answered("10.0.0.6")
+    ssh_says(DENIED)
+    rc, out, _ = run(capsys, "check", "--host", "new-01")
+    assert rc == 1 and "new-01  ssh:FAIL" in out and "[212]" in out
+    assert "isn't on new-01 by roster's record (never set up from this Box, or taken off)" in out
+    assert "roster setup --host new-01" in out
+
+
+def test_run_on_a_host_reached_before_hands_over_to_ssh_without_a_record(capsys, box, monkeypatch):
+    """LOW-5 (b): a Host whose login worked before (a pre-T245 setup: no record) keeps run's exec, no ssh -v child."""
+    from roster import run as run_module
+    run(capsys, "sync", "--no-vault")
+    answered("10.0.0.6")
+    handed = []
+    monkeypatch.setattr(run_module, "run_instead", lambda argv: handed.append(argv) or 0)
+    assert main(["run", "new-01", "--", "uptime"]) == 0
+    assert handed == [["ssh", "-o", "BatchMode=yes", "new-01", "uptime"]]
+
+
+def test_run_s_watched_login_passes_a_remote_command_s_own_debug_lines_through(capsys, box, ssh_says):
+    """NIT-8: ssh -v's lines are dropped only up to the login; the command's own stderr is passed on as it is."""
+    run(capsys, "sync", "--no-vault")
+    ssh_says("debug1: Authenticated to new-01 ([10.0.0.6]:22) using \"publickey\".\ndebug1: the command's own line")
+    rc, out, err = run(capsys, "run", "new-01", "--", "true")
+    assert "debug1: the command's own line" in err and "Authenticated to" not in err
