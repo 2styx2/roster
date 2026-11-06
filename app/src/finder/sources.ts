@@ -38,7 +38,7 @@ export interface FinderItem {
    * (see SidebarRow.lit). */
   lit?: Light;
   /** `false`: a lit node without its edge stub (nine or more Sessions: only the on-screen Host
-   * keeps it, the Sidebar's and the Picker's rule, Q231 a, Q247). */
+   * keeps it, the Sidebar's and the Picker's rule, Q316 a, Q332). */
   stub?: false;
   /** The Session on screen, or the one before it (the session bar's `*` and `-`). */
   mark?: "current" | "previous";

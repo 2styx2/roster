@@ -1,4 +1,4 @@
-// The idle pane's Recent Hosts as a map (Q219, Q222): with no Session open, the Hosts you opened
+// The idle pane's Recent Hosts as a map (Q304, Q307): with no Session open, the Hosts you opened
 // last (or, the first time, the Inventory's first ones), each one click away.
 import { useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Host } from "../backend/types";

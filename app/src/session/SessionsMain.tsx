@@ -88,10 +88,10 @@ export function SessionsMain({ mainRef, onPaneClick, tabStrip, noHostsIn, findKe
         <div className="empty">
           <Logo size={48} className="empty-mark" />
           <p className="empty-title">No Sessions open</p>
-          {/* Your network, not just a button (Q219, Q222, Q224): the Hosts you opened last (or,
+          {/* Your network, not just a button (Q304, Q307, Q309): the Hosts you opened last (or,
               the first time, the Inventory's first ones), each one click away. */}
           {recent.hosts.length > 0 && <RecentMap box={recent.box} hosts={recent.hosts} title={recent.title} dotOf={dotOf} open={(name) => run(`open ${name}`)} />}
-          {/* A quiet line while the Sidebar's Find field or the map is there (Q224; one form at every
+          {/* A quiet line while the Sidebar's Find field or the map is there (Q309; one form at every
               window size, round 9); the filled button only when the pane offers nothing else. */}
           {quietFind || recent.hosts.length > 0 ? (
             <button type="button" className="empty-find" onMouseDown={(e) => e.preventDefault()} onClick={() => run("find")}>

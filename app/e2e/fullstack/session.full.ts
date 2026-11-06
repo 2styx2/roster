@@ -62,7 +62,7 @@ describe("a Session on the whole stack", () => {
     await page.keyboard.press("Enter");
     const trust = page.getByRole("alertdialog", { name: "Trust lab-01's host key?" });
     await trust.waitFor();
-    // It opens on Cancel, so a reflexive Enter never trusts an unread key (owner, Q234 g): Trust
+    // It opens on Cancel, so a reflexive Enter never trusts an unread key (owner, Q319 g): Trust
     // and connect is the control before Cancel (Tab from Cancel wraps to `:help host-keys`), then
     // Enter.
     expect(await trust.getByRole("button", { name: /^Cancel/ }).evaluate((b) => b === document.activeElement)).toBe(true);
@@ -111,7 +111,7 @@ describe("a Session on the whole stack", () => {
     const password = ask.getByLabel(`Password for ${HOST_USER}`);
     await password.fill(HOST_PASSWORD);
     // Enter in the password field doesn't connect before "I've checked this key" is ticked: the
-    // question stays (Q237, Q251 a); ticked, the same Enter connects (Q255, Q257).
+    // question stays (Q322, Q336 a); ticked, the same Enter connects (Q340, Q342).
     await page.keyboard.press("Enter");
     const box = ask.getByRole("checkbox", { name: "I've checked this key" });
     await expect.poll(() => box.evaluate((b) => b === document.activeElement)).toBe(true);

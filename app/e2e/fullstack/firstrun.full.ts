@@ -58,7 +58,7 @@ describe("the first run", () => {
     await page.keyboard.press("Control+Space");
     await page.keyboard.press("f");
     await page.getByRole("combobox", { name: /Find a Host/ }).fill("lab");
-    // Added through the form, it's unreviewed: its badge sits beside its name (Q244 g).
+    // Added through the form, it's unreviewed: its badge sits beside its name (Q329 g).
     await page.getByRole("listbox", { name: "Hosts" }).getByRole("option", { name: /^lab-01 unreviewed 127\.0\.0\.1/ }).waitFor();
     await page.keyboard.press("Escape");
   });

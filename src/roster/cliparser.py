@@ -212,6 +212,13 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
                    "--user from its username, never reading its password (bw, op); flags given win. With no NAME: list "
                    "the vault items no Login in roster.yml names (new ones since the last run), and in a terminal "
                    "add each one [Y/n/edit/skip]")
+    s.add_argument("--save-to-vault", action="store_true", help="save its password as a new vault item `NAME ssh` "
+                   "(its address in the URI, --user as the username), then point its auth: at it; the password is "
+                   "asked twice on the terminal, hidden, never taken from an argument or the environment")
+    s.add_argument("--save-to", metavar="TARGET", help="with --save-to-vault: where the item goes for this run: "
+                   "personal, ORGANIZATION/COLLECTION (bw) or GROUP (kp) (default: save_to: in roster.yml or init.lua)")
+    s.add_argument("--provider", metavar="PROVIDER", help="with --save-to-vault: the vault to save in, bw or kp "
+                   "(default: the vault roster.yml's Logins use most)")
     s.add_argument("--json", action="store_true", help="with --from-vault and no NAME: print the list as JSON, add "
                    "nothing")
     s.add_argument("--all", action="store_true", help="with --from-vault and no NAME: every item roster.yml doesn't "
@@ -224,7 +231,8 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
                    "key on it when enrolled) and check it, and say how each went")
     s.add_argument("--dry-run", action="store_true", help="print the lines it would add; write nothing")
     s.add_argument("-y", "--yes", action="store_true", help="never ask: a missing value it can't default is an "
-                   "error naming its flag")
+                   "error naming its flag (with --save-to-vault the password is still asked, and a locked vault's "
+                   "master password in a terminal)")
     s = sub.add_parser("discover", help="scan networks (nmap if installed) for Hosts; --write adds the new ones to "
                        "roster.yml, unreviewed")
     s.add_argument("targets", nargs="+", metavar="CIDR", help="e.g. 10.0.1.0/24 (several allowed)")
@@ -384,6 +392,13 @@ def check(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
         if listed:
             parser.error(f"{', '.join(listed)} go{'es' if len(listed) == 1 else ''} with --from-vault and no NAME "
                          "(the list of vault items): drop NAME or the flag")
+    if args.cmd == "add" and args.save_to_vault:
+        clash = [f for f, on in (("--auth", args.auth), ("--from-vault", args.from_vault)) if on]
+        if clash:
+            parser.error(f"--save-to-vault makes a new vault item for the Login: drop {' and '.join(clash)} (--auth "
+                         "points at an item that's already there)")
+    if args.cmd == "add" and not args.save_to_vault and (args.save_to or args.provider):
+        parser.error("--save-to and --provider go with --save-to-vault")
     if args.cmd == "revoke" and args.all and (args.only or args.inv or args.config):
         parser.error("revoke --all revokes every Inventory's Hosts: drop --only, --inv and -c")
 

@@ -1436,20 +1436,14 @@ def item_writes(state, provider, floor=0.0):
 
 
 def make_item(state, provider, item, password, user, address, port, save_to):
-    """The Vault item for a password that just logged in: the user in its username field, ssh://address[:port] in
-    its URI field. Raises the vault_problem (60-65, 14) when the vault refuses."""
-    uri = f"ssh://{address}" + ("" if port == 22 else f":{port}")
-    try:
-        with item_writes(state, provider):
-            made = providers.create_item(provider, name=item, password=password, username=user, uri=uri,
-                                         save_to=save_to)
-    except providers.SecretError as e:
-        raise vault_problem(e) from None
-    return {"provider": provider, **made}
+    """The Vault item for a password that just logged in (addhost.save_item, as `roster add --save-to-vault`'s), one
+    at a time per provider. Raises the vault_problem (60-65, 14) when the vault refuses."""
+    with item_writes(state, provider):
+        return addhost.save_item(provider, item, password, user, address, port, save_to)
 
 
 def item_param(params, name):
-    item = params.get("item") or f"{name} ssh"
+    item = params.get("item") or addhost.item_name(name)
     if not isinstance(item, str) or not item.strip() or "\n" in item or ":" in item:
         raise Problem(INVALID_PARAMS, "params.item must be one line, without ':' (e.g. 'esx-02 ssh')")
     return " ".join(item.split())
@@ -1981,14 +1975,9 @@ def status_result(name, status, account, server=providers.ASK):
     return result | ({"message": message} if message else {})
 
 
-def main_vault(names):
-    """The vault to unlock: the most used provider that has a master password, or None."""
-    return next((n for n in names if PROVIDERS[n].get("unlock")), None)
-
-
 @method("vault.status", locks=SHARES_VAULT, waits_for_unlocks=True)
 def vault_status(state, params):
-    """The vault to unlock (main_vault) and where every provider the Inventory uses stands.
+    """The vault to unlock (providers.main_vault) and where every provider the Inventory uses stands.
 
     Params: none
     Result: `{provider, status, message?, sign_in?, account?, can_sign_out, save_to?, providers: [{provider,
@@ -1996,7 +1985,7 @@ def vault_status(state, params):
     Since: API 1
     """
     names = health.referenced_providers(state.inventory())
-    lockable = main_vault(names)
+    lockable = providers.main_vault(names)
     main = provider_status(lockable) if lockable else {"provider": None, "status": "unsupported",
                                                        "can_write": False, "can_sign_out": False}
     others = [main if n == main["provider"] else provider_status(n) for n in sorted(names)]
@@ -2009,7 +1998,7 @@ def vault_provider(state, params):
     """params.provider, or the Inventory's vault (vault.status's "provider")."""
     name = params.get("provider")
     if name is None:
-        name = main_vault(health.referenced_providers(state.inventory()))     # no status call: that'd be a `bw` run
+        name = providers.main_vault(health.referenced_providers(state.inventory()))     # no status call: that'd be a `bw` run
         if name is None:
             raise Problem(UNSUPPORTED, "no Host Login uses a vault with a master password")
     if not isinstance(name, str) or name not in PROVIDERS:

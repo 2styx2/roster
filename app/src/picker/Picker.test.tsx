@@ -179,7 +179,7 @@ describe("Picker", () => {
     });
   });
 
-  describe("edge stubs with nine or more Sessions (Q231 a, extended by Q247)", () => {
+  describe("edge stubs with nine or more Sessions (Q316 a, extended by Q332)", () => {
     const live = new Map([
       ["esxi-02", "current" as const],
       ["proxmox-01", "live" as const],

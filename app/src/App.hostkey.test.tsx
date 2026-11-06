@@ -58,7 +58,7 @@ describe("a Host whose host key roster hasn't seen", () => {
       new RegExp(`^${HOST.name}, new host key`),
     );
     expect(trusted).toEqual([]);
-    // Enter on the card itself never trusts (Q234).
+    // Enter on the card itself never trusts (Q319).
     q.focus();
     await user.keyboard("{Enter}");
     expect(trusted).toEqual([]);

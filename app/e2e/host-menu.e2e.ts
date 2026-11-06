@@ -6,9 +6,9 @@
 // and from the keyboard (the Menu key, Shift+F10). Every corner is checked to be the menu's own
 // pixel, so a menu cut off by a scrolling ancestor or under another layer fails too.
 // Where it goes (UI/UX pass, PR #418): as wide as its row and at its x, inside the Sidebar pane
-// (Q251, Q255 a); from the pointer it opens down from the pointer's height, or, flipped, ends on the
-// last row edge above it (Q250 d); from a key the tree scrolls just enough for it to open under its
-// row (Q250 d, Q252 a). In a window under 720 px the Sidebar floats, and over the idle pane it's
+// (Q336, Q340 a); from the pointer it opens down from the pointer's height, or, flipped, ends on the
+// last row edge above it (Q335 d); from a key the tree scrolls just enough for it to open under its
+// row (Q335 d, Q337 a). In a window under 720 px the Sidebar floats, and over the idle pane it's
 // tucked away outside App mode (keyboard.md), so there the test enters App mode first.
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -155,7 +155,7 @@ describe.each([
     ["top", TOP_ROW],
     ["bottom", BOTTOM_ROW],
   ] as const)("on a row at the Sidebar's %s", (where, n) => {
-    /** As wide as its row and at its x (Q255 a), so in the Sidebar pane (Q251). */
+    /** As wide as its row and at its x (Q340 a), so in the Sidebar pane (Q336). */
     const expectRowWidth = (m: Opened, row: Box) => {
       expect(near(m.box.left, row.left), `menu left ${m.box.left}, row's ${row.left}`).toBe(true);
       expect(near(m.box.right, row.right), `menu right ${m.box.right}, row's ${row.right}`).toBe(true);
@@ -175,10 +175,10 @@ describe.each([
       expectOnScreen(m);
       // Down from the pointer's height where there's room (the top); flipped where there isn't (the
       // bottom), ending on the last row edge above the pointer, the row's own top, so it slices no
-      // row (Q250 d). Under the pointer the tree never moves (Q228).
+      // row (Q335 d). Under the pointer the tree never moves (Q313).
       if (where === "top") expect(near(m.box.top, y), `menu top ${m.box.top}, expected ${y}`).toBe(true);
       else expect(near(m.box.bottom, box.top), `menu bottom ${m.box.bottom}, expected ${box.top}`).toBe(true);
-      // Across the pointer: the row's width at its x (Q255 a).
+      // Across the pointer: the row's width at its x (Q340 a).
       expectRowWidth(m, slot);
       expect(m.box.left).toBeLessThanOrEqual(x);
       expect(m.box.right).toBeGreaterThanOrEqual(x);
@@ -204,7 +204,7 @@ describe.each([
         const row = m.row;
         if (!row) throw new Error(`no row for ${name}`);
         // Under its row, at the bottom too: from a key the tree scrolls up just enough for that
-        // (Q250 d, Q252 a), where it once flipped over the row above.
+        // (Q335 d, Q337 a), where it once flipped over the row above.
         expect(near(m.box.top, row.bottom), `menu top ${m.box.top}, row's bottom ${row.bottom}`).toBe(true);
         expectRowWidth(m, row);
         expect(m.focus).toBe("first item");

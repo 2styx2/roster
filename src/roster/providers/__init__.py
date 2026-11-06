@@ -46,6 +46,8 @@ from .problems import (  # noqa: F401 (what a provider or plugin raises: provide
     WriteFailed,
     WrongLogin,
     WrongPassword,
+    repeats_secret,
+    withheld,
 )
 
 # ---------------------------------------------------------------- password providers
@@ -541,6 +543,31 @@ def check_save_to(value):
     raise ValueError(f"must be {SAVE_TO_SHAPES}, not {value!r}")
 
 
+def save_to_text(provider, text):
+    """A save_to as the command line writes it (`roster add --save-to`) for PROVIDER: `personal`, else the shape its
+    save_to keys take: Bitwarden's `ORGANIZATION/COLLECTION` (split at the first `/`: a collection may nest, an
+    organization's name or id has none), KeePassXC's `GROUP`. UnknownTarget when it can't be one of PROVIDER's."""
+    text = str(text).strip()
+    if text == PERSONAL:
+        return PERSONAL
+    keys = PROVIDERS.get(provider, {}).get("save_to") or frozenset()
+    if keys == {"group"} and text:
+        return check_save_to({"group": text})
+    org, _, collection = text.partition("/")
+    if keys == {"organization", "collection"} and org.strip() and collection.strip():
+        return check_save_to({"organization": org, "collection": collection})
+    shapes = {frozenset({"group"}): "personal or GROUP",
+              frozenset({"organization", "collection"}): "personal or ORGANIZATION/COLLECTION"}
+    raise UnknownTarget(f"--save-to {text!r} isn't a place {provider} saves to: give "
+                        f"{shapes.get(frozenset(keys), 'personal')}")
+
+
+def main_vault(names):
+    """The vault to unlock and save to among provider NAMES (most used first): the first that has a master password,
+    or None. serve's vault.status and "Save to vault", and `roster add --save-to-vault`."""
+    return next((n for n in names if PROVIDERS.get(n, {}).get("unlock")), None)
+
+
 def box_paths():
     """{provider: its settings naming files on this Box}, the ones vault.configure takes from init.lua."""
     return {n: p["box_paths"] for n, p in PROVIDERS.items() if p.get("box_paths")}
@@ -563,7 +590,10 @@ def save_to_setting(ctx):
 
 
 def save_to_field(ctx, source, part=None):
-    """The name of the setting a save_to came from, for messages (PART: organization, collection, group)."""
+    """The name of the setting a save_to came from, for messages (PART: organization, collection, group). A SOURCE
+    that's a command-line flag (`--save-to`) is named as it."""
+    if source and source.startswith("--"):
+        return source + (f"'s {part}" if part else "")
     if source == "init.lua":
         return "vault.save_to" + (f".{part}" if part else "") + " in init.lua"
     if source == "roster.yml" and ctx.settings.get("save_to") is None:       # its old_save_to
@@ -599,6 +629,18 @@ def save_targets(name):
     except (UnknownTarget, ReadOnlyTarget) as e:
         default, problem = None, e
     return {"targets": targets, "default": default, "from": source, "problem": problem}
+
+
+def check_target(provider, save_to=None, flag=None):
+    """The target a save to PROVIDER would go to (SAVE_TO, from FLAG on the command line; None: the setting's),
+    resolved against the vault now, so a target that isn't there is refused before a password is asked (#539's
+    review). Unlocks the vault first when it must, as create_item would (the same one prompt), so a wrong master
+    password is said before a new one is typed. Returns it as shown();
+    UnknownTarget or ReadOnlyTarget naming FLAG or the setting."""
+    _writer(provider, "create")
+    ctx = Ctx(provider, None)
+    setting, source = save_to_setting(ctx) if save_to is None else (save_to, flag or "choice")
+    return shown(resolve_target(ctx, setting, source))
 
 
 def default_target(name):
