@@ -23,6 +23,7 @@ from .errors import (
     FOLDER_NOT_WRITABLE,
     INVENTORY_THERE,
     NOT_AN_INVENTORY,
+    PATH_NOT_REPEATED,
     ROSTER_ERROR,
     SSH_CONFIG_UNREADABLE,
     InventoryError,
@@ -135,32 +136,44 @@ def cant_write(folder, e):
                    {"path": str(folder)}, fix="pick a folder you can write to (or make this one writable)")
 
 
+def source_named(src, what="the file"):
+    """SRC (file:'s or ssh-config:'s, as typed) as a message names it, and as data.path does (#529): through
+    config.shown_path, so a source in a token-named folder is `WHAT at that path (not repeated)`."""
+    shown = shown_path(src)
+    return shown or f"{what} at {HIDDEN_PATH}", shown or PATH_NOT_REPEATED
+
+
 def read_source(src, what, limit, code, fix):
     """SRC's text, if it's a regular file of at most LIMIT bytes (never a device, a folder or a huge file)."""
+    name, data = source_named(src)
     if not src.is_file():
-        raise Problem(code, f"no file at {src}", {"path": str(src)}, fix=fix)
+        raise Problem(code, f"no file at {shown_path(src) or HIDDEN_PATH}", {"path": data}, fix=fix)
     try:
         size = src.stat().st_size
         if size > limit:
-            raise Problem(code, f"{src} is too big for {what} ({size // 1024} KB; at most {limit // 1024} KB)",
-                          {"path": str(src)}, fix=fix)
+            raise Problem(code, f"{name} is too big for {what} ({size // 1024} KB; at most {limit // 1024} KB)",
+                          {"path": data}, fix=fix)
         return src.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
-        raise Problem(code, f"can't read {src}: {e.strerror or type(e).__name__}", {"path": str(src)},
+        raise Problem(code, f"can't read {name}: {e.strerror or type(e).__name__}", {"path": data},
                       fix=fix) from None
 
 
-def checked(path, text, what):
+def checked(path, text, what, data=None, check="PATH"):
+    """TEXT, as the roster.yml at PATH (as given: its errors name it through shown_path), loads; else NOT_AN_INVENTORY
+    about WHAT (DATA: its data.path, CHECK: what `roster -c` takes to say why)."""
     try:
         load_config_text(text, path)
     except InventoryError as e:
         raise Problem(NOT_AN_INVENTORY, f"{what} doesn't load, so nothing was written: "
-                                        f"{e.message}", {"path": str(path)},
-                      fix=f"fix {what} first (`roster -c {what} check --box` says why)") from None
+                                        f"{e.message}", {"path": data or str(path)},
+                      fix=f"fix {what} first (`roster -c {check} check --box` says why)") from None
 
 
 def copied(path, source):
     src = Path(source).expanduser()
+    name, data = source_named(src, "the roster.yml")
+    check = shown_path(src) or "PATH"               # PATH: the file, once its folder is renamed
     text = read_source(src, "a roster.yml", ROSTER_YML_MAX, NOT_AN_INVENTORY,
                        "give the path of an existing roster.yml (file:PATH)")
     try:
@@ -168,20 +181,20 @@ def copied(path, source):
     except yaml.YAMLError as e:                     # where, never PyYAML's snippet of the file: it may be secrets
         mark = getattr(e, "problem_mark", None)
         where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
-        raise Problem(NOT_AN_INVENTORY, f"{src} doesn't load (it isn't valid YAML: "
+        raise Problem(NOT_AN_INVENTORY, f"{name} doesn't load (it isn't valid YAML: "
                                         f"{getattr(e, 'problem', None) or 'a syntax error'}{where}), so nothing was "
-                                        "written", {"path": str(src)},
-                      fix=f"fix it first (`roster -c {src} check --box` shows the line)") from None
+                                        "written", {"path": data},
+                      fix=f"fix it first (`roster -c {check} check --box` shows the line)") from None
     if raw is not None and not isinstance(raw, dict):
-        raise Problem(NOT_AN_INVENTORY, f"{src} isn't a roster.yml (its top level isn't a mapping of settings and "
-                                        "groups:), so nothing was written", {"path": str(src)},
+        raise Problem(NOT_AN_INVENTORY, f"{name} isn't a roster.yml (its top level isn't a mapping of settings and "
+                                        "groups:), so nothing was written", {"path": data},
                       fix="give the path of a roster.yml (file:PATH); for an ssh config: ssh-config:PATH")
     groups = (raw or {}).get("groups")
     if not isinstance(groups, dict) or not groups:   # empty, a typo'd groups:, another YAML file
-        raise Problem(NOT_AN_INVENTORY, f"{src} has no groups: (no Hosts at all), so it isn't a roster.yml to "
-                                        "import; nothing was written", {"path": str(src)},
+        raise Problem(NOT_AN_INVENTORY, f"{name} has no groups: (no Hosts at all), so it isn't a roster.yml to "
+                                        "import; nothing was written", {"path": data},
                       fix="check the file, or start a new one: --inventory blank")
-    checked(src.resolve(), text, str(src))
+    checked(src, text, name, data, check)          # named from SRC as given (#529), never resolved
     return text
 
 
@@ -414,6 +427,8 @@ def imported(path, source):
         shown = "~/" + src.relative_to(Path.home()).as_posix()
     except ValueError:
         shown = str(src)
+    if shown_path(src) is None:                     # in a token-named folder: not in messages, nor the new file (#529)
+        shown = f"the ssh config at {HIDDEN_PATH}"
     text = read_source(src, "an ssh config", SSH_CONFIG_MAX, SSH_CONFIG_UNREADABLE,
                        "give the path of your ssh config (ssh-config:PATH)")
     hosts, skipped = ssh_hosts(text)

@@ -3,7 +3,7 @@
 // same data, for the Rust core.
 
 /** The serve API this roster speaks. */
-export const SERVE_API_VERSION = 30;
+export const SERVE_API_VERSION = 31;
 
 /** roster's error codes by their errors.py name (docs/app/errors.md has their rows). */
 export const Code = {
@@ -287,7 +287,7 @@ export const SINCE: Readonly<Record<ServeMethod, number>> = {
 export const FORMS = {
   "$/cancel": [21],
   "box.check": [16],
-  "changes.diff": [5, 28],
+  "changes.diff": [5, 28, 31],
   "changes.discard": [5, 28],
   "changes.publish": [7, 28],
   "discover.add": [18],
@@ -312,13 +312,13 @@ export const FORMS = {
   "host.update": [5],
   "host.verify_login": [5],
   "hosts.list": [1],
-  "inventories.list": [27],
+  "inventories.list": [27, 31],
   "inventories.use": [27],
   "inventory.create": [28],
-  "inventory.info": [1, 28],
+  "inventory.info": [1, 28, 31],
   "inventory.pull": [5, 28],
   "inventory.reload": [8],
-  "inventory.watch": [8],
+  "inventory.watch": [8, 31],
   "jobs.list": [20],
   "jobs.stop": [20],
   "mesh.apply": [15],
@@ -365,8 +365,11 @@ export const JOB_STATES = {
   over: ["done", "stopped", "failed"],
 } as const;
 
-/** `data.path` for a roster.yml path roster won't repeat (a -c value shaped like a token). */
+/** `data.path`, and a result's `path` since API 31 (#529), for a roster.yml path roster won't repeat (a -c value shaped like a token, or a roster.yml in a folder named like one). */
 export const PATH_NOT_REPEATED = "(not repeated)";
+
+/** What to do about a roster.yml roster won't name: the words the CLI says it with. */
+export const RENAME_HINT = "rename the folder (or file) whose name looks like a token, then give roster its new path";
 
 export type CodeName = keyof typeof Code;
 

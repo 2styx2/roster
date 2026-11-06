@@ -34,6 +34,9 @@ const FEATURES = {
    * T227 added it with no API bump of its own, at 29, and v0.6.0 is the first release with API 29,
    * so every roster speaking 29 has it; an older one has only `--only NAME` (#461). */
   setupHost: { since: 29, what: "roster setup --host" },
+  /** A roster.yml in a folder (or with a name) that looks like a token: serve's results say
+   * `PATH_NOT_REPEATED` for its path (#529), and the app says so (`backend/shown.ts`). */
+  hiddenPaths: { since: FORMS["inventory.info"][2], what: "A roster.yml roster won't name" },
 } as const satisfies Record<string, { since: number; what: string }>;
 
 export type Feature = keyof typeof FEATURES;

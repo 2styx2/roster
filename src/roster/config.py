@@ -121,8 +121,8 @@ def shown_path(path: Any) -> str | None:
     this: the loader's own errors (CLI and serve), and since #506 the lines of a run that works too (check --box,
     setup, sync's ROSTER.md, add's and discover's backup and wrote, revoke --all, the ssh config's header, the sync
     fix), through shown_file for a loaded Inventory, whose `hidden` load_inventory decides from the path as given.
-    Not yet: serve's results that name the file it runs on for the app to show (inventory.info, inventories.list,
-    inventory.watch)."""
+    Since #529 serve's results that name the file it runs on say PATH_NOT_REPEATED for it too (serve.State.shown,
+    store's `hidden`)."""
     if typed_token(path):
         return None
     full = Path(path).expanduser().resolve()
