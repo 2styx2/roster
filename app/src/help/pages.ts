@@ -25,7 +25,7 @@ import { guides, PARTS, type Guide } from "./guides";
 import { inline, withoutDevNotes } from "./markdown";
 import { helpText } from "./text";
 import guideTags from "virtual:help-tags";
-import { optionRows, optionTag, reference, referenceAliases } from "../config/reference";
+import { optionRows, optionTag, reference, referenceAliases } from "./reference";
 import type { StateChoices } from "./options";
 
 /** Everything a page is generated from, read when it's shown. */

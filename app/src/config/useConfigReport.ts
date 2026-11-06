@@ -2,7 +2,7 @@
 // what it makes of it. A broken save comes with the last good Config and the error, so nothing
 // changes but the toast.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { useLatest } from "../app/latest";
+import { useLatest } from "../ui/latest";
 import type { Platform } from "../platform/types";
 import type { Registries } from "../registries";
 import { deriveConfig, registerConfig, type ConfigWarning } from "./apply";

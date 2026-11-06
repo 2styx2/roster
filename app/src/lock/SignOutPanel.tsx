@@ -1,6 +1,6 @@
 // `:vault signout`'s question (ticket 42), naming the account and its server.
 import type { VaultAccount } from "../backend/types";
-import { ConfirmPanel } from "../inventory/ConfirmPanel";
+import { ConfirmPanel } from "../ui/ConfirmPanel";
 import type { PanelState } from "../panel/stack";
 import { serverName, SIGN_OUT_WHAT, signOutQuestion } from "./LockScreen";
 

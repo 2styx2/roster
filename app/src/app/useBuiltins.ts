@@ -6,7 +6,7 @@ import type { PluginManager } from "../plugins/manager";
 import type { Registries } from "../registries";
 import type { TutorialDef } from "../tutor/tutor";
 import type { TutorLink } from "../tutor/useDemo";
-import { Latest } from "./latest";
+import { Latest } from "../ui/latest";
 
 export interface Openers {
   plugins(): void;

@@ -15,7 +15,7 @@ import type { TutorEvent } from "../tutor/tutor";
 import { errorText } from "../ui/format";
 import type { Message, MessageLog, MessagesChoice } from "../ui/messages";
 import type { ViewHost } from "../view/views";
-import type { Latest } from "./latest";
+import type { Latest } from "../ui/latest";
 
 /** What a Plugin's calls reach in the workspace, as of its last render. */
 export interface PluginHandlers {

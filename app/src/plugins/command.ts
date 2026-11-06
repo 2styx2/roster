@@ -10,7 +10,7 @@
 //   plugins call NAME N CONTEXT  what a Plugin's row, action or finder item runs, and what it was (not for typing)
 //   plugins run NAME LINE        a command line a Plugin handed over, if it may run it (ticket 78)
 import type { CommandDef } from "../commands/table";
-import { matching } from "../commands/match";
+import { matching } from "../ui/completion";
 import { BUILTIN } from "../registry";
 import { quiet } from "../ui/messages";
 import type { HandlerContext, PluginManager } from "./manager";

@@ -10,7 +10,7 @@
 // sections are registries (ADR 0006), read live. What each part of the workspace does is its own
 // hook; this file wires them together and draws the screen.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import { Latest } from "./app/latest";
+import { Latest } from "./ui/latest";
 import { Overlays, type Overlay } from "./app/Overlays";
 import { PluginLayers } from "./app/PluginLayers";
 import { useBuiltins } from "./app/useBuiltins";
@@ -21,7 +21,7 @@ import { useWorkspaceTheme } from "./theme/useWorkspaceTheme";
 import { useMessages } from "./ui/useMessages";
 import { usePluginBridge, type PluginHandlers } from "./app/usePluginBridge";
 import { type Backend } from "./backend/types";
-import { useConnection } from "./backend/useConnection";
+import { useConnection } from "./app/useConnection";
 import { runLine, type AppContext, type CommandContext, type Commands } from "./commands/table";
 import { layoutWarnings } from "./config/apply";
 import type { ConfigContext } from "./config/command";

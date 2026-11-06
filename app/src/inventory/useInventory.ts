@@ -2,7 +2,7 @@
 // a write, roster.yml edited outside the app, `:source`'s roster.yml, and each Live Inventory
 // change through roster with what it says after.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useLatest } from "../app/latest";
+import { useLatest } from "../ui/latest";
 import type { Capabilities } from "../backend/capabilities";
 import type { Backend, BackendInfo } from "../backend/types";
 import type { ChangesState } from "../edit/ChangesPanel";

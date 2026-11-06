@@ -1,6 +1,6 @@
 // The Sidebar's commands: show or hide it, move its cursor, fold its rows, open a Host row's menu.
 import type { AppContext, CommandDef } from "../commands/table";
-import { matching } from "../commands/match";
+import { matching } from "../ui/completion";
 import { BUILTIN } from "../registry";
 import type { FoldHow, SidebarRow } from "./model";
 

@@ -3,7 +3,6 @@
 import type { Capabilities } from "../backend/capabilities";
 import { BackendCallError, type Host } from "../backend/types";
 import { resolveOpen, webUrl } from "../details/details";
-import { notReviewedMessage } from "../inventory/said";
 import type { Platform } from "../platform/types";
 import { parseQuickTarget } from "../quick/target";
 import { usedHost } from "../state/appState";
@@ -13,6 +12,13 @@ import { quiet, type Message } from "../ui/messages";
 import type { SessionContext } from "./commands";
 import { INTEGRATE_SAYS } from "./integrate";
 import type { Tab, Tabs, TabsSnapshot } from "./tabs";
+
+/** Why an unreviewed Host won't open, and how to change that (`:review`, api 6), or roster.yml. */
+function notReviewedMessage(name: string, canReview: boolean): string {
+  return canReview
+    ? `${name} isn't reviewed yet, so it can't be opened. :review ${name} marks it reviewed.`
+    : `${name} isn't reviewed yet, so it can't be opened. Review it in roster first.`;
+}
 
 export type SessionActions = Omit<SessionContext, "saveSession"> & {
   /** Hands a web service's URL to the default browser (ticket 18): http or https only, checked

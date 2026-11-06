@@ -9,7 +9,7 @@ import { Code, JsonRpcCode } from "../backend/serveContract";
 import { BackendCallError } from "../backend/types";
 import { Logo } from "../chrome/Logo";
 import { CopyCommand } from "../errors/ErrorPanel";
-import { withCode } from "../lock/withCode";
+import { withCode } from "../ui/withCode";
 import { Keys } from "../ui/Keys";
 
 const WAYS: { how: NewInventoryHow; label: string; about: string }[] = [

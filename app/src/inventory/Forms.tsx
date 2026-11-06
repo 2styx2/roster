@@ -16,7 +16,7 @@ import type { Tabs, TabsSnapshot } from "../session/tabs";
 import { errorText } from "../ui/format";
 import type { Message } from "../ui/messages";
 import type { Form } from "./actions";
-import { ConfirmPanel } from "./ConfirmPanel";
+import { ConfirmPanel } from "../ui/ConfirmPanel";
 import { addedMessage, discardedMessage, publishedMessage, savedMessage, savedToVaultMessage } from "./said";
 import type { InventoryState } from "./useInventory";
 

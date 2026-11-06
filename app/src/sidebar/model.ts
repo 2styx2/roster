@@ -4,9 +4,9 @@ import type { CommandLine } from "../keymap";
 import { hopWords, type Breadcrumb } from "../session/breadcrumb";
 import type { ActionIcon } from "../ui/icons";
 import { formatCount } from "../ui/format";
-import { DOT_WORDS, type Dot } from "../ui/StateDot";
+import { DOT_WORDS, type Dot } from "../ui/dot";
 
-export type { Dot } from "../ui/StateDot";
+export type { Dot } from "../ui/dot";
 
 /** A small button on a row or heading (close, rename, delete, new). */
 export interface RowAction {

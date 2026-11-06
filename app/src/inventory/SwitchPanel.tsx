@@ -1,5 +1,5 @@
 // `:inventory NAME`'s question (ticket 115): what switching does, or why it can't now.
-import { ConfirmPanel } from "./ConfirmPanel";
+import { ConfirmPanel } from "../ui/ConfirmPanel";
 import type { InventoriesState } from "./useInventories";
 
 export function SwitchPanel({ inventories }: { inventories: InventoriesState }) {

@@ -2,7 +2,7 @@
 // `:messages`'s choice in the State, else quiet (routine confirmations and tips don't show). Every
 // message goes into `:messages`'s history too, quiet ones included, and the history is a view.
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { Latest } from "../app/latest";
+import { Latest } from "./latest";
 import type { Registries } from "../registries";
 import { lineAfter, logView, MessageLog, MessagesChoice, type Message } from "./messages";
 

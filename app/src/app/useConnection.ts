@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { servicesLeftOut } from "../inventory/said";
 import type { Tabs } from "../session/tabs";
 import type { Message } from "../ui/messages";
-import { capabilities, type Capabilities } from "./capabilities";
-import { BackendStartError, type Backend, type BackendInfo, type BackendProblem, type HostList } from "./types";
+import { capabilities, type Capabilities } from "../backend/capabilities";
+import { BackendStartError, type Backend, type BackendInfo, type BackendProblem, type HostList } from "../backend/types";
 
 export type Conn =
   | { state: "connecting" }

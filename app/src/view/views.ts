@@ -7,7 +7,7 @@
 // One view is open at a time (`ViewHost`): `:view ID`, a key bound to it, the `views` finder, or
 // a Plugin's own action open it; Esc closes it and focus goes back where it was.
 import type { CommandDef } from "../commands/table";
-import { matching } from "../commands/match";
+import { matching } from "../ui/completion";
 import type { FinderSourceDef } from "../finder/sources";
 import type { Registries } from "../registries";
 import { BUILTIN, Registry, type Entry } from "../registry";
