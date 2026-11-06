@@ -32,9 +32,11 @@ from . import (
     manual_unlock,
     near_names,
     register,
+    repeats_secret,
     resolve_target,
     setting_name,
     split_field,
+    withheld,
 )
 
 TOOL = "keepassxc-cli"
@@ -203,11 +205,19 @@ def _keepassxc(spec, ctx):
 # password, so neither is ever an argument. An entry's id is its path (GROUP/TITLE): KeePassXC's CLI doesn't print
 # UUIDs, and the path is what `rm` takes.
 
-def _scrub(text, *values):
-    for v in values:
-        if v:
-            text = text.replace(v, "…")
-    return text
+KP_FIX = "see the message; check that the database file is writable and the group exists"
+
+
+def _failed(message):
+    """A refused write, with KeePassXC's own fix (a file, not Bitwarden's rights to a collection)."""
+    return WriteFailed(message, fix=KP_FIX)
+
+
+def _words(r, *secrets):
+    """keepassxc-cli's own words (_errtext), or withheld whole when they repeat a password (repeats_secret)."""
+    if any(repeats_secret(r.stderr, v) for v in secrets):
+        return withheld(NAME)
+    return _errtext(r)
 
 
 # ---- where it goes: the top level, or a group. The default is save_to (init.lua's, then roster.yml's),
@@ -226,6 +236,7 @@ def _targets(ctx):
 
 
 def _resolve(setting, field, ctx):
+    _ready(ctx)                                          # check_target may be the first call: unlocked, once
     if setting == "personal":
         return TOP
     if "group" not in setting:
@@ -244,9 +255,9 @@ def _create(item, ctx):
     name, password = item["name"], item["password"]
     target = resolve_target(ctx, *item["save_to"])
     if "/" in name:
-        raise WriteFailed(f"{NAME} entry titles can't contain '/' (it separates groups) - '{name}' wasn't created")
+        raise _failed(f"{NAME} entry titles can't contain '/' (it separates groups) - '{name}' wasn't created")
     if "\n" in password or "\r" in password:              # stdin is read a line at a time
-        raise WriteFailed(f"{NAME} can't take a password that spans lines - '{name}' wasn't created")
+        raise _failed(f"{NAME} can't take a password that spans lines - '{name}' wasn't created")
     same = [p for p in _entries(ctx) if p.rsplit("/", 1)[-1] == name]
     if same:
         raise ItemExists(f"a {NAME} entry titled '{name}' already exists ({', '.join(same)}) - Logins look entries "
@@ -259,8 +270,8 @@ def _create(item, ctx):
     except TimedOut:                                     # stopped: the entry may be saved all the same
         return {**_created_anyway(ctx, name, path), "target": target}
     if r.returncode != 0:
-        err = _scrub(_errtext(r), password, ctx.state.get("password"))
-        raise WriteFailed(f"{NAME} didn't create '{name}': {err or f'exit {r.returncode}'}"
+        err = _words(r, password, ctx.state.get("password"))
+        raise _failed(f"{NAME} didn't create '{name}': {err or f'exit {r.returncode}'}"
                           + (f" (is there a group '{group}'?)" if group and "Could not create entry" in err else ""))
     return {"id": path, "name": name, "target": target}
 
@@ -271,11 +282,11 @@ def _created_anyway(ctx, name, path):
     try:
         there = path in _entries(ctx, floor=LOOKUP_FLOOR)
     except SecretError as e:
-        raise WriteFailed(f"{NAME} didn't answer `{TOOL} add` in time, and roster couldn't check whether '{name}' "
+        raise _failed(f"{NAME} didn't answer `{TOOL} add` in time, and roster couldn't check whether '{name}' "
                           f"was saved ({e}) - look for it in the database, and delete it if it's not wanted")
     if there:
         return {"id": path, "name": name}
-    raise WriteFailed(f"{NAME} didn't answer `{TOOL} add` in time, and there's no '{name}' in the database: "
+    raise _failed(f"{NAME} didn't answer `{TOOL} add` in time, and there's no '{name}' in the database: "
                       "nothing was saved")
 
 
@@ -284,7 +295,7 @@ def _delete(item_id, ctx):
     _ready(ctx)
     r = _kp(ctx, "rm", entry=item_id)
     if r.returncode != 0:
-        raise WriteFailed(f"{NAME} didn't delete entry '{item_id}': {_scrub(_errtext(r), ctx.state.get('password'))}")
+        raise _failed(f"{NAME} didn't delete entry '{item_id}': {_words(r, ctx.state.get('password'))}")
 
 
 # ---- every entry, never its password (Q191): `ls -R -f`'s paths, and nothing more. Not `show -a UserName -a URL`:

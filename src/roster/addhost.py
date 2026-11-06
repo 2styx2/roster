@@ -113,10 +113,13 @@ def save_item(provider, item, password, user, address, port, save_to=None):
     return {"provider": provider, **made}
 
 
-def add_saving(path, group, name, fields, provider, password, save_to=None, dry_run=False, on_write=None):
+def add_saving(path, group, name, fields, provider, password, save_to=None, dry_run=False, on_write=None,
+               before_vault=None):
     """`roster add NAME --save-to-vault` (T265, Q217): Host NAME (FIELDS as add()'s, checked, without auth) added to
     GROUP with `auth: PROVIDER:<NAME> ssh`, its password saved as that vault item first. In order: PROVIDER can save
-    (61); every check of add(), nothing asked or saved yet; PASSWORD() (the caller's prompt: it raises to stop); the
+    (61); every check of add(), nothing asked or saved yet; BEFORE_VAULT() (the caller's note on what an unlock
+    costs); the target, resolved in the vault (64, 65; unlocking it if it must); PASSWORD() (the caller's prompt:
+    it raises to stop); the
     item (save_item: 60 when the name is taken, the vault's other refusals); the Host, written as add() writes it
     (ON_WRITE as add()'s, its result's `item` set); then PROVIDER's sync (`bw sync`), so other Boxes see the item at
     their next sync. A write that fails once the item is made is 225, naming the item to delete by hand: no Host
@@ -136,6 +139,12 @@ def add_saving(path, group, name, fields, provider, password, save_to=None, dry_
             providers.default_target(provider)
         return {**plan, "item": {"provider": provider, "name": item, "uri": ssh_uri(address, port),
                                  "username": user, "target": target}}
+    if before_vault is not None:
+        before_vault()
+    try:
+        providers.check_target(provider, save_to, "--save-to")
+    except providers.SecretError as e:
+        raise vault_problem(e) from None
     typed = password()
     try:
         made = save_item(provider, item, typed, user, address, port, save_to)

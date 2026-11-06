@@ -231,7 +231,8 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
                    "key on it when enrolled) and check it, and say how each went")
     s.add_argument("--dry-run", action="store_true", help="print the lines it would add; write nothing")
     s.add_argument("-y", "--yes", action="store_true", help="never ask: a missing value it can't default is an "
-                   "error naming its flag")
+                   "error naming its flag (with --save-to-vault the password is still asked, and a locked vault's "
+                   "master password in a terminal)")
     s = sub.add_parser("discover", help="scan networks (nmap if installed) for Hosts; --write adds the new ones to "
                        "roster.yml, unreviewed")
     s.add_argument("targets", nargs="+", metavar="CIDR", help="e.g. 10.0.1.0/24 (several allowed)")

@@ -825,7 +825,8 @@ def add_host(cfg, name, got, auth, group, enroll, asking, os=None, title=None, t
         if saving:
             r = addhost.add_saving(path, group, name, fields, saving["provider"],
                                    lambda: new_password(name, saving["provider"]), saving["save_to"], dry_run=dry_run,
-                                   on_write=lambda done: written(cfg, name, where, group, done))
+                                   on_write=lambda done: written(cfg, name, where, group, done),
+                                   before_vault=lambda: unlock_note(saving["provider"]))
         else:
             r = addhost.add(path, group, name, fields, dry_run=dry_run, new_address=True,
                             on_write=lambda done: written(cfg, name, where, group, done))
@@ -873,11 +874,18 @@ def target_text(setting):
     return setting["group"] if "group" in setting else f"{setting['organization']}/{setting['collection']}"
 
 
+def unlock_note(provider):
+    """Before --save-to-vault's first vault call: T241's note on what a Bitwarden unlock here costs, when it'll ask."""
+    if provider == "bw" and vaultsync.bw_would_ask():
+        providers.tell("note: this terminal has no Bitwarden session (no working saved session or BW_SESSION), so "
+                       "roster asks for the master password once to save the item. As with roster vault unlock, "
+                       f"{vaultsync.UNLOCK_COST}")
+
+
 def new_password(name, provider):
     """The new vault item's password, typed twice on the controlling terminal and hidden (getpass), never from argv,
-    the environment or a pipe: 223 with no terminal, 224 when the two differ or none is typed. Before it, when
-    Bitwarden will ask its master password to save, T241's note on what an unlock here costs. The password is
-    returned, never shown or kept."""
+    the environment or a pipe: 223 with no terminal (or one getpass can't hide typing on), 224 when the two differ
+    or none is typed. The password is returned, never shown or kept."""
     import getpass
     import warnings
     with providers.open_tty() as tty:
@@ -886,16 +894,16 @@ def new_password(name, provider):
         die(f"{name}'s password is asked on the terminal, and there's none here: nothing was saved",
             code=NO_TERMINAL_FOR_PASSWORD, fix="run roster add in a terminal, or make the item in the vault and give "
             f"--auth {provider}:ITEM")
-    if provider == "bw" and vaultsync.bw_would_ask():
-        providers.tell("note: this terminal has no Bitwarden session (no working saved session or BW_SESSION), so "
-                       "roster asks for the master password once to save the item, after the new password. As with "
-                       f"roster vault unlock, {vaultsync.UNLOCK_COST}")
     with warnings.catch_warnings():             # getpass would fall back to reading a pipe, echoed: never that
         warnings.simplefilter("error", getpass.GetPassWarning)
         try:
             first = getpass.getpass(f"Password for {name} (saved as the vault item '{addhost.item_name(name)}'): ")
             again = getpass.getpass(f"The same password again, for {name}: ") if first else ""
-        except (EOFError, getpass.GetPassWarning):
+        except getpass.GetPassWarning:
+            die(f"this terminal can't keep what's typed hidden, so {name}'s password isn't asked here: nothing was saved",
+                code=NO_TERMINAL_FOR_PASSWORD, fix="run roster add in a terminal that can hide a password (a real "
+                f"one, not a pipe), or make the item in the vault and give --auth {provider}:ITEM")
+        except EOFError:
             first = again = ""
     if not first:
         die(f"no password typed for {name}: nothing was saved", code=PASSWORDS_DIFFER)

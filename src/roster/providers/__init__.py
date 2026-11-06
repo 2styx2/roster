@@ -46,6 +46,8 @@ from .problems import (  # noqa: F401 (what a provider or plugin raises: provide
     WriteFailed,
     WrongLogin,
     WrongPassword,
+    repeats_secret,
+    withheld,
 )
 
 # ---------------------------------------------------------------- password providers
@@ -588,7 +590,10 @@ def save_to_setting(ctx):
 
 
 def save_to_field(ctx, source, part=None):
-    """The name of the setting a save_to came from, for messages (PART: organization, collection, group)."""
+    """The name of the setting a save_to came from, for messages (PART: organization, collection, group). A SOURCE
+    that's a command-line flag (`--save-to`) is named as it."""
+    if source and source.startswith("--"):
+        return source + (f"'s {part}" if part else "")
     if source == "init.lua":
         return "vault.save_to" + (f".{part}" if part else "") + " in init.lua"
     if source == "roster.yml" and ctx.settings.get("save_to") is None:       # its old_save_to
@@ -624,6 +629,18 @@ def save_targets(name):
     except (UnknownTarget, ReadOnlyTarget) as e:
         default, problem = None, e
     return {"targets": targets, "default": default, "from": source, "problem": problem}
+
+
+def check_target(provider, save_to=None, flag=None):
+    """The target a save to PROVIDER would go to (SAVE_TO, from FLAG on the command line; None: the setting's),
+    resolved against the vault now, so a target that isn't there is refused before a password is asked (#539's
+    review). Unlocks the vault first when it must, as create_item would (the same one prompt), so a wrong master
+    password is said before a new one is typed. Returns it as shown();
+    UnknownTarget or ReadOnlyTarget naming FLAG or the setting."""
+    _writer(provider, "create")
+    ctx = Ctx(provider, None)
+    setting, source = save_to_setting(ctx) if save_to is None else (save_to, flag or "choice")
+    return shown(resolve_target(ctx, setting, source))
 
 
 def default_target(name):

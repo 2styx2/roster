@@ -441,9 +441,12 @@ def test_bitwarden_undoes_a_create(bw_items):
 
 def test_a_refused_create_never_echoes_the_password(bw_items, monkeypatch):
     monkeypatch.setenv("FAKE_BW_WRITE_FAIL", f"Creating this item type is restricted by organizational policy. {NEW_PW}")
-    with pytest.raises(providers.WriteFailed, match="restricted by organizational policy") as e:
-        providers.create_item("bw", name="box ssh", password=NEW_PW)
+    with pytest.raises(providers.WriteFailed, match="withheld because it repeated the password") as e:
+        providers.create_item("bw", name="box ssh", password=NEW_PW)       # bw's words hold it: withheld whole (#539)
     assert NEW_PW not in str(e.value)
+    monkeypatch.setenv("FAKE_BW_WRITE_FAIL", "Creating this item type is restricted by organizational policy.")
+    with pytest.raises(providers.WriteFailed, match="restricted by organizational policy"):
+        providers.create_item("bw", name="box ssh", password=NEW_PW)
 
 
 def test_only_providers_that_can_write_create_items(bw_items, monkeypatch):

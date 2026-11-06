@@ -444,7 +444,7 @@ One person may have several Inventories, the team's for work and their own for h
 | `219` | A warning, not an error: by roster's record, a Host holds this Box's key line of another type than its `key_type:`, or none of it (`roster check`, `check --json`'s `key_type_drift`, `roster sync`) (T245) |
 | `220` | A warning, not an error: a Mesh source whose key is Ed25519 has a key Link to a peer (or through a `via:` hop) whose `key_type:` isn't `ed25519`, which a FIPS-mode one refuses. In a Mesh result's `warnings` (`mesh.plan`, `mesh.apply`) (T245) |
 | `221` | A note, not an error: `roster revoke` keeps a key file another Inventory on this Box uses too off its list of files to delete. CLI only (T245) |
-| `223` | `roster add --save-to-vault`: there's no terminal to ask the new item's password on; nothing was asked, saved or written. A CLI error (T265) |
+| `223` | `roster add --save-to-vault`: there's no terminal to ask the new item's password on, or it can't hide what's typed; nothing was asked, saved or written. A CLI error (T265) |
 | `224` | `roster add --save-to-vault`: the password and its confirmation differ, or none was typed; nothing was saved or written. A CLI error (T265) |
 | `225` | `roster add --save-to-vault`: the vault item was saved, then writing `roster.yml` failed; `data.left` names the item (`{provider, id, name, target}`) to delete by hand, and no Host points at it. A CLI error (T265) |
 

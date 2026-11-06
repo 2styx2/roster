@@ -227,7 +227,7 @@ then run setup for it alone (its host key, and this Box's key on it when enrolle
 print the lines it would add; write nothing
 .TP
 \fB\-y, \-\-yes\fR
-never ask: a missing value it can't default is an error naming its flag
+never ask: a missing value it can't default is an error naming its flag (with \-\-save\-to\-vault the password is still asked, and a locked vault's master password in a terminal)
 .SS discover
 .PP
 \fBroster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]\fR

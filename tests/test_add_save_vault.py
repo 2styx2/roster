@@ -152,7 +152,7 @@ def kdbx(fakes, isolated, tmp_path, monkeypatch):
 
 def test_kp_entry_made_in_a_group_then_auth_points_at_it(capsys, write_config, kdbx, tmp_path, monkeypatch):
     yml = write_config(f"providers:\n  kp:\n    database: {kdbx}\n" + YML)
-    term = Terminal(monkeypatch, PW, PW, "c0rrect-h0rse")         # the new password twice, then the database's
+    term = Terminal(monkeypatch, "c0rrect-h0rse", PW, PW)         # the database's password, then the new one twice
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
     rc, out = run(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "kp", "--save-to", "Hosts",
                   "--group", "lab", "-y")         # -y: no group or enroll question; the passwords are still asked
@@ -273,11 +273,72 @@ def test_the_password_never_reaches_a_child_process_argv_or_environment(capsys, 
 def test_a_locked_bitwarden_says_what_unlocking_costs_then_asks_once(capsys, yml, bw, monkeypatch, tmp_path):
     monkeypatch.delenv("BW_SESSION")
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
-    term = Terminal(monkeypatch, PW, PW, "hunter2")             # the new password twice, then the master password
+    term = Terminal(monkeypatch, "hunter2", PW, PW)             # the master password, then the new one twice
     rc, out = run(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "bw", "-y")
     assert rc == 0, out
     assert "locks the roster app" in term.shown                     # T241's note, before any prompt
-    assert len(term.asked) == 3 and "master password" in term.asked[2]
+    assert len(term.asked) == 3 and "master password" in term.asked[0]
     assert "Keep the vault unlocked" in term.shown                  # T241's offer (Enter: No)
     assert [i["name"] for i in bw_items(bw)] == ["esx-02 ssh", "nas ssh"]
     assert PW not in out + logged(tmp_path) and "hunter2" not in logged(tmp_path)
+
+
+# ---- #539's security review: a vault CLI's refusal that repeats the password, in any form, is never shown
+
+ODD = ["n3w-h0st-s3cret", "two  spaces here", 'q"uote\\back', "tab\there"]
+
+
+def forms(pw):
+    """The password as an error could carry it: raw, JSON-escaped, its whitespace collapsed."""
+    return {pw, json.dumps(pw)[1:-1], " ".join(pw.split())}
+
+
+@pytest.mark.parametrize("pw", ODD)
+def test_a_bw_refusal_that_repeats_the_password_is_withheld(capsys, yml, bw, monkeypatch, pw):
+    monkeypatch.setenv("FAKE_BW_WRITE_FAIL", f"Error: raw={pw} | json={json.dumps(pw)} | tail")
+    Terminal(monkeypatch, pw, pw)
+    code, out = fails(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "bw")
+    assert "[62]" in code and "withheld" in code
+    assert not [f for f in forms(pw) if f in code + out]
+
+
+def test_a_bw_refusal_without_the_password_keeps_bws_words(capsys, yml, bw, monkeypatch):
+    monkeypatch.setenv("FAKE_BW_WRITE_FAIL", "Error: the server refused it")
+    Terminal(monkeypatch, PW, PW)
+    code, _ = fails(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "bw")
+    assert "[62]" in code and "the server refused it" in code
+
+
+@pytest.mark.parametrize("pw", ["k3y-s3cret", "in  side", 'q"uote'])
+def test_a_kp_refusal_that_repeats_the_password_is_withheld_with_kps_own_fix(capsys, write_config, kdbx,
+                                                                           monkeypatch, pw):
+    write_config(f"providers:\n  kp:\n    database: {kdbx}\n" + YML)
+    monkeypatch.setenv("FAKE_KP_WRITE_FAIL", f"Could not create entry: got [{pw}] {json.dumps(pw)}")
+    Terminal(monkeypatch, "c0rrect-h0rse", pw, pw)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
+    code, out = fails(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "kp", "-y")
+    assert "[62]" in code and "withheld" in code
+    assert not [f for f in forms(pw) if f in code + out]
+    assert "collection" not in code                                 # not Bitwarden's fix
+
+
+def test_getpass_with_no_hidden_prompt_is_refused_saying_so(capsys, yml, bw, monkeypatch):
+    def echoing(prompt=""):
+        import warnings
+        warnings.warn("Can not control echo on the terminal.", getpass.GetPassWarning, stacklevel=2)
+        return "piped-secret"
+    Terminal(monkeypatch)
+    monkeypatch.setattr(getpass, "getpass", echoing)
+    code, out = fails(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "bw")
+    assert "[223]" in code and "hidden" in code and "no password typed" not in code
+    assert "piped-secret" not in code + out and [i["name"] for i in bw_items(bw)] == ["esx-02 ssh"]
+
+
+def test_a_save_to_the_vault_doesnt_have_is_refused_before_the_password_naming_the_flag(capsys, yml, bw,
+                                                                                       monkeypatch):
+    monkeypatch.setenv("FAKE_BW_ORGS", json.dumps(ORGS))
+    term = Terminal(monkeypatch, PW, PW)
+    code, _ = fails(capsys, "nas", "--ip", "10.0.0.50", "--save-to-vault", "--provider", "bw",
+                    "--save-to", "My Team/No such")
+    assert "[64]" in code and "--save-to" in code and "save_to." not in code
+    assert term.asked == []
