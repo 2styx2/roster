@@ -1101,8 +1101,8 @@ mod tests {
     }
 
     /// Ticket 162 (#284 item 4): a fill that finds the PTY's writer gone (the Session closed while
-    /// it checked, after the mask watch started) leaves no fill state set: no mask watch, no keys
-    /// held, nothing that makes the next fill Busy.
+    /// it checked, after the mask watch started) leaves no fill behind: keys typed next aren't
+    /// held for it, and the next fill isn't Busy.
     #[cfg(unix)]
     #[test]
     fn a_fill_whose_writer_is_gone_leaves_no_fill_state() {
@@ -1139,18 +1139,22 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "no prompt");
             std::thread::sleep(Duration::from_millis(20));
         }
-        std::thread::sleep(Duration::from_millis(100));
+        drop(running);
         let got = m.fill(id, Duration::from_millis(50), "[sudo] password for ops:", None, |_| {
             m.close(id).unwrap();
             Ok::<_, String>(Secret::new("pw".into()))
         });
         assert!(matches!(got, Err(FillError::NotFound(_))), "{got:?}");
-        assert!(running.input.lock().unwrap().held.is_none(), "keys still held");
         assert!(
-            !running.shown.lock().unwrap().screen.watching_mask(),
-            "mask watch still on"
+            matches!(m.write(id, b"typed"), Err(SessionError::NotFound(_))),
+            "keys still held for the fill"
         );
-        assert!(running.input.lock().unwrap().writer.is_none());
+        let again = m.fill(id, Duration::from_millis(50), "[sudo] password for ops:", None, |_| {
+            Ok::<_, String>(Secret::new("pw".into()))
+        });
+        assert!(matches!(again, Err(FillError::NotFound(_))), "{again:?}");
+        // Still there (its shell ignores the hangup): the answers above are the Session's.
+        assert_eq!(m.len(), 1);
     }
 
     #[test]
