@@ -46,12 +46,15 @@ def placeholder_user(h: dict[str, Any]) -> bool:
     return h["ssh"]["user"] in ("", PLACEHOLDER_USER)
 
 
-def account(h: dict[str, Any]) -> tuple[str, str]:
-    """The account Host H logs in to: its address and user, as roster.yml writes them (case aside). Two Host entries
-    with one account share its authorized_keys: two names for one machine, or a user several entries share (T258).
-    Not resolved: a name and an IP address of one machine are two accounts here."""
+def account(h: dict[str, Any]) -> tuple[str, int, str]:
+    """The account Host H logs in to: its address, port and user, as roster.yml writes them. Two Host entries with one
+    account share its authorized_keys: two names for one machine, or a user several entries share (T258). Another port
+    is another machine (containers port-forwarded on one address, #524's review M1); a user's case is its own except on
+    Windows (L1). Not resolved: a name and an IP address of one machine are two accounts here."""
     address = ip_of(h["ip"])
-    return (str(address) if address is not None else str(h["ip"]).casefold(), str(h["ssh"]["user"]).casefold())
+    user = str(h["ssh"]["user"])
+    return (str(address) if address is not None else str(h["ip"]).casefold(), int(h["ssh"]["port"]),
+            user.casefold() if is_windows(h) else user)
 
 
 class AccountLocks:
@@ -60,7 +63,7 @@ class AccountLocks:
 
     def __init__(self) -> None:
         self._guard = threading.Lock()
-        self._locks: dict[tuple[str, str], threading.Lock] = {}
+        self._locks: dict[tuple[str, int, str], threading.Lock] = {}
 
     def __call__(self, h: dict[str, Any]) -> threading.Lock:
         with self._guard:

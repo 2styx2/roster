@@ -19,34 +19,39 @@ from .errors import KEY_FILE, KEY_FILE_SHARED, InventoryError, Problem, tagged
 from .hosts import AccountLocks, account, is_windows
 
 
+class Refused(str):
+    """revoke_on's why when the Host refused this Box's key login (authorized.Done.refused)."""
+
+
 def revoke_on(h: dict[str, Any], tag_re: str) -> object:
-    """Take this Box's key (TAG_RE) off Host H (authorized.revoke): None when it says it's done, else why not. A
-    Windows Host's warnings, and the lines it took under another name, are said on stderr: the ok/FAIL lines stay
-    one per Host."""
+    """Take this Box's key (TAG_RE) off Host H (authorized.revoke): None when it says it's done, else why not (a
+    Refused when the key login was refused). A Windows Host's warnings, and the lines it took under another name, are
+    said on stderr: the ok/FAIL lines stay one per Host."""
     done = authorized.revoke(h, tag_re)
     for w in done.warnings:
         print(f"warning: [{KEY_FILE}] {h['name']}: {w} ({keyline.tag(keyline.name_in(tag_re))})",
               file=sys.stderr, flush=True)
     if done.why is None:
         other_names(h, tag_re, done.names)
-    return done.why
+    return Refused(str(done.why)) if done.refused else done.why
 
 
 def in_turn(turn: AccountLocks) -> Any:
-    """revoke_on, with Host entries that share an account (TURN's locks) taking turns (T258). Once one took TAG_RE's
-    lines off that account, the others are done too: nothing of TAG_RE's is left there, and this Box's key no longer
-    logs in to try."""
-    done: dict[tuple[tuple[str, str], str], str] = {}
+    """revoke_on, with Host entries that share an account (TURN's locks) taking turns (T258). Every entry is tried
+    (#524's review M1): one whose key login is refused once another entry's revoke took TAG_RE's lines off that same
+    account (address, port and user) is done too, as this Box's key no longer logs in there, and says so."""
+    done: dict[tuple[tuple[str, int, str], str], str] = {}
 
     def run(h: dict[str, Any], tag_re: str) -> object:
         with turn(h):
-            if first := done.get((account(h), tag_re)):
-                print(f"note: {h['name']}: the same account as {first} (its address and user), whose revoke took this "
-                      "Box's key lines there", file=sys.stderr, flush=True)
-                return None
             why = revoke_on(h, tag_re)
             if why is None:
-                done[(account(h), tag_re)] = h["name"]
+                done.setdefault((account(h), tag_re), h["name"])
+            elif isinstance(why, Refused) and (first := done.get((account(h), tag_re))):
+                print(f"note: {h['name']}: this Box's key no longer logs in there: the same account as {first} (its "
+                      "address, port and user), whose revoke took this Box's key lines there", file=sys.stderr,
+                      flush=True)
+                return None
             return why
     return run
 

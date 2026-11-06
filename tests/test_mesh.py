@@ -817,6 +817,21 @@ def test_an_interrupted_cut_never_leaves_a_file_half_written(net, monkeypatch, t
     assert_no_file_was_damaged(net, before)
 
 
+def test_a_failed_write_never_replaces_a_file_with_a_truncated_one(net, monkeypatch, tmp_path):
+    """#524's review F1: grep's exit 2 (a full disk) while it writes the new file was taken for "no line left", and the
+    truncated file put in place. Now nothing is replaced, and the Host stays pending."""
+    if not os.path.exists("/proc/self/fd/1"):
+        pytest.skip("needs /proc to see where grep writes")
+    from test_sshops import failing_writes
+    mesh.run(net.cfg(), apply=True)
+    before = net.snapshot()
+    monkeypatch.setenv("FAKE_HOST_PATH", str(failing_writes(tmp_path / "full")))
+    r = mesh.cut(net.cfg(), "orion-2")
+    assert {"orion-2", "orion-3", "esx-02", "nas-1"} <= set(r["pending"])
+    keys = {path: data for path, data in before.items() if path.endswith("authorized_keys")}
+    assert keys and {path: net.snapshot().get(path) for path in keys} == keys
+
+
 @pytest.mark.skipif(WINDOWS, reason="NTFS has no mode bits to keep")
 def test_rewriting_a_file_keeps_its_mode(net):
     ak = net.host("orion-2") / "home/.ssh/authorized_keys"

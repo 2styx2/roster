@@ -109,3 +109,63 @@ def test_key_scripts_run_at_once_on_one_file_never_lose_their_temp_file_or_leave
     assert sorted(p.name for p in ssh.iterdir()) == ["authorized_keys"]
     text = (ssh / "authorized_keys").read_text()
     assert text.startswith("ssh-ed25519 AAAAown own@laptop\n") and "roster-managed:box" in text
+
+
+TWO_PORTS_YML = """\
+box_name: ws1
+groups:
+  lab:
+    user: root
+    auth: env:PW
+    hosts:
+      ct-01: {ip: 10.0.0.4, port: 2201}
+      ct-02: {ip: 10.0.0.4, port: 2202}
+"""
+
+
+def test_two_machines_behind_one_address_on_other_ports_are_two_accounts_and_revoke_takes_both(
+        shared, write_config, isolated, capsys):
+    """#524's review M1: containers port-forwarded on one address are separate machines (each its own
+    authorized_keys): revoke never counts one as done because the other was."""
+    from roster import hosts
+    from roster.cli import main
+    from roster.config import load_config, locate_config
+    root = isolated["home"].parent / "hosts"
+    for n in ("ct-01", "ct-02"):
+        d = root / n / "home" / ".ssh"
+        d.mkdir(parents=True)
+        (d / "authorized_keys").write_text("ssh-ed25519 AAAAown own@laptop\n")
+        (root / n / "keys").touch()
+    write_config(TWO_PORTS_YML)
+    cfg = load_config(locate_config(None))
+    assert hosts.account(cfg["hosts"]["ct-01"]) != hosts.account(cfg["hosts"]["ct-02"])
+    assert main(["setup"]) == 0, capsys.readouterr().out
+    assert main(["revoke", "-y"]) == 0
+    assert "the same account as" not in capsys.readouterr().err
+    for n in ("ct-01", "ct-02"):
+        assert "roster-managed:ws1" not in (root / n / "home/.ssh/authorized_keys").read_text(), n
+
+
+@pytest.mark.parametrize(("os_", "same"), [("", False), (", os: windows", True)])
+def test_a_user_names_case_is_its_own_account_except_on_windows(write_config, isolated, os_, same):
+    """#524's review L1: Admin and admin are two POSIX accounts; Windows reads them as one."""
+    from roster import hosts
+    from roster.config import load_config, locate_config
+    write_config(TWO_PORTS_YML.replace("ct-01: {ip: 10.0.0.4, port: 2201}", f"ct-01: {{ip: 10.0.0.4, user: Admin{os_}}}")
+                 .replace("ct-02: {ip: 10.0.0.4, port: 2202}", f"ct-02: {{ip: 10.0.0.4, user: admin{os_}}}"))
+    cfg = load_config(locate_config(None))
+    assert (hosts.account(cfg["hosts"]["ct-01"]) == hosts.account(cfg["hosts"]["ct-02"])) is same
+
+
+def test_revoke_tries_every_entry_on_a_shared_account(shared, capsys, isolated):
+    """#524's review M1: revoke connects to each entry, even one on an account another entry's revoke just did:
+    only a key that no longer logs in there, after that, counts as done."""
+    from roster.cli import main
+    shared.write()
+    assert main(["setup"]) == 0
+    log = isolated["home"].parent / "hosts" / "connections"
+    log.write_text("")
+    assert main(["revoke", "-y"]) == 0
+    started = [ln.split()[1] for ln in log.read_text().splitlines() if ln.startswith("start ")]
+    assert sorted(set(started)) == ["app-01", "app-alias"]
+    assert shared.lines() == []

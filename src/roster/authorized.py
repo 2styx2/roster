@@ -84,12 +84,25 @@ AK_FILE = ('if [ "$(uname -s 2>/dev/null)" = VMkernel ]; then ESXI=1; f=/etc/ssh
 # The new file is a new inode: on an SELinux-enforcing Host it may lack the old one's label (ssh_home_t) and sshd
 # would refuse it. So the old file's context is copied (chcon --reference) before the mv, and restorecon sets the
 # policy's after it. Both only where they exist, and never fatal (ESXi's busybox, macOS, Alpine have neither).
+# No mktemp: said, never a fixed name instead (#524's review F3)
 REPLACE_AK = ("[ -L \"$f\" ] && f=$(readlink -f \"$f\"); "
+              "command -v mktemp >/dev/null 2>&1 || { echo \"this Host has no mktemp: roster needs it to write $F's "
+              "new version beside it: nothing was changed\" >&2; exit 1; }; "
               "t=$(mktemp \"$f.roster.XXXXXX\"); trap 'rm -f \"$t\"' EXIT; trap 'exit 1' HUP INT TERM; "
               "cp -p \"$f\" \"$t\"; ")
 KEEP_LABEL = ("{ command -v chcon >/dev/null 2>&1 && chcon --reference=\"$f\" \"$t\" 2>/dev/null; } "
               "|| true; ")
 RELABEL = "{ command -v restorecon >/dev/null 2>&1 && restorecon -F \"$f\" 2>/dev/null; } || true; "
+
+
+def keep_lines(tag_re: str) -> str:
+    """The lines of $f TAG_RE doesn't match, into $t. grep's 1 is "none left"; its 2 (a read or write error: a full
+    disk) stops the script before the mv, the trap taking $t, so a truncated file never replaces $f (#524's F1)."""
+    return (f"rc=0; grep -v -E -- {shlex.quote(tag_re)} \"$f\" > \"$t\" || rc=$?; "
+            "[ $rc -le 1 ] || { echo \"couldn't write the new $F (grep exit $rc: a full disk?): nothing was changed\" "
+            ">&2; exit 1; }; ")
+
+
 # 600, as sshd wants it; on ESXi a file roster makes gets 1600 (its own keys file's mode) and an existing one keeps
 # its mode (cp -p), sticky bit and all
 KEY_MODE = ("if [ -z \"$ESXI\" ]; then chmod 600 \"$t\"; "
@@ -122,7 +135,7 @@ def add_key_script(pub: str, tag_re: str, user: str, taken: str | None = None, o
              f"echo {keyline.OTHERS}; fi; ") if others else ""
     return (key_script_head(user) + "umask 077; d=${f%/*}; mkdir -p \"$d\"; NEW=; [ -f \"$f\" ] || NEW=1; "
             "touch \"$f\"; " + taken_guard(taken, own or this) + REPLACE_AK +
-            f"grep -v -E -- {shlex.quote(tag_re)} \"$f\" > \"$t\" || true; "
+            keep_lines(tag_re) +
             f"printf '%s\\n' {shlex.quote(pub)} >> \"$t\"; " + KEY_MODE + KEEP_LABEL +
             "mv -f \"$t\" \"$f\"; " + RELABEL + BACKUP +
             "[ -n \"$ESXI\" ] || chmod 700 \"$d\"; " + later + f"echo {keyline.OK}")
@@ -160,8 +173,8 @@ def retag_key_script(pub: str, user: str, taken: str | None = None, own: str | N
 def remove_key_script(tag_re: str, user: str) -> str:
     # each line it takes says its tag's name first (ROSTER_TAG NAME), so revoke can say when one had another name
     return (key_script_head(user) + f"[ -f \"$f\" ] || {{ echo {keyline.OK}; exit 0; }}; " + REPLACE_AK +
-            f"grep -E -- {shlex.quote(tag_re)} \"$f\" | sed -n '{keyline.SED_NAMES}' || true; "
-            f"grep -v -E -- {shlex.quote(tag_re)} \"$f\" > \"$t\" || true; " +
+            f"grep -E -- {shlex.quote(tag_re)} \"$f\" | sed -n '{keyline.SED_NAMES}' || true; " +
+            keep_lines(tag_re) +
             KEEP_LABEL + "mv -f \"$t\" \"$f\"; " + RELABEL + BACKUP + f"echo {keyline.OK}")
 
 
@@ -263,11 +276,13 @@ TAKEN = "name taken"        # retag: another key's line is under the new name th
 @dataclass
 class Done:
     """What a re-tag or revoke on one Host came to: WHY (None: done; else why not, or for re-tag a NoLine or TAKEN),
-    the warnings a Windows Host's script gave (KEY_FILE), and for revoke the tag names of the lines it took."""
+    the warnings a Windows Host's script gave (KEY_FILE), and for revoke the tag names of the lines it took. REFUSED:
+    revoke's login was refused (ssh's "Permission denied"): this Box's key doesn't log in there."""
 
     why: object = None
     warnings: list[str] = field(default_factory=list[str])
     names: list[str] = field(default_factory=list[str])
+    refused: bool = False
 
 
 def retag(h: dict[str, Any], pub: str, taken: str | None = None, own: str | None = None) -> Done:
@@ -311,4 +326,4 @@ def revoke(h: dict[str, Any], tag_re: str) -> Done:
     said = keyline.said(r.stdout)
     if said.ok:
         return Done(None, names=said.names)
-    return Done(failure(h, r))
+    return Done(failure(h, r), refused=r.returncode == 255 and "permission denied" in r.stderr.lower())
