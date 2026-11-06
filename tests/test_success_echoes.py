@@ -2,6 +2,7 @@
 named in full by the commands that succeed. Each one names it through config.shown_path now, and the load says once
 on stderr to rename the folder. conftest gives every test its own HOME and cwd; the stand-in CLIs only."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -172,6 +173,9 @@ def test_revoke_all_says_how_to_revoke_a_hidden_unnamed_inventory_without_renami
     assert not leaks(out + err), out + err
 
 
+# On native Windows the stand-in ssh is a batch file, which revoke won't hand its script (149, as in
+# test_inventories.py): the lookup is the same on every platform.
+@pytest.mark.skipif(os.name == "nt", reason="the stand-in ssh is a batch file on Windows")
 @pytest.mark.parametrize("where", ["ROSTER_CONFIG", "./roster.yml"])
 def test_revoke_all_finds_a_hidden_unnamed_inventory_where_roster_would_look(capsys, hidden, fakes, monkeypatch,
                                                                             tmp_path, where):
