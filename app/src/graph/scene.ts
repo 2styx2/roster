@@ -54,7 +54,7 @@ export interface Scene {
 }
 
 /** Above this many nodes, clusters the Plugin says nothing about start collapsed. */
-export const AUTO_COLLAPSE = 300;
+const AUTO_COLLAPSE = 300;
 
 /** The collapsed clusters: the user's choice (`folds`), else the Plugin's, else by size. */
 export function foldsFor(g: GraphData, folds: Readonly<Record<string, boolean>>): Set<string> {

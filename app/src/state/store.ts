@@ -60,13 +60,13 @@ export class StateStore {
     return this.state[key];
   }
 
-  /** Sets one key of the State. */
   set(key: string, value: unknown) {
     this.update((s) => ({ ...s, [key]: value }));
   }
 
   private save() {
     const state = this.state;
+    // Every save writes the whole State, so the next change saves what this one couldn't.
     this.saving = this.saving.then(() => this.platform.saveState(state)).catch(() => {});
   }
 

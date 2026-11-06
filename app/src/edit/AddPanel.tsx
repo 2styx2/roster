@@ -26,7 +26,9 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { addHostChecked } from "../backend/afterTimeout";
 import {
+  AddError,
   BackendCallError,
+  HostKeyError,
   type Backend,
   type CheckStep,
   type HostAdd,
@@ -61,6 +63,7 @@ import {
   type AddField,
   type LoginWay,
 } from "./addForm";
+import { errorText } from "../ui/format";
 
 type Phase =
   | { at: "ready" }
@@ -221,7 +224,7 @@ export function AddPanel({
       setItemFill({ at: "done", changed, ref: refText, note: fields.note ?? null });
     } catch (e) {
       if (!live.current || seq !== fillSeq.current) return;
-      setItemFill({ at: "failed", message: e instanceof Error ? e.message : String(e) });
+      setItemFill({ at: "failed", message: errorText(e) });
     }
   };
 
@@ -271,8 +274,8 @@ export function AddPanel({
       const problem = problemFromCallError(params.name, e);
       const steps = e instanceof BackendCallError && Array.isArray(e.data?.["steps"]) ? (e.data["steps"] as CheckStep[]) : null;
       if (steps) return setPhase({ at: "verify-failed", problem, steps });
-      if (e instanceof BackendCallError && (e.code === 80 || e.code === 81)) {
-        const field = e.code === 81 ? "name" : String(e.data?.["field"] ?? "");
+      if (e instanceof BackendCallError && (e.code === AddError.invalidHost || e.code === AddError.hostExists)) {
+        const field = e.code === AddError.hostExists ? "name" : String(e.data?.["field"] ?? "");
         setRosterSays({ field: field === "ip" ? "address" : field, message: e.message });
       }
       setPhase({ at: "failed", problem });
@@ -315,7 +318,7 @@ export function AddPanel({
         return setPhase({
           at: "failed",
           problem: {
-            code: 43,
+            code: HostKeyError.changed,
             host: draft.name.trim(),
             message: `The host key at ${key.address}:${key.port} isn't the one roster recorded - not adding ${draft.name.trim()}`,
             details: `offered ${key.key_type} ${key.fingerprint}`,

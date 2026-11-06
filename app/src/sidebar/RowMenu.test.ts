@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { placeMenu } from "./RowMenu";
 import { hostMenu, type HostMenuOptions } from "./hostMenu";
-import type { SidebarRow } from "./Sidebar";
+import type { SidebarRow } from "./model";
 
 const view = { width: 1000, height: 700 };
 const size = { width: 220, height: 300 };
@@ -28,7 +28,7 @@ describe("placeMenu", () => {
 
 describe("hostMenu", () => {
   const row: SidebarRow = { id: "inventory:esx-02", label: "esx-02", host: "esx-02", command: "open esx-02", menu: true };
-  const all: HostMenuOptions = { reviewed: true, live: true, edit: true, folders: true, keys: (c: string) => (c === "host rename" ? "␣ R" : null) };
+  const all: HostMenuOptions = { reviewed: true, caps: { has: () => true }, folders: true, keys: (c: string) => (c === "host rename" ? "␣ R" : null) };
   const labels = (r: SidebarRow, o = all) => hostMenu(r, o).map((e) => ("separator" in e ? "|" : e.label));
 
   it("groups open, look, change and remove, with a row's own actions among the changes", () => {

@@ -6,6 +6,9 @@
 // cluster is every node's in it. A meshed cluster's nodes reach each other both ways (the Mesh's
 // `mesh: true`, Q63) without n² edges. An end that names nothing (yet) is ignored.
 
+import type { ActionIcon } from "../ui/icons";
+import type { When } from "../ui/when";
+
 /** How a node is drawn: its shape carries meaning, not only its colour (Q53, taste.md). */
 export type NodeShape = "dot" | "ring" | "dashed" | "hollow" | "square";
 /** `live` is in the accent (connected now); `down` is drawn quieter and crossed. */
@@ -26,7 +29,6 @@ export interface GraphNode {
   mark?: Mark;
   /** A few words about it ("out of date", "cut pending"), beside it when selected and in the list. */
   note?: string;
-  /** The cluster it's in. */
   cluster?: string;
   /** The Host it is: actions get it as `e.host`. */
   host?: string;
@@ -73,13 +75,6 @@ export type FilterState = NodeState | Mark;
 /** Whether an action with `when` applies to `node` (T89, as a table's, ticket 78): every field it
  * names holds one of its values. A number and its text are the same value; a field the node
  * lacks matches nothing. */
-export function nodeActionApplies(when: Readonly<Record<string, readonly (string | number)[]>> | undefined, node: GraphNode): boolean {
-  if (!when) return true;
-  return Object.entries(when).every(([k, values]) => {
-    const v = (node as unknown as Record<string, unknown>)[k];
-    return (typeof v === "string" || typeof v === "number") && values.some((x) => String(x) === String(v));
-  });
-}
 
 export interface GraphData {
   nodes: readonly GraphNode[];
@@ -355,4 +350,26 @@ function countAll(adj: number[][], real: number): number[] {
     counts.push(c - 1);
   }
   return counts;
+}
+
+/** Something the selected node can do (ticket 77). */
+export interface NodeActionDef {
+  label: string;
+  key?: string;
+  icon?: ActionIcon;
+  /** Only on nodes whose fields match (whenApplies). */
+  when?: When;
+  run(node: GraphNode): void;
+}
+
+/** A graph (ticket 77): nodes, edges and clusters as plain data, and what a node does. */
+export interface GraphModel {
+  data: GraphData;
+  /** How far "reaches" goes: every hop (the default) or one. */
+  reach?: Reach;
+  /** What it shows; the user changes it with `f` (a new one from the Plugin replaces theirs). */
+  filter?: GraphFilter;
+  /** Enter or a double click on a node. */
+  open?(node: GraphNode): void;
+  actions: readonly NodeActionDef[];
 }

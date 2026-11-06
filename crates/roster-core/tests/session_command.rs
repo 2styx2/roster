@@ -5,7 +5,7 @@
 //! (docs/app/dev/tauri-pty-wsl.md, docs/app/security.md).
 
 use roster_core::detect::Target;
-use roster_core::session::{Prepared, SessionCommand, session_command, wslenv};
+use roster_core::session::{FillRule, Prepared, SessionCommand, session_command, wslenv};
 use serde_json::json;
 
 /// The value of `name` in the command's process env.
@@ -47,6 +47,7 @@ fn on_wsl_runs_ssh_through_wsl_exec_with_the_env_on_the_process_and_named_in_wsl
             distro: "FedoraLinux-44".into(),
         },
         &prepared(json!({"SSH_ASKPASS": "/run/askpass", "SSH_ASKPASS_REQUIRE": "force"})),
+        FillRule::Host { marks: None },
     );
     assert_eq!(
         cmd.argv,
@@ -88,7 +89,11 @@ fn wslenv_appends_to_the_existing_list_without_translating_paths() {
 
 #[test]
 fn locally_runs_ssh_as_given_with_env_set_on_the_process() {
-    let cmd = session_command(&Target::Local, &prepared(json!({"SSH_ASKPASS_REQUIRE": "force"})));
+    let cmd = session_command(
+        &Target::Local,
+        &prepared(json!({"SSH_ASKPASS_REQUIRE": "force"})),
+        FillRule::Host { marks: None },
+    );
     assert_eq!(cmd.argv, strings(&["/usr/bin/ssh", "-o", "BatchMode=yes", "web-1"]));
     assert_eq!(
         cmd.env,
@@ -102,7 +107,11 @@ fn locally_runs_ssh_as_given_with_env_set_on_the_process() {
 
 #[test]
 fn an_empty_env_still_sets_term_and_colorterm() {
-    let cmd = session_command(&Target::Wsl { distro: "D".into() }, &prepared(json!({})));
+    let cmd = session_command(
+        &Target::Wsl { distro: "D".into() },
+        &prepared(json!({})),
+        FillRule::Host { marks: None },
+    );
     assert_eq!(cmd.argv[6], "/usr/bin/ssh");
     assert_eq!(env_of(&cmd, "TERM"), Some("xterm-256color"));
     assert_eq!(env_of(&cmd, "COLORTERM"), Some("truecolor"));
@@ -115,7 +124,11 @@ fn an_empty_env_still_sets_term_and_colorterm() {
 #[test]
 fn the_app_adds_only_term_and_colorterm_to_the_session_env() {
     let from_roster = json!({"SSH_ASKPASS": "/run/askpass", "SSH_ASKPASS_REQUIRE": "force"});
-    let cmd = session_command(&Target::Local, &prepared(from_roster.clone()));
+    let cmd = session_command(
+        &Target::Local,
+        &prepared(from_roster.clone()),
+        FillRule::Host { marks: None },
+    );
     let added: Vec<&str> = cmd
         .env
         .iter()
@@ -123,7 +136,11 @@ fn the_app_adds_only_term_and_colorterm_to_the_session_env() {
         .filter(|k| from_roster.get(k).is_none())
         .collect();
     assert_eq!(added, ["TERM", "COLORTERM"]);
-    let wsl = session_command(&Target::Wsl { distro: "D".into() }, &prepared(from_roster.clone()));
+    let wsl = session_command(
+        &Target::Wsl { distro: "D".into() },
+        &prepared(from_roster.clone()),
+        FillRule::Host { marks: None },
+    );
     let added: Vec<&str> = wsl
         .env
         .iter()
@@ -139,8 +156,13 @@ fn debug_output_never_shows_env_values() {
     let wsl = session_command(
         &Target::Wsl { distro: "D".into() },
         &prepared(json!({"ROSTER_ASKPASS_TOKEN": secret})),
+        FillRule::Host { marks: None },
     );
-    let local = session_command(&Target::Local, &prepared(json!({"ROSTER_ASKPASS_TOKEN": secret})));
+    let local = session_command(
+        &Target::Local,
+        &prepared(json!({"ROSTER_ASKPASS_TOKEN": secret})),
+        FillRule::Host { marks: None },
+    );
     for shown in [
         format!("{wsl:?}"),
         format!("{local:?}"),
@@ -170,7 +192,11 @@ fn password_prepared(token: &str) -> Prepared {
 
 #[test]
 fn a_password_session_on_wsl_carries_the_askpass_env_through_wslenv_not_the_argv() {
-    let cmd = session_command(&Target::Wsl { distro: "D".into() }, &password_prepared("tok-1"));
+    let cmd = session_command(
+        &Target::Wsl { distro: "D".into() },
+        &password_prepared("tok-1"),
+        FillRule::Host { marks: None },
+    );
     assert_eq!(
         cmd.argv,
         strings(&[
@@ -213,7 +239,7 @@ fn an_error_naming_the_command_line_never_shows_the_token() {
     // A spawn failure may quote the command or its environment.
     let secret = "tok-5f3a9c";
     for target in [Target::Wsl { distro: "D".into() }, Target::Local] {
-        let cmd = session_command(&target, &password_prepared(secret));
+        let cmd = session_command(&target, &password_prepared(secret), FillRule::Host { marks: None });
         let raw = format!("CreateProcessW `{:?}` in cwd `None` failed: 2", cmd.argv.join(" "));
         let shown = cmd.redact(&raw);
         assert!(!shown.contains(secret), "{shown}");

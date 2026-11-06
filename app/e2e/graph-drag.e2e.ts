@@ -10,12 +10,8 @@
 // the app): what was left is drawn in the same place relative to the clusters that didn't move.
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { inject } from "vitest";
-import { launch } from "./browser";
-// Not imported, as those modules are the browser's: the fake Backend's master password
-// (src/backend/fake.ts FAKE_PASSWORD) and a collapsed cluster's radius (src/graph/draw.ts).
-const FAKE_PASSWORD = "correct horse";
-const STAND_IN_RADIUS = 12;
+import { STAND_IN_RADIUS } from "../src/graph/sizes";
+import { launch, openApp as openAppAt } from "./browser";
 
 let browser: Browser;
 let context: BrowserContext | null = null;
@@ -61,15 +57,10 @@ function recordFrames() {
 
 /** The app unlocked, the demo map open and focused. */
 async function openApp(): Promise<Page> {
-  context = await browser.newContext({ viewport: { width: 1200, height: 800 } });
-  await context.addInitScript(recordFrames);
-  const page = await context.newPage();
-  await page.goto(`${inject("appUrl")}?fixture=plugin-graph&toggle=off`);
-  await page.getByLabel(/master password/i).fill(FAKE_PASSWORD);
-  await page.keyboard.press("Enter");
-  await page.getByRole("group", { name: "Inventory" }).getByRole("treeitem").first().waitFor();
-  await openView(page);
-  return page;
+  const opened = await openAppAt(browser, "plugin-graph", { width: 1200, height: 800 }, recordFrames);
+  context = opened.context;
+  await openView(opened.page);
+  return opened.page;
 }
 
 async function openView(page: Page) {

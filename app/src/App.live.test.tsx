@@ -7,7 +7,8 @@
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { App, servicesLeftOut } from "./App";
+import { App } from "./App";
+import { servicesLeftOut } from "./inventory/said";
 import { FAKE_PASSWORD, fakeBackend, makeHosts, type FakeBackend } from "./backend/fake";
 import { configWith, defaultConfig } from "./config/fixture";
 import type { Config, ConfigReport } from "./config/types";
@@ -176,7 +177,7 @@ describe("outside edits to roster.yml", () => {
   it("a broken edit keeps the last good Inventory and says the line", async () => {
     const { backend } = await ready({ config: configWith({ autoReload: true }) });
     await waitFor(() => expect(backend.watching()).toBe(true));
-    act(() => backend.outsideEdit({ error: { message: "mapping values are not allowed here", path: "~/team-inventory/roster.yml", line: 12 } }));
+    act(() => backend.outsideEdit({ error: { message: "mapping values are not allowed here", path: "~/team-inventory/roster.yml", line: 12, fix: null } }));
     await said(/roster\.yml:12 has an error \(mapping values are not allowed here\): the last good Inventory is still in use/);
     expect(item("linux-1-000")).not.toBeNull();
   });

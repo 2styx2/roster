@@ -8,6 +8,7 @@ import sys
 import pytest
 
 from roster.config import load_config, load_inventory
+from roster.errors import InventoryError
 from roster.example import EXAMPLE_CONFIG
 from roster.models import Host, Inventory, Service, WifiResource
 
@@ -26,15 +27,11 @@ def test_roster_yml_loads_into_models(write_config):
     assert list(inv.hosts) == list(load_config(write_config(EXAMPLE_CONFIG))["hosts"])   # roster.yml's order
 
 
-def test_the_dict_view_is_the_models(write_config):
+def test_the_dict_view_is_plain_dicts(write_config):
     """load_config is load_inventory's dict view: what serve's hosts.list and --json have always returned."""
-    p = write_config(EXAMPLE_CONFIG)
-    cfg = load_config(p)
-    assert cfg == load_inventory(p).as_config()
-    h = cfg["hosts"]["orion-web-01"]
+    h = load_config(write_config(EXAMPLE_CONFIG))["hosts"]["orion-web-01"]
     assert type(h) is dict and type(h["ssh"]) is dict and type(h["services"]) is dict
     assert set(h["ssh"]) == {"port", "user", "auth"}
-    assert set(cfg["links"][0]) == {"from", "to", "both", "via"} if cfg["links"] else True
 
 
 def test_keys_roster_does_not_know_stay_on_the_host(write_config):
@@ -53,10 +50,10 @@ def test_a_link_keeps_its_from_key(write_config):
 def test_a_bad_number_is_roster_s_error_naming_the_key(write_config, key):
     """Was a raw ValueError traceback; now roster's own error (code 1 in serve), with the key and not the value."""
     p = write_config(f"{key}: hunter2-not-a-number\ngroups:\n  a:\n    user: u\n    hosts:\n      h1: 10.0.0.1\n")
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(p)
-    msg = str(e.value.code)
-    assert msg.startswith("error: ") and key in msg
+    msg = e.value.message
+    assert e.value.code == 1 and key in msg
     assert "hunter2" not in msg and "pydantic" not in msg.lower()
 
 

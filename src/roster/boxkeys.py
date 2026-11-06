@@ -16,11 +16,16 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .common import UTC_TIME, die, program_argv, replace_file, say, utc_now
+from .context import Context, box_file, current
+from .errors import KEY_TYPE_DRIFT, Problem
+
 DEFAULT = "ed25519"
-# key_max_age:'s default (T240, decision Q204): the strict end of NIST SP 800-57 Part 1 Rev. 5's cryptoperiod for a
+# key_max_age:'s default (decision Q204): the strict end of NIST SP 800-57 Part 1 Rev. 5's cryptoperiod for a
 # private authentication key ("no more than one or two years", §5.3.6 item 4; Table 1: 1 to 2 years)
 MAX_AGE = "365d"
 MAX_AGE_LIMIT = 3650        # days: the most key_max_age: takes (10 years); `off` is how to turn the warning off
@@ -111,7 +116,6 @@ def derived(key: Path) -> list[str] | None:
         return None
     stamp = (str(key), st.st_size, st.st_mtime_ns)
     if stamp not in _derived:
-        from .common import program_argv
         try:
             r = subprocess.run(program_argv(["ssh-keygen", "-y", "-P", "", "-f", str(key)]), capture_output=True,
                                text=True, stdin=subprocess.DEVNULL, timeout=30)
@@ -163,13 +167,69 @@ def vouched(key: BoxKey, own: Path) -> bool:
 
 def rsa_bits(pub: Path) -> int | None:
     """An RSA public key's size in bits (`ssh-keygen -l`), or None when it can't tell."""
-    from .common import program_argv
     try:
         r = subprocess.run(program_argv(["ssh-keygen", "-l", "-f", str(pub)]), capture_output=True, text=True,
                            stdin=subprocess.DEVNULL, timeout=30)
         return int(r.stdout.split()[0]) if r.returncode == 0 else None
     except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
         return None
+
+
+def generate(kt: KeyType, path: Path, comment: str) -> None:
+    """A new key of type KT at PATH (and PATH.pub), with no passphrase and COMMENT as its comment (ssh-keygen -C).
+    CalledProcessError or OSError when ssh-keygen fails."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    subprocess.run(program_argv(["ssh-keygen", "-q", *kt.keygen_args(), "-N", "", "-C", comment, "-f", str(path)]),
+                   check=True, stdin=subprocess.DEVNULL, capture_output=True)
+
+
+def ensure_key(key: BoxKey, tag: str) -> None:
+    """This Box's KEY on disk, made with ssh-keygen and tagged TAG when it isn't there yet. A key that's there is
+    kept; one of another type than KEY's (an ECDSA or RSA key's file holding another key) is refused (201), as the
+    Hosts that want this type would refuse it. An Ed25519 key's file is taken as it is (as before T239: key_path may
+    name a key of the user's own)."""
+    from .errors import KEY_TYPE_MISMATCH
+    if key.key.exists():
+        if not key.pub.exists():
+            die(f"{key.key} exists but {key.pub} is missing")
+        # key_path written out by an older template names the Ed25519 key's file, which a later top-level key_type:
+        # then finds holding another type
+        fix = (f"remove key_path from roster.yml (roster then keeps this key at {key.key.with_name(key.type.file_name)}) "
+               "or point it at another file" if key.key.name != key.type.file_name else
+               "move it away (roster makes the new key there), or point key_path at another file")
+        if key.type.name != "ed25519":
+            have = (key.pub.read_text().split() or ["nothing"])[0]
+            if have != key.type.public_word:
+                die(f"{key.key} is an {have} key, not {key.type.name} "
+                    f"({key.type.public_word}), which key_type: in roster.yml asks for: {fix}",
+                    code=KEY_TYPE_MISMATCH)
+            bits = rsa_bits(key.pub) if key.type.algorithm == "rsa" else None
+            if bits is not None and key.type.bits is not None and bits < key.type.bits:
+                die(f"{key.key} is a {bits}-bit RSA key, fewer than the {key.type.bits} bits "
+                    f"key_type: {key.type.name} asks for: {fix}", code=KEY_TYPE_MISMATCH)
+        # A .pub that isn't this key's would go on the Hosts and never log in. Checked only when
+        # ssh-keygen can read the key without a passphrase (a key of the user's own may have one, as before)
+        have_words, words = derived(key.key), public_words(key.pub)
+        if have_words is not None and have_words != words:
+            die(f"{key.pub} isn't the public key of {key.key} (another key's .pub beside it): "
+                f"{fix}", code=KEY_TYPE_MISMATCH)
+        say(f"key          {key.key} ({key.type.name}, existing)")
+        return
+    try:
+        generate(key.type, key.key, tag)
+    except subprocess.CalledProcessError as e:
+        die(f"ssh-keygen couldn't make {key.key}: {(e.stderr or b'').decode(errors='replace').strip() or e}")
+    stamp(key.key)                          # its age counts from now (key_max_age:)
+    say(f"key          {key.key} ({key.type.name}, created)")
+
+
+def public_key_line(key: BoxKey, tag: str) -> str:
+    """KEY's public key line as it goes on a Host: its type and key, then TAG (which lets revoke find exactly this
+    Box's line)."""
+    parts = key.pub.read_text().split()
+    if len(parts) < 2:
+        die(f"{key.pub} doesn't look like a public key")
+    return f"{parts[0]} {parts[1]} {tag}"
 
 
 def for_host(h: dict[str, Any]) -> BoxKey:
@@ -210,12 +270,12 @@ def all_keys(cfg: dict[str, Any]) -> list[BoxKey]:
         except ValueError:
             continue
         # only the canonical names roster itself writes, and only a key this Box holds: its private key (this user's,
-        # no one else's to read) gives that very .pub (#471's review LOW-3). A stray .pub (another Box's copied here),
+        # no one else's to read) gives that very .pub. A stray .pub (another Box's copied here),
         # an empty or foreign file beside it, never widens what setup and revoke take
         if kt.file_name + ".pub" == pub.name and owned(pub.with_suffix("")) and matches(pub.with_suffix("")):
             keys.setdefault(kt.name, BoxKey(kt, key_file(cfg["key"], cfg["key_type"], kt.name)))
     out = list(keys.values())
-    # T240: mid-rotation, each key's new one (KEY.new) and kept old one (KEY.old) are this Box's too, so revoke takes
+    # Mid-rotation, each key's new one (KEY.new) and kept old one (KEY.old) are this Box's too, so revoke takes
     # (and names) both, and a renamed Box finds their lines. The same test as above: this user's, its .pub its own
     for k in list(out):
         for suffix in (".new", ".old"):
@@ -227,19 +287,16 @@ def all_keys(cfg: dict[str, Any]) -> list[BoxKey]:
 
 # ---------------------------------------------------------------- the types on each Host (T245, #478 items 4 and 7)
 
-_CURRENT: Any = object()
-
-
-def installed(inv: Any = _CURRENT) -> dict[str, list[str]]:
-    """{host: the key types of this Box's lines there}, as roster last left them: written by setup's install, its
-    cleanup and a rotation, taken off by revoke (common.key_types_file: `HOST<TAB>TYPE TYPE`). A Host roster hasn't
-    installed on since T245 isn't in it: nothing is known there."""
-    from .common import key_types_file
+def installed(ctx: Context | None = None) -> dict[str, list[str]]:
+    """{host: the key types of this Box's lines there}, as roster last left them for the Inventory CTX (default:
+    this run's): written by setup's install, its cleanup and a rotation, taken off by revoke (context.FILES'
+    key_types: `HOST<TAB>TYPE TYPE`). A Host roster hasn't installed on since T245 isn't in it: nothing is known
+    there."""
     try:
-        text = (key_types_file() if inv is _CURRENT else key_types_file(inv)).read_text(encoding="utf-8")
+        text = (ctx or current()).file("key_types").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return {}
-    out = {}
+    out: dict[str, list[str]] = {}
     for line in text.splitlines():
         host, _, types = line.partition("\t")
         if host and types.split():
@@ -247,11 +304,10 @@ def installed(inv: Any = _CURRENT) -> dict[str, list[str]]:
     return out
 
 
-def record(changes: dict[str, Any], inv: Any = _CURRENT) -> None:
+def record(changes: dict[str, Any], ctx: Context | None = None) -> None:
     """Update the record (installed): {host: its types now (an iterable), or None when this Box has no line there}."""
-    from .common import key_types_file, replace_file
-    f = key_types_file() if inv is _CURRENT else key_types_file(inv)
-    rows = installed(inv)
+    f = (ctx or current()).file("key_types")
+    rows = installed(ctx)
     for host, types in changes.items():
         if types:
             rows[host] = sorted(set(types))
@@ -263,50 +319,39 @@ def record(changes: dict[str, Any], inv: Any = _CURRENT) -> None:
         f.unlink(missing_ok=True)
 
 
-def extra(h: dict[str, Any], inv: Any = _CURRENT) -> list[str]:
-    """The key types of this Box's lines on Host H other than its own key_type's, by the record (setup --key-type's
-    lines, or a cleanup that failed): setup takes them off, check says so (219)."""
-    return [t for t in installed(inv).get(h["name"], []) if t != h["key_type"]]
-
-
-def drift(cfg: dict[str, Any], hosts: Any = None) -> dict[str, str]:
+def drift(cfg: dict[str, Any], hosts: Any = None) -> dict[str, Problem]:
     """{host: what differs} between the record and roster.yml's key_type, for HOSTS' key Hosts (every one's when
     None): a line of another type still there, or none of roster.yml's type (it changed since the last setup)."""
-    from .errors import KEY_TYPE_DRIFT
     rec = installed()
-    out = {}
+    out: dict[str, Problem] = {}
     for h in (cfg["hosts"].values() if hosts is None else hosts):
         have = rec.get(h["name"])
         if not h["enroll"] or not have or have == [h["key_type"]]:
             continue
         if h["key_type"] not in have:
-            out[h["name"]] = (f"[{KEY_TYPE_DRIFT}] {h['name']} holds this Box's {' and '.join(have)} key, and roster.yml "
-                              f"says key_type: {h['key_type']} (changed since its last setup): roster setup --host "
-                              f"{h['name']} installs it and takes the other off")
+            out[h["name"]] = Problem(KEY_TYPE_DRIFT, f"{h['name']} holds this Box's {' and '.join(have)} key, and "
+                                     f"roster.yml says key_type: {h['key_type']} (changed since its last setup): "
+                                     f"roster setup --host {h['name']} installs it and takes the other off")
         else:
             others = [t for t in have if t != h["key_type"]]
-            out[h["name"]] = (f"[{KEY_TYPE_DRIFT}] {h['name']} still holds this Box's {' and '.join(others)} key line "
-                              f"besides its {h['key_type']} one (setup --key-type's, or a cleanup that failed): roster "
-                              "setup takes it off")
+            out[h["name"]] = Problem(KEY_TYPE_DRIFT, f"{h['name']} still holds this Box's {' and '.join(others)} key "
+                                     f"line besides its {h['key_type']} one (setup --key-type's, or a cleanup that "
+                                     "failed): roster setup takes it off")
     return out
 
 
-# ---------------------------------------------------------------- the key's age (T240, key_max_age:)
+# ---------------------------------------------------------------- the key's age (key_max_age:)
 
 def stamp(key: Path) -> None:
-    """Record that roster made (or rotated) KEY now (common.key_created_file): its age is counted from this."""
-    from datetime import datetime, timezone
-
-    from .common import key_created_file, replace_file
+    """Record that roster made (or rotated) KEY now (context.BOX_FILES): its age is counted from this."""
     rows = {p: t for t, p in _created_rows()}
-    rows[str(key)] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    replace_file(key_created_file(), "".join(f"{t}\t{p}\n" for p, t in sorted(rows.items())), 0o600)
+    rows[str(key)] = utc_now()
+    replace_file(box_file("key_created"), "".join(f"{t}\t{p}\n" for p, t in sorted(rows.items())), 0o600)
 
 
 def _created_rows() -> list[tuple[str, str]]:
-    from .common import key_created_file
     try:
-        text = key_created_file().read_text(encoding="utf-8")
+        text = box_file("key_created").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return []
     return [(t, p) for t, _, p in (ln.partition("\t") for ln in text.splitlines()) if p]
@@ -315,11 +360,10 @@ def _created_rows() -> list[tuple[str, str]]:
 def created(key: Path):
     """When KEY was made or last rotated (a UTC datetime): roster's record of it, else the file's own time (a key made
     before T240, or by hand). None when there's no such file."""
-    from datetime import datetime, timezone
     for t, p in _created_rows():
         if p == str(key):
             try:
-                return datetime.strptime(t, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                return datetime.strptime(t, UTC_TIME).replace(tzinfo=timezone.utc)
             except ValueError:
                 break
     try:
@@ -336,7 +380,7 @@ def parse_age(value: Any) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool):
         days = value
     else:
-        # ASCII digits only (#482's review: `\d` takes any script's digits)
+        # ASCII digits only: `\d` takes any script's digits
         m = re.fullmatch(r"([0-9]{1,6})\s*([dwy]?)", value.strip().lower(), re.ASCII) if isinstance(value, str) else None
         if m is None:
             raise ValueError(f"{value!r} isn't an age: write days as 365d (or 52w, 1y), or off")

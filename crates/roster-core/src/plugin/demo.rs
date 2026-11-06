@@ -13,8 +13,9 @@
 //!   (the temp dir), the user's alone, removed with the demo; one a crash left behind is swept at
 //!   the next demo's start. A Plugin's real `plugin-data` is never read or written.
 
-use super::{Limits, PluginHost, Serve};
-use serde_json::{Value as Json, json};
+use super::code::{INVALID_PARAMS, ROSTER_ERROR, UNKNOWN_HOST};
+use super::{CallError, Limits, PluginHost, Serve};
+use serde_json::Value as Json;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -35,7 +36,7 @@ impl DemoServe {
 }
 
 impl Serve for DemoServe {
-    fn call(&self, method: &str, params: Json) -> Result<Json, String> {
+    fn call(&self, method: &str, params: Json) -> Result<Json, CallError> {
         match method {
             "hosts.list" => Ok(self.hosts.clone()),
             "host.get" => {
@@ -44,72 +45,57 @@ impl Serve for DemoServe {
                     .as_array()
                     .and_then(|hs| hs.iter().find(|h| h["name"] == name))
                     .cloned()
-                    .ok_or_else(|| format!("No Host named '{name}' on the demo Inventory (code 2)"))
+                    .ok_or_else(|| {
+                        CallError::rpc(UNKNOWN_HOST, format!("No Host named '{name}' on the demo Inventory"))
+                    })
             }
             "mesh.status" => mesh_status(&params),
-            other => Err(format!(
-                "{other} isn't on the demo Inventory: the tutorial's demo answers only hosts.list, host.get and mesh.status (code 3)"
-            )),
+            other => {
+                let words = demo_mesh()?["refusal"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .replace("{method}", other);
+                Err(CallError::rpc(ROSTER_ERROR, words))
+            }
         }
     }
 }
 
-/// The demo's Mesh, fixed and made up, for `demoHosts()`'s six (app/src/tutor/demo.ts): the lab's
-/// `demo-01` to `demo-03` meshed, reaching each other both ways; `demo-01` reaches the office's
-/// `demo-05` too, which didn't answer the last apply (pending); the lab's switch `demo-04` is
-/// kept out (`mesh: false`), and the printer `demo-06` isn't named. Nothing connects anywhere.
-const DEMO_MESHED: [&str; 3] = ["demo-01", "demo-02", "demo-03"];
-const DEMO_LINKS: [(&str, &str); 1] = [("demo-01", "demo-05")];
+/// The demo's Mesh, fixed and made up (`tests/fixtures/demo-mesh.json`, which the app's fake
+/// Backend answers from too): `mesh.status`'s plain answer, and what `grouped` and `brief` change.
+const DEMO_MESH: &str = include_str!("../../tests/fixtures/demo-mesh.json");
+
+fn demo_mesh() -> Result<Json, CallError> {
+    serde_json::from_str(DEMO_MESH).map_err(|e| CallError::Io {
+        message: format!("the demo's Mesh: {e}"),
+    })
+}
 
 /// `mesh.status` as real serve answers it (`status` and `brief` in src/roster/mesh.py), for
 /// the demo's Mesh: plain, `grouped: true` (API 19) or `brief: true` (API 17).
-fn mesh_status(params: &Json) -> Result<Json, String> {
+fn mesh_status(params: &Json) -> Result<Json, CallError> {
     let flag = |name: &str| match params.get(name) {
         None | Some(Json::Null) => Ok(false),
         Some(Json::Bool(b)) => Ok(*b),
-        Some(_) => Err(format!("params.{name} must be true or false (code -32602)")),
+        Some(_) => Err(CallError::rpc(
+            INVALID_PARAMS,
+            format!("params.{name} must be true or false"),
+        )),
     };
     let (grouped, brief) = (flag("grouped")?, flag("brief")?);
     if grouped && brief {
-        return Err("params.grouped and params.brief don't go together (code -32602)".into());
+        return Err(CallError::rpc(
+            INVALID_PARAMS,
+            "params.grouped and params.brief don't go together",
+        ));
     }
-    let link = |from: &str, to: &str| json!({ "from": from, "to": to, "kind": "key" });
-    let pairs = DEMO_MESHED
-        .iter()
-        .flat_map(|a| DEMO_MESHED.iter().filter(move |b| *b != a).map(move |b| (*a, *b)));
-    let links: Vec<(&str, &str)> = pairs.chain(DEMO_LINKS).collect();
-    let mut reach = serde_json::Map::new();
-    for (from, _) in &links {
-        let n = reach.get(*from).and_then(Json::as_u64).unwrap_or(0);
-        reach.insert((*from).into(), json!(n + 1));
-    }
-    let mut out = json!({
-        "links": links.iter().map(|(f, t)| link(f, t)).collect::<Vec<_>>(),
-        "excluded": { "demo-04": "mesh: false" },
-        "reach": reach,
-        "members": ["demo-01", "demo-02", "demo-03", "demo-05"],
-        "pending": { "demo-05": "no answer: ssh: connect to host 10.0.0.15 port 22: Connection timed out" },
-        "cut_pending": {},
-        "out_of_date": false,
-        "warnings": [],
-    });
-    if grouped {
-        // The pairs `meshed` covers go; the rest stay.
-        out["links"] = DEMO_LINKS.iter().map(|(f, t)| link(f, t)).collect();
-        out["meshed"] = json!({ "demo-lab": DEMO_MESHED });
-    }
-    if brief {
-        // Untested Links all work (`asked`), with no hop: none is worth a look, so only counts.
-        let mut reached = serde_json::Map::new();
-        for (_, to) in &links {
-            let n = reached.get(*to).and_then(Json::as_u64).unwrap_or(0);
-            reached.insert((*to).into(), json!(n + 1));
+    let mesh = demo_mesh()?;
+    let mut out = mesh["plain"].clone();
+    let overlay = [(grouped, "grouped"), (brief, "brief")];
+    for (_, part) in overlay.iter().filter(|(on, _)| *on) {
+        if let (Some(o), Some(changes)) = (out.as_object_mut(), mesh[*part].as_object()) {
+            o.extend(changes.clone());
         }
-        out["links"] = json!([]);
-        out["links_more"] = json!(0);
-        out["link_count"] = json!(links.len());
-        out["link_statuses"] = json!({ "asked": links.len() });
-        out["reached"] = Json::Object(reached);
     }
     Ok(out)
 }
@@ -302,5 +288,32 @@ impl DemoSlot {
     /// Takes whatever demo runs out (the app quits).
     pub fn stop_any(&self) -> Option<Arc<DemoHost>> {
         self.held.lock().ok()?.take().map(|(_, h)| h)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The made-up Mesh agrees with itself: each Host's reach is how many Links start there, each
+    /// one's `reached` how many end there, and `link_count` how many there are.
+    #[test]
+    fn the_demo_mesh_counts_its_own_links() {
+        let mesh: Json = serde_json::from_str(DEMO_MESH).unwrap();
+        let links = mesh["plain"]["links"].as_array().unwrap();
+        let count = |end: &str| {
+            let mut n = serde_json::Map::new();
+            for l in links {
+                let at = l[end].as_str().unwrap().to_string();
+                let was = n.get(&at).and_then(Json::as_u64).unwrap_or(0);
+                n.insert(at, json!(was + 1));
+            }
+            Json::Object(n)
+        };
+        assert_eq!(mesh["plain"]["reach"], count("from"));
+        assert_eq!(mesh["brief"]["reached"], count("to"));
+        assert_eq!(mesh["brief"]["link_count"], json!(links.len()));
+        assert_eq!(mesh["brief"]["link_statuses"]["asked"], json!(links.len()));
     }
 }

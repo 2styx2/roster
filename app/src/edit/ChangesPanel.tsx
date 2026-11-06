@@ -15,6 +15,7 @@ import { countOf } from "../ui/format";
 import { CloseGlyph } from "../ui/CloseGlyph";
 import { PanelButton } from "../panel/PanelFrame";
 import { Keys } from "../ui/Keys";
+import { kindOf, shortCommit, SIGN_WORD } from "./diff";
 
 export type ChangesState =
   | { state: "loading" }
@@ -41,20 +42,6 @@ export interface ChangesPanelProps {
 }
 
 const FIELD_LABEL: Record<string, string> = { ip: "address", auth: "Login" };
-
-/** One diff line's kind, for its colour and its sign in words. */
-export function kindOf(line: string): "add" | "del" | "hunk" | "meta" | "same" {
-  if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff ") || line.startsWith("index ")) return "meta";
-  if (line.startsWith("@@")) return "hunk";
-  if (line.startsWith("+")) return "add";
-  if (line.startsWith("-")) return "del";
-  return "same";
-}
-
-export const SIGN_WORD = { add: "added: ", del: "removed: " } as const;
-
-/** The short hash git shows. */
-const short = (commit: string) => commit.slice(0, 7);
 
 export function ChangesPanel(props: ChangesPanelProps) {
   const { changes, editKeys, leader, canPublish, rows, actions, onDiscard, onPublish, onClose } = props;
@@ -282,7 +269,7 @@ function Published({ result, copy }: { result: PublishResult; copy: ProblemActio
       <p>
         Published{" "}
         <code className="publish-hash" title={result.commit}>
-          {short(result.commit)}
+          {shortCommit(result.commit)}
         </code>{" "}
         to <span className="mono">{result.upstream}</span>
         {result.pulled > 0 && <span className="muted"> (after {countOf(result.pulled, "new commit")} there)</span>}.

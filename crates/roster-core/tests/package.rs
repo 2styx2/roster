@@ -3,9 +3,11 @@
 
 mod common;
 
+use roster_core::config::package_spec::{check_specs, name_of, url_of};
 use roster_core::config::{self, PackageSpec};
-use roster_core::package::{Packages, check_specs, name_of, url_of};
-use roster_core::plugin::{Limits, PluginHost, Serve, Source};
+use roster_core::package::Packages;
+use roster_core::plugin::{Limits, Load, PluginHost, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -351,8 +353,10 @@ fn init_lua_declares_packages_the_lazy_nvim_way() {
 
 struct NoServe;
 impl Serve for NoServe {
-    fn call(&self, method: &str, _: Value) -> Result<Value, String> {
-        Err(format!("no {method}"))
+    fn call(&self, method: &str, _: Value) -> Result<Value, CallError> {
+        Err(CallError::Io {
+            message: format!("no {method}"),
+        })
     }
 }
 
@@ -373,7 +377,9 @@ fn a_package_loads_as_a_plugin_with_its_settings_from_init_lua() {
     packages.sync(&specs);
     let (dir, config) = packages.loadable(&specs, "recent-alerts").unwrap();
     let host = PluginHost::new(Arc::new(NoServe), Limits::default());
-    let (manifest, reply) = host.load_with(&Source::Dir(dir), &[], &config).unwrap();
+    let (manifest, reply) = host
+        .load(&Source::Dir(dir), Load::new(&[][..]).config(config.clone()))
+        .unwrap();
     assert_eq!(manifest.name, "recent-alerts");
     assert_eq!(reply.error, None);
     assert_eq!(reply.ops[0]["spec"]["text"], "⚠ 0");
@@ -450,7 +456,9 @@ fn a_package_from_a_subfolder_loads_the_plugin_in_it_and_the_lock_keeps_the_fold
     let (dir, _) = packages.loadable(&specs, "alpha").unwrap();
     assert!(dir.ends_with("plugins/alpha"), "{}", dir.display());
     let host = PluginHost::new(Arc::new(NoServe), Limits::default());
-    let (manifest, _) = host.load_with(&Source::Dir(dir), &[], &Value::Null).unwrap();
+    let (manifest, _) = host
+        .load(&Source::Dir(dir), Load::new(&[][..]).config(Value::Null))
+        .unwrap();
     assert_eq!(manifest.name, "alpha");
 
     packages.pin(&specs, "alpha").unwrap();

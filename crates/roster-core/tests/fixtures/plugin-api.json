@@ -1,5 +1,5 @@
 {
-  "api_version": 6,
+  "api_version": 7,
   "commands": [
     {
       "doc": "Opens a finder: `finder alerts`.",
@@ -74,7 +74,7 @@
       "permission": "sessions.open"
     }
   ],
-  "errors_doc": "A function that fails raises a Lua error: `pcall` catches it, with the message as a string. The message starts with the function (`roster.inventory.host: unknown host 'web-9' (code 2)`); a roster serve error ends with its code, from [serve-api.md's tables](serve-api.md). An error you don't catch stops the call: a notice names the Plugin, file and line (`pinned: init.lua:12: …`), the UI changes that call made are dropped, and the third such error after loading stops the Plugin.\n\nAny function can also raise:\n\n- Lua's own `bad argument` error, for an argument of the wrong kind (a number where a table goes);\n- `roster.sidebar.set: PATH: a table that mixes a list with named keys (or has gaps): use one or the other`, `roster.float.open: PATH: a thread can't be a Plugin value` and the like, for data that can't be handed over (the function, then `PATH`, where in your table: `rows.3.label`). A function's return value that can't be is `the value it returned: PATH: …`;\n- `more than 1000 UI changes in one go`, when one call sets more than that;\n- `more than 10000 functions handed to roster at once`.\n\n**Refused by the app** isn't an error: the app shows a warning notice naming the Plugin (`pinned: :pin is taken (builtin)`) and leaves that one change out. The call itself goes on.\n\n**What the Plugin added** (api 5): each collection (`roster.commands`, `roster.keymap`, `roster.themes`, `roster.sidebar`, `roster.views`, `roster.badges` by Host, …) has `get`, `has` and `list`, which give only the Plugin's own, as it set them; `get` gives a copy, so changing it changes nothing until you set it again. Taking away what the Plugin never added (or already took away) is an error at your line, as in `init.lua` (`roster.status.remove: the Plugin has no status segment \"alerts\" (roster.status.list() names its own)`), and so is a key context that isn't one. A Plugin whose manifest says `api = 4` or older keeps what it was written against: such a removal does nothing.",
+  "errors_doc": "A function that fails raises a Lua error: `pcall` catches it, with the message as a string that starts with the function (`roster.storage.write: …`). **roster serve's own error** (from `roster.serve.call`, `roster.serve.request`'s `done` and `roster.inventory`) is a [`ServeError`](#serveerror) instead (since api 7, decision Q211): an error object with `code`, serve's number from [serve-api.md's tables](serve-api.md), and `message`, serve's words. Tell errors apart by `e.code`, never by the text. `tostring(e)` is the text it was before api 7 (`roster.inventory.update: unknown host 'web-9' (code 2)`), and so are `..` and string methods (`e:find(…)`), so code written for the string keeps working. An error you don't catch stops the call: a notice names the Plugin, file and line (`pinned: init.lua:12: …`), the UI changes that call made are dropped, and the third such error after loading stops the Plugin.\n\nAny function can also raise:\n\n- Lua's own `bad argument` error, for an argument of the wrong kind (a number where a table goes);\n- `roster.sidebar.set: PATH: a table that mixes a list with named keys (or has gaps): use one or the other`, `roster.float.open: PATH: a thread can't be a Plugin value` and the like, for data that can't be handed over (the function, then `PATH`, where in your table: `rows.3.label`). A function's return value that can't be is `the value it returned: PATH: …`;\n- `more than 1000 UI changes in one go`, when one call sets more than that;\n- `more than 10000 functions handed to roster at once`.\n\n**Refused by the app** isn't an error: the app shows a warning notice naming the Plugin (`pinned: :pin is taken (builtin)`) and leaves that one change out. The call itself goes on.\n\n**What the Plugin added** (api 5): each collection (`roster.commands`, `roster.keymap`, `roster.themes`, `roster.sidebar`, `roster.views`, `roster.badges` by Host, …) has `get`, `has` and `list`, which give only the Plugin's own, as it set them; `get` gives a copy, so changing it changes nothing until you set it again. Taking away what the Plugin never added (or already took away) is an error at your line, as in `init.lua` (`roster.status.remove: the Plugin has no status segment \"alerts\" (roster.status.list() names its own)`), and so is a key context that isn't one. A Plugin whose manifest says `api = 4` or older keeps what it was written against: such a removal does nothing.",
   "events": [
     {
       "name": "lock",
@@ -284,7 +284,7 @@
         ],
         [
           "roster.cmd: :NAME can't run yet: the app hasn't told roster its own commands",
-          "one of your commands, when the app couldn't tell roster which commands are its own (a call the user makes waits up to 5 s for that first)"
+          "one of your commands, when the app hasn't told roster which commands are its own (the app tells it with every load, call and event, so only a host it never told says this)"
         ],
         [
           "roster.cmd: :NAME needs the P permission",
@@ -2884,10 +2884,10 @@
       "needs_text": "`inventory.read`",
       "params": [
         {
-          "doc": "Runs once with the answer: every Host and group (`list.hosts`, `list.groups`), or `nil` and why (`roster.inventory.request: MESSAGE (code N)`). Its return value is ignored; an error in it counts like an action's.",
+          "doc": "Runs once with the answer: every Host and group (`list.hosts`, `list.groups`), or `nil` and why: roster serve's error as a [`ServeError`](#serveerror) (`tostring(err)` is `roster.inventory.request: MESSAGE (code N)`), or a string when serve gave no answer. Its return value is ignored; an error in it counts like an action's.",
           "name": "done",
           "optional": false,
-          "type": "fun(list: HostList?, err: string?)"
+          "type": "fun(list: HostList?, err: ServeError|string?)"
         }
       ],
       "path": "roster.inventory.request",
@@ -3198,7 +3198,7 @@
         ],
         [
           "roster.serve.call METHOD: MESSAGE (code N)",
-          "the method failed (its codes are in [serve-api.md](serve-api.md))"
+          "the method failed: a [`ServeError`](#serveerror) with its `code` (in [serve-api.md](serve-api.md)) and `message`, this text as its `tostring`"
         ]
       ],
       "example": "local info = roster.serve.call(\"inventory.info\")\nroster.status.set(\"box\", { text = info.box .. \": \" .. info.host_count .. \" Hosts\" })",
@@ -3257,10 +3257,10 @@
           "type": "table"
         },
         {
-          "doc": "Runs once with the answer: the method's `result` (as `roster.serve.call` returns it), or `nil` and why (`roster.serve.request METHOD: MESSAGE (code N)`). Its return value is ignored; an error in it counts like an action's.",
+          "doc": "Runs once with the answer: the method's `result` (as `roster.serve.call` returns it), or `nil` and why: roster serve's error as a [`ServeError`](#serveerror) (`err.code`, `err.message`; `tostring(err)` is `roster.serve.request METHOD: MESSAGE (code N)`), or a string when serve gave no answer. Its return value is ignored; an error in it counts like an action's.",
           "name": "done",
           "optional": false,
-          "type": "fun(result: any, err: string?)"
+          "type": "fun(result: any, err: ServeError|string?)"
         }
       ],
       "path": "roster.serve.request",
@@ -3490,6 +3490,389 @@
     "config",
     "vault"
   ],
+  "runtime": {
+    "builtin_prefix": "builtin:",
+    "bundled": [
+      "hosts",
+      "folders"
+    ],
+    "complete_api": 5,
+    "events": [
+      {
+        "name": "lock",
+        "needs": []
+      },
+      {
+        "name": "unlock",
+        "needs": []
+      },
+      {
+        "name": "host_selected",
+        "needs": [
+          "inventory.read",
+          "terminal.read"
+        ]
+      },
+      {
+        "name": "session_open",
+        "needs": [
+          "inventory.read",
+          "terminal.read"
+        ]
+      },
+      {
+        "name": "session_exit",
+        "needs": [
+          "inventory.read",
+          "terminal.read"
+        ]
+      },
+      {
+        "name": "inventory_changed",
+        "needs": [
+          "inventory.read"
+        ]
+      },
+      {
+        "name": "terminal_output",
+        "needs": [
+          "terminal.read"
+        ]
+      },
+      {
+        "name": "command_done",
+        "needs": [
+          "terminal.read"
+        ]
+      },
+      {
+        "name": "job_progress",
+        "needs": [
+          "serve:mesh.job",
+          "serve:discover.status",
+          "serve:host.check_job"
+        ]
+      }
+    ],
+    "job_kinds": {
+      "check": "serve:host.check_job",
+      "discover": "serve:discover.status",
+      "mesh": "serve:mesh.job"
+    },
+    "key_contexts": [
+      "leader",
+      "list",
+      "list_vim"
+    ],
+    "limits": {
+      "defer_min_ms": 50,
+      "every_min_ms": 1000,
+      "max_copy": 65536,
+      "max_ops": 1000,
+      "max_serve_requests": 8,
+      "max_timers": 100,
+      "storage_file": 1048576,
+      "storage_files": 1000,
+      "storage_name": 100,
+      "storage_total": 10485760,
+      "strikes": 3,
+      "timer_max_ms": 2147483647.0
+    },
+    "ops": [
+      {
+        "fields": [
+          "name",
+          "desc",
+          "run",
+          "complete?"
+        ],
+        "op": "command"
+      },
+      {
+        "fields": [
+          "context",
+          "keys",
+          "action"
+        ],
+        "op": "key"
+      },
+      {
+        "fields": [
+          "id",
+          "theme"
+        ],
+        "op": "theme"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "section"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "status"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "finder"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "help"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "health"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "tutor"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "toolbar"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "progress"
+      },
+      {
+        "fields": [
+          "check",
+          "checks"
+        ],
+        "op": "health_answer"
+      },
+      {
+        "fields": [
+          "host",
+          "text"
+        ],
+        "op": "badge"
+      },
+      {
+        "fields": [
+          "spec"
+        ],
+        "op": "float"
+      },
+      {
+        "fields": [
+          "id",
+          "spec"
+        ],
+        "op": "view"
+      },
+      {
+        "fields": [
+          "id",
+          "changes"
+        ],
+        "op": "view_update"
+      },
+      {
+        "fields": [
+          "id",
+          "select?"
+        ],
+        "op": "view_open"
+      },
+      {
+        "fields": [
+          "id"
+        ],
+        "op": "view_close"
+      },
+      {
+        "fields": [
+          "id",
+          "host",
+          "spec"
+        ],
+        "op": "details"
+      },
+      {
+        "fields": [
+          "text"
+        ],
+        "op": "copy"
+      },
+      {
+        "fields": [
+          "spec"
+        ],
+        "op": "confirm"
+      },
+      {
+        "fields": [
+          "line",
+          "user?"
+        ],
+        "op": "cmd"
+      },
+      {
+        "fields": [
+          "text",
+          "quiet?"
+        ],
+        "op": "echo"
+      },
+      {
+        "fields": [
+          "text"
+        ],
+        "op": "cmdline"
+      },
+      {
+        "fields": [
+          "text",
+          "level",
+          "actions?",
+          "quiet?"
+        ],
+        "op": "notify"
+      },
+      {
+        "fields": [
+          "session",
+          "line"
+        ],
+        "op": "session_show"
+      },
+      {
+        "fields": [
+          "host"
+        ],
+        "op": "open"
+      },
+      {
+        "fields": [
+          "session",
+          "text"
+        ],
+        "op": "send"
+      },
+      {
+        "fields": [
+          "id",
+          "ms",
+          "every",
+          "run"
+        ],
+        "op": "timer"
+      },
+      {
+        "fields": [
+          "kind",
+          "id"
+        ],
+        "op": "remove"
+      }
+    ],
+    "package_prefix": "package:",
+    "permissions": {
+      "serve_methods": [
+        "inventory.info",
+        "hosts.list",
+        "host.get",
+        "host.check",
+        "host.check_job",
+        "changes.diff"
+      ],
+      "serve_prefixes": [
+        "mesh.",
+        "discover."
+      ],
+      "serve_reads": [
+        "inventory.info",
+        "hosts.list",
+        "host.get",
+        "host.check_job",
+        "changes.diff",
+        "mesh.status",
+        "mesh.plan",
+        "mesh.job",
+        "mesh.stop",
+        "discover.plan",
+        "discover.status",
+        "discover.stop"
+      ],
+      "serve_risk": "Can run roster's {method}, which can change things on your Hosts or in the Inventory.",
+      "serve_summary": "Call roster's {method}",
+      "words": {
+        "inventory.read": {
+          "risk": null,
+          "summary": "Read your Hosts and their Login references (never a password)"
+        },
+        "inventory.write": {
+          "risk": "Can change Hosts. The changes stay Pending until you review and Publish them.",
+          "summary": "Change Hosts, as Pending changes"
+        },
+        "serve:discover.add": {
+          "risk": "Can add the Hosts a scan found to your Inventory, unreviewed, as Pending changes you review and Publish.",
+          "summary": "Add the Hosts a scan found, as Pending changes"
+        },
+        "serve:discover.start": {
+          "risk": "Can scan networks from this computer, once you've confirmed it: roster connects to every address in a range, on many ports. A network's security tools may take a scan for an attack, so scan only networks you may.",
+          "summary": "Scan a network you name, from this computer"
+        },
+        "serve:host.check": {
+          "risk": "Can check your Hosts as :check HOST does: roster connects to the Host and signs in once with its Login, then leaves (the Plugin never sees the password). It changes nothing there or in the Inventory, but a failed sign-in counts like any other.",
+          "summary": ""
+        },
+        "sessions.open": {
+          "risk": "Can open Sessions on your Hosts.",
+          "summary": "Open Sessions"
+        },
+        "terminal.read": {
+          "risk": "Sees everything your Sessions print, including anything a server echoes back. A password you type at a prompt that echoes it would be visible too.",
+          "summary": "Read what your Sessions print"
+        },
+        "terminal.write": {
+          "risk": "Can type into your open Sessions, as if you typed it: it can run commands on your servers.",
+          "summary": "Type into your Sessions"
+        }
+      }
+    },
+    "removable": [
+      "command",
+      "theme",
+      "section",
+      "status",
+      "finder",
+      "help",
+      "health",
+      "tutor",
+      "view",
+      "details",
+      "timer",
+      "toolbar",
+      "progress"
+    ]
+  },
   "serve_results": [
     {
       "link": "serve-api.md",
@@ -3631,6 +4014,7 @@
     "roster-InventoryError": "plugin-api#inventoryerror",
     "roster-InventoryInfo": "plugin-api#inventoryinfo",
     "roster-InventoryStore": "plugin-api#inventorystore",
+    "roster-JobError": "plugin-api#joberror",
     "roster-JobProgressEvent": "plugin-api#jobprogressevent",
     "roster-KeyContext": "plugin-api#keycontext",
     "roster-LastCommit": "plugin-api#lastcommit",
@@ -3880,7 +4264,7 @@
         }
       ],
       "open": false,
-      "order": 78,
+      "order": 79,
       "summary": "`roster.inventory.update`'s changes: the fields to change"
     },
     "ChangesDiff": {
@@ -3942,7 +4326,7 @@
         }
       ],
       "open": false,
-      "order": 90,
+      "order": 91,
       "summary": "`changes.diff`'s result: the Pending changes"
     },
     "CheckJob": {
@@ -4006,11 +4390,11 @@
           "doc": "Once `failed`: why.",
           "name": "error",
           "required": false,
-          "type": "ServeError"
+          "type": "JobError"
         }
       ],
       "open": false,
-      "order": 87,
+      "order": 88,
       "summary": "`host.check_job`'s result: a Host's check, and how it came out"
     },
     "CheckStep": {
@@ -4060,7 +4444,7 @@
         }
       ],
       "open": false,
-      "order": 88,
+      "order": 89,
       "summary": "One step of a `host.check`"
     },
     "Column": {
@@ -4192,7 +4576,7 @@
         }
       ],
       "open": false,
-      "order": 119,
+      "order": 120,
       "summary": "`command_done`'s payload"
     },
     "CommandSpec": {
@@ -4344,7 +4728,7 @@
         }
       ],
       "open": false,
-      "order": 109,
+      "order": 110,
       "summary": "`discover.add`'s result"
     },
     "DiscoverAdded": {
@@ -4364,7 +4748,7 @@
         }
       ],
       "open": false,
-      "order": 110,
+      "order": 111,
       "summary": "A Host `discover.add` added"
     },
     "DiscoverFound": {
@@ -4444,7 +4828,7 @@
         }
       ],
       "open": false,
-      "order": 106,
+      "order": 107,
       "summary": "Something a scan found at an address"
     },
     "DiscoverPlan": {
@@ -4488,7 +4872,7 @@
         }
       ],
       "open": false,
-      "order": 104,
+      "order": 105,
       "summary": "`discover.plan`'s result: what a scan would visit"
     },
     "DiscoverPort": {
@@ -4520,7 +4904,7 @@
         }
       ],
       "open": false,
-      "order": 107,
+      "order": 108,
       "summary": "An open port a scan found"
     },
     "DiscoverStatus": {
@@ -4588,7 +4972,7 @@
         }
       ],
       "open": false,
-      "order": 105,
+      "order": 106,
       "summary": "`discover.status`'s and `discover.start`'s result: how far a scan has got"
     },
     "DiscoverStop": {
@@ -4608,7 +4992,7 @@
         }
       ],
       "open": false,
-      "order": 108,
+      "order": 109,
       "summary": "`discover.stop`'s result"
     },
     "EchoOptions": {
@@ -4647,13 +5031,13 @@
       "doc": "",
       "fields": [],
       "open": false,
-      "order": 112,
+      "order": 113,
       "summary": "The payload of `lock`, `unlock` and `inventory_changed`: an empty table"
     },
     "EventName": {
       "alias": "\"lock\"|\"unlock\"|\"host_selected\"|\"session_open\"|\"session_exit\"|\"inventory_changed\"|\"terminal_output\"|\"command_done\"|\"job_progress\"",
       "doc": "",
-      "order": 111,
+      "order": 112,
       "summary": "An event a Plugin can listen for"
     },
     "Fact": {
@@ -5071,7 +5455,7 @@
         }
       ],
       "open": false,
-      "order": 77,
+      "order": 78,
       "summary": "A group of Hosts, as `hosts.list` gives it"
     },
     "GroupChange": {
@@ -5091,7 +5475,7 @@
         }
       ],
       "open": false,
-      "order": 92,
+      "order": 93,
       "summary": "A group in `changes.diff`"
     },
     "HandlerContext": {
@@ -5465,7 +5849,7 @@
         }
       ],
       "open": false,
-      "order": 91,
+      "order": 92,
       "summary": "A Host in `changes.diff`"
     },
     "HostCheck": {
@@ -5491,7 +5875,7 @@
         }
       ],
       "open": false,
-      "order": 86,
+      "order": 87,
       "summary": "`host.check`'s result: the steps of `roster check HOST`"
     },
     "HostList": {
@@ -5517,7 +5901,7 @@
         }
       ],
       "open": false,
-      "order": 84,
+      "order": 85,
       "summary": "`hosts.list`'s result"
     },
     "HostSelectedEvent": {
@@ -5531,7 +5915,7 @@
         }
       ],
       "open": false,
-      "order": 113,
+      "order": 114,
       "summary": "`host_selected`'s payload"
     },
     "HttpRequest": {
@@ -5633,7 +6017,7 @@
         }
       ],
       "open": false,
-      "order": 85,
+      "order": 86,
       "summary": "Why `roster.yml` doesn't load right now"
     },
     "InventoryInfo": {
@@ -5683,7 +6067,7 @@
         }
       ],
       "open": false,
-      "order": 83,
+      "order": 84,
       "summary": "`inventory.info`'s result"
     },
     "InventoryStore": {
@@ -5709,8 +6093,34 @@
         }
       ],
       "open": false,
-      "order": 89,
+      "order": 90,
       "summary": "How `roster.yml` is kept: a plain file or a team repo (serve API 28)"
+    },
+    "JobError": {
+      "doc": "",
+      "fields": [
+        {
+          "doc": "Its code, in serve-api.md's tables.",
+          "name": "code",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "doc": "What went wrong.",
+          "name": "message",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "doc": "More about it, as its row says.",
+          "name": "data",
+          "required": false,
+          "type": "table"
+        }
+      ],
+      "open": false,
+      "order": 103,
+      "summary": "Why a job in roster serve failed, as plain data in its status"
     },
     "JobProgressEvent": {
       "doc": "",
@@ -5771,7 +6181,7 @@
         }
       ],
       "open": false,
-      "order": 117,
+      "order": 118,
       "summary": "`job_progress`'s payload: serve's `job.progress` notification"
     },
     "KeyContext": {
@@ -5809,7 +6219,7 @@
         }
       ],
       "open": false,
-      "order": 93,
+      "order": 94,
       "summary": "The infra repo's last commit"
     },
     "Lesson": {
@@ -5881,13 +6291,13 @@
         }
       ],
       "open": false,
-      "order": 74,
+      "order": 75,
       "summary": "A Host's default Login for its services (`login:` in roster.yml)"
     },
     "LoginRef": {
       "alias": "string",
       "doc": "`PROVIDER:ITEM`, a vault item's name (`bw:esx-02 ssh`, `op:Lab/esx-02#password`, `kp:esx-02 ssh`), or `prompt` (asked for), `agent` (an ssh key), `key`, `none`. `env:VAR` and `cmd:COMMAND` are references too, but they say how a secret is fetched (and a secret pasted into a `cmd:` line would show), so a Plugin gets them cut to their kind: `env:` and `cmd:` (since api 3; decision Q92), in raw text such as a diff or a check's message too. The providers are in [Password providers](cli-reference.md#password-providers).",
-      "order": 72,
+      "order": 73,
       "summary": "A Login reference: where a password is, never the password"
     },
     "Manifest": {
@@ -5969,7 +6379,7 @@
         }
       ],
       "open": false,
-      "order": 98,
+      "order": 99,
       "summary": "`mesh.cut`'s result"
     },
     "MeshCutChange": {
@@ -6013,7 +6423,7 @@
         }
       ],
       "open": false,
-      "order": 99,
+      "order": 100,
       "summary": "The `mesh: false` a `mesh.cut` writes into `roster.yml`"
     },
     "MeshHost": {
@@ -6051,7 +6461,7 @@
         }
       ],
       "open": false,
-      "order": 96,
+      "order": 97,
       "summary": "A Host a Mesh run visited"
     },
     "MeshJob": {
@@ -6115,11 +6525,11 @@
           "doc": "Once `failed`: why.",
           "name": "error",
           "required": false,
-          "type": "ServeError"
+          "type": "JobError"
         }
       ],
       "open": false,
-      "order": 101,
+      "order": 102,
       "summary": "`mesh.job`'s result: how far a Mesh run has got"
     },
     "MeshLink": {
@@ -6169,7 +6579,7 @@
         }
       ],
       "open": false,
-      "order": 95,
+      "order": 96,
       "summary": "A Link of the Mesh: a source reaching a peer"
     },
     "MeshResult": {
@@ -6255,7 +6665,7 @@
         }
       ],
       "open": false,
-      "order": 94,
+      "order": 95,
       "summary": "`mesh.plan`'s and `mesh.apply`'s result"
     },
     "MeshStarted": {
@@ -6287,7 +6697,7 @@
         }
       ],
       "open": false,
-      "order": 97,
+      "order": 98,
       "summary": "A Mesh run started with `background = true`"
     },
     "MeshStatus": {
@@ -6373,7 +6783,7 @@
         }
       ],
       "open": false,
-      "order": 100,
+      "order": 101,
       "summary": "`mesh.status`'s result: the Mesh as `roster.yml` asks for it"
     },
     "MeshStop": {
@@ -6393,7 +6803,7 @@
         }
       ],
       "open": false,
-      "order": 103,
+      "order": 104,
       "summary": "`mesh.stop`'s result"
     },
     "MoveResult": {
@@ -6425,7 +6835,7 @@
         }
       ],
       "open": false,
-      "order": 81,
+      "order": 82,
       "summary": "What `roster.inventory.move` wrote"
     },
     "NodeAction": {
@@ -6673,7 +7083,7 @@
         }
       ],
       "open": false,
-      "order": 80,
+      "order": 81,
       "summary": "What `roster.inventory.rename` wrote"
     },
     "ReviewResult": {
@@ -6699,7 +7109,7 @@
         }
       ],
       "open": false,
-      "order": 82,
+      "order": 83,
       "summary": "What `roster.inventory.review` wrote"
     },
     "Row": {
@@ -6907,30 +7317,24 @@
       "summary": "A Sidebar section (`roster.sidebar.set`)"
     },
     "ServeError": {
-      "doc": "",
+      "doc": "What `pcall` catches from [`roster.serve.call`](#rosterservecallmethod-params) and `roster.inventory`, and the second value [`roster.serve.request`](#rosterserverequestmethod-params-done)'s and [`roster.inventory.request`](#rosterinventoryrequestdone)'s `done` get, when roster serve answered with an error (decision Q211). Switch on `code`, never on the words. It's still the text it was before api 7: `tostring(e)`, `\"…\" .. e` and string methods (`e:find(\"busy\", 1, true)`, `e:match(…)`) see `roster.serve.call METHOD: MESSAGE (code N)`, and an uncaught one stops the call with that text. When serve gave no answer at all (it exited, or didn't answer in time) or roster refused before asking (`not granted`), the error is a plain string, whose `.code` is `nil` too.",
       "fields": [
         {
-          "doc": "Its code, in serve-api.md's tables.",
+          "doc": "serve's code: roster's own (`2` unknown Host, `4` busy, …) or JSON-RPC's (`-32601` no such method, `-32602` bad params), as [serve-api.md](serve-api.md) lists them.",
           "name": "code",
           "required": true,
           "type": "integer"
         },
         {
-          "doc": "What went wrong.",
+          "doc": "serve's words, without the function's name or the code; a `cmd:` or `env:` Login reference in them is cut to its kind ([`LoginRef`](#loginref)).",
           "name": "message",
           "required": true,
           "type": "string"
-        },
-        {
-          "doc": "More about it, as its row says.",
-          "name": "data",
-          "required": false,
-          "type": "table"
         }
       ],
       "open": false,
-      "order": 102,
-      "summary": "An error roster serve answered with"
+      "order": 72,
+      "summary": "roster serve's error, as a Plugin gets it (since api 7)"
     },
     "Service": {
       "doc": "",
@@ -6985,7 +7389,7 @@
         }
       ],
       "open": false,
-      "order": 75,
+      "order": 76,
       "summary": "One of a Host's services, resolved"
     },
     "ServiceProblem": {
@@ -7011,7 +7415,7 @@
         }
       ],
       "open": false,
-      "order": 76,
+      "order": 77,
       "summary": "A service entry roster left out of a Host"
     },
     "Session": {
@@ -7037,7 +7441,7 @@
         }
       ],
       "open": false,
-      "order": 114,
+      "order": 115,
       "summary": "An open Session, as `roster.sessions.list` gives it"
     },
     "SessionExitEvent": {
@@ -7063,7 +7467,7 @@
         }
       ],
       "open": false,
-      "order": 116,
+      "order": 117,
       "summary": "`session_exit`'s payload"
     },
     "SessionOpenEvent": {
@@ -7083,7 +7487,7 @@
         }
       ],
       "open": false,
-      "order": 115,
+      "order": 116,
       "summary": "`session_open`'s payload"
     },
     "SshLogin": {
@@ -7109,7 +7513,7 @@
         }
       ],
       "open": false,
-      "order": 73,
+      "order": 74,
       "summary": "A Host's ssh login"
     },
     "StatusSegment": {
@@ -7371,7 +7775,7 @@
         }
       ],
       "open": false,
-      "order": 118,
+      "order": 119,
       "summary": "`terminal_output`'s payload"
     },
     "Theme": {
@@ -7535,7 +7939,7 @@
         }
       ],
       "open": false,
-      "order": 79,
+      "order": 80,
       "summary": "What `roster.inventory.update` wrote"
     },
     "View": {

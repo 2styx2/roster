@@ -15,8 +15,9 @@ from urllib.parse import urljoin, urlparse
 from xml.sax.saxutils import escape as xml_escape
 from xml.sax.saxutils import unescape as xml_unescape
 
-from .common import die
+from .common import NotPrivate, die, read_private, write_private
 from .config import refuse_broken
+from .errors import UNKNOWN_HOST
 from .providers import get_secret
 
 METHODS = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
@@ -177,8 +178,11 @@ def load_session(path):
     """The kept session, or None. One past its time is deleted, so an expired cookie doesn't stay on disk (under
     ~/.cache, without $XDG_RUNTIME_DIR, nothing else removes it)."""
     try:
-        sess = json.loads(path.read_text())
+        sess = json.loads(read_private(path))
     except (OSError, ValueError):
+        return None
+    except NotPrivate:                  # a cookie others can read is no session to keep: logged in again
+        drop_session(path)
         return None
     if isinstance(sess, dict) and sess.get("expires", 0) > time.time():
         return sess
@@ -188,10 +192,7 @@ def load_session(path):
 
 def save_session(path, sess):
     try:
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            json.dump(sess, f)
+        write_private(path, json.dumps(sess))
     except OSError:
         pass                                          # no cache: the next call just logs in again
 
@@ -373,7 +374,7 @@ def cmd_web(cfg, args):
     host, service, method, path = words if len(words) == 4 else (words[0], None, *words[1:])
     h = cfg["hosts"].get(host)
     if not h:
-        die(f"unknown host {host!r} (see `roster hosts`)")
+        die(f"unknown host {host!r} (see `roster hosts`)", code=UNKNOWN_HOST)
     status, reason, ctype, body = request(h, service, method, path, args.data, args.header or (),
                                           args.insecure, args.timeout)
     print(f"HTTP {status} {reason}" + (f"  [{ctype}]" if ctype else ""), file=sys.stderr, flush=True)

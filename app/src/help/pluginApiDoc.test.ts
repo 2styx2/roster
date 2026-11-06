@@ -1,6 +1,6 @@
 // `:help plugin-api` is written from plugin-api.json (T228, #438), so the help chunk carries the
 // Plugin API once, as data, rather than as data and as plugin-api.md: what pluginApiDoc writes is, to
-// the byte, the docs/plugin-api.md the Rust generator committed (crates/roster-core/src/plugin/api.rs
+// the byte, the docs/plugin-api.md the Rust generator committed (crates/roster-core/src/plugin/api/
 // `markdown`), which GitHub shows.
 import { describe, expect, it } from "vitest";
 import api from "../../../crates/roster-core/tests/fixtures/plugin-api.json";

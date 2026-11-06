@@ -1,5 +1,35 @@
 //! Facts about the machine the app runs on.
 
+/// The OS the app runs on: which Backends there can be (detect.rs), `roster.os` in Lua, where
+/// the Config lives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Os {
+    Windows,
+    Linux,
+    Macos,
+}
+
+impl Os {
+    pub fn current() -> Self {
+        if cfg!(windows) {
+            Os::Windows
+        } else if cfg!(target_os = "macos") {
+            Os::Macos
+        } else {
+            Os::Linux
+        }
+    }
+
+    /// `roster.os` in Lua.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Os::Windows => "windows",
+            Os::Linux => "linux",
+            Os::Macos => "macos",
+        }
+    }
+}
+
 /// The Windows build number (e.g. 26200 for 10.0.26200), for xterm's `windowsPty` option: ConPTY
 /// sits between the terminal and the shell on Windows, and how it reflows depends on the build.
 /// `None` off Windows.

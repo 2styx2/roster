@@ -147,6 +147,19 @@ def test_a_move_that_would_change_the_mesh_dir_is_caught(write_config):
     assert pinned == ["mesh_dir"] and "        mesh_dir: /opt/m\n" in new
 
 
+def test_moving_a_host_keeps_the_sudo_login_it_inherited(write_config):
+    """A Host's sudo: (ticket 119) comes out the same after a move: one it inherited from its old group is written on
+    it, and a Host with none doesn't take the new group's (its sudo password stays its ssh Login's)."""
+    from roster.config import load_config_text
+    path = write_config(MESHED.replace("  lab:\n    user: u\n", '  lab:\n    user: u\n    sudo: {auth: "bw:lab sudo"}\n'))
+    _, new, _, pinned = edit.moved(path, "h1", "plain")
+    assert "sudo" in pinned and load_config_text(new, path)["sudo"]["h1"] == "bw:lab sudo"
+    _, new, _, pinned = edit.moved(path, "p1", "lab")
+    assert "sudo" in pinned and "p1" not in load_config_text(new, path)["sudo"]
+    _, new, moved = edit.group_deleted(path, "lab", "plain")
+    assert moved == ["h1", "h2"] and load_config_text(new, path)["sudo"] == {"h1": "bw:lab sudo", "h2": "bw:lab sudo"}
+
+
 def test_a_host_with_no_mesh_setting_joins_the_mesh_of_the_group_it_moves_to(write_config):
     path = write_config(MESHED)
     _, _, h, pinned = edit.moved(path, "p1", "lab")
@@ -273,8 +286,8 @@ def test_deleting_a_group_of_50_hosts_loads_roster_yml_a_constant_number_of_time
     path = write_config(f"groups:\n  lab:\n    user: root\n    hosts:\n      keep: 10.0.0.1\n"
                         f"  big:\n    user: admin\n    type: switch\n    hosts:\n{hosts}")
     loads, temps = [], []
-    real_load, real_mkstemp = config.parse_config, tempfile.mkstemp
-    monkeypatch.setattr(config, "parse_config", lambda *a, **k: loads.append(1) or real_load(*a, **k))
+    real_load, real_mkstemp = config.parse_inventory, tempfile.mkstemp
+    monkeypatch.setattr(config, "parse_inventory", lambda *a, **k: loads.append(1) or real_load(*a, **k))
     monkeypatch.setattr(tempfile, "mkstemp", lambda *a, **k: temps.append(k.get("dir")) or real_mkstemp(*a, **k))
     old, new, moved = edit.group_deleted(path, "big", "lab")
     assert len(moved) == 50 and len(loads) <= 3, len(loads)

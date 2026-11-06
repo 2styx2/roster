@@ -12,6 +12,7 @@ import { fakeCommit } from "./backend/fakePackages";
 import type { FakePlugin } from "./backend/fakePlugins";
 import { memoryPlatform } from "./platform/memory";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { advanceTimers, fakeTimeouts, pass } from "./test-timers";
 
 const LEADER = "{Control>} {/Control}";
 
@@ -198,7 +199,8 @@ describe(":tutor with your Plugins", () => {
   });
 
   it("leaving stops the demo's Plugins: no timer of theirs reaches the demo's host after it closed", async () => {
-    const user = userEvent.setup();
+    fakeTimeouts();
+    const user = userEvent.setup({ advanceTimers });
     const ticker: FakePlugin = {
       manifest: { name: "ticker", version: "1", description: "", author: null, api: 3, permissions: [] },
       load(roster) {
@@ -238,7 +240,8 @@ describe(":tutor with your Plugins", () => {
     await user.keyboard(`${LEADER}:tutor quit{Enter}`);
     await waitFor(() => expect(banner()).toBeNull());
     expect(closed).toBe(true);
-    await new Promise((r) => setTimeout(r, 150));
+    // Twenty of the ticker's 50 ms.
+    await pass(1_000);
     expect(late).toBe(0);
   });
 });

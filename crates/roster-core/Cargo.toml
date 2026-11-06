@@ -34,6 +34,10 @@ hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 http-body-util = "0.1"
 tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
 rustls-platform-verifier = "0.7"
+# The TypeScript types of what the core sends the frontend, generated from these Rust types by a
+# test (tests/ts_types.rs writes app/src/config/core.gen.ts). Only with the `ts` feature, which only
+# the tests turn on: never in the app.
+ts-rs = { version = "12", optional = true, default-features = false, features = ["serde-compat", "no-serde-warnings"] }
 
 # Polling the PTY master so a Session's reader can stop (session.rs).
 [target.'cfg(unix)'.dependencies]
@@ -43,9 +47,18 @@ libc = "0.2"
 # Lets tests stand in for this computer's resolver (`PluginHost::with_lookup`) and hold the Config
 # watcher's clock (`config::watch_held`); never on in the app.
 test-hooks = []
+# Derives the TypeScript types (tests/ts_types.rs); never on in the app.
+ts = ["dep:ts-rs"]
+# The end-to-end bridge (shell/bridge.rs, examples/bridge.rs): the app's commands over a local
+# WebSocket for the full-stack tests in app/e2e/fullstack; never on in the app.
+bridge = []
+
+[[example]]
+name = "bridge"
+required-features = ["bridge"]
 
 [dev-dependencies]
-# Its own tests build it with the test hooks on.
-roster-core = { path = ".", features = ["test-hooks"] }
+# Its own tests build it with the test hooks and the TypeScript types on.
+roster-core = { path = ".", features = ["test-hooks", "ts", "bridge"] }
 # A test's temp folder is deleted when the test ends, even when it panics (tests/common/mod.rs).
 tempfile = "3"

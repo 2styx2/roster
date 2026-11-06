@@ -10,8 +10,8 @@ import { searchHosts } from "../picker/match";
 import { searchItems } from "./search";
 import { BUILTIN, Registry, type Entry } from "../registry";
 import type { CommandLine } from "../keymap";
-import { statusText } from "../session/Sessions";
-import type { Dot, SidebarSection } from "../sidebar/Sidebar";
+import { isLive, statusText } from "../session/status";
+import type { Dot, SidebarSection } from "../sidebar/model";
 import { buildSections, hostDot, type SidebarContext, type SidebarSectionDef } from "../sidebar/sections";
 
 export interface FinderItem {
@@ -98,7 +98,7 @@ export const sessionsFinder: FinderSourceDef = {
   items: ({ sessions, hostByName }) =>
     sessions.tabs.map((tab, i) => {
       const host = hostByName.get(tab.host);
-      const ended = tab.status.state === "ended" || tab.status.state === "failed";
+      const ended = !isLive(tab.status);
       const mark = tab.id === sessions.active ? "current" : tab.id === sessions.previous ? "previous" : undefined;
       return {
         id: `session-${tab.id}`,

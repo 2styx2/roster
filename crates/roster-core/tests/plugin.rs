@@ -5,6 +5,8 @@
 mod common;
 
 use common::{CEILING, within_ceiling};
+use roster_core::plugin::By;
+use roster_core::rpc::CallError;
 
 use roster_core::plugin::{Event, Limits, Permission, PluginHost, Serve, Source};
 use serde_json::{Value, json};
@@ -43,7 +45,7 @@ impl Held {
 }
 
 impl Serve for FakeServe {
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
         self.calls.lock().unwrap().push((method.to_string(), params.clone()));
         if let Some(held) = &self.held {
             held.wait();
@@ -57,7 +59,9 @@ impl Serve for FakeServe {
             "host.get" => Ok(json!({ "name": params["name"], "ip": "10.0.0.5" })),
             "host.update" => Ok(json!({ "host": params["host"], "pending": true })),
             "inventory.info" => Ok(json!({ "api_version": 17 })),
-            other => Err(format!("unknown method {other}")),
+            other => Err(CallError::Io {
+                message: format!("unknown method {other}"),
+            }),
         }
     }
 }
@@ -196,7 +200,7 @@ fn a_plugin_adds_commands_keys_sections_status_finders_and_help_as_ops() {
     assert_eq!(reply.ops[7]["theme"]["colors"]["accent"], "#ff8800");
 
     let run = handler(&reply.ops[0], "run");
-    let r = host.call("hello", run, json!({ "args": "world", "words": ["world"] }));
+    let r = host.call("hello", run, json!({ "args": "world", "words": ["world"] }), By::User);
     assert_eq!(r.result, "done");
     assert_eq!(
         r.ops,
@@ -204,7 +208,7 @@ fn a_plugin_adds_commands_keys_sections_status_finders_and_help_as_ops() {
     );
 
     let items = handler(&reply.ops[4]["spec"], "items");
-    let r = host.call("hello", items, json!({ "query": "b" }));
+    let r = host.call("hello", items, json!({ "query": "b" }), By::User);
     assert_eq!(r.result, json!([{ "label": "ab" }]));
 }
 
@@ -263,7 +267,7 @@ fn granted_functions_reach_only_their_serve_methods_and_writes_stay_pending() {
         .unwrap();
     assert!(loaded.error.is_none(), "{:?}", loaded.error);
     let go = loaded.ops[0]["run"]["handler"].as_u64().unwrap();
-    let reply = host.call("reader", go, json!({ "args": "", "words": [] }));
+    let reply = host.call("reader", go, json!({ "args": "", "words": [] }), By::User);
     assert!(reply.error.is_none(), "{:?}", reply.error);
     assert_eq!(serve.methods(), ["hosts.list", "host.get", "host.update"]);
     assert_eq!(reply.ops[0], json!({ "op": "open", "host": "esx-02" }));
@@ -594,7 +598,7 @@ fn an_error_while_loading_names_the_plugin_and_line_and_disables_it() {
     assert!(reply.disabled.is_some());
     assert!(host.list()[0].disabled.is_some());
     assert!(
-        host.call("broken", 1, json!({}))
+        host.call("broken", 1, json!({}), By::User)
             .error
             .unwrap()
             .message
@@ -617,16 +621,16 @@ fn a_hook_that_loops_runs_out_of_time_and_a_repeat_offender_is_disabled() {
     let (spin, fine) = (handler(&reply.ops[0], "run"), handler(&reply.ops[1], "run"));
     // The budget stopped it (its message, at its line), not the host giving up on it (that
     // disables it at once, "didn't answer"). T161: no stopwatch, which a paused process overran.
-    let r = host.call("loopy", spin, json!({}));
+    let r = host.call("loopy", spin, json!({}), By::User);
     let e = r.error.unwrap();
     assert!(e.message.contains("took longer than 250 ms"), "{e}");
     assert_eq!(e.line, Some(2));
     assert!(r.disabled.is_none(), "one strike");
-    assert_eq!(host.call("loopy", fine, json!({})).result, "ok");
-    host.call("loopy", spin, json!({}));
-    let third = host.call("loopy", spin, json!({}));
+    assert_eq!(host.call("loopy", fine, json!({}), By::User).result, "ok");
+    host.call("loopy", spin, json!({}), By::User);
+    let third = host.call("loopy", spin, json!({}), By::User);
     assert!(third.disabled.unwrap().contains("failed 3 times"));
-    assert!(host.call("loopy", fine, json!({})).error.is_some());
+    assert!(host.call("loopy", fine, json!({}), By::User).error.is_some());
 }
 
 /// Its manifest is read within the host's load limits, as its init.lua is, not a fixed second
@@ -692,11 +696,12 @@ fn a_slow_plugin_is_given_up_on_and_the_others_keep_working() {
     let r = {
         let host = Arc::clone(&host);
         let h = handler(&slow_load.ops[0], "run");
-        within_ceiling("the host giving up", move || host.call("slow", h, json!({})))
+        within_ceiling("the host giving up", move || host.call("slow", h, json!({}), By::User))
     };
     assert!(r.disabled.unwrap().contains("didn't answer"));
     assert_eq!(
-        host.call("quick", handler(&quick_load.ops[0], "run"), json!({})).result,
+        host.call("quick", handler(&quick_load.ops[0], "run"), json!({}), By::User)
+            .result,
         1
     );
 }
@@ -731,7 +736,7 @@ fn a_plugin_waiting_for_a_slow_serve_isnt_given_up_on_and_the_others_keep_workin
     let waiting = {
         let host = Arc::clone(&host);
         let h = handler(&slow_load.ops[0], "run");
-        std::thread::spawn(move || host.call("waits", h, json!({})))
+        std::thread::spawn(move || host.call("waits", h, json!({}), By::User))
     };
     // T161: signals, not a 50 ms sleep and a stopwatch. It's waiting for serve once serve has
     // the call; the other Plugin answers meanwhile, not queued behind it.
@@ -743,7 +748,9 @@ fn a_plugin_waiting_for_a_slow_serve_isnt_given_up_on_and_the_others_keep_workin
     let quick = {
         let host = Arc::clone(&host);
         let h = handler(&quick_load.ops[0], "run");
-        within_ceiling("the other Plugin's answer", move || host.call("quick2", h, json!({})))
+        within_ceiling("the other Plugin's answer", move || {
+            host.call("quick2", h, json!({}), By::User)
+        })
     };
     assert_eq!(quick.result, 1);
     // Held past the Plugin's budget and the host's grace (a sleep only ever lasts longer), and
@@ -769,12 +776,12 @@ fn setting_a_section_again_replaces_its_actions() {
     let (host, _) = host();
     let (_, reply) = host.load(&Source::Dir(dir.to_path_buf()), &[]).unwrap();
     let again = handler(&reply.ops[0], "run");
-    let first = host.call("rows", again, json!({}));
+    let first = host.call("rows", again, json!({}), By::User);
     let old = handler(&first.ops[0]["spec"]["rows"][0], "run");
-    let second = host.call("rows", again, json!({}));
+    let second = host.call("rows", again, json!({}), By::User);
     let new = handler(&second.ops[0]["spec"]["rows"][0], "run");
-    assert_eq!(host.call("rows", new, json!({})).result, 2);
-    let stale = host.call("rows", old, json!({}));
+    assert_eq!(host.call("rows", new, json!({}), By::User).result, 2);
+    let stale = host.call("rows", old, json!({}), By::User);
     assert!(stale.error.unwrap().message.contains("gone"));
     assert!(host.list()[0].errors == 0, "a stale action isn't the Plugin's fault");
 }
@@ -833,6 +840,29 @@ fn an_install_path_is_home_absolute_or_under_the_config_dir() {
 }
 
 #[test]
+fn a_plugin_path_is_built_in_a_package_or_a_folder() {
+    use roster_core::plugin::PluginPath;
+    assert_eq!(PluginPath::parse("builtin:hosts"), PluginPath::Builtin("hosts"));
+    assert_eq!(
+        PluginPath::parse("package:recent-alerts"),
+        PluginPath::Package("recent-alerts")
+    );
+    assert_eq!(PluginPath::parse("~/plugins/x"), PluginPath::Folder("~/plugins/x"));
+    assert_eq!(
+        PluginPath::parse("plugins/builtin:x"),
+        PluginPath::Folder("plugins/builtin:x")
+    );
+}
+
+#[test]
+fn a_kept_grant_this_version_refuses_is_reported_not_granted() {
+    let (grants, refused) = Permission::parse_grants(&["inventory.read".into(), "serve:vault.unlock".into()]);
+    assert_eq!(grants, vec![Permission::InventoryRead]);
+    assert_eq!(refused.len(), 1);
+    assert!(refused[0].starts_with("serve:vault.unlock: "), "{refused:?}");
+}
+
+#[test]
 fn the_host_count_is_a_built_in_plugin_on_the_public_api() {
     let (host, serve) = host();
     let (m, reply) = host
@@ -886,6 +916,7 @@ fn the_example_plugin_loads_and_pins_a_host() {
         "pinned",
         handler(pin, "run"),
         json!({ "args": "esx-02", "words": ["esx-02"] }),
+        By::User,
     );
     assert!(r.error.is_none(), "{:?}", r.error);
     let section = r.ops.iter().find(|o| o["op"] == "section").unwrap();
@@ -950,6 +981,7 @@ fn the_clipboard_is_written_only_in_a_call_the_user_started() {
         "copier",
         handler(copy, "run"),
         json!({ "args": "10.0.0.5", "words": ["10.0.0.5"] }),
+        By::User,
     );
     assert!(r.error.is_none(), "{:?}", r.error);
     assert_eq!(r.ops, [json!({ "op": "copy", "text": "10.0.0.5" })]);
@@ -1002,7 +1034,12 @@ fn text_that_isnt_utf8_is_shown_with_a_replacement_character_not_an_error() {
         assert_eq!(r.ops[4]["spec"]["lines"][0], shown);
     }
     let copy = reply.ops.iter().find(|o| o["op"] == "command").unwrap();
-    let r = host.call("cutter", handler(copy, "run"), json!({ "args": "", "words": [] }));
+    let r = host.call(
+        "cutter",
+        handler(copy, "run"),
+        json!({ "args": "", "words": [] }),
+        By::User,
+    );
     assert!(r.error.is_none(), "{:?}", r.error);
     assert_eq!(r.ops, [json!({ "op": "copy", "text": shown })]);
 }
@@ -1029,7 +1066,7 @@ fn replies_say_which_events_a_plugin_listens_for_when_that_changes() {
         let op = loaded.ops.iter().find(|o| o["name"] == name).unwrap();
         handler(op, "run")
     };
-    let noop = host.call("listens", command("noop"), json!({}));
+    let noop = host.call("listens", command("noop"), json!({}), By::User);
     assert_eq!(noop.listens, None, "nothing new");
     let heard = host.event(Event {
         name: "session_open".into(),
@@ -1045,7 +1082,7 @@ fn replies_say_which_events_a_plugin_listens_for_when_that_changes() {
         payload: json!({ "session": 2, "host": "esx-02" }),
     });
     assert!(again.is_empty(), "the same events: nothing to say");
-    let hear = host.call("listens", command("hear"), json!({}));
+    let hear = host.call("listens", command("hear"), json!({}), By::User);
     assert_eq!(
         hear.listens,
         Some(vec![

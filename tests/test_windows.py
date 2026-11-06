@@ -11,15 +11,15 @@ import pytest
 from conftest import WINDOWS
 from test_serve import INVENTORY, PASSWORD, run_askpass, unlocked_serve
 
-from roster import common, sshops
+from roster import common, context, sshops
 
 windows_only = pytest.mark.skipif(not WINDOWS, reason="needs Windows itself")
 
 
 @pytest.fixture
 def as_windows(monkeypatch):
-    monkeypatch.setattr(common, "WINDOWS", True)
-    monkeypatch.setattr(sshops, "WINDOWS", True)
+    from roster import context
+    monkeypatch.setattr(context, "WINDOWS", True)
 
 
 def test_a_tool_is_found_by_its_extension_and_an_exe_takes_any_argument(as_windows, monkeypatch):
@@ -75,7 +75,7 @@ def test_a_batch_file_refusal_is_a_provider_error_not_a_crash(as_windows, monkey
 
 
 def test_roster_keeps_its_files_in_appdata_on_windows(as_windows, isolated):
-    assert common.user_config_dir() == isolated["home"] / "AppData" / "Roaming" / "roster"
+    assert context.user_config_dir() == isolated["home"] / "AppData" / "Roaming" / "roster"
 
 
 def test_the_ssh_config_on_windows_has_forward_slashes_and_no_shared_connections(as_windows, isolated, write_config):
@@ -83,7 +83,7 @@ def test_the_ssh_config_on_windows_has_forward_slashes_and_no_shared_connections
     cfg = load_config(write_config(INVENTORY))
     block = "\n".join(sshops.host_block(cfg, "esx", cfg["hosts"]["esx"]))
     assert "Control" not in block                     # Windows' OpenSSH has no Unix sockets to share one on
-    assert f'UserKnownHostsFile "{common.known_hosts_file().as_posix()}"' in block
+    assert f'UserKnownHostsFile "{context.current().known_hosts.as_posix()}"' in block
     assert "\\" not in block
 
 
@@ -255,7 +255,7 @@ def test_sudos_password_reaches_the_remote_sh_without_a_carriage_return(as_windo
     write_config(SUDO_CFG)
     monkeypatch.setenv("ROSTER_TEST_PW", "s3cret")
     seen = {}
-    monkeypatch.setattr(cli.subprocess, "run", fake_run_answering(seen, "root\n"))
+    monkeypatch.setattr(subprocess, "run", fake_run_answering(seen, "root\n"))
     assert cli.main(["run", "--sudo", "key-host", "--", "whoami"]) == 0
     assert sent_on_windows(seen) == b"s3cret\n"
 
@@ -396,7 +396,7 @@ def test_a_file_anyone_else_owns_or_may_open_isnt_private(owner, aces, why):
 @windows_only
 def test_the_bw_session_file_is_read_only_while_its_acl_is_this_users_alone(isolated, fakes, capsys):
     from roster.providers import get_secret
-    f = common.user_config_dir() / "bw-session"
+    f = context.user_config_dir() / "bw-session"
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text("fake-session-key\n")
     assert common.read_private(f) == "fake-session-key\n"
@@ -481,8 +481,8 @@ def test_roster_tells_windows_never_to_look_in_the_current_folder(as_windows, mo
     folder first unless NoDefaultCurrentDirectoryInExePath is set; roster sets it for itself and all it starts."""
     from roster import cli
     monkeypatch.delenv("NoDefaultCurrentDirectoryInExePath", raising=False)
-    monkeypatch.setattr(cli, "_main", lambda argv: 0)
-    assert cli.main(["--version"]) == 0
+    with pytest.raises(SystemExit, match="0"):
+        cli.main(["--version"])
     assert os.environ["NoDefaultCurrentDirectoryInExePath"] == "1"
 
 

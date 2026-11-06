@@ -6,8 +6,8 @@
 import { describe, expect, it } from "vitest";
 import { fakePluginHost } from "../backend/fakePlugins";
 import { topologyPlugin } from "../backend/fakeTopology";
-import type { Host, PluginEventName, PluginReply } from "../backend/types";
-import { parseOp } from "./ops";
+import { BackendCallError, type Host, type PluginEventName, type PluginReply } from "../backend/types";
+import { parseOp } from "./opRegistry";
 import transcript from "./topology.transcript.json";
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
@@ -41,7 +41,7 @@ describe("the Topology stand-in", () => {
       if (method === "mesh.cut" && params.background === true) return answers["mesh.cut"];
       if (method === "mesh.job") return answers["mesh.job"];
       if (method === "host.check_job") return answers["host.check_job"];
-      throw new Error(`unknown method '${method}' (code -32601)`);
+      throw new BackendCallError(`unknown method '${method}'`, -32601);
     };
     const host = fakePluginHost({ topology: topologyPlugin() }, () => hosts, undefined, serve);
     // What the Plugin did when its roster serve requests answered: part of the step, as the Rust

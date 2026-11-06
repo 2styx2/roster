@@ -10,6 +10,7 @@
 //   Night shift: []
 import { isMap, isScalar, isSeq, LineCounter, parseDocument } from "yaml";
 import { parseFolders, STATE_KEY, type Folder } from "./folders";
+import { errorText } from "../ui/format";
 
 export const FOLDERS_FILE = "folders.yml";
 
@@ -71,7 +72,15 @@ export async function foldersSettings(
   state: { load(): Promise<void>; get(key: string): unknown },
 ): Promise<Record<string, unknown>> {
   const out: Record<string, unknown> = { fixed: fixed.list().map((f) => ({ name: f.name, hosts: [...f.hosts], source: f.source })) };
-  const file = source ? await source.read().catch(() => null) : null;
+  let file: { text: string | null } | null;
+  try {
+    file = source ? await source.read() : null;
+  } catch (e) {
+    // There may be Folders in it: the State's older ones must not move in over them.
+    out.import_from = FOLDERS_FILE;
+    out.import_error = `${FOLDERS_FILE} can't be read (${errorText(e)}): fix it and they move in at the next start`;
+    return out;
+  }
   if (file?.text != null) {
     const parsed = parseFoldersYml(file.text);
     out.import_from = FOLDERS_FILE;

@@ -9,14 +9,17 @@ come from providers.vault_items, the listing that never reads a password (Bitwar
 `roster vault status` reads the snapshot's time for "last synced", with no vault call."""
 
 import json
+import os
+import sys
 from datetime import datetime, timezone
 
-from . import providers
-from .common import NotPrivate, read_private, replace_file, say, user_config_dir
+from . import fromvault, providers
+from .common import UTC_TIME, NotPrivate, find_program, plain, read_private, say, utc_now, write_private
+from .context import box_file
 
 
 def snapshot_path(provider):
-    return user_config_dir() / "vault-sync" / f"{provider}.json"
+    return box_file("vault_sync") / f"{provider}.json"
 
 
 def load(provider, quiet=False):
@@ -38,7 +41,7 @@ def load(provider, quiet=False):
     return data
 
 
-def last_synced(provider):
+def last_synced(provider: str) -> str | None:
     """When `roster vault sync` last synced PROVIDER (an ISO time), or None. Never says anything: a snapshot that isn't
     the user's alone counts as none, and the next `roster vault sync` says so and replaces it."""
     data = load(provider, quiet=True)
@@ -85,23 +88,18 @@ def missing(item):
 def shown(item):
     """An item as a line names it: its name, or its id when the name holds a control or format character (a vault
     item can't rewrite the terminal it's shown on)."""
-    name = item["name"]
-    return name if name and name.isprintable() else item["id"]
+    return item["name"] if plain(item["name"]) else item["id"]
 
 
 def save(provider, items):
-    f = snapshot_path(provider)
-    if f.is_symlink():
-        say(f"warning      {f} is a symlink (roster never writes through one here) - not updated")
-        return
-    data = {"synced": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "items": items}
-    replace_file(f, json.dumps(data, indent=1, sort_keys=True) + "\n", mode=0o600)
+    data = {"synced": utc_now(), "items": items}
+    write_private(snapshot_path(provider), json.dumps(data, indent=1, sort_keys=True) + "\n")
 
 
-def ago(when, now=None):
+def ago(when: object, now: datetime | None = None) -> str:
     """'just now', '5 min ago', '3 h ago', '2 days ago' for an ISO time."""
     try:
-        then = datetime.strptime(str(when)[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        then = datetime.strptime(str(when)[:19] + "Z", UTC_TIME).replace(tzinfo=timezone.utc)
     except ValueError:
         return str(when)
     s = ((now or datetime.now(timezone.utc)) - then).total_seconds()
@@ -112,3 +110,45 @@ def ago(when, now=None):
     if s < 2 * 86400:
         return f"{int(s // 3600)} h ago"
     return f"{int(s // 86400)} days ago"
+
+
+# ---------------------------------------------------------------- every vault roster.yml uses (roster sync, vault sync)
+
+# what an unlock in a terminal costs: Bitwarden keeps one unlock at a time
+UNLOCK_COST = "unlocking here locks the roster app and any other bw session on this Box (bw keeps one unlock at a time)"
+
+
+class NotAsked(providers.VaultLocked):
+    """The vault step was skipped at its prompt (Ctrl-D): left as last synced."""
+
+
+def sync_vaults(cfg, interactive=False):
+    """Each vault roster.yml uses that keeps a local copy, synced (sync), one at a time: [(provider, result, error)],
+    result None for a vault with nothing to sync, error what stopped it (a SecretError). Asks for a master password
+    only when INTERACTIVE, once a run (T241's offer to keep it unlocked with it), saying first what that costs."""
+    refs = fromvault.refs(cfg["path"])
+    out = []
+    for p in sorted(p for p in refs if p in providers.PROVIDERS and providers.holds_items(p)):
+        if interactive and p == "bw" and bw_would_ask():    # #503's review MED-1: say what an unlock here costs
+            print(f"note: the vault is locked, so roster asks for its master password once to sync it (Ctrl-D "
+                  f"skips the vault). As with roster vault unlock, {UNLOCK_COST}", file=sys.stderr, flush=True)
+        try:
+            out.append((p, sync(p, interactive=interactive, mapped=fromvault.named(p, refs[p])), None))
+        except EOFError:                   # Ctrl-D at the prompt: the vault is left as last synced
+            out.append((p, None, NotAsked("no master password given")))
+        except RuntimeError as e:          # a SecretError, or a provider's own failure: its words, never a value
+            out.append((p, None, e))
+    return out
+
+
+def bw_would_ask():
+    """Would a Bitwarden lookup now ask for the master password? Not with a working BW_SESSION or saved session, nor
+    BW_PASSWORD; not when bw isn't logged in or installed (its own error says so)."""
+    if os.environ.get("BW_PASSWORD") or not find_program("bw"):
+        return False
+    try:
+        if providers.vault_status("bw") != "locked":    # unlocked by BW_SESSION, or not logged in
+            return False
+        return (providers.saved_session("bw") or ("none", None))[0] != "working"
+    except providers.SecretError:
+        return False

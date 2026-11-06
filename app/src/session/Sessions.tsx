@@ -14,53 +14,12 @@ import { HopCrumb } from "./HopCrumb";
 import type { QuickTarget } from "../quick/target";
 import { CloseGlyph } from "../ui/CloseGlyph";
 import { useForgetOnLock } from "../lock/forgetOnLock";
-
-/** Where a Session is on its way to a shell (issue #78): `starting` while roster prepares it and
- * ssh starts on this Box, `logging-in` once ssh runs and the Host hasn't answered yet, null once
- * it has (or it ended, or was refused). For a Host whose key roster hasn't seen (ticket 36):
- * `checking-key` while its key is fetched, `asking` while the user decides, `trusting` while
- * roster records it. */
-export type ConnectPhase = "starting" | "logging-in" | "checking-key" | "asking" | "trusting" | "password";
-
-export function connectPhase(tab: Tab): ConnectPhase | null {
-  const s = tab.status;
-  if (s.state === "asking") return !s.key ? "checking-key" : s.trusting ? "trusting" : "asking";
-  if (s.state === "password") return "password";
-  if (s.state === "connecting") return "starting";
-  if (tab.status.state === "open" && !tab.shell) return "logging-in";
-  return null;
-}
-
-/** How the Session's link to its Host stands, for the edge drawn from its node (taste.md: an
- * edge drawn on connect, snapping back on failure): drawing, up, or down. */
-export function linkOf(tab: Tab): "connecting" | "up" | "down" {
-  if (connectPhase(tab)) return "connecting";
-  return tab.status.state === "open" ? "up" : "down";
-}
-
-export function statusText(tab: Tab): string {
-  const s = tab.status;
-  switch (s.state) {
-    case "connecting":
-      return "connecting…";
-    case "asking":
-      return s.key ? "new host key" : "connecting…";
-    case "password":
-      return "password";
-    case "open":
-      return tab.shell ? "" : "connecting…";
-    case "failed":
-      return "failed";
-    case "ended":
-      if (s.exit.closed) return "closed";
-      return s.exit.code === null ? "ended (signal)" : `ended (code ${s.exit.code})`;
-  }
-}
+import { connectPhase, isLive, statusText, type ConnectPhase } from "./status";
 
 /** The tab's state dot (as in the prototype): filled for a key login, hollow for a password one,
  * grey once the Session has ended or was refused. */
 function StateDot({ tab }: { tab: Tab }) {
-  const done = tab.status.state === "ended" || tab.status.state === "failed";
+  const done = !isLive(tab.status);
   const auth = tab.auth;
   const connecting = connectPhase(tab) !== null;
   const cls = [
@@ -146,7 +105,7 @@ export interface KeyAnswers {
  * It's the network-map motif (taste.md), never a spinner. When the shell answers, it fades out
  * over the first output; a failure replaces it with the error at once.
  */
-export function ConnectCard({
+function ConnectCard({
   host,
   address,
   phase,
@@ -557,7 +516,7 @@ export function SessionPanes({
                 />
               )
             )}
-            {s.state !== "failed" && s.state !== "ended" && (
+            {isLive(s) && (
               <ConnectCard
                 key={tab.attempt}
                 host={tab.host}

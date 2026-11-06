@@ -1,11 +1,11 @@
-// The Plugin API's types (crates/roster-core/src/plugin/api.rs, ticket 70) against what the app
+// The Plugin API's types (crates/roster-core/src/plugin/api/, ticket 70) against what the app
 // really reads of them: ops.ts checks each op a Plugin sends, and this test records every field it
 // reads of each table (a Proxy) and compares that with the type's documented fields. A field
-// ops.ts starts reading, or one the reference lists that nothing reads, fails here: change api.rs
+// ops.ts starts reading, or one the reference lists that nothing reads, fails here: change plugin/api
 // and run `cargo run -p roster-core --example gen_plugin_api`.
 import { describe, expect, it } from "vitest";
 import api from "../../../crates/roster-core/tests/fixtures/plugin-api.json";
-import { parseOp } from "./ops";
+import { parseOp } from "./opRegistry";
 
 type Types = Record<string, { fields?: { name: string }[]; alias?: string }>;
 const TYPES = api.types as Types;

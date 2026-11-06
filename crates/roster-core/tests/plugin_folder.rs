@@ -6,6 +6,7 @@
 mod common;
 
 use roster_core::plugin::{Limits, PluginHost, Serve, Source};
+use roster_core::rpc::CallError;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,11 +14,13 @@ use std::sync::Arc;
 struct NoServe;
 
 impl Serve for NoServe {
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
         match method {
             "host.get" if params["name"] == "esx-02" => Ok(json!({ "name": "esx-02" })),
-            "host.get" => Err("no Host by that name (code 2)".into()),
-            _ => Err(format!("unknown method {method}")),
+            "host.get" => Err(CallError::rpc(2, "no Host by that name")),
+            _ => Err(CallError::Io {
+                message: format!("unknown method {method}"),
+            }),
         }
     }
 }

@@ -38,7 +38,7 @@ A first-party Plugin's tests run in the jobs that test the core (`.github/workfl
 | Job | What it runs on `plugins/` |
 |---|---|
 | App Rust (`cargo test`) | `crates/roster-core/tests/first_party.rs` installs every folder here as a Package with `dir = "plugins/NAME"` (from a local git repo, no network), checks its manifest names it after its folder, and loads it through the Plugin host the app uses, with the permissions it asks for. The Plugin's own tests go next to it, in `crates/roster-core/tests/plugin_NAME.rs`: drive it through the host as [`recent_alerts.rs`](../crates/roster-core/tests/recent_alerts.rs) does (install, every slot it fills, what it can't reach, revoking, an update that asks for more) |
-| App frontend (`npm run check`) | Its UI tests, in `app/src/plugins/NAME.test.ts(x)`, against the fake Backend; a recorded transcript of the real Lua (as recent-alerts does) keeps the stand-in honest |
+| App frontend (`npm run check`) | Its UI tests, in `app/src/plugins/NAME.test.ts(x)`, against the fake Backend; a recorded transcript of the real Lua (as recent-alerts does) keeps the stand-in honest. `app/src/plugins/luaContract.test.ts` checks every Plugin here names serve's codes as the contract does and compares job states only with serve's |
 | Plugin types (lua-language-server) | Every `.lua` file here, checked against the Plugin API's generated stubs (`.luarc.json` points at `examples/plugins/types`) |
 
 To run them locally: `cargo test --test first_party`, `cargo test --test plugin_NAME`, `npm run check` in `app/`, and `lua-language-server --check plugins --checklevel=Hint`.

@@ -10,6 +10,7 @@ import { STATE_KEY as PLUGINS_KEY, type DemoPlugins } from "../plugins/manager";
 import type { Platform } from "../platform/types";
 import { HINTS_KEY } from "../ui/hints";
 import { THEME_KEY, THEME_OVER_KEY } from "../theme/picker";
+import { errorText } from "../ui/format";
 
 /** The demo's Hosts: names a tutorial can point at (`demo-01`), made-up addresses, every Login a
  * key, so no Session ever asks for a vault. */
@@ -77,7 +78,7 @@ export async function demoBackend(real?: Backend, plugins?: DemoPlugins): Promis
   try {
     host = await real.demoPlugins(hosts);
   } catch (e) {
-    return without(`Your Plugins aren't in the demo: ${e instanceof Error ? e.message : String(e)}. The tutorial runs with roster's own.`);
+    return without(`Your Plugins aren't in the demo: ${errorText(e)}. The tutorial runs with roster's own.`);
   }
   const { close, ...methods } = host;
   const packages = plugins?.packages ?? [];
