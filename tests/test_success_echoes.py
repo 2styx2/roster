@@ -153,6 +153,32 @@ def test_revoke_all_never_names_a_hidden_unnamed_inventory(capsys, hidden, fakes
     assert not leaks(out + err), out + err
 
 
+def test_revoke_all_says_how_to_revoke_a_hidden_unnamed_inventory_without_renaming_it(capsys, hidden, fakes,
+                                                                                        monkeypatch, tmp_path):
+    """#529 item 3: when nothing roster knows of matches the header's digest, `roster -c PATH revoke` still works."""
+    run(capsys, ["-c", hidden, "sync", "--no-vault"])
+    monkeypatch.chdir(tmp_path)                             # ./roster.yml isn't it either
+    code, out, err = run(capsys, ["revoke", "--all", "-y"])
+    assert "`roster -c PATH revoke --yes` revokes it without renaming" in out and code == "1", out
+    assert not leaks(out + err), out + err
+
+
+@pytest.mark.parametrize("where", ["ROSTER_CONFIG", "./roster.yml"])
+def test_revoke_all_finds_a_hidden_unnamed_inventory_where_roster_would_look(capsys, hidden, fakes, monkeypatch,
+                                                                            tmp_path, where):
+    """#529 item 3: $ROSTER_CONFIG, ./roster.yml and the named Inventories' files are checked against the header's
+    digest, so the hidden one is revoked like any other, still never named."""
+    run(capsys, ["-c", hidden, "sync", "--no-vault"])
+    if where == "ROSTER_CONFIG":
+        monkeypatch.setenv("ROSTER_CONFIG", hidden)
+    else:
+        monkeypatch.chdir(Path(hidden).parent)
+    code, out, err = run(capsys, ["revoke", "--all", "-y"])
+    assert "not revoked: rename" not in out and "(unnamed): esx-02" in out, out
+    assert "in 1 Inventories" in out, out
+    assert not leaks(out + err), out + err
+
+
 def test_revoke_all_never_names_an_old_headers_token_folder(capsys, tmp_path, fakes):
     """An ssh config an older roster wrote names the token folder in its header; its roster.yml is gone since."""
     ssh = tmp_path / "home" / ".ssh" / "config.d"

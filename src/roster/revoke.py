@@ -3,6 +3,7 @@ on this Box (T183), each reached only by a name `ssh NAME` takes to that Invento
 The key files are deleted by hand, and only once every Host has lost the key: roster says which."""
 
 import concurrent.futures as cf
+import os
 import shlex
 import sys
 from collections.abc import Iterable
@@ -158,6 +159,18 @@ def revoke_targets() -> list[tuple[str, str | None, Path]]:
     return out
 
 
+def hidden_candidate(source: Path) -> Path | None:
+    """The roster.yml a hidden header names by its digest alone (#506), when it's one roster would find without being
+    told (#529): $ROSTER_CONFIG, ./roster.yml or a named Inventory's file, as given (so it stays hidden), or None.
+    Nothing else is searched: a search is slow, guesses, and could revoke the wrong file."""
+    from . import named
+    given = [os.environ.get("ROSTER_CONFIG"), "roster.yml", *(str(x.path) for x in named.load().inventories)]
+    for candidate in given:
+        if candidate and Path(candidate).expanduser().is_file() and sshconfig.same_source(source, candidate):
+            return Path(candidate)
+    return None
+
+
 def revoke_all(yes: bool = False) -> int:
     """T183 (#347): `roster revoke` for every Inventory on this Box at once, with one question and one summary. Each
     Inventory is loaded and reached by its own name (this run's Inventory is never switched), and a Host is reached
@@ -174,10 +187,14 @@ def revoke_all(yes: bool = False) -> int:
     left_alone = 0                          # left-out Hosts: skipped, so not finished (exit 1)
     for label, name, path in targets:
         if name is None and sshconfig.hidden_source(path):  # the header names it by its digest alone (#506)
-            say(f"  {label}: {HIDDEN_FILE} - not revoked: {RENAME_HINT} (`roster -c NEW-PATH sync`, then "
-                "`roster revoke --all`)")
-            problems += 1
-            continue
+            found = hidden_candidate(path)
+            if found is None:
+                say(f"  {label}: {HIDDEN_FILE} - not revoked: `roster -c PATH revoke --yes` revokes it without "
+                    f"renaming (PATH: its roster.yml); or {RENAME_HINT} (`roster -c NEW-PATH sync`, then "
+                    "`roster revoke --all`)")
+                problems += 1
+                continue
+            path = found
         shown = shown_path(path)
         again = f"roster --inv {name}" if name else f"roster -c {shlex.quote(shown or 'PATH')}"
         try:
