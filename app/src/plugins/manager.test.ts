@@ -1,11 +1,15 @@
 // The Plugin manager (ticket 23) over the fake Backend's Plugin host: installing asks first,
 // ops become registry entries with the Plugin's name as their source, revoking takes a permission
 // away at once, and only Sessions' output (never what's typed) reaches terminal.read.
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { fakeBackend, makeHosts } from "../backend/fake";
 import type { FakePlugin } from "../backend/fakePlugins";
 import { builtinRegistries } from "../registries";
-import { PluginManager, STATE_KEY, type PluginUi } from "./manager";
+import { BUILTIN_GRANTS, PluginManager, STATE_KEY, type PluginUi } from "./manager";
+import { CORE } from "./core.gen";
 import { parseOp } from "./opRegistry";
 
 const ALERTS = "~/plugins/recent-alerts";
@@ -44,6 +48,18 @@ function setup(
   const manager = new PluginManager(backend, registries, store, ui, now);
   return { manager, registries, state, ran, sent, backend };
 }
+
+describe("the built-in Plugins' grants", () => {
+  it("cover what each built-in's manifest asks, so the core runs it with all of it", () => {
+    const asked = CORE.bundled.flatMap((name) => {
+      const lua = readFileSync(join(dirname(fileURLToPath(import.meta.url)), `../../../crates/roster-core/plugins/${name}/roster-plugin.lua`), "utf8");
+      const list = /permissions\s*=\s*\{([^}]*)\}/.exec(lua)?.[1] ?? "";
+      return [...list.matchAll(/"([^"]+)"/g)].map((m) => `${name}: ${m[1]}`);
+    });
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.filter((a) => !BUILTIN_GRANTS.includes(a.split(": ")[1]!))).toEqual([]);
+  });
+});
 
 describe("installing", () => {
   it("asks first, with each permission's risk; cancelling installs nothing", async () => {

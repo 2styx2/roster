@@ -97,6 +97,12 @@ export interface DemoPlugins {
 const BUILTIN_PREFIX = CORE.builtin_prefix;
 /** The built-in features written as Plugins: always installed, granted what they ask until revoked. */
 const BUILTIN_PLUGINS: readonly string[] = CORE.bundled.map((name) => `${BUILTIN_PREFIX}${name}`);
+/** The most a built-in Plugin is granted before the user revokes any: the core runs it with what
+ * its manifest asks of these (plugin/mod.rs's `load` keeps only asked grants). The app can't read a
+ * built-in's manifest before loading it (`plugin_manifest` takes a folder), so this is a ceiling,
+ * not a list of what each gets: a serve method or a site stays something a built-in can't have
+ * unasked by the user. `hosts` and `folders` ask `inventory.read` (manager.test.ts checks). */
+export const BUILTIN_GRANTS: readonly string[] = ["inventory.read", "inventory.write", "sessions.open", "terminal.read", "terminal.write"];
 const builtinName = (path: string) => (path.startsWith(BUILTIN_PREFIX) ? path.slice(BUILTIN_PREFIX.length) : null);
 
 export const STATE_KEY = "plugins";
@@ -893,13 +899,12 @@ export class PluginManager {
     if (this.stopped) return;
     let result;
     try {
-      // A built-in Plugin is granted everything it asks for until a permission is revoked.
       const builtin = builtinName(path);
       const settings = builtin === null ? null : await this.builtinSettings(builtin);
       if (builtin !== null) this.builtinConfig.set(builtin, JSON.stringify(settings));
       // The list of open Sessions sent last is in the core first: the Plugin may read it at load.
       await this.sessionsSent;
-      result = await this.backend.pluginLoad(path, granted ?? ["inventory.read", "inventory.write", "sessions.open", "terminal.read", "terminal.write"], settings, this.builtins());
+      result = await this.backend.pluginLoad(path, granted ?? BUILTIN_GRANTS, settings, this.builtins());
     } catch (e) {
       await this.unload(name);
       this.problems.set(name, errorText(e));
@@ -911,7 +916,7 @@ export class PluginManager {
     if (this.stopped) return void (await this.backend.pluginUnload(manifest.name).catch(() => false));
     await this.unload(manifest.name, false);
     const asked = manifest.permissions.map((p) => p.name);
-    const info = { manifest, path, granted: granted === null ? asked : granted.filter((g) => asked.includes(g)) };
+    const info = { manifest, path, granted: (granted ?? BUILTIN_GRANTS).filter((g) => asked.includes(g)) };
     this.known.set(manifest.name, info);
     this.loaded.set(manifest.name, { ...info, listens: new Set(), disposers: new Map() });
     this.problems.delete(manifest.name);
