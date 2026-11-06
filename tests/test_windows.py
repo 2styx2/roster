@@ -483,8 +483,8 @@ def test_roster_tells_windows_never_to_look_in_the_current_folder(as_windows, mo
     folder first unless NoDefaultCurrentDirectoryInExePath is set; roster sets it for itself and all it starts."""
     from roster import cli
     monkeypatch.delenv("NoDefaultCurrentDirectoryInExePath", raising=False)
-    monkeypatch.setattr(cli, "_main", lambda argv: 0)
-    assert cli.main(["--version"]) == 0
+    with pytest.raises(SystemExit, match="0"):
+        cli.main(["--version"])
     assert os.environ["NoDefaultCurrentDirectoryInExePath"] == "1"
 
 

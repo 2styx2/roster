@@ -1026,15 +1026,18 @@ def test_cut_keeps_the_peers_that_confirmed_it_in_the_meshs_bookkeeping(net):
 # ---------------------------------------------------------------- serve's deadline
 
 def test_apply_stops_at_the_deadline_and_leaves_the_rest_pending_without_connecting(net, monkeypatch):
+    import time
+
     from roster import common
     real = mesh.on_host
 
     def first_one_uses_up_the_time(h, script, timeout=mesh.STEP_TIMEOUT):
         out = real(h, script, timeout)
-        common._deadline.at = 0.0                    # the deadline passed during this Host's step
+        while time.monotonic() < common.current_deadline():     # the deadline passes during this Host's step
+            time.sleep(0.05)
         return out
     monkeypatch.setattr(mesh, "on_host", first_one_uses_up_the_time)
-    with common.deadline(240):
+    with common.deadline(3):
         r = mesh.run(net.cfg(), apply=True)
     assert [x for x in net.connections() if x.startswith("start")] == ["start db-9"]
     visit = mesh.graph(net.cfg())["visit"]
@@ -1380,9 +1383,10 @@ def test_a_quick_read_answers_while_a_waiting_plan_is_on_a_slow_host(net, serve)
     import time
     s = serve("-c", str(net.cfg_path))
     s.call("inventory.info")
-    (net.host("orion-2") / "slow").write_text("3")                      # the stand-in slow Host
+    hold = net.host("orion-2") / "hold"
+    hold.write_text("")                                                 # the stand-in Host waits until it goes
     plan = s.request("mesh.plan")                                       # the waiting form: no background
-    time.sleep(0.5)
+    connected(net, "orion-2")                                           # the plan is on that Host now
     t = time.monotonic()
     assert s.call("mesh.status")["result"]["out_of_date"] is True
     assert s.call("hosts.list")["result"]["hosts"]
@@ -1390,6 +1394,7 @@ def test_a_quick_read_answers_while_a_waiting_plan_is_on_a_slow_host(net, serve)
     assert took < 1, f"two quick reads took {took:.2f} s behind a Mesh plan"
     busy = s.call("mesh.apply", {"background": True})["error"]          # the waiting plan is a job too
     assert busy["code"] == 111
+    hold.unlink()
     assert s.answer(plan)["result"]["applied"] is False
     assert s.order[-1] == plan
 
