@@ -240,6 +240,9 @@ KEY_TYPE_DRIFT = 219        # a warning: a Host holds this Box's key lines of ot
 MESH_KEY_PEER = 220         # a warning: a source's Ed25519 Mesh key goes to a peer whose key_type isn't ed25519
 KEY_FILE_SHARED = 221       # a note: revoke keeps a key file another Inventory on this Box still uses
 
+# Mesh folder permissions (T259, #522; decision Q212 (k); catalog row 284)
+MESH_DIR_UNSAFE = 222       # the Mesh's folder (or one above it) others may write in: a planted key would spread
+
 # roster add --save-to-vault (T265, decision Q217; catalog rows 285-287)
 NO_TERMINAL_FOR_PASSWORD = 223  # add --save-to-vault: no terminal to ask the new item's password on, so nothing saved
 PASSWORDS_DIFFER = 224      # add --save-to-vault: the password and its confirmation differ (or none was typed)

@@ -441,6 +441,27 @@ def test_setup_gives_a_new_user_file_this_account_system_and_administrators(win,
 
 
 @needs_powershell
+def test_a_plain_users_install_warns_when_the_admin_file_may_hold_this_boxs_key(win, capsys):
+    """#522 item 2: a plain account can't read the admin key file, so its install can't tell whether this Box's line
+    is there from when the account was an administrator: it says so, as revoke does, and installs as before."""
+    win.admin_file("ws-01").write_bytes(OTHER)
+    assert main(["setup", "--only", "ws-01"]) == 0
+    captured = capsys.readouterr()
+    said = captured.out + captured.err
+    assert win.user_file("ws-01").read_bytes() == key_line(win)
+    assert "warning: [157] this account isn't in Administrators now, so roster can't look in" in said
+    assert "administrators_authorized_keys" in said
+    assert win.admin_file("ws-01").read_bytes() == OTHER
+
+
+@needs_powershell
+def test_a_plain_users_install_says_nothing_of_an_admin_file_that_isnt_there(win, capsys):
+    assert main(["setup", "--only", "ws-01"]) == 0
+    captured = capsys.readouterr()
+    assert "Administrators" not in captured.out + captured.err
+
+
+@needs_powershell
 def test_a_new_user_files_acl_is_read_back(win, capsys):
     """Review F3: icacls saying it worked isn't enough: the ACL is read back by SID before any key goes in."""
     (win.root / "ws-01" / "icacls-noop").touch()            # this stand-in's icacls exits 0 and changes nothing
