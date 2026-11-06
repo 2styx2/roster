@@ -512,18 +512,16 @@ Added and changed items are named, removed ones only counted. To tell, it keeps 
 
 ### When your vault changes
 
-After a vault item or a Host is added, or a password changed, there's no set order: run whichever you reach for. Each catches up what it needs, or names the one command that does, and ends with what changed and, only if something is left, `next:` and that command.
+After a vault or map change there's no set order. Each command catches up what it needs or ends with `next:` and the command that does.
 
 | Command | Catches up | Names when something's missing |
 |---|---|---|
-| `roster sync` | The map (ssh config, ROSTER.md) and, unless `--no-vault`, the vault | `roster setup --host NAME`, `roster add --from-vault`, `roster vault unlock`, the Mesh or a rotation left |
-| `roster setup` | This Box's key on each Host, host keys, ssh config; its lookup syncs the vault itself | Each Host it couldn't finish, with the cause; then `roster check --host` for the Hosts it keyed |
+| `roster sync` | The map and, unless `--no-vault`, the vault | `roster setup --host NAME`, `roster add --from-vault`, `roster vault unlock` |
+| `roster setup` | This Box's key on each Host; its lookup syncs the vault | Each Host it couldn't finish and why; `roster check --host` |
 | `roster check` | Nothing: one login per Host | Each failure's cause and fix (no key yet is a to-do) |
-| `roster run HOST -- CMD` | Nothing | `roster sync` for a Host not synced yet, `roster setup --host NAME`, a vault item gone or doubled |
-| `roster vault sync` | The vault alone, and what changed by name | `roster add --from-vault` for a new item; offline, when it last synced |
-| `roster vault unlock` | Bitwarden, for every roster run on this Box | What the locked vault held up |
-
-None asks for a password without a terminal; `update.sh` ends with sync's line.
+| `roster run HOST -- CMD` | Nothing | `roster sync`, `roster setup --host NAME`, a vault item gone or doubled |
+| `roster vault sync` | The vault alone | `roster add --from-vault` for a new item; offline, when it last synced |
+| `roster vault unlock` | Bitwarden, kept unlocked | What the locked vault held up |
 
 ### Old command names
 

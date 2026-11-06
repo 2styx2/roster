@@ -120,7 +120,6 @@ export const guides: readonly Guide[] = [
       discover: "cli#discover",
       resources: "cli#resources-secrets-with-no-address",
       json: "cli#machine-readable-output",
-      "vault changes": "cli#when-your-vault-changes",
       "vault-changes": "cli#when-your-vault-changes",
     },
   },
