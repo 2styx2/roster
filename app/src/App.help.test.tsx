@@ -81,6 +81,9 @@ describe(":help", () => {
     // still matched it.
     expect(row.querySelector(".finder-detail")).toBeNull();
     expect(finder.querySelector(".finder-foot-tag")).toHaveTextContent(":help keys.picker");
+    // Drawn whole on one line or not at all (round 23): the row's tooltip names it too.
+    expect(finder.querySelector(".finder-foot-tag")?.textContent).toBe(":help keys.picker");
+    expect(row.querySelector(".finder-label")?.getAttribute("title")).toMatch(/\n:help keys\.picker$/);
     expect(finder.querySelector(".picker-count")).toHaveTextContent(/results?$/);
   });
 

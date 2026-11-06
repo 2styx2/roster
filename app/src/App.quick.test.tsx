@@ -117,7 +117,11 @@ describe("Quick Connect", () => {
     reveal.mockClear();
     await user.keyboard("{Enter}");
     expect(field).toHaveFocus();
-    expect(reveal).toHaveBeenCalledWith(q, field, null, 22);
+    // Revealed with its label and the note under it as one block (round 23: the note lay under
+    // the footer's fade), else the field with as much of the note as fits.
+    const note = q.querySelector(".quick-keys");
+    expect(note).toHaveTextContent("Leave it empty to log in with this Box's keys.");
+    expect(reveal).toHaveBeenCalledWith(q, field, note, 22, [field.closest("label"), field, note]);
     expect(backend.quickConnects()).toEqual([]);
     // Now ↵ is on Trust: Enter in the field connects, empty or not.
     expect(trust.querySelector(".key-enter.on")).not.toBeNull();

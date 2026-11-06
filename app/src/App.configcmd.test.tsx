@@ -4,7 +4,7 @@
 // configurable thing shows (the Key bindings panel, the theme finder, the layout pieces). The
 // memory Platform stands in for the core's config dir (roster-core config/editor.rs has the
 // file's own tests). Fake Backend, stub terminal; user-event writes Ctrl+Space as {Control>} {/Control}.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
@@ -162,14 +162,29 @@ describe("Option names where configurable things show", () => {
     const rows = () => within(panel).getAllByRole("row").filter((r) => !r.classList.contains("group"));
     const option = () => panel.querySelector(".panel-foot .keys-option")?.textContent;
     expect(option()).toBeUndefined();
-    // ↓ from the filter names the first binding drawn, then the next; ↑ goes back.
+    // ↓ from the filter names the first binding drawn, then the next; ↑ goes back. Each move
+    // brings the named row (the cursor, round 23) into view, never jumping past it.
+    const scrolled: Element[] = [];
+    const spy = vi.fn(function (this: Element, opts?: ScrollIntoViewOptions | boolean) {
+      expect(opts).toEqual({ block: "nearest" });
+      scrolled.push(this);
+    });
+    const before = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = spy;
+    onTestFinished(() => {
+      Element.prototype.scrollIntoView = before;
+    });
     await user.keyboard("{ArrowDown}");
     expect(filter).toHaveFocus();
     expect(rows()[0]).toHaveClass("named");
+    expect(scrolled.at(-1)).toBe(rows()[0]);
+    expect(panel.querySelectorAll("tr.named")).toHaveLength(1);
     const first = option();
     expect(first).toBeTruthy();
     await user.keyboard("{ArrowDown}");
     expect(rows()[1]).toHaveClass("named");
+    expect(scrolled.at(-1)).toBe(rows()[1]);
+    expect(panel.querySelectorAll("tr.named")).toHaveLength(1);
     await user.keyboard("{ArrowUp}{ArrowUp}");
     expect(rows()[0]).toHaveClass("named");
     expect(option()).toBe(first);

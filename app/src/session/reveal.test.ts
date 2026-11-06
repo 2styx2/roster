@@ -110,7 +110,7 @@ describe("revealTop: a blocked Enter lands on the box (round 21)", () => {
     expect(cut(s)).toEqual([]);
   });
 
-  it("a fade that isn't drawn takes no room: at the last scroll the footer has none", () => {
+  it("a fade that isn't drawn takes no room: with no text below the footer it has none", () => {
     // The Host question at 480×320 scrolls 30 px; `:help host-keys` sits 210–235 px at rest.
     const help: Span = { top: 210, bottom: 235 };
     const g: RevealGeometry = {
@@ -128,6 +128,54 @@ describe("revealTop: a blocked Enter lands on the box (round 21)", () => {
       ],
       pin: 0,
     };
-    expect(revealTop(g)).toBe(30);
+    // From 23 on, nothing but padding lies below the footer (round 23: the fade is drawn for
+    // text below it, not for any scroll left), so the link is whole at its edge.
+    const s = revealTop(g);
+    expect(s).toBe(23);
+    expect(help.bottom - s).toBeLessThanOrEqual(FOOTER);
+    expect(g.lines.every((l) => l.bottom - s <= FOOTER)).toBe(true);
+  });
+});
+
+describe("revealTop: Quick Connect with Save to vault at 480×320 (round 23)", () => {
+  // Content coordinates as measured in Chromium (scrollTop 0), the card scrolling 176 px.
+  const LABEL: Span = { top: 270.2, bottom: 287.2 }; // Password for root
+  const FIELD: Span = { top: 290.4, bottom: 322.4 };
+  const NOTE: Span = { top: 330.4, bottom: 346.4 }; // Leave it empty to log in with this Box's keys.
+  const SAVE_TEXT: Span = { top: 357.5, bottom: 373.5 }; // Save to vault once it logs in
+  const SAVE: Span = { top: 359, bottom: 372 }; // its box
+  const lines = [...LINES.slice(0, 8), LABEL, FIELD, NOTE, SAVE_TEXT, SAVE];
+  const geometry = (s: number, target: Span | null, also: Span | null = null): RevealGeometry => {
+    const up = (x: Span) => ({ top: x.top - s, bottom: x.bottom - s });
+    return {
+      scrollTop: s,
+      maxScroll: 176,
+      titleBottom: TITLE,
+      footerTop: FOOTER,
+      fade: 22,
+      target: target && up(target),
+      also: also && up(also),
+      lines: lines.map(up),
+      pin: 0,
+    };
+  };
+  const crossed = (s: number) =>
+    lines.filter((l) => [TITLE + s, FOOTER + s].some((e) => l.top < e - 0.05 && l.bottom > e + 0.05));
+
+  it("Tab to the save box cuts no line at the title: \"Password for root\" stays whole", () => {
+    // Round 22's rule drew the footer's fade over the last 7 px of padding, so the box was only
+    // clear of it at 176, where "Password for root" sat 94.2–111.2 across the title's 100.4.
+    const s = revealTop(geometry(135, SAVE));
+    expect(crossed(s)).toEqual([]);
+    expect(SAVE_TEXT.bottom - s).toBeLessThanOrEqual(FOOTER);
+    expect(LABEL.top - s).toBeGreaterThanOrEqual(TITLE);
+  });
+
+  it("moving to a pinned button only settles the card: from a cut scroll to the nearest clean one", () => {
+    const s = revealTop(geometry(176, null));
+    expect(crossed(s)).toEqual([]);
+    expect(Math.abs(s - 176)).toBeLessThanOrEqual(10);
+    // Already clean: it stays.
+    expect(revealTop(geometry(169, null))).toBe(169);
   });
 });

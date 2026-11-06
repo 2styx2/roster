@@ -109,18 +109,19 @@ describe("menuHint (round 21)", () => {
   });
 });
 
-describe("fitHints (round 22)", () => {
+describe("fitHints (rounds 22, 23)", () => {
   /** A menu item whose label and hint have the given widths: [shown, natural]. */
   function item(label: [number, number], hint: [number, number]) {
     const menu = document.createElement("div");
     menu.innerHTML = `<button class="row-menu-item"><span class="row-menu-label">Remove from Folder</span><span class="row-menu-cmd">:folder remove HOST NAME</span></button>`;
-    const size = (el: Element | null, [shown, natural]: [number, number]) => {
-      Object.defineProperty(el, "clientWidth", { value: shown });
-      Object.defineProperty(el, "scrollWidth", { value: natural });
-    };
-    size(menu.querySelector(".row-menu-label"), label);
-    size(menu.querySelector(".row-menu-cmd"), hint);
-    fitHints(menu);
+    const sizes = new Map<Element | null, [number, number]>([
+      [menu.querySelector(".row-menu-label"), label],
+      [menu.querySelector(".row-menu-cmd"), hint],
+    ]);
+    fitHints(menu, (el) => {
+      const [shown, natural] = sizes.get(el) ?? [0, 0];
+      return { shown, natural };
+    });
     return (menu.querySelector(".row-menu-cmd") as HTMLElement).hidden;
   }
 
@@ -132,5 +133,10 @@ describe("fitHints (round 22)", () => {
   it("drops the hint before the label is cut, and a hint cut to its ellipsis", () => {
     expect(item([100, 130], [0, 168])).toBe(true);
     expect(item([120, 120], [12, 168])).toBe(true);
+  });
+
+  it("counts a label cut by a fraction of a pixel as cut (round 23: 131.00 px in 130.95)", () => {
+    expect(item([130.95, 131], [40, 168])).toBe(true);
+    expect(item([131, 131], [40, 168])).toBe(false);
   });
 });

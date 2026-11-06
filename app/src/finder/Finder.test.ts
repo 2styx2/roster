@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { footTag, footerCount, layOutHosts, layOutNames, layOutTitles, pathForms, withData } from "./Finder";
+import { footerCount, layOutHosts, layOutNames, layOutTitles, pathForms, tagFits, withData } from "./Finder";
 
 describe("the finder footer's count", () => {
   it("says how many there are before a query, and how many matched after (round 18)", () => {
@@ -130,9 +130,17 @@ describe("Help's rows have no tag column (round 22)", () => {
     expect(ul.style.getPropertyValue("--finder-page-w")).toBe("134px");
   });
 
-  it("breaks the footer's :help TAG only after its #, never inside the tag", () => {
-    const html = renderToStaticMarkup(createElement(Fragment, null, footTag("help errors-guide#trusting-a-new-host-key")));
-    expect(html).toBe('<span class="finder-foot-part">:help errors-guide#</span><wbr/><span class="finder-foot-part">trusting-a-new-host-key</span>');
-    expect(renderToStaticMarkup(createElement(Fragment, null, footTag("help theme")))).toBe('<span class="finder-foot-part">:help theme</span>');
+  it("draws the footer's :help TAG whole or not at all, measured to the fraction (round 23)", () => {
+    const sized = (width: number) => {
+      const el = document.createElement("span");
+      el.getBoundingClientRect = () => ({ width }) as DOMRect;
+      return el;
+    };
+    expect(tagFits(sized(200), sized(180))).toBe(true);
+    expect(tagFits(sized(200), sized(200))).toBe(true);
+    // A tag 0.05 px over its room would be drawn cut: it isn't drawn.
+    expect(tagFits(sized(130.95), sized(131))).toBe(true);
+    expect(tagFits(sized(130.9), sized(131))).toBe(false);
+    expect(tagFits(sized(120), sized(236))).toBe(false);
   });
 });

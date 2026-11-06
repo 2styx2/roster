@@ -24,7 +24,7 @@ import { HopCrumb } from "./HopCrumb";
 import type { QuickTarget } from "../quick/target";
 import { CloseGlyph } from "../ui/CloseGlyph";
 import { useForgetOnLock } from "../lock/forgetOnLock";
-import { revealInCard } from "./reveal";
+import { cardMoreBelow, revealInCard } from "./reveal";
 import { slip, type Message } from "../ui/messages";
 
 /** Where a Session is on its way to a shell (issue #78): `starting` while roster prepares it and
@@ -286,6 +286,24 @@ export function ConnectCard({
     if (!c || !row) return;
     revealInCard(c, row, c.querySelector(".key-print"), FADE_PX);
   };
+  // The password field is revealed with its label and the note under it ("Leave it empty…") as
+  // one block when they fit (round 23: after Enter on the ticked box the note lay under the
+  // footer's fade), else the field with as much of the note as fits.
+  const revealField = (field: HTMLElement) => {
+    const c = card.current;
+    if (!c) return;
+    const label = field.closest("label");
+    const noteId = field.getAttribute("aria-describedby");
+    const note = noteId ? document.getElementById(noteId) : null;
+    const block = [label, field, note].filter((el): el is HTMLElement => el !== null);
+    revealInCard(c, field, note, FADE_PX, block);
+  };
+  // Focus moved to the pinned title or footer (Trust, Cancel), always in view: the card only
+  // settles where no line is cut by either edge (round 23: Enter on "Save to vault" went to
+  // Trust and left "Password for root" sliced by the title).
+  const settle = () => {
+    if (card.current) revealInCard(card.current, null, null, FADE_PX);
+  };
   // The question's edges say what's past them (round 20): the title's rule and fade only once
   // something is under it, the footer's fade only while more lies below it, so neither fades a
   // line that isn't going anywhere. Set as the card scrolls and whenever its size changes.
@@ -324,6 +342,7 @@ export function ConnectCard({
         // Quick Connect's box is shown with the key it vouches for (round 19).
         // Either way it lands whole between the fades, no line cut at an edge (round 21).
         if (target && target === checkedBox.current) revealBox();
+        else if (target && target === passwordField.current) revealField(target);
         else if (target && card.current && !target.closest(".key-actions"))
           revealInCard(card.current, target, null, FADE_PX);
       }
@@ -400,14 +419,13 @@ export function ConnectCard({
   // there. A character typed on the box goes into the field too, so nothing typed vanishes.
   const toPassword = (typed?: string) => {
     const field = passwordField.current;
-    const c = card.current;
-    if (!field || !c) return;
+    if (!field || !card.current) return;
     field.focus({ focusVisible: true, preventScroll: true } as FocusOptions);
     if (typed !== undefined) {
       const end = field.value.length;
       field.setRangeText(typed, end, end, "end");
     }
-    revealInCard(c, field, null, FADE_PX);
+    revealField(field);
   };
   const connectQuick = () => {
     const field = passwordField.current;
@@ -483,8 +501,10 @@ export function ConnectCard({
                 const pinned =
                   next.closest(".key-actions, .connect-title") !== null;
                 if (next === checkedBox.current) revealBox();
+                else if (next === passwordField.current) revealField(next);
                 else if (!pinned)
                   revealInCard(e.currentTarget, next, null, FADE_PX);
+                else settle();
               }
             }
           : undefined
@@ -707,11 +727,13 @@ export function ConnectCard({
                     e.preventDefault();
                     e.stopPropagation();
                     if (!checkedKey) blocked();
-                    else
+                    else {
                       trustButton.current?.focus({
                         focusVisible: true,
                         preventScroll: true,
                       } as FocusOptions);
+                      settle();
+                    }
                   }}
                 />
                 Save to vault once it logs in
@@ -1015,10 +1037,8 @@ const FADE_PX = 22;
 /** Marks a question card scrolled (something under its title) and with more below its footer. */
 function markScroll(c: HTMLElement) {
   c.toggleAttribute("data-scrolled", c.scrollTop > 0);
-  c.toggleAttribute(
-    "data-more",
-    c.scrollTop + c.clientHeight < c.scrollHeight - 1,
-  );
+  // Text below the footer, not just more scroll (round 23: the fade lay over 7 px of padding).
+  c.toggleAttribute("data-more", cardMoreBelow(c));
 }
 
 /** address:port as ssh would write it ([address]:port for IPv6). */

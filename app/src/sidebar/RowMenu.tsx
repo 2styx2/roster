@@ -101,16 +101,38 @@ function paneOf(row: Element | null): Bounds {
     : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
 }
 
-/** Each item's command hint gives way to its label (styles.css shrinks it first, cut with "…");
- * where the label would still be cut, or the hint would show only its "…", the hint goes. */
-export function fitHints(menu: HTMLElement) {
+/** An element's drawn width and the width its text needs, in fractional px (round 23: integer
+ * scrollWidth and clientWidth + 1 missed 131.00 px of "Remove from Folder" in a 130.95 px box,
+ * which Chrome drew as "Remove from Fold…"). */
+export interface Widths {
+  shown: number;
+  natural: number;
+}
+
+export function textWidths(el: HTMLElement): Widths {
+  const shown = el.getBoundingClientRect().width;
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const natural =
+    typeof range.getBoundingClientRect === "function"
+      ? range.getBoundingClientRect().width
+      : el.scrollWidth;
+  return { shown, natural };
+}
+
+/** Each item's command hint gives way to its label (the label never shrinks; the hint does, cut
+ * with "…"); where the label would still be cut, or the hint would show only its "…", the hint
+ * goes. */
+export function fitHints(menu: HTMLElement, measure: (el: HTMLElement) => Widths = textWidths) {
   for (const item of menu.querySelectorAll<HTMLElement>(".row-menu-item")) {
     const label = item.querySelector<HTMLElement>(".row-menu-label");
     const hint = item.querySelector<HTMLElement>(".row-menu-cmd");
     if (!label || !hint) continue;
     hint.hidden = false;
-    const cut = label.scrollWidth > label.clientWidth + 1;
-    const stub = hint.clientWidth < Math.min(hint.scrollWidth, HINT_MIN);
+    const l = measure(label);
+    const h = measure(hint);
+    const cut = l.natural > l.shown + 0.01;
+    const stub = h.shown < Math.min(h.natural, HINT_MIN);
     if (cut || stub) hint.hidden = true;
   }
 }

@@ -222,6 +222,30 @@ describe("the status bar's order of giving way (rounds 18, 19, 21)", () => {
   });
 });
 
+describe("a Host finder row's group and type (round 23)", () => {
+  it("are set as the Picker's: Inter, muted, the small size", () => {
+    const host = rules(stylesCss).filter(([s, , at]) => at.length === 0 && /\.finder-row\.host-row > :is\(\.finder-path, \.finder-type\)/.test(s)).map(([, b]) => b).join(";");
+    expect(host).toMatch(/font-family:\s*var\(--font-ui\)/);
+  });
+});
+
+describe("the key question's `:help host-keys` (round 23)", () => {
+  it("is its own line under the advice, so the advice's leading stays even", () => {
+    const link = rules(stylesCss).filter(([s, , at]) => at.length === 0 && s.trim() === ".key-help-link").map(([, b]) => b).join(";");
+    expect(link).toMatch(/display:\s*block/);
+    expect(link).toMatch(/margin:\s*6px 0 0 -5px/);
+  });
+});
+
+describe("the Key bindings cursor (round 23)", () => {
+  it("is drawn as the Picker's selected row: raised, with a 1px accent outline, not the hover fill", () => {
+    const named = rules(stylesCss).filter(([s, , at]) => at.length === 0 && /tr\.named/.test(s)).map(([, b]) => b).join(";");
+    expect(named).toMatch(/background:\s*var\(--raised\)/);
+    expect(named).toMatch(/box-shadow:\s*inset 0 0 0 1px var\(--accent\)/);
+    expect(named).not.toMatch(/var\(--hover\)/);
+  });
+});
+
 describe("Key bindings in a short window (round 21)", () => {
   it("gives the list the room: no footer and tighter rows at 360 px tall or less", () => {
     const short = rules(stylesCss).filter(([, , at]) => at.some((a) => /max-height:\s*360px/.test(a)));
@@ -250,5 +274,10 @@ describe("the Sidebar's cursor and menus (round 19)", () => {
   });
   it("draws a menu's group split as a rule you can see, the border's tone", () => {
     expect(body(".row-menu-sep")).toMatch(/background:\s*var\(--line-strong\)/);
+  });
+  it("never shrinks a menu item's label: only its command hint gives way (round 23)", () => {
+    expect(body(".row-menu-label")).toMatch(/flex:\s*0 0 auto/);
+    expect(body(".row-menu-cmd")).toMatch(/flex:\s*0 1 auto/);
+    expect(body(".row-menu-cmd")).toMatch(/min-width:\s*0/);
   });
 });

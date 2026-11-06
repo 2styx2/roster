@@ -3,13 +3,21 @@
 // form asks for a Host name (pre-filled from what the box's shell calls itself), its group and where
 // in the vault; roster then makes the Vault item and adds the Host as a Pending change. Fake Backend,
 // stub terminal.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_HOST_PASSWORD, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeBackend, type FakeScenario } from "./backend/fake";
 import { QUICK_CONNECT_API_VERSION, SAVE_TO_VAULT_API_VERSION } from "./backend/types";
 import { StubTerminal } from "./terminal/StubTerminal";
+import { revealInCard } from "./session/reveal";
+
+// Where the card scrolls is reveal.test.ts's (jsdom has no layout); here, which reveal each focus
+// move asks for (round 23).
+vi.mock("./session/reveal", async (original) => {
+  const real = await original<typeof import("./session/reveal")>();
+  return { ...real, revealInCard: vi.fn(real.revealInCard) };
+});
 
 const hosts = makeHosts(12);
 const LABEL = "root@10.0.0.5";
@@ -153,6 +161,46 @@ describe('"Save to vault" on Quick Connect', () => {
     await user.keyboard("{Enter}");
     await within(pane()).findByText(`Connected to ${LABEL}`, { exact: false });
     expect(backend.quickConnects()).toHaveLength(1);
+  });
+
+  it("every focus move in the question uses the card's reveal: Tab, Shift+Tab and Enter on the save box (round 23)", async () => {
+    // Round 23: Tab to "Save to vault" at 480×320 left "Password for root" sliced by the title,
+    // and Enter there went on to Trust without settling the card.
+    const backend = backendWith();
+    const user = await ready(backend);
+    await user.keyboard(`{Control>} {/Control}:connect ${LABEL}{Enter}`);
+    const q = await within(pane()).findByRole("alertdialog", { name: `Quick Connect to ${LABEL}` });
+    const box = within(q).getByRole("checkbox", { name: "I've checked this key" });
+    const field = within(q).getByLabelText("Password for root");
+    const save = within(q).getByRole("checkbox", { name: /save to vault/i });
+    const trust = within(q).getByRole("button", { name: "Trust and connect" });
+    const note = q.querySelector(".quick-keys");
+    const reveal = vi.mocked(revealInCard);
+    await user.click(box);
+    // Tab into the field: the field with its label and note, as one block.
+    field.focus();
+    save.focus();
+    reveal.mockClear();
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(field).toHaveFocus();
+    expect(reveal).toHaveBeenLastCalledWith(q, field, note, 22, [field.closest("label"), field, note]);
+    // Tab to the save box: revealed, no line cut.
+    reveal.mockClear();
+    await user.keyboard("{Tab}");
+    expect(save).toHaveFocus();
+    expect(reveal).toHaveBeenLastCalledWith(q, save, null, 22);
+    // Tab on to Trust (pinned, always in view): the card settles where no line is cut.
+    reveal.mockClear();
+    await user.keyboard("{Tab}");
+    expect(trust).toHaveFocus();
+    expect(reveal).toHaveBeenLastCalledWith(q, null, null, 22);
+    // Enter on the save box goes on to Trust and settles the card too.
+    save.focus();
+    reveal.mockClear();
+    await user.keyboard("{Enter}");
+    expect(trust).toHaveFocus();
+    expect(reveal).toHaveBeenLastCalledWith(q, null, null, 22);
+    expect(backend.quickConnects()).toEqual([]);
   });
 
   it("isn't offered by a roster older than API 13", async () => {

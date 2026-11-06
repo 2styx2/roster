@@ -161,18 +161,11 @@ export function layOutTitles(list: HTMLElement) {
   list.style.setProperty("--finder-page-w", `${Math.ceil(use.page)}px`);
 }
 
-/** The footer's `:help TAG`, broken only after the `#` when it must take two lines (round 22: at
- * 480 px it broke inside the tag, "trusting-a-new-/host-key"); each part stays on one line, cut
- * at its end if even that line is too narrow (whole in the tooltip). */
-export function footTag(command: string): ReactNode {
-  const hash = command.indexOf("#");
-  const parts = hash < 0 ? [`:${command}`] : [`:${command.slice(0, hash + 1)}`, command.slice(hash + 1)];
-  return parts.map((part, i) => [
-    i > 0 && <wbr key={`b${i}`} />,
-    <span key={i} className="finder-foot-part">
-      {part}
-    </span>,
-  ]);
+/** Whether the footer's `:help TAG` (`code` in its `box`) fits whole on the box's one line
+ * (round 23: broken after its `#` at 480 px, both halves were still cut and the footer grew to
+ * 47 px). Measured fractionally: the tag is drawn whole or not at all, never cut. */
+export function tagFits(box: Element, code: Element): boolean {
+  return code.getBoundingClientRect().width <= box.getBoundingClientRect().width + 0.05;
 }
 
 /** `text` with each of `codes` (in order, each where it's next found) in an Iosevka span. */
@@ -256,6 +249,24 @@ export function Finder({
     return () => resize?.disconnect();
   }, [shown, fontsReady, source.prose]);
 
+
+  // The selected row's `:help TAG` in the footer: whole on its one line, or not drawn (its row's
+  // tooltip names it too). Measured again as the selection, the fonts or the width change.
+  const tagRef = useRef<HTMLSpanElement>(null);
+  const tagCommand = source.prose && selectedItem?.detail ? selectedItem.command : null;
+  useLayoutEffect(() => {
+    const box = tagRef.current;
+    const code = box?.firstElementChild;
+    if (!box || !code) return;
+    const fit = () => {
+      if (tagFits(box, code)) delete box.dataset.cut;
+      else box.dataset.cut = "";
+    };
+    fit();
+    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(fit);
+    resize?.observe(box);
+    return () => resize?.disconnect();
+  }, [tagCommand, fontsReady]);
 
   function choose(item: FinderItem | undefined) {
     if (!item) return;
@@ -398,7 +409,11 @@ export function Finder({
               onClick={() => choose(item)}
             >
               {item.dot && <StateDot dot={item.dot} lit={item.lit} {...(item.stub === false ? { stub: false } : {})} />}
-              <span className="finder-label" title={item.note ? `${item.label} · ${item.note}` : item.label}>
+              <span
+                className="finder-label"
+                // A help row names its `:help TAG` too: the footer drops it when it can't be whole.
+                title={`${item.note ? `${item.label} · ${item.note}` : item.label}${source.prose && item.detail ? `\n:${item.command}` : ""}`}
+              >
                 <span className={`finder-name${source.prose && (item.dataLabel || DATA_NAME.test(item.label)) ? " data" : ""}`} dir="auto">
                   {marked(item.label, query, source.prose)}
                 </span>
@@ -492,8 +507,8 @@ export function Finder({
           {/* The selected row's tag, which no row draws (round 22): what Enter runs, ":help TAG"
               (round 21), as the Picker names a cut Host. */}
           {source.prose && selectedItem?.detail && (
-            <span className="finder-foot-tag" title={`:${selectedItem.command}`}>
-              <code>{footTag(selectedItem.command)}</code>
+            <span className="finder-foot-tag" ref={tagRef} title={`:${selectedItem.command}`}>
+              <code>:{selectedItem.command}</code>
             </span>
           )}
           {shown.some((i) => i.mark) && (
@@ -510,7 +525,7 @@ export function Finder({
             )}
           </span>
           {shown.length > 1 && (
-            <span className="picker-hint key-hint">
+            <span className="picker-hint key-hint" data-what="move">
               <Keys keys="ArrowUp ArrowDown" />{" "}
               <span className="picker-hint-word">move</span>
             </span>
