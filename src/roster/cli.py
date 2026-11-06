@@ -1433,12 +1433,14 @@ def cmd_from_vault(cfg, args):
         found = fromvault.listing(path, sync=not args.no_sync)
     except Problem as e:
         refuse(e)                               # with --json, main says it as the JSON error
+    # with --json, stdout is the one document: what the sync did goes to stderr
+    tell = (lambda line: print(line, file=sys.stderr, flush=True)) if args.json else say
     for s in found["synced"]:
         before = fromvault.ago(s["previous"])
-        say(f"synced       {s['provider']} (the previous sync was {before})" if before else
-            f"synced       {s['provider']} (its first sync on this box)")
+        tell(f"synced       {s['provider']} (the previous sync was {before})" if before else
+             f"synced       {s['provider']} (its first sync on this box)")
     for note in found["skipped"]:
-        say(f"not listed   {note}")
+        tell(f"not listed   {note}")
     seen, rows = found["seen"], found["items"]
     listed = rows if args.all else [r for r in rows if r["new"]]
     if args.json:
