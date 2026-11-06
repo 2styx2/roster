@@ -104,7 +104,8 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
 #             "save_to": the keys of a save_to that names a target of this provider ({organization, collection},
 #                        {group}); "old_save_to": an older setting of its own that means save_to: {it: value}
 #             "holds_items": False for a provider with no items to list or sync (prompt, env, cmd)
-#             "unlock_hint": what to run so a locked vault can answer (roster add --from-vault, vault sync)
+#             "unlock_hint": what to run so a locked vault can answer: every fix line takes it from here
+#                            (unlock_fix: roster add --from-vault, vault sync, sync, setup)
 #             "session": a session saved for every run on this Box (`roster vault unlock`/`lock`): {"unlock":
 #                        fn(ctx) -> how, "lock": fn(ctx) -> (said, problem), "remove": fn() -> removed, "file": fn(),
 #                        "until": how long it lasts, "missing": the CLI isn't installed}; "no_session": why a
@@ -119,6 +120,11 @@ MANUAL_UNLOCK = False     # True (`roster serve`): only unlock() unlocks - no se
 JSON_OUTPUT = False       # True: the command prints --json, so a provider adds no note or question on stderr
 _secrets = {}
 _secret_lock = threading.Lock()
+
+
+def unlock_fix(provider: str) -> str:
+    """How to unlock PROVIDER's vault (its unlock_hint), for a fix line."""
+    return (PROVIDERS.get(provider) or {}).get("unlock_hint") or f"unlock {provider}'s vault, then run it again"
 
 
 LOOKUP_FLOOR = 7            # s for each look-up after a create timed out (did it get there?), even past serve's deadline

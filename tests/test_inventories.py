@@ -541,7 +541,8 @@ def sync_unnamed(src, root):
 def test_without_named_inventories_sync_is_byte_for_byte_what_dev_wrote(tmp_path):
     """tests/vectors/sync-unnamed.json: sync_unnamed() run with dev's roster before ticket 115 (`git archive origin/dev
     src`, then `sync_unnamed(that src, a temp dir)`). The output, ~/.ssh/config, roster's ssh config, the files written
-    and their modes are the same, byte for byte."""
+    and their modes are the same, byte for byte. One change since, on purpose: T243 (#476) ends sync with the Hosts
+    that need setup, by name, instead of a note it always printed."""
     want = json.loads((Path(__file__).parent / "vectors/sync-unnamed.json").read_text())
     assert sync_unnamed(Path(__file__).parent.parent / "src", tmp_path) == want
 

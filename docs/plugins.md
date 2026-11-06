@@ -175,7 +175,7 @@ end })
 
 `roster.serve.call` asks and waits. Waiting never counts against the Plugin (its budget, or being given up on), but the Plugin does nothing else meanwhile, and the user's next action in it waits too. One call (an action, a load, an event, an answer) may ask roster serve this way at most 100 times and wait 300 s in all, then it's an error: a loop of calls would keep serve from the app. Use it where the answer is needed there and then and serve is quick to give it; a `:check` section that needs serve answers later instead ([Health sections](#health-sections)).
 
-**serve's errors carry their code** (since api 7, decision Q210). When roster serve answers with an error, what `pcall(roster.serve.call, …)` catches, and the `why` that `done` gets, is a [`ServeError`](plugin-api.md#serveerror): `why.code` is serve's number ([serve-api.md](serve-api.md): `2` no such Host, `4` `roster.yml` busy, `-32601` a method this roster serve doesn't have) and `why.message` its words. Tell errors apart by the code, never by the words:
+**serve's errors carry their code** (since api 7, decision Q211). When roster serve answers with an error, what `pcall(roster.serve.call, …)` catches, and the `why` that `done` gets, is a [`ServeError`](plugin-api.md#serveerror): `why.code` is serve's number ([serve-api.md](serve-api.md): `2` no such Host, `4` `roster.yml` busy, `-32601` a method this roster serve doesn't have) and `why.message` its words. Tell errors apart by the code, never by the words:
 
 ```lua
 roster.serve.request("mesh.job", {}, function(job, why)

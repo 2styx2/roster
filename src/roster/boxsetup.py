@@ -9,7 +9,7 @@ from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from typing import Any
 
-from . import authorized, boxkeys, boxlock, keyline, mesh, meshview, rotation
+from . import authorized, boxkeys, boxlock, catchup, keyline, mesh, meshview, providers, rotation
 from .authorized import TAKEN, NameTaken, NoLine, box_key_re, box_public_keys, enroll, key_named
 from .boxkeys import ensure_key, public_key_line
 from .claude import write_claude_files
@@ -17,6 +17,7 @@ from .common import die, plural, replace_file, say
 from .config import selected
 from .context import Context, current
 from .errors import KEY_FILE, UNKNOWN_HOST, Exit, Problem, tagged
+from .hosts import provider_of
 from .keyline import key_ere
 from .providers import get_secret
 from .sshops import record_fingerprints, ssh_ok, write_ssh_config
@@ -213,16 +214,19 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
     if known:
         boxkeys.record(known)
 
+    locked_vaults: set[str] = set()         # the providers a Login's lookup found locked (their own fix each)
     for ref, group in sorted({(h["auth"], h["group"]) for h in todo}, key=lambda t: (str(t[0]), t[1])):
         try:
             get_secret(ref, group)          # ask for / fetch passwords up front, one per group
         except RuntimeError as e:
+            if isinstance(e, providers.VaultLocked):
+                locked_vaults.add(provider_of(ref))
             for h in todo:
                 if (h["auth"], h["group"]) == (ref, group):
                     failed[h["name"]] = str(e)
     todo = [h for h in todo if h["name"] not in failed]
 
-    installed = 0
+    installed: list[str] = []
     if todo:
         say(f"installing   key on {len(todo)} hosts...")
         with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
@@ -233,7 +237,7 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                 h = futs[f]
                 try:
                     notes = f.result()
-                    installed += 1
+                    installed.append(h["name"])
                     if override:            # roster.yml's type's line stayed, and any other try's: those go
                         have = set(held.get(h["name"], [])) | keep(h)
                         left: list[str] = []
@@ -260,23 +264,30 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
     write_claude_files(cfg)
     warn_overlaps(cfg)
     failed.update(setup_mesh(cfg, "--only" if only else "--host" if narrowed else None))
-    ready = len(key_hosts) - len(todo) + installed
+    # a Host that failed (the vault locked, say) is never counted as ready too; one whose key works but whose Mesh
+    # step failed is key-ready (its gap is the Mesh's)
+    keyed = [h["name"] for h in key_hosts if h["name"] not in failed or str(failed[h["name"]]).startswith("mesh:")]
+    ready = len(keyed)
+    catchup.record_setup(cfg, keyed, [n for n, why in failed.items() if not str(why).startswith("mesh:")])
     say()
     say(f"done         {ready} key hosts ready, {len(pw_hosts)} password-only hosts, {len(failed)} failed")
     if failed:
         say("failed hosts (fix, then re-run setup - hosts that already work are skipped):")
         for name, why in sorted(failed.items()):
             say(f"  {name}: {why}")
+    rc = 1 if failed else 0
     # a Box key rotation not finished is never a clean setup, whatever logs in
     if waiting := rotation.pending(cfg):
         say(f"Box key rotation pending on {plural(len(waiting), 'Host')} ({', '.join(sorted(waiting))}): the old Box "
             "key is still on them; `roster setup --rotate` finishes it")
-        return 1
-    if found := rotation.problems(cfg):
+        rc = 1
+    elif found := rotation.problems(cfg):
         for p in found:
             say(f"warning: {tagged(p)} ({p.fix})")
-        return 1
-    return 1 if failed else 0
+        rc = 1
+    if line := catchup.setup_next_line(sorted(installed), locked_vaults):
+        say(line)
+    return rc
 
 
 def cleanup_re(cfg: dict[str, Any], pub: str, types: list[str]) -> tuple[str, list[str]]:

@@ -54,7 +54,7 @@ export function redactText(text: string): string {
 }
 
 /** roster serve's error as a Plugin gets it, as the core's Lua error object (Plugin API 7,
- * decision Q210): serve's `code` and its `serveMessage` (the Lua object's `message`), references
+ * decision Q211): serve's `code` and its `serveMessage` (the Lua object's `message`), references
  * cut; as a string (`String(e)`, and `message` for the fake's error handling) the text it was
  * before api 7, `WHAT: MESSAGE (code N)`. */
 export class PluginServeError extends Error {

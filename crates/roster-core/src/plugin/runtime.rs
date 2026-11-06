@@ -251,7 +251,7 @@ pub(crate) enum Arrival {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Failed {
     /// serve's own error (`CallError::Rpc`): a Plugin gets it as an error object with `code` and
-    /// `message` (Plugin API 7, decision Q210).
+    /// `message` (Plugin API 7, decision Q211).
     Serve { code: i64, message: String },
     /// serve didn't answer (it exited, or not in time), or the host refused to ask: a string.
     Other(String),

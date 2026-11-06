@@ -25,6 +25,10 @@ from .common import NAME_RE, NotPrivate, plain, read_private, say, utc_now, writ
 from .context import box_file
 from .errors import LIST_FAILED, NO_LISTABLE_VAULT, VAULT_LOCKED, Problem
 
+# providers.unlock_fix's fix, and for KeePassXC (which keeps no session) the way round it here
+KP_INSTEAD = "or give the address and user yourself (roster add NAME --ip ADDR --user USER --auth kp:ENTRY)"
+
+
 # ---------------------------------------------------------------- what roster.yml refers to
 
 def refs(path):
@@ -137,7 +141,8 @@ def listing(path, sync=True, interactive=False):
 def problem(provider, e):
     if isinstance(e, providers.VaultLocked) or providers.vault_status(provider) in ("locked", "unauthenticated"):
         return Problem(VAULT_LOCKED, f"{provider}: the vault is locked, and roster add --from-vault never asks for "
-                                     "its master password", fix=providers.PROVIDERS[provider].get("unlock_hint") or "unlock it, then run it again")
+                                     "its master password",
+                       fix=providers.unlock_fix(provider) + (f"; {KP_INSTEAD}" if provider == "kp" else ""))
     if isinstance(e, providers.Unsupported):
         return Problem(NO_LISTABLE_VAULT, str(e))
     return Problem(LIST_FAILED, f"{provider}: {e}", fix="see the message; roster check --auth tests the vault")

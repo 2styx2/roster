@@ -757,7 +757,7 @@ fn notices_within(rx: &Receiver<Reply>, want: usize, limit: Duration) -> Vec<Str
     out
 }
 
-/// Plugin API 7 (decision Q210): roster serve's error reaches a Plugin as an error object with
+/// Plugin API 7 (decision Q211): roster serve's error reaches a Plugin as an error object with
 /// `code` and `message`, and is still the text it was before (`tostring`, `..`, `#` and string
 /// methods), so a Plugin written for the string keeps working. What isn't serve's answer (a
 /// refusal before asking) stays a string, whose `.code` is nil too.

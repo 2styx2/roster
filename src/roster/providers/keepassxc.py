@@ -306,7 +306,7 @@ PROVIDERS["kp"].update(unlock=_unlock, lock=_lock, status=_status, not_logged_in
                                    "another one, change vault.kp.database in init.lua",
                        create=_create, delete=_delete, targets=_targets, resolve=_resolve,
                        box_paths=("database", "key_file"), save_to=frozenset({"group"}), old_save_to="group",
-                       unlock_hint="KeePassXC has no session roster can reuse: give the address and user yourself "
-                                   "(roster add NAME --ip ADDR --user USER --auth kp:ENTRY), or unlock it in the app",
+                       unlock_hint="run it in a terminal: KeePassXC has no session roster keeps, so each run asks for "
+                                   "its database's password",
                        no_session="KeePassXC keeps no session: each run opens the database with its password, so "
                                   "there's nothing to keep unlocked")

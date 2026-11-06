@@ -52,7 +52,7 @@ fn said(ops: &[Value], id: &str) -> String {
 }
 
 /// api 6 (#242, decision Q185) added `cwd` to `roster.sessions.list()`'s Sessions and to
-/// `command_done`; api 7 (decision Q210) made roster serve's error an error object
+/// `command_done`; api 7 (decision Q211) made roster serve's error an error object
 /// (tests/plugin_serve.rs); what api 5 brought is unchanged.
 #[test]
 fn the_api_version_is_7() {

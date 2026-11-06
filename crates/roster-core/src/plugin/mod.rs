@@ -165,7 +165,7 @@ pub const ENTRY: &str = "init.lua";
 
 /// How a Plugin reaches `roster serve`. The Shell calls the running Backend; tests use a fake.
 /// The host only ever asks for the methods a Plugin was granted. serve's error keeps its code
-/// ([`CallError::Rpc`]): a Plugin gets it as an error object (Plugin API 7, decision Q210).
+/// ([`CallError::Rpc`]): a Plugin gets it as an error object (Plugin API 7, decision Q211).
 pub trait Serve: Send + Sync {
     fn call(&self, method: &str, params: Json) -> Result<Json, CallError>;
 }

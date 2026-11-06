@@ -267,7 +267,7 @@ class State:
         """Why roster.yml doesn't load right now (code 1, with its line), or None."""
         if self.error is None:
             return None
-        p = InventoryError(self.error.message, self.error.path, self.error.line)
+        p = InventoryError(self.error.message, self.error.path, self.error.line, hidden=self.error.hidden)
         p.data = {**(p.data or {}), **versions()}
         return p
 

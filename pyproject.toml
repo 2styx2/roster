@@ -73,6 +73,7 @@ strict = ["src/roster/models.py", "src/roster/completion.py", "src/roster/invent
           "src/roster/jsonout.py",
           "src/roster/authorized.py",
           "src/roster/boxsetup.py",
+          "src/roster/catchup.py",
           "src/roster/cliparser.py",
           "src/roster/context.py",
           "src/roster/hosts.py",

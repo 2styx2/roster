@@ -138,8 +138,8 @@ def roster_md(cfg: dict[str, Any], ctx: Context | None = None) -> str:
           f"(don't run `bw`, `{run} vault bw` (or `{run} bw`), `op`, `{run} vault op` or any other password-manager command "
           "yourself).",
           "- If `run` says a password manager is locked or signed out, tell the user what it said; they "
-          "unlock it in the shell they start Claude from (e.g. `export BW_SESSION=$(bw unlock --raw)` "
-          "or `eval $(op signin)`). Don't try to unlock it yourself.",
+          f"unlock it in their own terminal (`{run} vault unlock` for Bitwarden, `eval $(op signin)` for "
+          "1Password). Don't try to unlock it yourself.",
           "- Ask before changing state on a host: restarts, installs, deletes, config edits, writes to databases.",
           f"- If a host doesn't respond, run `{run} check <name> --json` to see which step fails and its fix, "
           "and report what you find.", "",

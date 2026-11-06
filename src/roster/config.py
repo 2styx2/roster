@@ -13,7 +13,7 @@ import yaml
 from . import boxkeys, context, keyline
 from .common import NAME_RE, die, oneline, typed_token
 from .context import user_config_dir
-from .errors import PATH_NOT_REPEATED, InventoryError
+from .errors import PATH_NOT_REPEATED, RENAME_HINT, InventoryError
 from .hosts import vault_login
 from .resources import load_resources
 from .sshconfig import SSH_UNSAFE
@@ -55,7 +55,7 @@ def open_inventory(config: Any = None, inv: str | None = None) -> dict[str, Any]
     try:
         setup_providers(cfg)
     except InventoryError as e:
-        raise e.at(shown_or_hidden(path)) from None
+        raise located(e, path) from None
     return cfg
 
 
@@ -108,20 +108,29 @@ def blank_shape(raw):
 
 
 HIDDEN_PATH = "that path (not repeated)"
+HIDDEN_FILE = f"the roster.yml at {HIDDEN_PATH}"
+
+
 def shown_path(path) -> str | None:
     """roster.yml's PATH (as given: -c, $ROSTER_CONFIG, a named Inventory's) as roster may print it, resolved; None
-    when it mustn't be (#479, #484 M1/L1/L3, #489 M1). A file that's there is shown. One that isn't is shown only
-    when its folder exists and it isn't typed_token (#494): `roster -cTOKEN hosts` reads an op session token that
-    starts with -c as `-c TOKEN`, and a bw key or an op token can be typed after -c by mistake. Every message, fix line and JSON field naming the path goes through this."""
+    when it mustn't be (#479, #484 M1/L1/L3, #489 M1, #498): never when it's typed_token, whether a file is there or
+    not (a token-named folder or file an older roster's init made is still a token), else when the file or its folder
+    is there. `roster -cTOKEN hosts` reads an op session token that starts with -c as `-c TOKEN`, and a bw key or an
+    op token can be typed after -c by mistake. Every message, fix line and JSON field naming the path goes through
+    this, the loader's own errors included."""
+    if typed_token(path):
+        return None
     full = Path(path).expanduser().resolve()
-    if full.exists() or (full.parent.is_dir() and not typed_token(path)):
+    if full.exists() or full.parent.is_dir():
         return str(full)
     return None
 
 
-def shown_or_hidden(path) -> str:
-    """PATH as an InventoryError carries it: shown_path's, or PATH_NOT_REPEATED."""
-    return shown_path(path) or PATH_NOT_REPEATED
+def located(e: InventoryError, path) -> InventoryError:
+    """E, about the roster.yml at PATH as shown_path has it (PATH_NOT_REPEATED when it mustn't be shown; hidden when
+    the file is there all the same, in a token-named folder)."""
+    shown = shown_path(path)
+    return e.at(shown or PATH_NOT_REPEATED, hidden=shown is None and Path(path).expanduser().is_file())
 
 
 def load_inventory(path):
@@ -135,6 +144,12 @@ def load_inventory(path):
                                  PATH_NOT_REPEATED)
         raise InventoryError(f"{shown} not found - make one: roster -c {shown} init --blank (or --inventory "
                              "file:PATH|repo:URL|ssh-config)", shown)
+    if shown is None:                       # it's there, in a token-named folder (or named like one itself)
+        try:
+            return checked_inventory(path.read_text(), path, HIDDEN_FILE)
+        except InventoryError as e:
+            raise InventoryError(f"{e.message}\n{RENAME_HINT}", PATH_NOT_REPEATED, e.line, e.host, e.why,
+                                 hidden=True) from None
     return parse_inventory(path.read_text(), path)
 
 
@@ -153,11 +168,12 @@ def load_config_text(text, path, named=None):
 
 def parse_inventory(text, path, named=None):
     """roster.yml's TEXT (read from PATH, or as it would be there), loaded and checked into an Inventory;
-    InventoryError naming the key, the file (as NAMED, else PATH) and, for bad YAML, the line otherwise."""
+    InventoryError naming the key, the file (as NAMED, else as shown_path has it: never a token typed as a folder)
+    and, for bad YAML, the line otherwise."""
     try:
-        return checked_inventory(text, path, named or path)
+        return checked_inventory(text, path, named or shown_path(path) or HIDDEN_FILE)
     except InventoryError as e:
-        raise e.at(shown_or_hidden(path)) from None
+        raise located(e, path) from None
 
 
 def yaml_line(e: yaml.YAMLError) -> int | None:

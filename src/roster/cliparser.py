@@ -153,7 +153,10 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
                    "`roster mesh --rotate HOST` does those) on every Host: a new key, proven on each Host before the "
                    "old key's line goes, then the old key deleted. --host NAME (a Host or a group) narrows it; a Host "
                    "not reached stays pending until setup --rotate runs again")
-    sub.add_parser("sync", help="rewrite this Box's ssh config and Claude files from roster.yml; it touches no Host")
+    s = sub.add_parser("sync", help="rewrite this Box's ssh config and Claude files from roster.yml, and sync the "
+                       "vault (as roster vault sync); it touches no Host. Ends with what changed and the next command, "
+                       "if any")
+    s.add_argument("--no-vault", action="store_true", help="the map only: leave the vault as last synced")
     s = sub.add_parser("check", help="check: can this Box reach every Host? check HOST: why a Session to it would "
                        "fail, step by step. check --box: this Box's own health. check --auth: every Login's password "
                        "source answers")
@@ -163,7 +166,11 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
                    "roster.yml, ssh and its config, vault CLIs, askpass, the infra repo")
     s.add_argument("--auth", action="store_true", help="test each Login's password source (SSH, services, "
                    "resources) instead, connecting to no Host and printing nothing secret")
-    values(s.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
+    which = s.add_mutually_exclusive_group()
+    values(which.add_argument("--only", **only), ONLY, HOSTS, GROUPS)
+    values(which.add_argument("--host", dest="hosts", action="append", metavar="NAME", help="check exactly this Host "
+                              "(never a group or type by the name); again for more, as setup's last line names them"),
+           HOSTS)
     s.add_argument("--json", **as_json)
     s = sub.add_parser("hosts", help="list the Hosts and resources in roster.yml; hosts NAME: everything about one; "
                        "hosts --resources: only the resources")
@@ -365,8 +372,10 @@ def check(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
                          f"{'es' if len(listed) == 1 else ''} with the list (drop NAME or the flag)")
     if args.cmd == "check" and args.auth and (args.box or args.host):
         parser.error("check --auth tests the Logins' password sources: it takes no HOST or --box (--only narrows it)")
-    if args.cmd == "check" and args.box and (args.host or args.only):
-        parser.error("check --box takes no HOST or --only: it checks this Box, not its Hosts")
+    if args.cmd == "check" and args.box and (args.host or args.only or args.hosts):
+        parser.error("check --box takes no HOST, --host or --only: it checks this Box, not its Hosts")
+    if args.cmd == "check" and args.host and not args.box and (args.hosts or args.only):
+        parser.error("check HOST diagnoses one Host step by step: drop --host and --only")
     if args.cmd == "add" and args.name is None and not args.from_vault:
         parser.error("roster add needs NAME, the new Host's name")
     if args.cmd == "add" and args.name is not None:

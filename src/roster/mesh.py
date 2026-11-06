@@ -1149,7 +1149,7 @@ def brief(r):
     return out
 
 
-def status(cfg, grouped=False):
+def status(cfg: dict[str, Any], grouped: bool = False) -> dict[str, Any]:
     """No connections: who reaches whom as roster.yml says, what's unfinished, and whether roster.yml changed the
     Mesh since the last complete apply on this Box. grouped: each meshed group once, as meshed: {group: [hosts]},
     and links only those it doesn't already cover (a pair in one meshed group without a via: hop), so a map

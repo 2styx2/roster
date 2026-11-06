@@ -381,18 +381,42 @@ def token_shaped(value: str | Path) -> bool:
 
 
 def typed_token(path: str | Path) -> bool:
-    """PATH as typed is token_shaped (#489 M1, #494 L3). In an absolute value (after ~ is expanded) the folders at
-    its start that exist are left out first, so a long real folder name (a temp folder, C:/Users/NAME/…) never
-    counts. A relative value is tested whole, every part but . and .., whether it exists or not: a token typed as
-    a folder is caught even when an older roster already made that folder."""
+    """PATH as typed is token_shaped (#489 M1, #494 L3, #498). A relative value is tested whole, every part but . and
+    .., whether it exists or not: a token typed as a folder is caught even when an older roster already made that
+    folder. In an absolute value (after ~ is expanded) the folders at its start are left out first, so a long real
+    folder name (a temp folder, C:/Users/NAME/…) never counts: inside the cwd or $HOME, only up to the deeper of
+    them, and all the rest is tested, so `$PWD/TOKEN/…` and `~/TOKEN/…` are caught too; elsewhere, the folders at
+    its start that exist."""
     text = os.path.expanduser(str(path))
     if not Path(text).is_absolute():
         return token_shaped(str(path))
+    if (rest := _past_cwd_or_home(text)) is not None:
+        return token_shaped(rest)
     parts = re.split(r"[\\/]", text)
     for k in range(len(parts) - 1, 0, -1):
         if Path("/".join(parts[:k]) or "/").is_dir():
             return token_shaped("/".join(parts[k:]))
     return token_shaped(text)
+
+
+def _past_cwd_or_home(text: str) -> str | None:
+    """What absolute TEXT has past the deeper of the cwd and $HOME (as given or resolved) that it's inside, or None
+    when it's inside neither. A base that is a drive's or the file system's root doesn't count: it isn't a limit."""
+    bases = set()
+    for where in (Path.cwd, Path.home):
+        try:
+            base = where()
+            both = (base, base.resolve())
+        except (OSError, RuntimeError):     # a cwd that was deleted, no home to be found
+            continue
+        for b in both:
+            if b != Path(b.anchor):
+                bases.add(os.path.normcase(str(b)).rstrip("\\/"))
+    typed = os.path.normcase(text)
+    inside = [b for b in bases if typed == b or typed[len(b):len(b) + 1] in ("/", "\\") and typed.startswith(b)]
+    if not inside:
+        return None
+    return text[len(max(inside, key=len)):].lstrip("\\/")
 
 
 UTC_TIME = "%Y-%m-%dT%H:%M:%SZ"      # how roster writes a time in its own files

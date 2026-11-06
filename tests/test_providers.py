@@ -377,8 +377,16 @@ def test_bw_session_file_that_isnt_a_session_key_is_ignored(isolated, fakes, cap
 
 def test_bw_expired_session_file_says_refresh(isolated, fakes):
     _session_file(isolated, "stale-key\n")
-    with pytest.raises(providers.VaultLocked, match="has expired.*bw unlock --raw >"):
+    with pytest.raises(providers.VaultLocked, match="has expired") as e:
         get_secret("bw:Network gear", "g")
+    assert "run in a terminal: roster vault unlock" in str(e.value) and "umask" not in str(e.value)
+
+
+def test_bw_locked_with_no_terminal_names_roster_vault_unlock(isolated, fakes):
+    """T243 (#476, the owner's run): with no terminal the fix is roster vault unlock (T241), not the raw bw recipe."""
+    with pytest.raises(providers.VaultLocked) as e:
+        get_secret("bw:Network gear", "g")
+    assert "roster vault unlock" in str(e.value) and "umask" not in str(e.value)
 
 
 # ---- creating Vault items (ticket 13; fake bw keeps its items in FAKE_BW_ITEMS)

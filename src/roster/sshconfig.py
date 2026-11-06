@@ -89,6 +89,22 @@ def blocks(path: Path) -> list[Block]:
     return out
 
 
+def written_hosts(path: Path) -> dict[str, str | None] | None:
+    """{Host name: its HostName} in the ssh config file at PATH as roster last wrote it (None: no HostName), or None
+    when there's no such file."""
+    if not path.is_file():
+        return None
+    out: dict[str, str | None] = {}
+    name = None
+    for line in path.read_text().splitlines():
+        if line.startswith("Host "):
+            name = line[5:].strip()
+            out[name] = None
+        elif name and line.strip().startswith("HostName "):
+            out[name] = line.strip()[9:].replace("%%", "%")
+    return out
+
+
 def written_block(path: Path, name: str) -> list[str] | None:
     """The `Host NAME` block in the file at PATH as it is now, as lines; None if it isn't there."""
     return next((b.lines for b in blocks(path) if b.host == name), None)

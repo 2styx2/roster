@@ -23,8 +23,8 @@ def hk_name(h: dict[str, Any]) -> str:
     return h["ip"] if h["ssh"]["port"] == 22 else f"[{h['ip']}]:{h['ssh']['port']}"
 
 
-def known_names():
-    names = set()
+def known_names() -> set[str]:
+    names: set[str] = set()
     if current().known_hosts.exists():
         for line in current().known_hosts.read_text().splitlines():
             if line.strip() and not line.startswith(("#", "@")):

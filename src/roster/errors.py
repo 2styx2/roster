@@ -261,26 +261,30 @@ class Problem(Exception):
         return err
 
 
+# what to do about a roster.yml roster found in a token-named folder (or named like a token itself), which it never
+# names (#498): its errors and fix say so
+RENAME_HINT = "rename the folder (or file) whose name looks like a token, then give roster its new path"
+
+
 class InventoryError(Problem):
     """roster.yml wasn't found or doesn't load (catalog row 1): roster's MESSAGE, the PATH as roster may show it
     (PATH_NOT_REPEATED when it mustn't be; None when no file is in question yet) and, for a YAML error, the LINE.
-    An error in one Host's entry names the HOST, and WHY is the message without it. data: path and line; the fix
-    names the file."""
+    An error in one Host's entry names the HOST, and WHY is the message without it. HIDDEN: the file is there, in a
+    token-named folder, so the fix says to rename it first. data: path and line; the fix names the file."""
 
-    def __init__(self, message, path=None, line=None, host=None, why=None):
+    def __init__(self, message, path=None, line=None, host=None, why=None, hidden=False):
         where = ("roster.yml" if path is None else f"the roster.yml at that path {PATH_NOT_REPEATED}"
                  if path == PATH_NOT_REPEATED else path) + (f" at line {line}" if line else "")
-        super().__init__(INVENTORY_ERROR, message, {"path": path} | ({"line": line} if line else {}),
-                         fix=f"fix {where}, or make one if there's none yet: `roster init --blank` (`roster init "
-                             "--help`: the others)")
-        self.path, self.line, self.host, self.why = path, line, host, why or message
+        fix = (f"{RENAME_HINT}; then fix {where}" if hidden else
+               f"fix {where}, or make one if there's none yet: `roster init --blank` (`roster init --help`: the others)")
+        super().__init__(INVENTORY_ERROR, message, {"path": path} | ({"line": line} if line else {}), fix=fix)
+        self.path, self.line, self.host, self.why, self.hidden = path, line, host, why or message, hidden
 
-    def at(self, path):
-        """This error, about the file roster shows as PATH (when it named none yet)."""
+    def at(self, path, hidden=False):
+        """This error, about the file roster shows as PATH (when it named none yet); HIDDEN as the class has it."""
         if self.path is not None:
             return self
-        return InventoryError(self.message, path, self.line, self.host, self.why)
-
+        return InventoryError(self.message, path, self.line, self.host, self.why, hidden)
 
 
 def tagged(problem: Problem) -> str:

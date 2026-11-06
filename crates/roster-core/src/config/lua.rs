@@ -76,7 +76,7 @@ const LOADING: &str = "\0loading";
 const CODED: &str = "roster.coded";
 
 /// An error a `roster.*` function raises that carries a code: roster serve's error, as a Plugin
-/// gets it (Plugin API 7, decision Q210). `pcall` hands it to Lua as an error object, a table with
+/// gets it (Plugin API 7, decision Q211). `pcall` hands it to Lua as an error object, a table with
 /// `code` and `message`, whose `tostring` is `text` (`roster.serve.call METHOD: MESSAGE (code N)`,
 /// the string Plugins got before) and which answers string methods (`e:find`) on that text, so
 /// code written for the string keeps working. Uncaught, it's `text`.

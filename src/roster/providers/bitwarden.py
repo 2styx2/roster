@@ -35,6 +35,7 @@ from . import (
     register,
     resolve_target,
     split_field,
+    unlock_fix,
 )
 from .bw_items_filter import (
     CAP as LIST_CAP,  # bytes of `bw list items` the filter reads; more is refused, not cut short
@@ -569,8 +570,8 @@ def _bw_ready(ctx):
     if expired:
         forget_session()
         if not (os.environ.get("BW_PASSWORD") or ctx.interactive):
-            raise VaultLocked(f"the Bitwarden session in {session_file()} has expired (vault locked) - refresh it: "
-                              f"(umask 077; bw unlock --raw > {session_file()})")
+            raise VaultLocked(f"the Bitwarden session in {session_file()} has expired (vault locked): "
+                              f"{unlock_fix('bw')}")
     if status == "locked" and manual_unlock():
         raise VaultLocked("Bitwarden vault is locked - unlock it first")
     if status == "locked":
@@ -582,9 +583,8 @@ def _bw_ready(ctx):
             _offer_to_keep(ctx, key, expired)
             r = None
         else:
-            raise VaultLocked("Bitwarden vault is locked and there's no terminal to unlock it. In the shell "
-                              "you start Claude (or roster) from, run:  export BW_SESSION=$(bw unlock --raw)  "
-                              f"- or, for every session on this box:  (umask 077; bw unlock --raw > {session_file()})")
+            raise VaultLocked(f"Bitwarden vault is locked and there's no terminal to unlock it: {unlock_fix('bw')} "
+                              "(every roster run on this Box, Claude's too, then uses it until roster vault lock)")
         if r is not None:
             if r.returncode != 0 or not r.stdout.strip():
                 raise WrongPassword("Bitwarden unlock failed (wrong master password?)")
@@ -1087,9 +1087,7 @@ PROVIDERS["bw"].update(unlock=unlock_with, lock=_bw_lock, manual=_bw_manual, for
                        create=_bw_create, delete=_bw_delete, targets=_bw_targets, resolve=_bw_resolve,
                        login_fields=_bw_login_fields, items=_bw_items, sync=_bw_sync,
                        saved_session=_bw_saved_session, save_to=frozenset({"organization", "collection"}),
-                       unlock_hint="roster vault bw --write -- unlock (then export BW_SESSION=... as it says), or put "
-                                   "the session in ~/.config/roster/bw-session: (umask 077; bw unlock --raw > "
-                                   "~/.config/roster/bw-session)",
+                       unlock_hint="run in a terminal: roster vault unlock",
                        session={"unlock": unlock_to_session_file, "lock": lock_everywhere,
                                 "remove": remove_session_file, "file": session_file, "until": UNTIL,
                                 "missing": "bw (the Bitwarden CLI) isn't installed"})

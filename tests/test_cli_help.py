@@ -1,7 +1,9 @@
 """`roster --help`, `roster COMMAND --help` and usage errors (roster.clihelp)."""
 
 import json
+import os
 import shlex
+from pathlib import Path
 
 import pytest
 
@@ -381,13 +383,56 @@ def test_init_refuses_a_token_named_folder_that_exists(capsys, tmp_path, monkeyp
     assert list((tmp_path / OP_SESSION).iterdir()) == []
 
 
+# #498 item 2 (#496 review L1): in an absolute value, the folders that exist are skipped only up to the cwd or
+# $HOME, never past them: `-c $PWD/TOKEN/roster.yml` and `-c ~/TOKEN/roster.yml` through a token folder an older
+# roster made are hidden, and init writes nothing there. A long real folder above them (or outside both) still shows.
 def test_a_long_real_folder_in_an_absolute_path_is_shown(capsys, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    real = tmp_path / "a-really-long-real-folder-name-for-lab-inventories"
+    real = tmp_path / "a-really-long-real-folder-name-for-lab-inventories"     # outside the cwd and $HOME
     real.mkdir()
     assert f"{real / 'roster.yml'} not found" in _run(capsys, ["-c", str(real / "roster.yml"), "hosts"])
     out = _run(capsys, ["-c", str(real / "roster.yml"), "init", "--blank"])
     assert f"wrote {real / 'roster.yml'}, a blank Inventory" in out, out
+
+
+@pytest.mark.parametrize("base", ["cwd", "home"])
+def test_a_long_real_folder_above_the_cwd_or_home_is_shown(capsys, tmp_path, monkeypatch, base):
+    real = tmp_path / "a-really-long-real-folder-name-for-lab-inventories" / "lab"
+    real.mkdir(parents=True)
+    monkeypatch.chdir(real) if base == "cwd" else monkeypatch.setenv("HOME", str(real))
+    monkeypatch.setenv("USERPROFILE", os.environ["HOME"])            # what ~ is on Windows
+    assert f"{real / 'roster.yml'} not found" in _run(capsys, ["-c", str(real / "roster.yml"), "hosts"])
+    out = _run(capsys, ["-c", str(real / "roster.yml"), "init", "--blank"])
+    assert f"wrote {real / 'roster.yml'}, a blank Inventory" in out, out
+
+
+ABSOLUTE_THROUGH_A_TOKEN_FOLDER = [pytest.param(lambda: str(Path.cwd() / OP_SESSION / "roster.yml"), id="cwd"),
+                                   pytest.param(lambda: f"~/{OP_SESSION}/roster.yml", id="tilde"),
+                                   pytest.param(lambda: str(Path.home() / "inv" / OP_SESSION / "roster.yml"),
+                                                id="home-subfolder")]
+
+
+@pytest.mark.parametrize("typed", ABSOLUTE_THROUGH_A_TOKEN_FOLDER)
+@pytest.mark.parametrize("command", [["hosts"], ["hosts", "--json"], ["inv", "which"], ["init", "--blank"]])
+def test_an_absolute_path_through_an_existing_token_folder_is_hidden(capsys, tmp_path, monkeypatch, typed, command):
+    monkeypatch.setenv("USERPROFILE", os.environ["HOME"])
+    for base in (Path.cwd(), Path.home(), Path.home() / "inv"):
+        (base / OP_SESSION).mkdir(parents=True)
+    out = _run(capsys, ["-c", typed(), *command])
+    assert not [x for x in _slices(OP_SESSION) if x in out], out
+    assert "(not repeated)" in out, out
+    assert not list(tmp_path.rglob("roster.yml"))                   # init wrote nothing into it
+
+
+@pytest.mark.parametrize("typed", ABSOLUTE_THROUGH_A_TOKEN_FOLDER)
+@pytest.mark.parametrize("command", [["hosts"], ["hosts", "--json"], ["inv", "which"]])
+def test_an_absolute_roster_yml_in_a_token_folder_is_hidden(capsys, tmp_path, monkeypatch, typed, command):
+    monkeypatch.setenv("USERPROFILE", os.environ["HOME"])
+    for base in (Path.cwd(), Path.home(), Path.home() / "inv"):
+        (base / OP_SESSION).mkdir(parents=True)
+        (base / OP_SESSION / "roster.yml").write_text("groups: [unclosed\n")
+    out = _run(capsys, ["-c", typed(), *command])
+    assert not [x for x in _slices(OP_SESSION) if x in out], out
+    assert "(not repeated)" in out, out
 
 
 @pytest.mark.parametrize("command", [["hosts"], ["init", "--blank"]])
@@ -398,6 +443,33 @@ def test_a_token_after_the_absolute_cwd_is_hidden(capsys, tmp_path, monkeypatch,
     assert not [x for x in _slices(OP_SESSION) if x in out], out
     assert "(not repeated)" in out, out
     assert list((tmp_path / "cwd").iterdir()) == []
+
+
+# #498 item 1 (#496 review L2): a roster.yml that is there, in a token-named folder an older roster made, was shown,
+# and the loader's own errors (not valid YAML, defines no hosts) named it in text and --json.
+@pytest.mark.parametrize("text", ["groups: [unclosed\n", "groups:\n  lab:\n    title: x\n", "- a list\n"],
+                         ids=["not-yaml", "no-hosts", "not-a-mapping"])
+@pytest.mark.parametrize("command", [["hosts"], ["hosts", "--json"], ["check", "--box"], ["inv", "which"],
+                                     ["inv", "which", "--json"]])
+@pytest.mark.parametrize("up", ["", "../"], ids=["in-the-cwd", "above-the-cwd"])
+def test_a_roster_yml_in_a_token_named_folder_is_never_named(capsys, tmp_path, monkeypatch, text, command, up):
+    (tmp_path / "cwd").mkdir()
+    monkeypatch.chdir(tmp_path / "cwd")
+    folder = (tmp_path / "cwd" / up / OP_SESSION).resolve()
+    folder.mkdir()
+    (folder / "roster.yml").write_text(text)
+    out = _run(capsys, ["-c", f"{up}{OP_SESSION}/roster.yml", *command])
+    assert not [x for x in _slices(OP_SESSION) if x in out], out
+    assert "(not repeated)" in out, out
+
+
+@pytest.mark.parametrize("command", [["hosts"], ["hosts", "--json"]])
+def test_a_hidden_roster_yml_says_to_rename_its_folder(capsys, tmp_path, monkeypatch, command):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / OP_SESSION).mkdir()
+    (tmp_path / OP_SESSION / "roster.yml").write_text("groups: [unclosed\n")
+    out = _run(capsys, ["-c", f"{OP_SESSION}/roster.yml", *command])
+    assert "rename the folder" in out, out
 
 
 def test_init_says_the_path_it_wrote(capsys, tmp_path, monkeypatch):

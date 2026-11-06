@@ -73,8 +73,12 @@ src/roster/
                     new ones since the last run (the seen file); the CLI's walk adds each as `roster add` does
   vaultcli.py       what `roster vault bw` and `roster vault op` let through: a fail-closed allowlist of each CLI's
                     commands (Q178, Q197), read-only unless --write
-  vaultsync.py      `roster vault sync` (T222, Q194): each vault roster.yml uses, synced, and the items added, changed
-                    or removed since the last sync, from a snapshot of ids and revision dates (vault-sync/, 0600)
+  catchup.py        what's left after the vault or the map changed (T243, Q210): local state only (no connection, no
+                    vault call), the "next" line sync, setup, vault sync and vault unlock end with (what changed, then
+                    the next command), setup's record of the Hosts it didn't finish
+  vaultsync.py      `roster vault sync` (T222, Q194): each vault roster.yml uses, synced (also `roster sync`'s vault
+                    step), and the items added, changed or removed since the last sync, from a snapshot of ids and
+                    revision dates (vault-sync/, 0600)
   discover.py       nmap / built-in scanning, type guessing, merging into roster.yml; Scan: serve's discover.* scan
   serve.py          `roster serve`: JSON-RPC API for the desktop app, the roster.yml watcher (inventory.changed); one
                     method registry (`@method`: deadline, locks, lane, what a cancel stops, whether it holds a secret);

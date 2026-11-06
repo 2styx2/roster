@@ -217,7 +217,7 @@ def ssh(cfg):
     return out
 
 
-def key_age(cfg, key, what):
+def key_age(cfg: dict[str, Any], key: Any, what: str) -> list[Any]:
     """T240: a warning once KEY (boxkeys.BoxKey) is older than key_max_age: (on by default, 365d; off: none). Only a
     warning: roster never rotates by itself."""
     limit = cfg.get("key_max_age")
