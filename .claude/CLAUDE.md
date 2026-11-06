@@ -2,6 +2,11 @@
 
 One repo, two halves: the Python CLI at the root (`src/roster/`, `tests/`) and the desktop app, the roster app, in `app/` (frontend `app/src/`, Tauri shell `app/src-tauri/`) with its Rust core in `crates/roster-core/`. Decision Q56 and ADR 0007 explain the layout.
 
+## Where code goes
+
+- **Placing code:** before adding a module, a file roster keeps, a serve method, a command, a Plugin op, or any value two modules or languages share, read `docs/architecture.md`: each half's layers, the "Where new code goes" table, the generated files. Code goes in its fact's owner; a cross-language value is generated or checked, never copied.
+- The layers are tests: `tests/test_layers.py` (a new Python module needs its layer there and in the doc), `app/src/architecture.test.ts`, `app/src/docs-site/build.test.ts`, `crates/roster-core/tests/layers.rs`. Fix the structure they name, not the test.
+
 ## The CLI
 
 - Module map: `docs/development.md` (one line per file in `src/roster/`). Open only the module it points you to.

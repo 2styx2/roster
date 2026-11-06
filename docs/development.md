@@ -16,6 +16,8 @@ The tests use stand-in `bw`, `op`, `pass` and `ssh` commands from `tests/fakes/`
 
 The `cmd:`/`env:` cut (decision Q92) is written twice, in `src/roster/jsonout.py` (the CLI's `--json`) and `crates/roster-core/src/plugin/runtime.rs` (what Plugins get). Its cases are one file, `tests/vectors/redaction.json` (`in`, `out` and a `note` each; `"error": true` for an error message, which keeps its `(code N)`), read by `tests/test_json.py` and runtime.rs's tests: add a case there, not in either test, and change both implementations until both pass.
 
+Each module below is in one of [architecture.md](architecture.md#the-cli)'s layers, and imports only its own layer or the ones below (`tests/test_layers.py`): a new module gets its line here and its layer there.
+
 ```text
 src/roster/
   cli.py            the commands: what each one asks of the modules below, and what it prints
