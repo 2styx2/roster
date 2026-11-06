@@ -4,6 +4,7 @@ import ipaddress
 import os
 import re
 import socket
+import sys
 from pathlib import Path
 from typing import Any, Literal, NoReturn, overload
 from urllib.parse import urlparse
@@ -111,13 +112,17 @@ HIDDEN_PATH = "that path (not repeated)"
 HIDDEN_FILE = f"the roster.yml at {HIDDEN_PATH}"
 
 
-def shown_path(path) -> str | None:
+def shown_path(path: Any) -> str | None:
     """roster.yml's PATH (as given: -c, $ROSTER_CONFIG, a named Inventory's) as roster may print it, resolved; None
     when it mustn't be (#479, #484 M1/L1/L3, #489 M1, #498): never when it's typed_token, whether a file is there or
     not (a token-named folder or file an older roster's init made is still a token), else when the file or its folder
     is there. `roster -cTOKEN hosts` reads an op session token that starts with -c as `-c TOKEN`, and a bw key or an
     op token can be typed after -c by mistake. Every message, fix line and JSON field naming the path goes through
-    this, the loader's own errors included."""
+    this: the loader's own errors (CLI and serve), and since #506 the lines of a run that works too (check --box,
+    setup, sync's ROSTER.md, add's and discover's backup and wrote, revoke --all, the ssh config's header, the sync
+    fix), through shown_file for a loaded Inventory, whose `hidden` load_inventory decides from the path as given.
+    Not yet: serve's results that name the file it runs on for the app to show (inventory.info, inventories.list,
+    inventory.watch)."""
     if typed_token(path):
         return None
     full = Path(path).expanduser().resolve()
@@ -146,11 +151,36 @@ def load_inventory(path):
                              "file:PATH|repo:URL|ssh-config)", shown)
     if shown is None:                       # it's there, in a token-named folder (or named like one itself)
         try:
-            return checked_inventory(path.read_text(), path, HIDDEN_FILE)
+            inv = checked_inventory(path.read_text(), path, HIDDEN_FILE)
         except InventoryError as e:
             raise InventoryError(f"{e.message}\n{RENAME_HINT}", PATH_NOT_REPEATED, e.line, e.host, e.why,
                                  hidden=True) from None
+        rename_hint(path)
+        return inv.model_copy(update={"hidden": True})
     return parse_inventory(path.read_text(), path)
+
+
+_HINTED: set[Path] = set()
+
+
+def rename_hint(path: Path) -> None:
+    """Say once per run, on stderr, that the roster.yml at PATH (resolved) loads but is hidden (#506): only the error
+    paths said it before, so a file that loads never told you to rename its folder. Once renamed, nothing is hidden."""
+    if path in _HINTED:
+        return
+    _HINTED.add(path)
+    print(f"note: {HIDDEN_FILE} loads, but its folder (or its own name) looks like a token, so roster names it "
+          f"nowhere - {RENAME_HINT}", file=sys.stderr, flush=True)
+
+
+def shown_file(cfg: dict[str, Any], path: Any = None, what: str = "the roster.yml") -> str:
+    """PATH (default: the Inventory CFG's roster.yml; else a file roster keeps beside it: its backup, ROSTER.md) as a
+    success message may name it (#506): `WHAT at that path (not repeated)` when CFG's path as given is hidden
+    (cfg["hidden"], load_inventory's shown_path), or PATH itself is."""
+    path = cfg["path"] if path is None else path
+    if cfg.get("hidden"):
+        return f"{what} at {HIDDEN_PATH}"
+    return shown_path(path) or f"{what} at {HIDDEN_PATH}"
 
 
 def load_config(path: Any) -> dict[str, Any]:
@@ -163,7 +193,11 @@ def load_config_text(text, path, named=None):
     """load_config of TEXT as if it were PATH's (an edit checked before it's written): no file is read or written.
     NAMED: what its messages call the file (PATH)."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    return parse_inventory(text, Path(path).expanduser().resolve(), named).as_config()
+    try:                                    # named from PATH as given, as load_inventory does (#506)
+        return checked_inventory(text, Path(path).expanduser().resolve(),
+                                 named or shown_path(path) or HIDDEN_FILE).as_config()
+    except InventoryError as e:
+        raise located(e, path) from None
 
 
 def parse_inventory(text, path, named=None):

@@ -17,7 +17,7 @@ import yaml
 
 from . import boxsync, jsonout, store
 from .common import die, find_program, oneline, program_argv, replace_file, say, tcp_ok
-from .config import find_config, load_config, load_config_text
+from .config import HIDDEN_FILE, HIDDEN_PATH, find_config, load_config, load_config_text, shown_path
 from .errors import ROSTER_ERROR, TOO_MANY_ADDRESSES, InventoryError, Problem
 
 # ---------------------------------------------------------------- discover (network scan)
@@ -395,10 +395,12 @@ def write_discovered(cfg_path, group, entries, note, needs_user, today):
         load_config_text(new_text, path)          # refuse to write a file roster can't read back (checked in memory)
     except InventoryError as e:
         die(f"the merged roster.yml didn't validate, nothing written ({e.message})")
+    shown = shown_path(cfg_path or path)            # as given, never a token-named folder (#506)
+
     def wrote(backup=None):
         if backup is not None:
-            say(f"backup       {backup}")
-        say(f"wrote        {len(entries)} hosts into group '{group}' in {path}")
+            say(f"backup       {(shown and shown_path(backup)) or f'its backup at {HIDDEN_PATH}'}")
+        say(f"wrote        {len(entries)} hosts into group '{group}' in {shown or HIDDEN_FILE}")
     if path.exists():                             # saved as serve's edits are (store.py), repo or plain file
         _, synced = store.at(path).write(text, new_text, then=wrote)
     else:                                         # a new one is private (0600), as `roster init`'s
@@ -406,7 +408,7 @@ def write_discovered(cfg_path, group, entries, note, needs_user, today):
         wrote()
         synced = boxsync.sync_file(path)
     boxsync.warn(synced)
-    say(f"next         open {path.name}: rename hosts (e.g. orion-dev-01), add titles/descriptions,")
+    say(f"next         open {path.name if shown else 'roster.yml'}: rename hosts (e.g. orion-dev-01), add titles/descriptions,")
     say("             set the login user, move hosts into the right groups if you like,")
     say(f"             then set `reviewed: true` and run:  roster setup --only {group}")
 

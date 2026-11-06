@@ -12,6 +12,7 @@ from typing import Any
 
 from . import context, rotation, sshconfig
 from .common import die, program_argv, replace_file, say, ssh_path
+from .config import HIDDEN_FILE, shown_path
 from .context import Context, current, ssh_dir
 from .errors import NOT_SET_UP, Problem
 from .hosts import is_windows, password_login
@@ -146,7 +147,7 @@ def not_reached(name: str) -> str | None:
     other = named.unnamed_from_elsewhere()
     if other is not None:               # with or without the index: roster's one unnamed file is another roster.yml's
         return (f"{name} is not in this Box's ssh config for this roster.yml: roster's unnamed ssh config was written "
-                f"from {other}, so `ssh {name}` would reach that file's {name}")
+                f"from {shown_source(other)}, so `ssh {name}` would reach that file's {name}")
     by_file = named.index_hosts()
     if by_file is None or name in by_file.get(ssh_path(current().ssh_config), set()):
         return None
@@ -155,12 +156,24 @@ def not_reached(name: str) -> str | None:
                               "wouldn't reach it")
 
 
+def shown_source(source: Path) -> str:
+    """The roster.yml an ssh config's header names (sshconfig.source_of), as a message may name it: never a hidden
+    one's digest, nor a token-named folder an older roster's header names (#506)."""
+    if sshconfig.hidden_source(source):
+        return HIDDEN_FILE
+    return shown_path(source) or HIDDEN_FILE
+
+
 def sync_fix() -> str:
     """The command that writes this run's ssh config: `roster sync` with what picks this run's roster.yml."""
     here = current()
     if here.name is not None:
         return f"`roster --inv {here.name} sync` writes it"
-    return f"`roster -c {shlex.quote(str(here.path))} sync` writes it" if here.path is not None else "`roster sync` writes it"
+    if here.path is None:
+        return "`roster sync` writes it"
+    if shown_path(here.path) is None:           # a token-named folder: never repeated (#506)
+        return "`roster -c PATH sync` writes it (PATH: its roster.yml, once its folder is renamed)"
+    return f"`roster -c {shlex.quote(str(here.path))} sync` writes it"
 
 
 def not_in_ssh_config(name, missing, fix=None):
@@ -242,7 +255,7 @@ def ssh_config_lines(cfg, ctx=None):
     path can't be written safely."""
     ctx = ctx or current()
     waiting = rotation.config_waiting(cfg, ctx)   # fail closed: every Host when roster can't tell
-    out = [sshconfig.header(cfg["path"]), "# Don't edit by hand: change roster.yml and run `roster sync`.", ""]
+    out = [sshconfig.header(cfg["path"], bool(cfg.get("hidden"))), "# Don't edit by hand: change roster.yml and run `roster sync`.", ""]
     for name, h in sorted(cfg["hosts"].items()):
         tags = ", ".join(x for x in (h["type"], h["product"]) if x)
         label = " ".join(x for x in (h["title"], f"[{tags}]" if tags else "") if x)
@@ -269,7 +282,7 @@ def write_ssh_config(cfg: dict[str, Any], ctx: Context | None = None) -> None:
     say(f"ssh config   {ctx.ssh_config} ({len(cfg['hosts'])} hosts)")
     if ctx.name is not None:
         unnamed = Context().ssh_config          # the file this same roster.yml had before it was named: superseded
-        if sshconfig.source_of(unnamed) == Path(sshconfig.comment(cfg["path"])):
+        if (source := sshconfig.source_of(unnamed)) is not None and named.same_file(source, cfg["path"]):
             unnamed.unlink()
     if named.in_use():
         named.refresh_index()
