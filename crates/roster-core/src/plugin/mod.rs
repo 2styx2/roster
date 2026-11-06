@@ -865,16 +865,16 @@ impl PluginHost {
         let spawned = std::thread::Builder::new()
             .name(format!("plugin:{name}"))
             .spawn(move || {
-                let runtime = runtime::Runtime::new(
-                    &name,
-                    &version,
+                let runtime = runtime::Runtime::new(runtime::Start {
+                    plugin: name,
+                    version,
                     api,
-                    &dir,
-                    &config,
+                    dir,
+                    config,
                     grants,
                     serve,
-                    limits.memory,
-                    limits.call,
+                    memory: limits.memory,
+                    budget: limits.call,
                     post,
                     offline,
                     storage,
@@ -883,7 +883,7 @@ impl PluginHost {
                     network,
                     sessions,
                     builtins,
-                );
+                });
                 // Ends when the host drops the Plugin's sender (unload, disable).
                 for (job, reply) in rx {
                     let outcome = match &runtime {

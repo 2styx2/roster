@@ -17,7 +17,7 @@ use mlua::{Function, Lua, Table, Value};
 use serde_json::{Value as Json, json};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap};
-use std::path::Path;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -334,27 +334,58 @@ pub(crate) struct Runtime {
     budget: Duration,
 }
 
+/// What a Plugin's Lua starts with: each a fact about the Plugin from its own place (its manifest,
+/// the user's grants, the host's limits and shared state).
+pub(crate) struct Start {
+    pub plugin: String,
+    pub version: String,
+    /// The `api` its manifest says.
+    pub api: u32,
+    /// Its folder (empty: a built-in Plugin, with only `require("roster")`).
+    pub dir: PathBuf,
+    /// Its settings (`roster.plugin.config`).
+    pub config: Json,
+    pub grants: BTreeSet<Permission>,
+    pub serve: Arc<dyn Serve>,
+    /// Its memory limit, in bytes.
+    pub memory: usize,
+    /// Each call's time budget.
+    pub budget: Duration,
+    /// Where a request's answer goes; None: it makes none.
+    pub post: Option<Post>,
+    /// No request leaves (`:tutor`'s demo).
+    pub offline: bool,
+    pub storage: Option<Result<Storage, String>>,
+    pub serving: Arc<ServeWait>,
+    /// The load's generation, in its handlers' numbers.
+    pub generation: u64,
+    pub network: network::Setup,
+    pub sessions: Arc<OpenSessions>,
+    pub builtins: Builtins,
+}
+
 impl Runtime {
-    #[allow(clippy::too_many_arguments)] // each is one fact about the Plugin, from its own place
-    pub(crate) fn new(
-        plugin: &str,
-        version: &str,
-        api: u32,
-        dir: &Path,
-        config: &Json,
-        grants: BTreeSet<Permission>,
-        serve: Arc<dyn Serve>,
-        memory: usize,
-        budget: Duration,
-        post: Option<Post>,
-        offline: bool,
-        storage: Option<Result<Storage, String>>,
-        serving: Arc<ServeWait>,
-        generation: u64,
-        network: network::Setup,
-        sessions: Arc<OpenSessions>,
-        builtins: Builtins,
-    ) -> Result<Runtime, PluginError> {
+    pub(crate) fn new(start: Start) -> Result<Runtime, PluginError> {
+        let Start {
+            plugin,
+            version,
+            api,
+            dir,
+            config,
+            grants,
+            serve,
+            memory,
+            budget,
+            post,
+            offline,
+            storage,
+            serving,
+            generation,
+            network,
+            sessions,
+            builtins,
+        } = start;
+        let plugin = plugin.as_str();
         let fail = |e: mlua::Error| PluginError::new(plugin, None, None, format!("couldn't start Lua: {e}"));
         let sites: Vec<network::Site> = grants
             .iter()
@@ -370,8 +401,12 @@ impl Runtime {
         } else {
             Some(Net::new(sites, network).map_err(|e| PluginError::new(plugin, None, None, e))?)
         };
-        let (lua, clock) =
-            lua::sandboxed(memory, (!dir.as_os_str().is_empty()).then_some(dir), plugin.to_string()).map_err(fail)?;
+        let (lua, clock) = lua::sandboxed(
+            memory,
+            (!dir.as_os_str().is_empty()).then_some(dir.as_path()),
+            plugin.to_string(),
+        )
+        .map_err(fail)?;
         let shared = Rc::new(Shared {
             plugin: plugin.to_string(),
             api,
@@ -418,7 +453,7 @@ impl Runtime {
             .set_mode(ChunkMode::Text)
             .exec()
             .map_err(fail)?;
-        let roster = self::api(&lua, &shared, version, config).map_err(fail)?;
+        let roster = self::api(&lua, &shared, &version, &config).map_err(fail)?;
         lua::set_api(&lua, roster).map_err(fail)?;
         Ok(Runtime { lua, shared, budget })
     }
@@ -1489,27 +1524,31 @@ mod tests {
         }
     }
 
+    /// A built-in-like Plugin `plugin` with `grants`, asking `serve`.
+    fn start(plugin: &str, grants: BTreeSet<Permission>, serve: Arc<dyn Serve>) -> Start {
+        Start {
+            plugin: plugin.into(),
+            version: "1.0.0".into(),
+            api: crate::plugin::API_VERSION,
+            dir: PathBuf::new(),
+            config: Json::Null,
+            grants,
+            serve,
+            memory: 8 * 1024 * 1024,
+            budget: Duration::from_millis(250),
+            post: None,
+            offline: false,
+            storage: None,
+            serving: Arc::new(ServeWait::default()),
+            generation: 1,
+            network: network::Setup::default(),
+            sessions: Arc::default(),
+            builtins: Builtins::default(),
+        }
+    }
+
     fn runtime() -> Runtime {
-        Runtime::new(
-            "quiet",
-            "1.0.0",
-            crate::plugin::API_VERSION,
-            Path::new(""),
-            &Json::Null,
-            BTreeSet::new(),
-            Arc::new(NoServe),
-            8 * 1024 * 1024,
-            Duration::from_millis(250),
-            None,
-            false,
-            None,
-            Arc::new(ServeWait::default()),
-            1,
-            network::Setup::default(),
-            Arc::default(),
-            Builtins::default(),
-        )
-        .unwrap()
+        Runtime::new(start("quiet", BTreeSet::new(), Arc::new(NoServe))).unwrap()
     }
 
     thread_local! {
@@ -1539,25 +1578,11 @@ mod tests {
     #[test]
     fn one_call_may_wait_for_roster_serve_300_s_in_all() {
         let serve = Arc::new(Calls(Default::default()));
-        let rt = Runtime::new(
+        let rt = Runtime::new(start(
             "slow",
-            "1.0.0",
-            crate::plugin::API_VERSION,
-            Path::new(""),
-            &Json::Null,
             BTreeSet::from([Permission::Serve("mesh.status".into())]),
             serve.clone(),
-            8 * 1024 * 1024,
-            Duration::from_millis(250),
-            None,
-            false,
-            None,
-            Arc::new(ServeWait::default()),
-            1,
-            network::Setup::default(),
-            Arc::default(),
-            Builtins::default(),
-        )
+        ))
         .unwrap();
         rt.shared.serve_clock.set(fake_now);
         let loaded = rt.load(
