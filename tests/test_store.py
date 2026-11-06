@@ -43,7 +43,7 @@ def test_a_file_outside_any_repo_is_a_plain_file(plain):
 
 def test_a_plain_file_saves_in_place_and_keeps_a_backup_beside_it(plain):
     s = store.at(plain)
-    backup = s.save(TEXT, TEXT.replace("10.0.0.5", "10.0.0.6"))
+    backup = s.write(TEXT, TEXT.replace("10.0.0.5", "10.0.0.6"), sync=dict)[0]
     assert plain.read_text() == TEXT.replace("10.0.0.5", "10.0.0.6")
     assert backup == plain.with_name("roster.yml.bak") and backup.read_text() == TEXT
 
@@ -71,7 +71,7 @@ def test_committed_in_a_repo_with_a_remote_is_a_repo(plain, tmp_path):
     committed(plain, tmp_path / "origin.git")
     s = store.at(plain)
     assert s.kind == "repo" and str(plain.parent.resolve()) in s.note
-    backup = s.save(TEXT, TEXT + "# more\n")
+    backup = s.write(TEXT, TEXT + "# more\n", sync=dict)[0]
     assert backup == plain.parent.resolve() / ".git" / "roster" / "roster.yml.bak"
     assert git(plain.parent, "status", "--porcelain", "--untracked-files=no") == "M roster.yml"
     assert s.diff()["kind"] == "repo" and s.diff()["count"] == 1
@@ -81,7 +81,7 @@ def test_a_repo_without_a_remote_saves_in_place_with_the_backup_in_its_git_dir(p
     committed(plain)
     s = store.at(plain)
     assert s.kind == "file" and "no remote" in s.note
-    assert s.save(TEXT, TEXT + "# more\n") == plain.parent.resolve() / ".git" / "roster" / "roster.yml.bak"
+    assert s.write(TEXT, TEXT + "# more\n", sync=dict)[0] == plain.parent.resolve() / ".git" / "roster" / "roster.yml.bak"
     assert s.diff()["count"] == 0
 
 
