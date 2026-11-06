@@ -39,8 +39,12 @@ export function switchPlan(list: Inventories, to: string, open: { sessions: numb
   if (names.length === 0) return { kind: "say", message: NONE_NAMED };
   const target = list.inventories.find((i) => i.name === to);
   if (!target) return { kind: "say", message: `No Inventory named ${to} (there's ${names.join(", ")})` };
-  if (list.name === to) return { kind: "say", message: `Already on ${to} (${here(list, caps) ?? target.path})${thenRename(list.path, caps)}` };
-  if (!target.exists) return { kind: "say", message: `${to}'s roster.yml isn't there: ${target.path}. roster inv remove ${to} forgets it` };
+  // Another named Inventory's path is hidden since API 32 (#538), as serve's own since 31.
+  const named = shownPath(target.path, caps, undefined, "hiddenNamedPaths");
+  if (list.name === to) return { kind: "say", message: `Already on ${to} (${here(list, caps) ?? named})${thenRename(list.path, caps)}` };
+  if (!target.exists) {
+    return { kind: "say", message: `${to}'s roster.yml isn't there: ${named}. roster inv remove ${to} forgets it${thenRename(target.path, caps, "hiddenNamedPaths")}` };
+  }
   const from = list.name ?? "this roster.yml";
   const fromOwn = list.name ? `${list.name}'s` : "this";
   // serve runs on another file than the active Inventory's: an earlier step of roster's lookup found

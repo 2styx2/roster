@@ -65,7 +65,7 @@ def add(path, group, name, fields, sync=None, dry_run=False, new_address=False, 
         return done
 
     def written(backup):
-        done["backup"] = str(backup)
+        done["backup"] = kept.shown_backup(backup)      # PATH_NOT_REPEATED for a hidden one's (#538)
         if on_write is not None:
             on_write(done)
     _, done["sync"] = kept.write(old, new, then=written, sync=sync)

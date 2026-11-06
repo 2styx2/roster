@@ -21,6 +21,7 @@ from .errors import (
     NOT_A_REPO,
     NOTHING_TO_PUBLISH,
     OTHER_CHANGES,
+    PATH_NOT_REPEATED,
     PULL_FAILED,
     PUSH_FAILED,
     REMOTE_MOVED,
@@ -85,22 +86,42 @@ def out(repo, *args):
 
 
 class Repo:
-    """The git working tree roster.yml is in, and roster.yml's path inside it."""
+    """The git working tree roster.yml is in, and roster.yml's path inside it. HIDDEN: roster.yml is one
+    config.shown_path hides (store.py's `hidden`, #538), so no message or fix names it, its folder or the work tree:
+    `name` is plain `roster.yml`, and a git command to type is `git ...` run in its folder, never `git -C TOP ...`."""
 
-    def __init__(self, path):
+    def __init__(self, path, hidden=False):
         self.path = Path(path).resolve()
+        self.hidden = hidden
+        shown = PATH_NOT_REPEATED if hidden else str(self.path)
         top = out(self.path.parent, "rev-parse", "--show-toplevel")
         if top is None:
-            raise Problem(NOT_A_REPO, f"{self.path} isn't in a git repo, so it can't have Pending changes",
-                          {"path": str(self.path)},
+            raise Problem(NOT_A_REPO, f"{'roster.yml (not repeated)' if hidden else self.path} isn't in a git repo, so "
+                                      "it can't have Pending changes", {"path": shown},
                           fix="keep roster.yml in the infra repo (a git clone), or edit it by hand")
         self.top = Path(top).resolve()
         self.rel = self.path.relative_to(self.top).as_posix()
+        self.name = "roster.yml" if hidden else self.rel
         self.git_dir = Path(out(self.top, "rev-parse", "--absolute-git-dir") or self.top / ".git")
         if git(self.top, "ls-files", "--error-unmatch", "--", self.rel).returncode != 0:
-            raise Problem(NOT_A_REPO, f"{self.rel} isn't committed in {self.top} yet, so it can't have Pending "
-                                      "changes", {"path": str(self.path)},
-                          fix=f"commit it once in a terminal: git -C {self.top} add {self.rel} && git commit")
+            where = "its git repo (not repeated)" if hidden else self.top
+            raise Problem(NOT_A_REPO, f"{self.name} isn't committed in {where} yet, so it can't have Pending "
+                                      "changes", {"path": shown},
+                          fix=f"commit it once {self.terminal}: {self.cmd('add ' + self.name)} && git commit")
+
+    @property
+    def terminal(self):
+        """Where a fix's git command is typed: in a terminal, in its folder when `cmd` can't name it."""
+        return "in a terminal, in roster.yml's folder" if self.hidden else "in a terminal"
+
+    @property
+    def folder(self):
+        """After a `git ...` quoted in a fix: where it's run, when `cmd` can't name it."""
+        return " (in roster.yml's folder)" if self.hidden else ""
+
+    def cmd(self, rest):
+        """`git -C TOP REST` as a fix says it, or `git REST` for a hidden one's (#538)."""
+        return f"git {rest}" if self.hidden else f"git -C {self.top} {rest}"
 
     def head_text(self):
         r = git(self.top, "show", f"HEAD:{self.rel}")
@@ -122,17 +143,17 @@ def dirty_files(repo):
     return [ln[3:] for ln in r.stdout.splitlines() if ln.strip()]
 
 
-def pull(path):
+def pull(path, hidden=False):
     """Fast-forward the infra repo to its upstream. Refuses a working tree with uncommitted changes and a branch
-    that has diverged; never merges, rebases or stashes."""
-    repo = Repo(path)
+    that has diverged; never merges, rebases or stashes. HIDDEN: Repo's."""
+    repo = Repo(path, hidden)
     files = dirty_files(repo)
     if files:
         if files == [repo.rel]:
-            raise Problem(DIRTY, f"{repo.rel} has Pending changes, so roster won't pull over them",
+            raise Problem(DIRTY, f"{repo.name} has Pending changes, so roster won't pull over them",
                           {"files": files}, fix="Publish or discard the Pending changes first")
         raise Problem(DIRTY, f"the infra repo has uncommitted changes ({', '.join(files)}), so roster won't pull",
-                      {"files": files}, fix=f"commit, stash or undo them in a terminal (git -C {repo.top} status)")
+                      {"files": files}, fix=f"commit, stash or undo them {repo.terminal} ({repo.cmd('status')})")
     upstream = out(repo.top, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
     if upstream is None:
         return {"updated": False, "upstream": None, "commits": 0, "ahead": 0,
@@ -142,26 +163,28 @@ def pull(path):
     r = git(repo.top, "fetch", "--quiet", "--prune", remote)
     if r.returncode != 0:
         raise Problem(PULL_FAILED, f"couldn't fetch {upstream} for the infra repo", {"upstream": upstream},
-                      fix=f"check the network and your access to the repo; `git -C {repo.top} fetch` shows the same",
+                      fix=f"check the network and your access to the repo; `{repo.cmd('fetch')}`{repo.folder} shows "
+                          "the same",
                       details=r.stderr.strip() or None)
     if out(repo.top, "rev-parse", "--verify", "--quiet", "@{u}") is None:
         default = (out(repo.top, "rev-parse", "--abbrev-ref", f"{remote}/HEAD") or f"{remote}/main").split("/", 1)[1]
         raise Problem(BRANCH_GONE, f"{upstream} is gone from the server (merged and deleted?), so there's nothing to "
                                    "pull from it; roster.yml is used as it is", {"upstream": upstream},
-                      fix=f"switch to the main branch: git -C {repo.top} switch {default} (then pull again)")
+                      fix=f"switch to the main branch: {repo.cmd('switch ' + default)}{repo.folder} (then pull "
+                          "again)")
     behind = int(out(repo.top, "rev-list", "--count", "HEAD..@{u}") or 0)
     ahead = int(out(repo.top, "rev-list", "--count", "@{u}..HEAD") or 0)
     if behind and ahead:
         raise Problem(DIVERGED, f"this box's infra repo and {upstream} have diverged ({ahead} local and {behind} "
                                 f"new commits there), so roster won't pull", {"upstream": upstream, "ahead": ahead,
                                                                                 "behind": behind},
-                      fix=f"merge or rebase in a terminal: git -C {repo.top} pull --rebase")
+                      fix=f"merge or rebase {repo.terminal}: {repo.cmd('pull --rebase')}")
     before = out(repo.top, "rev-parse", "HEAD")
     if behind:
         r = git(repo.top, "merge", "--ff-only", "--quiet", "@{u}")
         if r.returncode != 0:
             raise Problem(PULL_FAILED, f"couldn't fast-forward the infra repo to {upstream}", {"upstream": upstream},
-                          fix=f"see the details; `git -C {repo.top} pull --ff-only` shows the same",
+                          fix=f"see the details; `{repo.cmd('pull --ff-only')}`{repo.folder} shows the same",
                           details=r.stderr.strip() or None)
     return {"updated": bool(behind), "upstream": upstream, "commits": behind, "ahead": ahead,
             "from": before, "to": out(repo.top, "rev-parse", "HEAD")}
@@ -233,15 +256,16 @@ def last_commit(repo):
             "pushed": pushed}
 
 
-def discard(path):
-    """Put roster.yml back as the last commit has it (index and working tree). What it held is kept as the backup."""
-    repo = Repo(path)
+def discard(path, hidden=False):
+    """Put roster.yml back as the last commit has it (index and working tree). What it held is kept as the backup.
+    HIDDEN: Repo's."""
+    repo = Repo(path, hidden)
     if not repo.diff_text():
         return {"discarded": False, "backup": None}
     bak = repo.backup(read_text(repo.path))
     r = git(repo.top, "checkout", "HEAD", "--", repo.rel)
     if r.returncode != 0:
-        raise Problem(ROSTER_ERROR, f"couldn't put {repo.rel} back as committed", fix="see the details",
+        raise Problem(ROSTER_ERROR, f"couldn't put {repo.name} back as committed", fix="see the details",
                       details=r.stderr.strip() or None)
     return {"discarded": True, "backup": str(bak)}
 
@@ -323,27 +347,27 @@ def pushed_anyway(repo, remote, commit):
     return git(repo.top, "merge-base", "--is-ancestor", commit, "@{u}").returncode == 0
 
 
-def publish(path, message=None):
+def publish(path, message=None, hidden=False):
     """Commit roster.yml's Pending changes (that file only) and push them to the branch's upstream.
     Fetches first. New upstream commits that leave roster.yml alone are fast-forwarded over; anything else
     that moved (roster.yml changed there, local commits, a rejected push) stops it with nothing published,
-    the Pending changes as they were, and never a force. The author is the repo's own git identity."""
-    repo = Repo(path)
+    the Pending changes as they were, and never a force. The author is the repo's own git identity. HIDDEN: Repo's."""
+    repo = Repo(path, hidden)
     if not repo.diff_text():
-        raise Problem(NOTHING_TO_PUBLISH, f"{repo.rel} has no Pending changes, so there's nothing to publish",
+        raise Problem(NOTHING_TO_PUBLISH, f"{repo.name} has no Pending changes, so there's nothing to publish",
                       fix="edit a Host first")
     others = [f for f in dirty_files(repo) if f != repo.rel]
     if others:
         raise Problem(OTHER_CHANGES, f"the infra repo has other uncommitted changes ({', '.join(others)}), so "
                                      f"roster won't publish", {"files": others},
-                      fix=f"commit, stash or undo them in a terminal (git -C {repo.top} status), then publish")
+                      fix=f"commit, stash or undo them {repo.terminal} ({repo.cmd('status')}), then publish")
     text = read_text(repo.path)
     try:
         load_text(repo.path, text)
     except Problem as e:
-        raise Problem(INVENTORY_ERROR, f"{repo.rel} doesn't load, so roster won't publish it: "
-                                       f"{e.details or e.message}", {"path": str(repo.path)},
-                      fix=f"fix {repo.rel} (or discard the Pending changes), then publish") from None
+        raise Problem(INVENTORY_ERROR, f"{repo.name} doesn't load, so roster won't publish it: "
+                                       f"{e.details or e.message}", {"path": PATH_NOT_REPEATED if hidden else str(repo.path)},
+                      fix=f"fix {repo.name} (or discard the Pending changes), then publish") from None
 
     branch = out(repo.top, "symbolic-ref", "--quiet", "--short", "HEAD")
     upstream = out(repo.top, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
@@ -351,12 +375,13 @@ def publish(path, message=None):
     merge = branch and out(repo.top, "config", f"branch.{branch}.merge")
     if not (upstream and remote and merge):
         raise Problem(NO_UPSTREAM, "this branch of the infra repo has no upstream, so there's nowhere to publish to",
-                      fix=f"set one in a terminal: git -C {repo.top} push -u origin {branch or 'main'}")
+                      fix=f"set one {repo.terminal}: {repo.cmd('push -u origin ' + (branch or 'main'))}")
     r = git(repo.top, "fetch", "--quiet", remote)
     if r.returncode != 0:
         raise Problem(PULL_FAILED, f"couldn't fetch {upstream} for the infra repo, so nothing was published",
                       {"upstream": upstream},
-                      fix=f"check the network and your access to the repo; `git -C {repo.top} fetch` shows the same",
+                      fix=f"check the network and your access to the repo; `{repo.cmd('fetch')}`{repo.folder} shows "
+                          "the same",
                       details=r.stderr.strip() or None)
     ahead = int(out(repo.top, "rev-list", "--count", "@{u}..HEAD") or 0)
     behind = int(out(repo.top, "rev-list", "--count", "HEAD..@{u}") or 0)
@@ -364,19 +389,19 @@ def publish(path, message=None):
         raise Problem(UNPUSHED, f"this box's infra repo has {ahead} commit{'s' * (ahead != 1)} that "
                                 f"{'are' if ahead != 1 else 'is'}n't on {upstream}, and roster publishes only its own", {"upstream": upstream,
                                                                                   "ahead": ahead, "behind": behind},
-                      fix=f"push or drop them in a terminal (git -C {repo.top} log @{{u}}..), then publish")
+                      fix=f"push or drop them {repo.terminal} ({repo.cmd('log @{u}..')}), then publish")
     if behind:
         if git(repo.top, "diff", "--quiet", "HEAD", "@{u}", "--", repo.rel).returncode != 0:
-            raise Problem(REMOTE_MOVED, f"someone published {repo.rel} to {upstream} since this box pulled "
+            raise Problem(REMOTE_MOVED, f"someone published {repo.name} to {upstream} since this box pulled "
                                         f"({behind} new commit{'s' * (behind != 1)}), so roster won't publish over "
                                         "it", {"upstream": upstream, "behind": behind},
-                          fix="discard your Pending changes, :pull, and make them again; or merge in a terminal: "
-                              f"git -C {repo.top} stash && git pull --ff-only && git stash pop")
+                          fix=f"discard your Pending changes, :pull, and make them again; or merge {repo.terminal}: "
+                              f"{repo.cmd('stash')} && git pull --ff-only && git stash pop")
         r = git(repo.top, "merge", "--ff-only", "--quiet", "@{u}")
         if r.returncode != 0:
             raise Problem(PULL_FAILED, f"couldn't fast-forward the infra repo to {upstream}, so nothing was "
                                        "published", {"upstream": upstream},
-                          fix=f"see the details; `git -C {repo.top} pull --ff-only` shows the same",
+                          fix=f"see the details; `{repo.cmd('pull --ff-only')}`{repo.folder} shows the same",
                           details=r.stderr.strip() or None)
 
     old_text = repo.head_text() or ""
@@ -387,8 +412,8 @@ def publish(path, message=None):
     r = git(repo.top, "commit", "--quiet", "--only", "-m", msg, "--", repo.rel)
     if r.returncode != 0:
         raise Problem(COMMIT_FAILED, "git didn't make the commit, so nothing was published", {"upstream": upstream},
-                      fix=f"see the details (often no git identity: git -C {repo.top} config user.name and "
-                          "user.email); the Pending changes are kept", details=(r.stderr or r.stdout).strip() or None)
+                      fix=f"see the details (often no git identity: {repo.cmd('config user.name')} and "
+                          f"user.email{repo.folder}); the Pending changes are kept", details=(r.stderr or r.stdout).strip() or None)
     commit = out(repo.top, "rev-parse", "HEAD")
     target = merge.removeprefix("refs/heads/")
     try:
@@ -404,7 +429,7 @@ def publish(path, message=None):
                              "changes are Pending again"),
                           {"upstream": upstream, "rejected": False, "timed_out": True, "landed": landed},
                           fix="check the network, then :publish again" if landed is False else
-                              f"check `git -C {repo.top} fetch && git -C {repo.top} log -1 {upstream}`: if your "
+                              f"check `{repo.cmd('fetch')} && {repo.cmd('log -1 ' + upstream)}`{repo.folder}: if your "
                               "change is there it was published, so discard the Pending changes; if not, "
                               ":publish again") from None
     except BaseException:

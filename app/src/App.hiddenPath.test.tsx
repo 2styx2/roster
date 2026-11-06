@@ -75,6 +75,34 @@ describe("a roster.yml roster won't name", () => {
     expect(await screen.findByText(`Already on work (that path (not repeated)). ${HINT}`, { selector: ".message-line" })).toBeInTheDocument();
   });
 
+  it("is said so for another named Inventory's roster.yml (#538, API 32)", async () => {
+    const user = await ready(
+      hidden({
+        apiVersion: sinceOf("hiddenNamedPaths"),
+        inventories: { named: [{ name: "home", path: "/home/you/home-lab/roster.yml" }, { name: "lab", path: PATH_NOT_REPEATED, exists: false }], active: "home" },
+        info: { path: "/home/you/home-lab/roster.yml" },
+      }),
+    );
+    await user.keyboard(`${LEADER}:inventory lab{Enter}`);
+    expect(
+      await screen.findByText(`lab's roster.yml isn't there: that path (not repeated). roster inv remove lab forgets it. ${HINT}`, { selector: ".message-line" }),
+    ).toBeInTheDocument();
+  });
+
+  it("is shown as it is by a roster before API 32, which never hides a named Inventory's", async () => {
+    const user = await ready(
+      hidden({
+        apiVersion: sinceOf("hiddenNamedPaths") - 1,
+        inventories: { named: [{ name: "home", path: "/home/you/home-lab/roster.yml" }, { name: "lab", path: PATH_NOT_REPEATED, exists: false }], active: "home" },
+        info: { path: "/home/you/home-lab/roster.yml" },
+      }),
+    );
+    await user.keyboard(`${LEADER}:inventory lab{Enter}`);
+    expect(
+      await screen.findByText(`lab's roster.yml isn't there: ${PATH_NOT_REPEATED}. roster inv remove lab forgets it`, { selector: ".message-line" }),
+    ).toBeInTheDocument();
+  });
+
   it("is shown as it is by a roster before API 31, which never hides one", async () => {
     await ready(hidden({ apiVersion: sinceOf("hiddenPaths") - 1 }));
     expect(statusbar().querySelector(".path")?.textContent).toBe(PATH_NOT_REPEATED);

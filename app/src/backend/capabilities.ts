@@ -38,6 +38,9 @@ const FEATURES = {
   /** A roster.yml in a folder (or with a name) that looks like a token: serve's results say
    * `PATH_NOT_REPEATED` for its path (#529), and the app says so (`backend/shown.ts`). */
   hiddenPaths: { since: FORMS["inventory.info"][2], what: "A roster.yml roster won't name" },
+  /** The same for another named Inventory's roster.yml, in `inventories.list`'s entries and
+   * `inventories.use`'s `path` (#538). */
+  hiddenNamedPaths: { since: FORMS["inventories.list"][2], what: "A named roster.yml roster won't name" },
 } as const satisfies Record<string, { since: number; what: string }>;
 
 export type Feature = keyof typeof FEATURES;
