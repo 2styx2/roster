@@ -31,6 +31,8 @@ export interface BuiltinDeps {
 export function registerBuiltins(registries: Registries, deps: BuiltinDeps): () => void {
   const { manager, openPlugins, openPackages } = deps.plugins;
   const disposers = [
+    // `:tutor` before `:help`, so it keeps its place in `:help commands` and completion.
+    ...(deps.tutor ? [registries.commands.register(tutorCommand(registries.tutorials, deps.tutor))] : []),
     registerHelp(registries, deps.help),
     registerThemePicker(registries, deps.theme),
     registerHints(registries, deps.hints),
@@ -40,7 +42,6 @@ export function registerBuiltins(registries: Registries, deps: BuiltinDeps): () 
     registries.commands.register(pluginsCommand(manager, openPlugins)),
     registries.commands.register(packagesCommand(manager, openPackages)),
     registries.commands.register(cancelCommand(manager)),
-    ...(deps.tutor ? [registries.commands.register(tutorCommand(registries.tutorials, deps.tutor))] : []),
   ];
   return () => disposers.forEach((d) => d());
 }
