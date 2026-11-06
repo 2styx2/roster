@@ -27,7 +27,6 @@ async function ready(scenario: FakeScenario = fixtures.add as FakeScenario) {
   const user = userEvent.setup();
   render(<App backend={fakeBackend(scenario)} terminalView={StubTerminal} platform={memoryPlatform()} />);
   const password = await screen.findByLabelText(/master password/i);
-  expect(taken(password)).toEqual([]);
   await user.type(password, `${FAKE_PASSWORD}{Enter}`);
   await screen.findByRole("main", { name: /workspace/i });
   return { user };
@@ -35,7 +34,8 @@ async function ready(scenario: FakeScenario = fixtures.add as FakeScenario) {
 
 describe("Editing keys in text fields", () => {
   it("reach the lock screen's password field", async () => {
-    await ready();
+    render(<App backend={fakeBackend(fixtures.add as FakeScenario)} terminalView={StubTerminal} platform={memoryPlatform()} />);
+    expect(taken(await screen.findByLabelText(/master password/i))).toEqual([]);
   });
 
   it("reach the command line, the Picker, a finder and the key bindings filter", async () => {
