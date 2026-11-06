@@ -158,10 +158,21 @@ def exchange(address, request, timeout):
     return reply
 
 
+LINE = "roster askpass: "      # its one stderr line: `roster askpass: [CODE] REASON` (app/src/errors/classify.ts too)
+
+
 def complain(code, reason):
     """The one line the terminal shows and the app's classifier reads; nothing goes to stdout, exit 1."""
-    print(f"roster askpass: [{code}] {' '.join(reason.split())}", file=sys.stderr)
+    print(f"{LINE}[{code}] {' '.join(reason.split())}", file=sys.stderr)
     return 1
+
+
+def complaint(line):
+    """(code, reason) of a complain() LINE, the code None when it isn't a number; None for any other line."""
+    if not line.startswith(LINE + "["):
+        return None
+    code, _, reason = line.removeprefix(LINE + "[").partition("] ")
+    return (int(code) if code.isdigit() else None), reason
 
 
 # ---------------------------------------------------------------- serve's side

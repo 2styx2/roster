@@ -7,7 +7,7 @@ import sys
 from .claude import write_claude_files
 from .common import failure_text
 from .config import load_config
-from .errors import Problem, problem_of
+from .errors import Exit, Problem, problem_of
 from .sshops import write_ssh_config
 
 FIX = "run `roster sync` on this box"
@@ -30,7 +30,7 @@ def guarded(sync):
     an OSError its own (paths only), anything else just its type)."""
     try:
         return sync()
-    except (Problem, SystemExit) as e:  # a die() isn't an Exception
+    except (Problem, Exit) as e:        # a die() isn't an Exception
         return {"ok": False, "error": problem_of(e).message, "fix": FIX}
     except Exception as e:              # anything at all: the change is written already (and serve's watcher must live)
         return {"ok": False, "error": failure_text(e), "fix": FIX}

@@ -13,7 +13,7 @@ from typing import Any
 from . import boxkeys
 from .common import die, write_private
 from .context import Context, current
-from .errors import ROTATION_PENDING
+from .errors import ROTATION_PENDING, Problem
 
 
 def new_of(key: Path) -> Path:
@@ -145,17 +145,17 @@ def identity_files(h: dict[str, Any], waiting: Any = ()) -> list[str]:
     return out
 
 
-def problems(cfg: dict[str, Any]) -> list[tuple[str, str]]:
-    """What's wrong with this Inventory's rotation state besides pending Hosts, as (message, fix): an unreadable
-    record (LOW-1), and a KEY.new or KEY.old with no Host pending or no record of its rotation (LOW-2, MED-1).
-    Read-only: check, check --box and setup report them."""
-    out: list[tuple[str, str]] = []
+def problems(cfg: dict[str, Any]) -> list[Problem]:
+    """What's wrong with this Inventory's rotation state besides pending Hosts, each a ROTATION_PENDING Problem with
+    its fix: an unreadable record (LOW-1), and a KEY.new or KEY.old with no Host pending or no record of its rotation
+    (LOW-2, MED-1). Read-only: check, check --box and setup report them."""
+    out: list[Problem] = []
     try:
         rec = read()
     except Unreadable as e:
-        return [(f"[{ROTATION_PENDING}] the Box key rotation's record {e}: roster can't tell which Hosts still hold "
-                 "the old Box key, so this Box's ssh config offers every Host both keys",
-                 "run `roster setup --rotate`, which says what to do; restore the file if you have it")]
+        return [Problem(ROTATION_PENDING, f"the Box key rotation's record {e}: roster can't tell which Hosts still "
+                                          "hold the old Box key, so this Box's ssh config offers every Host both keys",
+                        fix="run `roster setup --rotate`, which says what to do; restore the file if you have it")]
     keys = sorted({Path(h["key_file"]) for h in cfg["hosts"].values() if h["enroll"]} | {cfg["key"]})
     held = [n for n in rec.pending if n in cfg["hosts"]]
     for key in keys:
@@ -163,12 +163,13 @@ def problems(cfg: dict[str, Any]) -> list[tuple[str, str]]:
             if not (f.exists() or pub_of(f).exists()):
                 continue
             if str(key) not in rec.keys:
-                out.append((f"[{ROTATION_PENDING}] {f} is there, but no Box key rotation of roster's made it",
-                            "move it away: roster never uses or deletes a key file it didn't make"))
+                out.append(Problem(ROTATION_PENDING, f"{f} is there, but no Box key rotation of roster's made it",
+                                   fix="move it away: roster never uses or deletes a key file it didn't make"))
             elif not held:
-                out.append((f"[{ROTATION_PENDING}] {f} (the Box key rotation's {'new' if f == new_of(key) else 'old'}"
-                            " key) is still on this Box with no Host of this Inventory pending",
-                            "run `roster setup --rotate`: it finishes the rotation and deletes the old key"))
+                out.append(Problem(ROTATION_PENDING, f"{f} (the Box key rotation's "
+                                   f"{'new' if f == new_of(key) else 'old'} key) is still on this Box with no Host of "
+                                   "this Inventory pending",
+                                   fix="run `roster setup --rotate`: it finishes the rotation and deletes the old key"))
     return out
 
 

@@ -10,7 +10,7 @@ import pytest
 
 from roster import providers
 from roster.cli import main
-from roster.common import WINDOWS, user_config_dir
+from roster.context import WINDOWS, user_config_dir
 from roster.providers import bitwarden, get_secret
 
 FAKE_BW = os.path.join(os.path.dirname(__file__), "fakes", "bw")
@@ -192,7 +192,7 @@ def test_bw_password_in_a_terminal_never_asks(isolated, fakes, monkeypatch, caps
 
 def test_json_output_has_no_note_or_question(isolated, fakes, monkeypatch, capsys):
     term = Terminal(monkeypatch, "y\n")
-    monkeypatch.setattr(providers, "JSON_OUTPUT", True)
+    providers.set_json_output(True)
     get_secret("bw:Network gear", "g")
     err = capsys.readouterr().err
     assert OFFER not in term.shown and "note:" not in err
@@ -201,7 +201,7 @@ def test_json_output_has_no_note_or_question(isolated, fakes, monkeypatch, capsy
 
 def test_serve_never_asks(isolated, fakes, monkeypatch, capsys):
     term = Terminal(monkeypatch, "y\n")
-    monkeypatch.setattr(providers, "MANUAL_UNLOCK", True)
+    providers.only_unlock_unlocks()
     providers.unlock("bw", "hunter2")
     get_secret("bw:Network gear", "g")
     assert OFFER not in term.shown
@@ -221,7 +221,7 @@ def test_a_json_command_in_a_terminal_has_no_note_or_question(isolated, fakes, w
     err = capsys.readouterr().err
     assert OFFER not in term.shown and "note:" not in err
     assert not session_path().exists()
-    assert providers.JSON_OUTPUT is False                # only for that command
+    assert providers.json_output() is False              # only for that command
 
 
 def test_vault_unlock_saves_a_private_session_the_next_run_uses(isolated, fakes, write_config, monkeypatch, capsys,
@@ -340,10 +340,9 @@ def test_the_app_locking_makes_the_saved_session_expired(one_unlock, fakes, writ
     Terminal(monkeypatch, "\n")
     main(["vault", "unlock"])
     next_run()
-    monkeypatch.setattr(providers, "MANUAL_UNLOCK", True)     # the app's serve
+    providers.only_unlock_unlocks()                           # the app's serve
     providers.unlock("bw", "hunter2")                         # a new unlock already breaks it...
     providers.lock("bw")                                      # ...and so does the lock
-    monkeypatch.setattr(providers, "MANUAL_UNLOCK", False)
     next_run()
     capsys.readouterr()
     assert get_secret("bw:Network gear", "g") == "pw-netops"
@@ -402,7 +401,7 @@ def test_serve_never_reads_the_saved_session(isolated, fakes, write_config, monk
     session_path().write_text("fake-session-key\n")
     session_path().chmod(0o600)
     monkeypatch.setenv("FAKE_BW_ENV_LOG", str(tmp_path / "env.log"))
-    monkeypatch.setattr(providers, "MANUAL_UNLOCK", True)
+    providers.only_unlock_unlocks()
     c = next(c for c in health.vault(cfg) if c["message"].startswith("bw ("))
     assert "saved_session" not in c and "saved session" not in c["message"]
     assert all("BW_SESSION" not in json.loads(x) for x in (tmp_path / "env.log").read_text().splitlines())

@@ -27,7 +27,7 @@ from .errors import (
     Problem,
     vault_problem,
 )
-from .hosts import ip_of
+from .hosts import ip_of, item_of, provider_of
 
 
 def add(path, group, name, fields, sync=None, dry_run=False, new_address=False, on_write=None):
@@ -89,9 +89,8 @@ def vault_fields(auth, interactive=True):
     username. A field the item doesn't have is left out, and `note` says why a URI gave no address (another scheme).
     Never reads the password: a provider that can't give these without it (providers.login_fields) is 186.
     INTERACTIVE=False never asks, not even for the master password. Raises Problem: 186, 31 no such provider, 32 no such item, 33 several, 35, or the vault's own (11, 12, 14)."""
-    name, _, spec = str(auth or "").partition(":")
-    name = name.strip()
-    if not spec.strip() or name not in providers.PROVIDERS:
+    name, spec = provider_of(auth), item_of(auth)
+    if not spec or name not in providers.PROVIDERS:
         raise Problem(NO_PROVIDER, f"{auth!r} isn't a vault item reference (bw:ITEM, op:ITEM, ...) of a provider set "
                                    "up on this box", {"provider": name}, fix="see `roster vault status`")
     try:

@@ -929,7 +929,7 @@ def test_revoke_all_names_every_file_to_delete_once_every_host_is_done(two, caps
     run(capsys, "sync")
     run(capsys, "--inv", "home", "sync")
     done = []
-    monkeypatch.setattr("roster.cli.revoke_on", lambda h, tag_re: done.append(h["name"]))
+    monkeypatch.setattr("roster.revoke.revoke_on", lambda h, tag_re: done.append(h["name"]))
     from roster.context import Context
     for name in (None, "work", "home"):                     # T226 (#435, 4): the names setup recorded go too
         Context(name).key_name.parent.mkdir(parents=True, exist_ok=True)
@@ -1045,7 +1045,7 @@ def test_an_ssh_roster_wont_hand_the_script_is_a_clean_error(two, capsys, monkey
 
     def refuse(argv):
         raise ValueError("ssh.CMD is a batch file, and roster won't pass it an argument with any of ...")
-    monkeypatch.setattr("roster.cli.program_argv", refuse)
+    monkeypatch.setattr("roster.revoke.program_argv", refuse)
     with pytest.raises(SystemExit) as e:
         main([*argv, "-y"])
     assert "[149]" in str(e.value.code) and "batch file" in str(e.value.code)
@@ -1154,7 +1154,7 @@ def test_revoke_names_the_files_to_delete_only_when_every_host_of_the_file_was_r
     a = a_synced_b_not["a"]
     a.write_text(A_YML + "      nas-1: {ip: 10.0.0.30}\n")
     run(capsys, "-c", str(a), "sync")
-    monkeypatch.setattr("roster.cli.revoke_on", lambda h, tag_re: None)
+    monkeypatch.setattr("roster.revoke.revoke_on", lambda h, tag_re: None)
     code, out, _ = run(capsys, "-c", str(a), "revoke", "--only", "pi", "-y")
     assert code == 0 and "removed from 1/1 hosts" in out and "To finish, delete" not in out
     code, out, _ = run(capsys, "-c", str(a), "revoke", "-y")
@@ -1171,6 +1171,6 @@ def test_revoke_names_the_files_to_delete_only_when_every_host_of_the_file_was_r
 def test_revoke_all_with_a_left_out_host_skipped_fails(two, capsys, ssh_log, monkeypatch):
     monkeypatch.setenv("HOMEPW", "hunter2")
     clashing(two, capsys)
-    monkeypatch.setattr("roster.cli.revoke_on", lambda h, tag_re: None)
+    monkeypatch.setattr("roster.revoke.revoke_on", lambda h, tag_re: None)
     code, out, _ = run(capsys, "revoke", "--all", "-y")
     assert "home: pi: left out" in out and "To finish, delete" not in out and code == 1

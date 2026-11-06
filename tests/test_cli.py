@@ -8,7 +8,7 @@ from conftest import posix_shell
 
 import roster.cli as cli
 from roster.cli import main
-from roster.common import user_config_dir
+from roster.context import user_config_dir
 from roster.sshops import sudo_wrap
 
 
@@ -94,7 +94,7 @@ SAME_NAME_YML = ("groups:\n  nas:\n    user: u\n    enroll: false\n    auth: env
 
 def test_setup_host_sets_up_exactly_that_host_never_its_group_or_type(capsys, write_config, monkeypatch):
     scanned = []                                                 # #437 (1): --only nas would take backup-01 too
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: scanned.extend(h["name"] for h in hosts) or set())
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: scanned.extend(h["name"] for h in hosts) or set())
     write_config(SAME_NAME_YML)
     rc, out = run(capsys, "setup", "--host", "nas", "--dry-run")
     assert rc == 0 and scanned == ["nas"] and "1 hosts from" in out

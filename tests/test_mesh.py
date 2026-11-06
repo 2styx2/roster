@@ -14,6 +14,7 @@ from conftest import POSIX_SH, WINDOWS, stand_in_hosts
 from roster import authorized, mesh
 from roster.cli import main
 from roster.config import load_config
+from roster.errors import InventoryError
 
 # The stand-in Hosts run their side with sh (tests/fakes/ssh, FAKE_HOSTS; Git for Windows' sh on native Windows, ticket
 # 63), and ESXi's datastore is a symlink.
@@ -198,13 +199,13 @@ def test_a_meshed_group_reaches_itself_both_ways_and_links_add_one_way_reach(net
 def test_bad_links_are_refused_with_a_clean_error(write_config, links, message):
     p = write_config("defaults: {user: u}\ngroups:\n  lab: {hosts: {a1: 10.0.0.1, a2: 10.0.0.2, a3: 10.0.0.3, a4: 10.0.0.4}}\n"
                      f"links: {links}\n")
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(p)
     assert message in str(e.value)
 
 
 def test_mesh_must_be_true_or_false(write_config):
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(write_config("groups:\n  lab: {mesh: 1, user: u, hosts: {a1: 10.0.0.1}}\n"))
     assert "mesh: must be true or false" in str(e.value)
 
@@ -426,7 +427,7 @@ def test_mesh_dir_works_on_linux_too_and_cascades_from_its_group(net):
     ("/vmfs/volumes/../etc", "mesh_dir: must be an absolute path"),
 ])
 def test_a_bad_mesh_dir_is_refused_when_roster_yml_loads(write_config, value, message):
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(write_config(f"defaults: {{user: u}}\ngroups:\n  lab:\n    hosts:\n      a1: {{ip: 10.0.0.1, mesh_dir: {value}}}\n"))
     assert message in str(e.value) and "a1" in str(e.value)
 
@@ -655,13 +656,13 @@ def test_seen_as_works_for_a_direct_source_and_takes_a_list(net):
     ("a1: {ip: 10.0.0.1, seen_as: ['10.0.0.2,10.0.0.3']}", "host 'a1': seen_as: must be IP addresses"),
 ])
 def test_a_bad_seen_as_is_refused_when_roster_yml_loads(write_config, entry, message):
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(write_config(f"defaults: {{user: u}}\ngroups:\n  lab:\n    hosts:\n      {entry}\n"))
     assert message in str(e.value)
 
 
 def test_seen_as_belongs_to_a_host_not_a_group(write_config):
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(write_config("defaults: {user: u}\ngroups:\n  lab:\n    seen_as: 10.0.0.9\n    hosts:\n      a1: 10.0.0.1\n"))
     assert "seen_as: goes on a Host" in str(e.value)
 
@@ -1059,11 +1060,10 @@ def test_cut_stops_at_the_deadline_too(net):
 # ---------------------------------------------------------------- setup and serve
 
 def test_setup_applies_the_mesh_for_meshed_groups(net, capsys, monkeypatch):
-    from roster import cli
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())
-    monkeypatch.setattr(cli, "ssh_ok", lambda name: True)
-    monkeypatch.setattr(cli, "ensure_key", lambda key, tag: None)
-    monkeypatch.setattr(cli, "public_key_line", lambda key, tag: "ssh-ed25519 AAAAbox roster-managed:box")
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: set())
+    monkeypatch.setattr("roster.boxsetup.ssh_ok", lambda name: True)
+    monkeypatch.setattr("roster.boxsetup.ensure_key", lambda key, tag: None)
+    monkeypatch.setattr("roster.boxsetup.public_key_line", lambda key, tag: "ssh-ed25519 AAAAbox roster-managed:box")
     main(["setup"])
     assert "mesh" in capsys.readouterr().out
     assert net.mesh_lines("nas-1") == [key_line_of(net, "orion-2", "10.0.0.2")]
@@ -1462,7 +1462,7 @@ def test_a_cut_whose_write_waits_too_long_for_roster_yml_says_so_and_still_cut(n
 # ---------------------------------------------------------------- one mesh.json per Inventory (T182, #346)
 
 def config_dir():
-    from roster.common import user_config_dir
+    from roster.context import user_config_dir
     return user_config_dir()
 
 
@@ -2264,8 +2264,7 @@ def test_revoke_on_esxi_refuses_a_user_that_isnt_the_login(net, isolated, capsys
 
 def setup_box(monkeypatch):
     """`roster setup` with the stand-in Hosts' key logins: no ssh-keyscan (the host keys are recorded already)."""
-    from roster import cli
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: set())
 
 
 @key_scripts_run

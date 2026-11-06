@@ -4,6 +4,7 @@ still log in by key. ed25519 stays the default, with its paths unchanged."""
 import pytest
 
 from roster.config import load_config
+from roster.errors import InventoryError
 
 FIPS_YML = """\
 box_name: ws1
@@ -49,19 +50,19 @@ def test_key_type_spellings(write_config, written, canonical):
 
 @pytest.mark.parametrize("bad", ["dsa", "rsa-2048", "ecdsa-128", "rsa-99999", "true", "[ecdsa]"])
 def test_an_unknown_key_type_fails_at_load_naming_the_allowed_values(write_config, bad):
-    with pytest.raises(SystemExit, match=r"host 'fips-02': key_type: .* \(ed25519, ecdsa .*rsa"):
+    with pytest.raises(InventoryError, match=r"host 'fips-02': key_type: .* \(ed25519, ecdsa .*rsa"):
         load_config(write_config(FIPS_YML.replace("key_type: rsa", f"key_type: {bad}")))
 
 
 def test_a_bad_key_type_on_a_group_without_hosts_or_at_the_top_still_fails(write_config):
-    with pytest.raises(SystemExit, match="group 'empty': key_type"):
+    with pytest.raises(InventoryError, match="group 'empty': key_type"):
         load_config(write_config(FIPS_YML + "  empty:\n    key_type: dsa\n    hosts: {}\n"))
-    with pytest.raises(SystemExit, match="^error: key_type: .dsa."):
+    with pytest.raises(InventoryError, match="^key_type: .dsa."):
         load_config(write_config("key_type: dsa\n" + FIPS_YML))
 
 
 def test_a_host_listed_in_two_groups_names_both(write_config):
-    with pytest.raises(SystemExit, match="listed twice.*'web'.*'fips-lab'"):
+    with pytest.raises(InventoryError, match="listed twice.*'web'.*'fips-lab'"):
         load_config(write_config(FIPS_YML.replace("fips-01: 10.0.0.5", "web-01: 10.0.0.5")))
 
 
@@ -72,7 +73,7 @@ def test_key_path_names_the_boxs_key_and_the_others_sit_beside_it(write_config, 
 
 
 def test_key_path_cant_be_another_types_key_file(write_config):
-    with pytest.raises(SystemExit, match="key_path.*roster_ecdsa.*ecdsa"):
+    with pytest.raises(InventoryError, match="key_path.*roster_ecdsa.*ecdsa"):
         load_config(write_config("key_path: ~/.ssh/roster_ecdsa\n" + FIPS_YML))
 
 
@@ -145,7 +146,7 @@ def lab(fakes, isolated, write_config, monkeypatch):
 
     from conftest import POSIX_SH, WINDOWS
 
-    from roster import cli, sshops
+    from roster import sshops
     if WINDOWS:
         pytest.skip("the stand-in Hosts' key scripts run in a POSIX sh")
     for f in (fakes / "host").iterdir():
@@ -158,7 +159,7 @@ def lab(fakes, isolated, write_config, monkeypatch):
     (root / "web-01" / "keys").touch()
     monkeypatch.setenv("FAKE_HOSTS", str(root))
     monkeypatch.setenv("FAKE_SH", POSIX_SH)
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: set())
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: set())
     monkeypatch.setenv("PW", "pw")                              # auth: env:PW (a stand-in: no Host checks it)
     monkeypatch.setattr(sshops, "password_exec", lambda h, command, pw, **k: (
         lambda r: (r.returncode, r.stdout, r.stderr))(subprocess.run(
@@ -467,7 +468,7 @@ def test_setup_doesnt_take_a_member_out_of_the_mesh_for_its_key_type(write_confi
     key_type leaves it out, it warns and leaves the Mesh alone: `roster mesh --dry-run` shows it, `roster mesh` does it."""
     from roster import cli, mesh
     from roster.cli import main
-    monkeypatch.setattr(cli, "record_fingerprints", lambda cfg, hosts: {h["name"] for h in hosts})
+    monkeypatch.setattr("roster.boxsetup.record_fingerprints", lambda cfg, hosts: {h["name"] for h in hosts})
     applied = []
     monkeypatch.setattr(cli, "mesh_apply", lambda cfg: applied.append(1) or {})
     yml = MESH_YML.replace("      fips-01: {ip: 10.0.0.5, key_type: ecdsa}\n", "      fips-01: 10.0.0.5\n")

@@ -28,12 +28,12 @@ from .cliparser import (
     GROUPS,
     HOSTS,
     INVENTORIES,
-    NAME_RE,
     ONLY,
     RESOURCES,
     SHELLS,
     build_parser,
 )
+from .common import NAME_RE
 
 
 def main(argv: list[str]) -> int:
@@ -203,7 +203,7 @@ def roster_yml(root: dict[str, str | None]) -> dict[object, object]:
     from .config import locate_config
     try:
         return mapping(yaml.safe_load(locate_config(root["config"], root["inv"]).read_text(encoding="utf-8")))
-    except (SystemExit, Exception):     # noqa: BLE001 - none found, unreadable, not YAML: no names
+    except Exception:                   # noqa: BLE001 - none found, unreadable, not YAML: no names
         return {}
 
 
@@ -211,7 +211,7 @@ def inventory_names() -> list[str]:
     from . import named
     try:
         return [x.name for x in named.load().inventories]
-    except (SystemExit, Exception):     # noqa: BLE001
+    except Exception:                   # noqa: BLE001 - inventories.json doesn't load: no names
         return []
 
 

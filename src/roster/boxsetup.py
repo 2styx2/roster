@@ -1,0 +1,269 @@
+"""`roster setup`: this Box's key on the Inventory's Hosts that don't take it yet, their host keys recorded, this
+Box's ssh config and Claude files written, a renamed Box's key lines re-tagged, then the Mesh (decision Q63). The
+Box-wide lock (boxlock) is held throughout, and the helpers `roster revoke` shares: the Hosts a plain `ssh NAME`
+wouldn't reach are skipped, and a Host whose key line another Box's name holds is left (code 190)."""
+
+import concurrent.futures as cf
+import sys
+from contextlib import contextmanager
+
+from . import authorized, boxkeys, boxlock, keyline, mesh, rotation
+from .authorized import TAKEN, NameTaken, NoLine, box_key_re, box_public_keys, enroll, key_named
+from .boxkeys import ensure_key, public_key_line
+from .claude import write_claude_files
+from .common import die, plural, replace_file, say
+from .config import selected
+from .context import current
+from .errors import KEY_FILE, UNKNOWN_HOST, Exit, Problem, tagged
+from .keyline import key_ere
+from .providers import get_secret
+from .sshops import record_fingerprints, ssh_ok, write_ssh_config
+
+LEFT_OUT = ("left out of this Box's ssh config: another named Inventory ahead of this one has a Host by that name, "
+            "so `ssh {name}` reaches that one; skipped (`roster inv use` this Inventory to reach it)")
+
+
+def skip_left_out(hosts, to_stderr=False):
+    """HOSTS without the key Hosts a plain `ssh NAME` wouldn't reach (ticket 115): another named Inventory's Host by
+    that name is the one in this Box's ssh config, or this Inventory's part of it doesn't have NAME (not synced here),
+    so roster must never ssh to it by name. Each skipped one is said."""
+    from .sshops import left_out, not_reached, sync_fix
+    keep = []
+    for h in hosts:
+        why = not_reached(h["name"]) if h["enroll"] else None
+        if why:
+            words = f"{h['name']}: " + LEFT_OUT.format(name=h["name"]) if left_out(h["name"]) else \
+                f"{why}; skipped ({sync_fix()})"
+            print(f"  {words}", file=sys.stderr if to_stderr else sys.stdout, flush=True)
+        else:
+            keep.append(h)
+    return keep
+
+
+def name_taken(cfg):
+    from .errors import BOX_NAME_TAKEN
+    return tagged(Problem(BOX_NAME_TAKEN, f"another key's line there is tagged {cfg['tag']}: another Box already uses "
+                                          "that name, and this Box's setup and revoke would take that line too (one "
+                                          "name, one owner), so nothing was changed there. Give this Box another "
+                                          "box_name:, or run roster setup --force to go ahead"))
+
+
+@contextmanager
+def locked(what, contexts=None):
+    """The Box-wide lock (boxlock, T240) of each of CONTEXTS' Inventories (default: this run's) while the body runs;
+    a run that can't get it stops (205) before anything."""
+    held = boxlock.held(what, contexts)
+    try:
+        held.__enter__()
+    except Problem as e:
+        raise Exit(e) from None
+    try:
+        yield
+    finally:
+        held.__exit__(None, None, None)
+
+
+def setup(cfg, apply_mesh, only=None, host=None, dry_run=False, key_type=None, force=False):
+    """`roster setup`, holding the Box-wide lock unless DRY_RUN (read-only). APPLY_MESH(cfg) -> {host: why pending}:
+    the Mesh's apply as the command line shows it."""
+    if dry_run:
+        return setup_run(cfg, apply_mesh, only, host, dry_run, key_type, force)
+    with locked("setup"):
+        return setup_run(cfg, apply_mesh, only, host, dry_run, key_type, force)
+
+
+def setup_run(cfg, apply_mesh, only, host, dry_run, override, force):
+    # `--host NAME` (Q198; `roster add --setup` too): exactly that Host, never what --only NAME would match too
+    # (a group, type or product by that name)
+    if host is not None and host not in cfg["hosts"]:
+        die(f"unknown host {host!r} (see `roster hosts`)", code=UNKNOWN_HOST)
+    hosts = [cfg["hosts"][host]] if host is not None else selected(cfg, only)
+    narrowed = bool(only or host)           # part of roster.yml: no Mesh, no key-name record
+    waiting = [h for h in hosts if not h["reviewed"]]
+    hosts = [h for h in hosts if h["reviewed"]]
+    if waiting:
+        say(f"skipping     {len(waiting)} hosts with reviewed: false (from discover) - review them in "
+            "roster.yml, set reviewed: true, then re-run setup")
+    if not hosts:
+        return 0
+    warn_os(hosts)
+    if override:
+        if host is None:            # a Host at a time, never a group or the whole Inventory
+            die("--key-type goes with --host NAME (one Host, to try a key type there): for more Hosts, set "
+                "key_type: on them, their group or defaults in roster.yml and run roster setup")
+        cfg, hosts = key_type_for_run(cfg, hosts, override)
+    say(f"roster setup box '{cfg['box']}', {len(hosts)} hosts from {cfg['path']}")
+    if not dry_run:                     # a swap a rotation was stopped in the middle of, finished
+        rotation.repair_all(cfg, say)
+    # one key per key type the Hosts use (this Box's own when none), each made on first need
+    keys = boxkeys.in_use(cfg, hosts) or [boxkeys.box_key(cfg)]
+    for key in keys:
+        ensure_key(key, cfg["tag"])
+    pubs = {key.type.name: public_key_line(key, cfg["tag"]) for key in keys}
+
+    def pub(h):
+        return pubs[h["key_type"]]
+    # every key of this Box: a line of any of them under the new name is this Box's own, never "taken"
+    own = "|".join(key_ere(*words[:2]) for words in box_public_keys(cfg))
+    no_answer = record_fingerprints(cfg, hosts)
+    write_ssh_config(cfg)
+
+    key_hosts = skip_left_out([h for h in hosts if h["enroll"] and h["name"] not in no_answer])
+    pw_hosts = [h for h in hosts if not h["enroll"]]
+    with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
+        works = dict(zip([h["name"] for h in key_hosts], ex.map(lambda h: ssh_ok(h["name"]), key_hosts), strict=True))
+    todo = [h for h in key_hosts if not works[h["name"]]]
+    say(f"key login    {len(key_hosts) - len(todo)} already work, {len(todo)} need the key installed")
+    # box_name: (or the hostname) changed since this Box's key went on its Hosts: the lines there still
+    # carry the earlier name, so the Hosts where the key works get it re-tagged (found by this Box's own public key)
+    was = key_named(cfg)
+    retag = [h for h in key_hosts if works[h["name"]]] if was not in (None, cfg["box"]) else []
+    if retag:
+        # with no record, only the key's comment says a name (a named Inventory's first setup may never
+        # have been renamed: the key was made by another Inventory's)
+        why = (f"this Box's key is tagged {keyline.tag(str(was))} on its Hosts (box_name:, or the hostname, changed "
+               "since)" if current().key_name.exists() else
+               f"this Box's key was made as {keyline.tag(str(was))}, so its lines may carry that name")
+        say(f"key tag      {why}: re-tag it as {cfg['tag']} on {plural(len(retag), 'host')} where it works")
+
+    failed = {h["name"]: "no answer on SSH port" for h in hosts if h["name"] in no_answer}
+    if dry_run:
+        for h in todo:
+            say(f"  would install key on {h['name']} ({h['user']}@{h['ip']}:{h['port']}, auth {h['auth']}, "
+                f"{h['key_type']} key)")
+        for h in retag:
+            say(f"  would re-tag key on {h['name']}")
+        return 0
+
+    # renamed onto a name another Box's key line has on a Host: the same-name rule (this Box's revoke
+    # and install take a name's lines) would take that Box's line, so that Host is left, said, unless --force
+    taken = cfg["tag_re"] if was not in (None, cfg["box"]) and not force else None
+    if retag:
+        with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
+            for h, done in zip(retag, ex.map(lambda h: authorized.retag(h, pub(h), taken, own), retag), strict=True):
+                for w in done.warnings:
+                    print(f"warning: [{KEY_FILE}] {h['name']}: {w}", file=sys.stderr, flush=True)
+                why = done.why
+                if why is None:
+                    say(f"  ok    {h['name']} (re-tagged)")
+                elif isinstance(why, NoLine):   # nothing roster can re-tag there: done, said once
+                    say(f"  note  {h['name']}: the key works, but no {keyline.TAG} line for it is in {why.file} (a "
+                        "line written by hand): left as is; change or remove that line by hand")
+                elif why is TAKEN:
+                    failed[h["name"]] = name_taken(cfg)
+                    say(f"  FAIL  {h['name']}: {name_taken(cfg)}")
+                else:
+                    failed[h["name"]] = f"re-tag: {why}"
+                    say(f"  FAIL  {h['name']}: re-tag: {why}")
+
+    for ref, group in sorted({(h["auth"], h["group"]) for h in todo}, key=lambda t: (str(t[0]), t[1])):
+        try:
+            get_secret(ref, group)          # ask for / fetch passwords up front, one per group
+        except RuntimeError as e:
+            for h in todo:
+                if (h["auth"], h["group"]) == (ref, group):
+                    failed[h["name"]] = str(e)
+    todo = [h for h in todo if h["name"] not in failed]
+
+    installed = 0
+    if todo:
+        say(f"installing   key on {len(todo)} hosts...")
+        with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
+            mine = box_key_re(cfg)
+            # --key-type: this run's line goes in beside roster.yml's type's, which the next sync offers again
+            futs = {ex.submit(enroll, h, pub(h), mine, taken, own, bool(override)): h for h in todo}
+            for f in cf.as_completed(futs):
+                h = futs[f]
+                try:
+                    notes = f.result()
+                    installed += 1
+                    say(f"  ok    {h['name']}")
+                    for note in notes or ():
+                        say(f"        {note}")
+                except NameTaken:
+                    failed[h["name"]] = name_taken(cfg)
+                    say(f"  FAIL  {h['name']}: {name_taken(cfg)}")
+                except Exception as e:
+                    failed[h["name"]] = str(e)
+                    say(f"  FAIL  {h['name']}: {e}")
+
+    # every key Host of this roster.yml now has the key under this name: a later rename is seen against it
+    if not narrowed and not failed and len(key_hosts) == sum(h["enroll"] for h in hosts):
+        if was != cfg["box"]:
+            replace_file(current().key_name, f"{cfg['box']}\n")
+    write_claude_files(cfg)
+    warn_overlaps(cfg)
+    failed.update(setup_mesh(cfg, "--only" if only else "--host" if narrowed else None, apply_mesh))
+    ready = len(key_hosts) - len(todo) + installed
+    say()
+    say(f"done         {ready} key hosts ready, {len(pw_hosts)} password-only hosts, {len(failed)} failed")
+    if failed:
+        say("failed hosts (fix, then re-run setup - hosts that already work are skipped):")
+        for name, why in sorted(failed.items()):
+            say(f"  {name}: {why}")
+    # a Box key rotation not finished is never a clean setup, whatever logs in
+    if waiting := rotation.pending(cfg):
+        say(f"Box key rotation pending on {plural(len(waiting), 'Host')} ({', '.join(sorted(waiting))}): the old Box "
+            "key is still on them; `roster setup --rotate` finishes it")
+        return 1
+    if found := rotation.problems(cfg):
+        for p in found:
+            say(f"warning: {tagged(p)} ({p.fix})")
+        return 1
+    return 1 if failed else 0
+
+
+def setup_mesh(cfg, narrowed_by, apply_mesh):
+    """Setup's own Mesh apply (Q63), once the Box key works on the Hosts: never with a narrowed run (NARROWED_BY, the
+    flag), never one that would take a member out for its key type. {host: why} for what it left pending."""
+    if not mesh.graph(cfg)["links"]:
+        return {}
+    if narrowed_by:
+        say(f"mesh         not applied with {narrowed_by} (it covers the whole Mesh): run `roster mesh`")
+        return {}
+    if dropped := mesh.key_type_dropped(cfg):
+        # never take a member's Mesh entries off as a side effect of setup
+        say(f"warning: mesh         NOT applied: {', '.join(dropped)} {'is' if len(dropped) == 1 else 'are'} in "
+            "the Mesh now, but key_type: leaves them out of it (the Mesh is Ed25519 only), so applying it would "
+            "take their Mesh entries off and their peers' for them. See what it would change with `roster mesh "
+            "--dry-run`, then run `roster mesh` to do it (or set key_type: back)")
+        return {}
+    say("mesh         applying the Mesh for meshed groups and links (one Host at a time)...")
+    return {n: f"mesh: {why}" for n, why in apply_mesh(cfg).items()}
+
+
+def key_type_for_run(cfg, hosts, value):
+    """`setup --key-type TYPE` (T239): CFG and HOSTS with TYPE for HOSTS' key Logins, this run only (their key file,
+    and so the IdentityFile this run's ssh config gives them); a note says roster.yml still says otherwise."""
+    try:
+        kt = boxkeys.parse(value)
+    except ValueError as e:
+        die(f"--key-type: {e}")
+    file = str(boxkeys.key_file(cfg["key"], cfg["key_type"], kt.name))
+    changed = {h["name"]: {**h, "key_type": kt.name, "key_file": file} for h in hosts
+               if h["enroll"] and h["key_type"] != kt.name}
+    if changed:
+        say(f"note: --key-type {kt.name} for {plural(len(changed), 'host')} whose roster.yml says otherwise "
+            f"({', '.join(sorted(changed))}): its line goes in beside this Box's line of roster.yml's type, which "
+            f"stays, and the next `roster sync` offers roster.yml's type again; set key_type: {kt.name} in "
+            "roster.yml to keep it (the other line stays there until roster revoke, which takes both)")
+    cfg = {**cfg, "hosts": {**cfg["hosts"], **changed}}
+    return cfg, [changed.get(h["name"], h) for h in hosts]
+
+
+def warn_overlaps(cfg):
+    """The same machine in two named Inventories (ticket 115): a warning each, never an error."""
+    from .health import overlaps
+    for w in overlaps(cfg):
+        say(f"warning: {w['message']} (fix: {w['fix']})")
+
+
+def warn_os(hosts):
+    """A Host with type: windows but no os: (T195, code 154): roster treats it as POSIX and runs sh scripts there, so
+    say how to mark it. A warning only: roster never infers os: from type:, a free label."""
+    from .errors import WINDOWS_TYPE_NO_OS
+    for h in sorted(hosts, key=lambda h: h["name"]):
+        if h["type"].strip().lower() == "windows" and h.get("os") is None:
+            print(f"warning: [{WINDOWS_TYPE_NO_OS}] {h['name']} has type: windows but no os:, so roster treats it as a "
+                  "POSIX Host (sh scripts)\n         fix: set os: windows for it (or its group) in roster.yml",
+                  file=sys.stderr, flush=True)

@@ -5,7 +5,9 @@ import json
 import os
 import sys
 
-from ..common import WINDOWS, NotPrivate, find_program, read_private_bytes, say, user_config_dir
+from .. import context
+from ..common import NotPrivate, find_program, read_private_bytes, say
+from ..context import user_config_dir
 from . import (
     LOOKUP_FLOOR,
     PROVIDERS,
@@ -40,7 +42,7 @@ from .bw_items_filter import (
 
 # ---- built-in: Bitwarden
 
-def _bw(ctx, *args, env=None, input=None, floor=1, discard=False):
+def run(ctx, *args, env=None, input=None, floor=1, discard=False):
     key = session_key()
     env = {**({"BW_SESSION": key} if key else {}), **(env or {})}
     return ctx.run(["bw", *args, "--nointeraction"], env=env, input=input, floor=floor, discard=discard)
@@ -69,6 +71,11 @@ def set_session(key):
 def forget_session():
     os.environ.pop("BW_SESSION", None)
     _session["key"] = None
+
+
+def _bw_manual(ctx):
+    os.environ.pop("BW_PASSWORD", None)
+    forget_session()
 
 
 NOT_LOGGED_IN = "Bitwarden CLI isn't logged in on this box - run `bw login` once"
@@ -182,7 +189,7 @@ def check_session_dir():
     every folder above it from $HOME down, as open_session_dir checks them. Nothing there yet is fine (roster makes it
     0700). Windows: not checked here: %APPDATA% is kept private by its ACL, and the file's own owner and ACL are
     (common.read_private_bytes)."""
-    if WINDOWS:
+    if context.WINDOWS:
         return
     try:
         os.close(open_session_dir())
@@ -199,7 +206,7 @@ def read_session_file():
     f = session_file()
     if not os.path.lexists(f):
         raise FileNotFoundError(f)
-    if WINDOWS:
+    if context.WINDOWS:
         return read_private_bytes(f)
     try:
         fd = open_session_dir()
@@ -309,7 +316,7 @@ def save_session_file(key):
     data = key.encode("ascii") + b"\n"
     old = os.umask(0o077)
     try:
-        if WINDOWS:
+        if context.WINDOWS:
             check_session_file()
             _save_by_name(f, data, key)
         else:
@@ -388,6 +395,21 @@ def _save_by_name(f, data, key):
         raise
 
 
+def lock_everywhere(ctx):
+    """`roster vault lock`'s first half: `bw lock`, which locks every bw session on this Box (the app's too).
+    Returns (what to say when it locked, why it didn't: one of the two is None)."""
+    if not find_program("bw"):
+        return None, "bw (the Bitwarden CLI) isn't installed, so nothing was locked"
+    try:
+        r = ctx.run(["bw", "lock", "--nointeraction"], discard=True)
+    except SecretError as e:
+        return None, f"`bw lock` failed: {e}"
+    if r.returncode != 0:
+        return None, f"`bw lock` failed: {errtext(r, stdout=False) or f'exit {r.returncode}'}"
+    return ("bw lock: locked; bw keeps one unlock at a time, so the roster app and any other bw session on this Box "
+            "are locked too"), None
+
+
 def remove_session_file():
     """Remove session_file() (a link itself, never what it points to): True if one was there. On Linux and macOS
     through the folder's open handle, as it was saved (open_session_dir; #492, T250); by its name when that folder is
@@ -403,7 +425,7 @@ def remove_session_file():
 
 
 def _remove_in_its_folder(f):
-    if WINDOWS:
+    if context.WINDOWS:
         f.unlink()
         return
     try:
@@ -488,7 +510,7 @@ def _offer_to_keep(ctx, key, expired):
 
 def _bw_ask_unlock(ctx):
     """`bw unlock` with the master password typed at the terminal (to bw by an env var, never argv): the new key."""
-    r = _bw(ctx, "unlock", "--raw", "--passwordenv", "ROSTER_BW_MASTER",
+    r = run(ctx, "unlock", "--raw", "--passwordenv", "ROSTER_BW_MASTER",
             env={"ROSTER_BW_MASTER": ctx.ask("Bitwarden master password: ")})
     if r.returncode != 0 or not r.stdout.strip():
         if "not logged in" in errtext(r, stdout=False).lower():
@@ -515,11 +537,11 @@ def unlock_to_session_file(ctx):
     return "unlocked"
 
 
-def _bw_status_json(ctx):
+def status_json(ctx):
     """`bw status` as a dict: status, and (when it says) userEmail and serverUrl (None for bitwarden.com). SecretError
     when it isn't a JSON object (#486: valid JSON of another kind was an AttributeError in `check --box`)."""
     try:
-        st = json.loads(_bw(ctx, "status").stdout or "{}")
+        st = json.loads(run(ctx, "status").stdout or "{}")
     except json.JSONDecodeError:
         st = None
     if not isinstance(st, dict):
@@ -528,7 +550,7 @@ def _bw_status_json(ctx):
 
 
 def _bw_status(ctx):
-    return _bw_status_json(ctx).get("status")
+    return status_json(ctx).get("status")
 
 
 def _bw_ready(ctx):
@@ -540,7 +562,7 @@ def _bw_ready(ctx):
         if not (os.environ.get("BW_CLIENTID") and os.environ.get("BW_CLIENTSECRET")):
             raise NotLoggedIn(f"{NOT_LOGGED_IN} "
                               "(or set BW_CLIENTID and BW_CLIENTSECRET to use an API key)")
-        if _bw(ctx, "login", "--apikey").returncode != 0:
+        if run(ctx, "login", "--apikey").returncode != 0:
             raise SecretError("`bw login --apikey` failed - check BW_CLIENTID / BW_CLIENTSECRET")
         status = "locked"
     expired = status == "locked" and from_file
@@ -553,7 +575,7 @@ def _bw_ready(ctx):
         raise VaultLocked("Bitwarden vault is locked - unlock it first")
     if status == "locked":
         if os.environ.get("BW_PASSWORD"):
-            r = _bw(ctx, "unlock", "--raw", "--passwordenv", "BW_PASSWORD")
+            r = run(ctx, "unlock", "--raw", "--passwordenv", "BW_PASSWORD")
         elif ctx.interactive:
             key = _bw_ask_unlock(ctx)
             set_session(key)
@@ -567,15 +589,15 @@ def _bw_ready(ctx):
             if r.returncode != 0 or not r.stdout.strip():
                 raise WrongPassword("Bitwarden unlock failed (wrong master password?)")
             set_session(r.stdout.strip())
-    if ctx.settings.get("sync", True) and _bw(ctx, "sync").returncode != 0:
+    if ctx.settings.get("sync", True) and run(ctx, "sync").returncode != 0:
         say("warning      `bw sync` failed - using the vault as last synced")
     ctx.state["ready"] = True
 
 
-def _bw_unlock(password, ctx):
+def unlock_with(password, ctx):
     """Unlock with a master password given as a value (from `roster serve`), via the env-var path. One `bw`
     call (each costs about a second of Node start-up): bw itself says "You are not logged in." when it isn't."""
-    r = _bw(ctx, "unlock", "--raw", "--passwordenv", "ROSTER_BW_MASTER", env={"ROSTER_BW_MASTER": password})
+    r = run(ctx, "unlock", "--raw", "--passwordenv", "ROSTER_BW_MASTER", env={"ROSTER_BW_MASTER": password})
     if r.returncode != 0 or not r.stdout.strip():
         if "not logged in" in errtext(r).lower():
             raise NotLoggedIn(NOT_LOGGED_IN)
@@ -592,7 +614,7 @@ def _bw_account(ctx):
     """vault_account for bw: the status and {email, server} (server None: bitwarden.com) from one `bw status`."""
     if not find_program("bw"):
         return "missing", None
-    st = _bw_status_json(ctx)
+    st = status_json(ctx)
     status = st.get("status")
     if status in ("locked", "unlocked") and st.get("userEmail"):
         return status, {"email": st["userEmail"], "server": st.get("serverUrl")}
@@ -610,7 +632,7 @@ def _bw_reset():
 
 def _bw_lock(ctx):
     try:
-        _bw(ctx, "lock")
+        run(ctx, "lock")
     finally:
         _bw_forget(ctx)
 
@@ -619,7 +641,7 @@ def _bw_logout(ctx):
     """`bw logout`: removes the account and the CLI's local copy of the vault (the server setting stays). The session
     key goes first, so it's gone even if bw then fails."""
     _bw_forget(ctx)
-    r = _bw(ctx, "logout")
+    r = run(ctx, "logout")
     if r.returncode != 0:
         if "not logged in" in errtext(r).lower():
             raise NotSignedIn("the Bitwarden CLI isn't signed in on this box - there's no account to sign out of")
@@ -647,7 +669,7 @@ def _bw_get(ctx, ref):
     """`bw get item REF`: (the item, "", "") when REF names exactly one, else (None, bw's error shortened, its whole
     stderr). The one item is read whole, its password, TOTP seed, notes and custom fields too: bw has no other way to
     give a custom field, and the Login being resolved needs one of them (Q191 (p))."""
-    r = _bw(ctx, "get", "item", ref)
+    r = run(ctx, "get", "item", ref)
     if r.returncode != 0:
         return None, errtext(r, stdout=False), r.stderr or ""
     try:
@@ -758,7 +780,7 @@ CONFIRMED = 2               # bw's OrganizationUserStatusType: invited 0, accept
 
 
 def _bw_listed(ctx, *what):
-    r = _bw(ctx, "list", *what)
+    r = run(ctx, "list", *what)
     try:
         listed = json.loads(r.stdout) if r.returncode == 0 else None
     except json.JSONDecodeError:
@@ -837,7 +859,7 @@ def _bw_create(item, ctx):
     name, password = item["name"], item["password"]
     target = resolve_target(ctx, *item["save_to"])
     collection = target["save_to"]["collection"] if target["kind"] == "collection" else None
-    if _bw(ctx, "sync").returncode != 0:                   # see items made elsewhere since this run's first sync
+    if run(ctx, "sync").returncode != 0:                   # see items made elsewhere since this run's first sync
         say("warning      `bw sync` failed - checking for a duplicate name in the vault as last synced")
     try:
         listed = _bw_rows(ctx, "--search", name)          # through the filter: names and URIs, never a value
@@ -855,7 +877,7 @@ def _bw_create(item, ctx):
         "type": 1, "name": name, "notes": None, "favorite": False, "fields": [], "reprompt": 0,
         **where, "folderId": None, "login": login}).encode()).decode()
     try:
-        r = _bw(ctx, "create", "item", input=encoded)
+        r = run(ctx, "create", "item", input=encoded)
     except TimedOut:                                       # bw was stopped: the item may be saved all the same
         r, made = None, _created_anyway(ctx, name)
     if r is not None and r.returncode != 0:                # stderr only: stdout would be the item itself
@@ -935,7 +957,7 @@ def _refused_collection(ctx, made, target, ours=True):
 def _bw_lookup(ctx, name):
     """The filter's rows (Q191, T229) for the items named exactly NAME, synced from the server first. Raises
     SecretError if bw can't say."""
-    _bw(ctx, "sync", floor=LOOKUP_FLOOR)
+    run(ctx, "sync", floor=LOOKUP_FLOOR)
     return [i for i in _bw_rows(ctx, "--search", name, floor=LOOKUP_FLOOR) if i["name"] == name]
 
 
@@ -958,7 +980,7 @@ def _created_anyway(ctx, name):
 
 def _bw_delete(item_id, ctx):
     _bw_ready(ctx)
-    r = _bw(ctx, "delete", "item", item_id)
+    r = run(ctx, "delete", "item", item_id)
     if r.returncode != 0:
         raise WriteFailed(f"Bitwarden didn't delete item {item_id}: {errtext(r)}")
 
@@ -984,12 +1006,12 @@ def _bw_one(ctx, name, r):
 
 def _bw_login_fields(name, ctx):
     _bw_ready(ctx)
-    r = _bw(ctx, "get", "item", name, discard=True)           # one item? Its output (the password) is never read
+    r = run(ctx, "get", "item", name, discard=True)           # one item? Its output (the password) is never read
     if r.returncode != 0:
         raise SecretError(f"`bw get item` failed: {_bw_one(ctx, name, r)}")
     out = {}
     for field in ("uri", "username"):
-        r = _bw(ctx, "get", field, name)
+        r = run(ctx, "get", field, name)
         if r.returncode == 0:
             out[field] = r.stdout.strip() or None
             continue
@@ -1053,15 +1075,21 @@ def _bw_items(ctx, mapped):
 def _bw_sync(ctx):
     """`bw sync`, after the time of the one before it (`bw status`'s lastSync). Its output is never read."""
     _bw_ready(ctx)
-    previous = _bw_status_json(ctx).get("lastSync") or None
-    r = _bw(ctx, "sync", discard=True)
+    previous = status_json(ctx).get("lastSync") or None
+    r = run(ctx, "sync", discard=True)
     if r.returncode != 0:
         raise SecretError(f"`bw sync` failed: {errtext(r, stdout=False) or f'exit {r.returncode}'}")
     return {"previous": previous}
 
 
-PROVIDERS["bw"].update(unlock=_bw_unlock, lock=_bw_lock, forget=_bw_forget, reset=_bw_reset, status=_bw_vault_status,
+PROVIDERS["bw"].update(unlock=unlock_with, lock=_bw_lock, manual=_bw_manual, forget=_bw_forget, reset=_bw_reset, status=_bw_vault_status,
                        account=_bw_account, logout=_bw_logout, not_logged_in=NOT_LOGGED_IN,
                        create=_bw_create, delete=_bw_delete, targets=_bw_targets, resolve=_bw_resolve,
                        login_fields=_bw_login_fields, items=_bw_items, sync=_bw_sync,
-                       saved_session=_bw_saved_session)
+                       saved_session=_bw_saved_session, save_to=frozenset({"organization", "collection"}),
+                       unlock_hint="roster vault bw --write -- unlock (then export BW_SESSION=... as it says), or put "
+                                   "the session in ~/.config/roster/bw-session: (umask 077; bw unlock --raw > "
+                                   "~/.config/roster/bw-session)",
+                       session={"unlock": unlock_to_session_file, "lock": lock_everywhere,
+                                "remove": remove_session_file, "file": session_file, "until": UNTIL,
+                                "missing": "bw (the Bitwarden CLI) isn't installed"})

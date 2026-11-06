@@ -37,12 +37,14 @@ from . import (
     __version__,
     addhost,
     askpass,
+    boxlock,
     boxsync,
     diagnose,
     discover,
     edit,
     fill,
     health,
+    hosts,
     inventories,
     jobs,
     mesh,
@@ -60,7 +62,7 @@ from .common import (
     not_reviewed,
     ssh_path,
 )
-from .config import find_config, inventory_problem, load_config, load_inventory, locate_config
+from .config import find_config, load_config, load_inventory, locate_config
 from .context import current
 from .errors import (
     ALREADY_SIGNED_OUT,
@@ -96,14 +98,16 @@ from .errors import (
     UNKNOWN_HOST,
     UNKNOWN_INVENTORY,
     UNSUPPORTED,
+    Exit,
+    InventoryError,
     Problem,
-    die_message,
     problem_of,
     sign_in_problem,
     vault_problem,
 )
 from .providers import PROVIDERS, setup_providers
-from .servemodels import HostGetParams, HostsListResult, InventoryError, NoParams, dump
+from .servemodels import HostGetParams, HostsListResult, NoParams, dump
+from .servemodels import InventoryError as InventoryErrorDoc
 from .sshops import (
     fingerprint,
     not_in_ssh_config,
@@ -229,13 +233,22 @@ class State:
         self.scan_lock = threading.Lock()   # held while one starts
         self.watch_lock = threading.Lock()  # held while inventory.watch starts the watcher (it's a quick read)
         self.closing = False                # serve's stdin closed: nothing new starts (a sign-in least of all)
-        only_vault_unlock_unlocks()
+        self.item_locks: dict[str, Lock] = {}   # provider -> its items' Lock (item_writes)
+        self.item_locks_lock = threading.Lock()
+        providers.only_unlock_unlocks()
         try:
             self.path = find_config(config_arg, inv)
-        except SystemExit as e:
-            self.error = die_message(e)
+        except InventoryError as e:
+            self.error = e
+            return
+        except Problem as e:                # an unknown --inv, or inventories.json that doesn't load: no roster.yml
+            self.error = InventoryError(e.message)
             return
         self.reload()
+
+    def item_lock(self, provider):
+        with self.item_locks_lock:
+            return self.item_locks.setdefault(provider, Lock(f"{provider}'s items"))
 
     def reload(self):
         """Load roster.yml again (after a pull, an edit, a discard, `:source` or an outside edit, so hosts.list shows
@@ -244,8 +257,8 @@ class State:
             self.digest, self.noticed = file_digest(self.path), None
             try:
                 inv = load_inventory(self.path)
-            except SystemExit as e:
-                self.error = die_message(e)
+            except InventoryError as e:
+                self.error = e
                 return
             cfg = inv.as_config()
             self.inv, self.cfg, self.path, self.error = inv, cfg, cfg["path"], None
@@ -255,7 +268,7 @@ class State:
         """Why roster.yml doesn't load right now (code 1, with its line), or None."""
         if self.error is None:
             return None
-        p = inventory_problem(self.error, self.path)
+        p = InventoryError(self.error.message, self.error.path, self.error.line)
         p.data = {**(p.data or {}), **versions()}
         return p
 
@@ -337,7 +350,8 @@ def hosts_list(state, params):
     state.inventory()
     inv, error = state.inv, broken(state)
     return dump(HostsListResult(hosts=list(inv.hosts.values()), groups=dict(inv.groups),
-                                error=None if error is None else InventoryError.model_validate(error)))
+                                error=None if error is None else InventoryErrorDoc.model_validate(error)))
+
 
 
 @method("host.get", locks=settled_waits, lane="quick")
@@ -535,7 +549,7 @@ def need_askpass(state, what="password sessions"):
 def prompted(h):
     """Is the Host's ssh Login `auth: prompt`: a password nobody saved, which the user types (ticket 16)?"""
     login = diagnose.password_login(h)
-    return login is not None and str(login["auth"]).partition(":")[0].strip() == "prompt"
+    return login is not None and hosts.prompted(login["auth"])
 
 
 def prompt_session(state, h, ssh, params):
@@ -679,16 +693,17 @@ def box_check(state, params):
     load is an error even while the app shows the last good Inventory.
 
     Params: none
-    Result: `{checks: [{section, level, message, fix?, topic?}, ...], ok, roster_version, api_version}`
+    Result: `{checks: [{section, level, message, fix?, topic?, code?}, ...], ok, roster_version, api_version}`:
+        `code` is a warning's own (206, 207), which the CLI shows as `[CODE] ` before the message
     Since: API 16
     """
     error = state.error
     if state.path is not None and error is None:
         try:
             load_config(state.path)
-        except SystemExit as e:
-            error = die_message(e)
-    checks = health.check_box(state.path, state.cfg, error, health.askpass_state(state.askpass), API_VERSION)
+        except InventoryError as e:
+            error = e
+    checks = health.check_box(state.cfg, error, health.askpass_state(state.askpass), API_VERSION)
     return {"checks": checks, "ok": not any(c["level"] == "error" for c in checks), **versions()}
 
 
@@ -745,11 +760,12 @@ def inventory_create(state, params):
     and the answer is `5`.
 
     Params: `{how: blank|file|repo, folder, source?, name?}`: `folder` absolute (or `~/...`); `source` the
-        `roster.yml` to copy (`file`) or the git URL (`repo`); `name` when the folder's name is taken (`-32602` with
-        `data.field: "name"`)
+        `roster.yml` to copy (`file`) or the git URL (`repo`); `name` when the folder's name is taken (`141` with
+        `data.field: "name"`) or isn't one (`142`, as `roster inv add` refuses it)
     Result: `{path, name, how, hosts, restart: true}`: `path` the new `roster.yml`, `hosts` how many it has; the
         app restarts serve (as after `inventories.use`)
-    Errors: 5, 140, 143, 170-172, 174
+    Errors: 5, 140-143, 170-172, 174
+
     Since: API 28
     """
     from . import newinventory
@@ -780,21 +796,17 @@ def inventory_create(state, params):
         except ValueError as e:
             raise Problem(INVALID_PARAMS, f"params.source: {e}") from None
     name = params.get("name") or folder.name
-    if not isinstance(name, str) or named.name_problem(name):
-        raise Problem(INVALID_PARAMS, f"params.name: {named.name_problem(str(name))}")
-    inv = named.load()
-    taken = [x.name for x in inv.inventories if named.same_name(x.name, name)]
-    if taken:                                       # the field to change, for the app's form
-        raise Problem(INVALID_PARAMS, f"params.name: there's already an Inventory named '{taken[0]}'",
-                       {"field": "name", "name": taken[0]},
-                       fix="give it another name, or pick another folder (its name names the Inventory); "
-                           f"`roster inv remove {taken[0]}` forgets the other one")
+    if not isinstance(name, str):
+        raise Problem(INVALID_PARAMS, "params.name must be a string")
     target = folder / "roster.yml"
+    inventories.check_new(name, target, exists=False)   # data.field: the app's form asks for another name
+
     stop = threading.Event()
     on_cancel(stop.set)                             # the app's Cancel: a clone under way stops
-    with state.lock, first_run_lock():              # one at a time on this Box, whichever serve
+    with state.lock, boxlock.first_run():
         if state.path is not None:                  # another create got here first
             raise Problem(INVENTORY_THERE, f"this roster serve made {state.path} already", {"path": str(state.path)})
+        made_meanwhile()
         made = newinventory.create(target, how, source, interactive=False, stop=stop)
         state.path = made.path.resolve()            # this serve makes no other
         newinventory.name_new(made.path, name, use=True)
@@ -803,48 +815,15 @@ def inventory_create(state, params):
             "restart": True}
 
 
-FIRST_RUN_STALE = 600       # s: a lock older than this is a serve that died making one, and is taken over
-
-
-@contextmanager
-def first_run_lock():
-    """inventory.create one at a time on this Box: a lock file in roster's config folder (O_EXCL), so two app windows
-    (or two serves) can't both make and name one (#417 L3). After it's taken, an Inventory found now means one was
-    made meanwhile: 170."""
-    from .common import user_config_dir
-    lock = user_config_dir() / "inventory.create.lock"
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    for _ in range(2):
-        try:
-            fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            break
-        except FileExistsError:
-            try:
-                old = time.time() - lock.stat().st_mtime > FIRST_RUN_STALE
-            except OSError:
-                old = True
-            if not old:
-                raise Problem(INVENTORY_THERE, "another first run is making an Inventory on this Box right now",
-                               {"lock": str(lock)}, fix="wait for it, then Retry") from None
-            lock.unlink(missing_ok=True)
-    else:
-        raise Problem(INVENTORY_THERE, "another first run is making an Inventory on this Box right now",
-                       {"lock": str(lock)}, fix="wait for it, then Retry")
+def made_meanwhile():
+    """inventory.create, holding the first-run lock: an Inventory found now was made meanwhile (170)."""
     try:
-        os.write(fd, f"{os.getpid()}\n".encode())
-        os.close(fd)
-        try:
-            found = locate_config(None, None)
-        except SystemExit:
-            found = None
-        if found is not None and Path(found).exists():
-            raise Problem(INVENTORY_THERE, f"an Inventory was made meanwhile: {found}", {"path": str(found)},
-                           fix="Retry: roster starts on it")
-        yield
-    finally:
-        lock.unlink(missing_ok=True)
-
-
+        found = locate_config(None, None)
+    except Problem:                         # none found (or inventories.json doesn't load): nothing was made
+        return
+    if found.exists():
+        raise Problem(INVENTORY_THERE, f"an Inventory was made meanwhile: {found}", {"path": str(found)},
+                      fix="Retry: roster starts on it")
 
 
 # ---------------------------------------------------------------- editing: Pending changes
@@ -1045,7 +1024,7 @@ def sync_box(state):
     same way (boxsync.py, T153)."""
     def loaded():
         if state.error is not None:
-            raise Problem(ROSTER_ERROR, f"roster.yml doesn't load ({state.error})")
+            raise Problem(ROSTER_ERROR, f"roster.yml doesn't load ({state.error.message})")
         return state.inventory()
     with state.lock:                        # one writer of the ssh config at a time; a write already holds it
         return boxsync.sync(loaded)
@@ -1421,37 +1400,31 @@ def vault_forget_typed(state, params):
     return {"forgotten": forget_held(state, hid)}
 
 
-def save_held(state, repo, hid, password, item, change, what):
+def save_held(state, repo, hid, password, item, change, what, then=None):
     """Q43's order, once a held password's Session logged in with it: the Vault item (ITEM: make_item's other
     arguments), then CHANGE(path) -> (old_text, new_text) written as a Pending change, the item taken back out if that
-    fails (WHAT: what then wasn't done); then the password is forgotten. Returns (the item, the backup's path)."""
-    made = make_item(password=password, **item)
+    fails (WHAT: what then wasn't done); THEN(backup) once it's written, and this Box synced; then the password is
+    forgotten. Returns (the item, the backup's path, the sync's answer)."""
+    made = make_item(state, password=password, **item)
     try:                                        # until roster.yml is written, any failure takes the item back out
         old_text, new_text = change(repo.path)
-        backup = repo.save(old_text, new_text)
+        backup, synced = repo.write(old_text, new_text, then=then, sync=lambda: resynced(state))
     except BaseException as e:
-        raise take_back(made, write_failed(what, repo.path, e)) from None
+        raise take_back(state, made, write_failed(what, repo.path, e)) from None
     forget_held(state, hid)
-    return made, backup
+    return made, backup, synced
 
 
-# Making or deleting a Vault item, one at a time per provider: bw keeps its local cache in one data.json
-# and pass commits each insert to a git repo, so neither is known to take two writes at once, and two creations of one
-# name would both pass the "no item by that name" check. Inside the shared vault lock (after roster.yml and the vault in
-# Q112's order); it waits at most what's left of the request's deadline (LOCK_WAIT without one), then 4.
-ITEM_LOCKS = {}
-ITEM_LOCKS_LOCK = threading.Lock()
-
-
-def item_lock(provider):
-    with ITEM_LOCKS_LOCK:
-        return ITEM_LOCKS.setdefault(provider, Lock(f"{provider}'s items"))
-
+# Making or deleting a Vault item, one at a time per provider (State.item_lock): bw keeps its local cache in one
+# data.json and pass commits each insert to a git repo, so neither is known to take two writes at once, and two
+# creations of one name would both pass the "no item by that name" check. Inside the shared vault lock (after
+# roster.yml and the vault in Q112's order); it waits at most what's left of the request's deadline (LOCK_WAIT without
+# one), then 4.
 
 @contextmanager
-def item_writes(provider, floor=0.0):
+def item_writes(state, provider, floor=0.0):
     """Hold PROVIDER's item lock while a Vault item is made or deleted (FLOOR: an undo waits at least that long)."""
-    lock = item_lock(provider)
+    lock = state.item_lock(provider)
     at = current_deadline()
     wait = LOCK_WAIT if at is None else max(floor, at - time.monotonic())
     r = current_request()
@@ -1463,12 +1436,12 @@ def item_writes(provider, floor=0.0):
         lock.release()
 
 
-def make_item(provider, item, password, user, address, port, save_to):
+def make_item(state, provider, item, password, user, address, port, save_to):
     """The Vault item for a password that just logged in: the user in its username field, ssh://address[:port] in
     its URI field. Raises the vault_problem (60-65, 14) when the vault refuses."""
     uri = f"ssh://{address}" + ("" if port == 22 else f":{port}")
     try:
-        with item_writes(provider):
+        with item_writes(state, provider):
             made = providers.create_item(provider, name=item, password=password, username=user, uri=uri,
                                          save_to=save_to)
     except providers.SecretError as e:
@@ -1519,17 +1492,20 @@ def quick_save(state, params):
     state.fresh()
     repo = store.at(state.path)
     _, _, h = edit.added(repo.path, group, name, fields)      # a dry run: the name and group, before the vault
-    made, backup = save_held(state, repo, hid, password,
-                             {"provider": provider, "item": item, "user": q["user"], "address": q["address"],
-                              "port": q["port"], "save_to": save_to},
-                             lambda path: edit.added(path, group, name, fields)[:2], f"{name} wasn't added")
     warnings = []
-    try:                                        # the key the user confirmed for this Session, never a fresh scan
-        record_host_key(h, q["key_type"], q["base64"])
-    except Exception as e:
-        warnings.append(f"{name} was added, but its host key couldn't be recorded in {current().known_hosts_label} "
-                        f"({failure_text(e)}) - the first Session to it will ask about the key")
-    synced = resynced(state)
+
+    def record_key(_backup):                    # the key the user confirmed for this Session, never a fresh scan
+        try:
+            record_host_key(h, q["key_type"], q["base64"])
+        except Exception as e:                  # the Host is added: the first Session asks about the key instead
+            warnings.append(f"{name} was added, but its host key couldn't be recorded in "
+                            f"{current().known_hosts_label} ({failure_text(e)}) - the first Session to it will ask "
+                            "about the key")
+    made, backup, synced = save_held(state, repo, hid, password,
+                                     {"provider": provider, "item": item, "user": q["user"], "address": q["address"],
+                                      "port": q["port"], "save_to": save_to},
+                                     lambda path: edit.added(path, group, name, fields)[:2], f"{name} wasn't added",
+                                     then=record_key)
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "item": made,
             "warnings": warnings, "sync": synced}
 
@@ -1565,11 +1541,11 @@ def host_save_login(state, params):
     wanted = {"auth": f"{provider}:{item}"}
     repo = store.at(state.path)
     edit.edited(repo.path, name, wanted)        # a dry run: the edit must be possible before the vault is touched
-    made, backup = save_held(state, repo, hid, password,
-                             {"provider": provider, "item": item, "user": h["ssh"]["user"], "address": h["ip"],
-                              "port": h["ssh"]["port"], "save_to": save_to},
-                             lambda path: edit.edited(path, name, wanted)[:2], f"{name}'s Login wasn't changed")
-    synced = resynced(state)
+    made, backup, synced = save_held(state, repo, hid, password,
+                                     {"provider": provider, "item": item, "user": h["ssh"]["user"],
+                                      "address": h["ip"], "port": h["ssh"]["port"], "save_to": save_to},
+                                     lambda path: edit.edited(path, name, wanted)[:2],
+                                     f"{name}'s Login wasn't changed")
     return {"changed": True, "host": state.inventory()["hosts"][name], "backup": str(backup), "item": made,
             "warnings": [], "sync": synced}
 
@@ -1630,7 +1606,7 @@ def host_add(state, params):
     if typed:
         password, typed["password"] = typed["password"], None
         try:
-            made = make_item(typed["provider"], typed["item"], password, h["ssh"]["user"], h["ip"], h["ssh"]["port"],
+            made = make_item(state, typed["provider"], typed["item"], password, h["ssh"]["user"], h["ip"], h["ssh"]["port"],
                              typed["save_to"])
         finally:
             del password
@@ -1653,7 +1629,7 @@ def host_add(state, params):
     except BaseException as e:
         if written_in:
             raise
-        raise take_back(made, write_failed(f"{name} wasn't added", state.path, e)) from None
+        raise take_back(state, made, write_failed(f"{name} wasn't added", state.path, e)) from None
     return {"added": True, "host": state.inventory()["hosts"][name], "backup": written["backup"], "verify": verify,
             "item": made, "warnings": warnings, "sync": written["sync"]}
 
@@ -1663,8 +1639,8 @@ def write_failed(what, path, e):
     words)."""
     if isinstance(e, Problem):
         return e
-    if isinstance(e, SystemExit):
-        return Problem(ROSTER_ERROR, f"{what}: {die_message(e)}")
+    if isinstance(e, Exit):
+        return Problem(ROSTER_ERROR, f"{what}: {e.problem.message}")
     return Problem(ROSTER_ERROR, f"{what}: couldn't write {path} ({failure_text(e)})")
 
 
@@ -1676,12 +1652,12 @@ def verify_failed(name, verify):
                    fix=fail.get("fix"), details=fail.get("details"))
 
 
-def take_back(made, e):
+def take_back(state, made, e):
     """Writing the Host failed after its Vault item was made: delete the item again (Q43), and say so."""
     if made is None:
         return e
     try:
-        with deadline(UNDO_TIME), item_writes(made["provider"], UNDO_TIME):
+        with deadline(UNDO_TIME), item_writes(state, made["provider"], UNDO_TIME):
             providers.delete_item(made["provider"], made["id"])
     except Exception as undo:
         what = str(undo) if isinstance(undo, providers.SecretError) else type(undo).__name__
@@ -2001,7 +1977,7 @@ def status_result(name, status, account, server=providers.ASK):
     if status == "unauthenticated" and PROVIDERS[name].get("login_info"):
         try:
             result["sign_in"] = PROVIDERS[name]["login_info"](providers.Ctx(name, None), server)
-        except providers.SecretError:
+        except providers.SecretError:       # the CLI can't say how to sign in now: the status alone still answers
             pass
     return result | ({"message": message} if message else {})
 
@@ -2028,18 +2004,6 @@ def vault_status(state, params):
     if main["can_write"]:                       # where "Save to vault" goes by default, as set
         main = {**main, "save_to": providers.default_target(lockable)}
     return {**main, "providers": others}
-
-
-def only_vault_unlock_unlocks():
-    """The app opens locked and only its lock screen unlocks: forget a BW_PASSWORD / BW_SESSION this process
-    inherited, and tell providers not to unlock by themselves (no bw-session file, no prompt). An OP_SESSION_* it
-    inherited moves out of its environment into the op provider's state: only op gets it, and vault.lock forgets it."""
-    from .providers.bitwarden import forget_session
-    from .providers.onepassword import adopt_inherited_session
-    os.environ.pop("BW_PASSWORD", None)
-    forget_session()
-    adopt_inherited_session(providers.PROVIDER_STATE.setdefault("op", {}))
-    providers.MANUAL_UNLOCK = True
 
 
 def vault_provider(state, params):
@@ -2075,17 +2039,6 @@ def vault_unlock(state, params):
     return {"provider": name, "status": "unlocked", "can_write": providers.can_write(name)}   # no second `bw status`
 
 
-ON_VAULT_LOCK = []          # fn(state) run by vault.lock: whatever else holds secrets (askpass tokens) forgets them
-
-
-def forget_askpass_tokens(state):
-    if state.askpass is not None:
-        state.askpass.forget()
-
-
-ON_VAULT_LOCK.append(forget_askpass_tokens)
-ON_VAULT_LOCK.append(forget_held)
-ON_VAULT_LOCK.append(stop_checks)
 
 
 @method("vault.lock", cancel="never")
@@ -2120,12 +2073,15 @@ def forgotten_for_good(state, signing_out=None, then=None):
 
 
 def forget_everything(state, signing_out=None):
-    """vault.lock's work: end a sign-in, run every ON_VAULT_LOCK hook, and lock every provider (SIGNING_OUT's only
-    in memory: its CLI is about to log out). Returns the providers it locked."""
+    """vault.lock's work: end a sign-in, forget what else holds secrets (askpass tokens, typed passwords held to save,
+    checks under way), and lock every provider (SIGNING_OUT's only in memory: its CLI is about to log out). Returns
+    the providers it locked."""
     names = set(state.unlocked) | (set(health.referenced_providers(state.cfg)) if state.cfg else set())
     end_sign_in(state)
-    for forget in ON_VAULT_LOCK:
-        forget(state)
+    if state.askpass is not None:
+        state.askpass.forget()
+    forget_held(state)
+    stop_checks(state)
     for name in sorted(names | ({signing_out} if signing_out else set())):
         try:
             providers.lock(name, cli=name != signing_out)
@@ -2185,9 +2141,6 @@ def sign_out_error(e):
 # a key that isn't one of these is refused, so nothing else (a secret above all) can ride along. A value roster can't
 # use (a relative or Windows path, a save_to of the wrong shape) is refused alone: the other settings still apply.
 
-BOX_PATHS = {"kp": ("database", "key_file")}
-
-
 def box_path(value, field):
     if not isinstance(value, str) or not value.strip():
         raise Problem(INVALID_PARAMS, f"params.{field} must be a path")
@@ -2211,22 +2164,21 @@ def box_settings(params):
             return None
     save_to = take("save_to", save_to_param, params)
     if save_to is not None:
-        # init.lua has one save_to; it goes to the provider it fits: a collection is Bitwarden's, a group KeePassXC's
-        fits = ("bw", "kp") if save_to == providers.PERSONAL else ("kp",) if "group" in save_to else ("bw",)
-        for name in fits:
+        for name in providers.save_to_fits(save_to):   # init.lua has one: each provider whose targets it names
             box.setdefault(name, {})["save_to"] = save_to
+    paths = providers.box_paths()
     for name, given in params.items():
         if name == "save_to":
             continue
-        if name not in BOX_PATHS:
+        if name not in paths:
             raise Problem(INVALID_PARAMS, f"params.{name} isn't a setting roster takes from init.lua (it takes: "
-                                           f"save_to, {', '.join(sorted(BOX_PATHS))})")
+                                           f"save_to, {', '.join(sorted(paths))})")
         if not isinstance(given, dict):
             raise Problem(INVALID_PARAMS, f"params.{name} must be an object")
         for key, value in given.items():
-            if key not in BOX_PATHS[name]:
+            if key not in paths[name]:
                 raise Problem(INVALID_PARAMS, f"params.{name}.{key} isn't a setting roster takes from init.lua "
-                                               f"(it takes: {', '.join(BOX_PATHS[name])})")
+                                               f"(it takes: {', '.join(paths[name])})")
             setting = f"{name}.{key}"
             path = None if value is None else take(setting, box_path, value, setting)
             if path is not None:
@@ -2276,7 +2228,7 @@ def vault_create_item(state, params):
     save_to = save_to_param(params)
     doing(f"saving to {provider}")
     try:
-        with item_writes(provider):
+        with item_writes(state, provider):
             made = providers.create_item(provider, name=name, password=password, save_to=save_to, **extra)
     except providers.SecretError as e:
         raise vault_problem(e) from None
@@ -2300,7 +2252,7 @@ def vault_undo_create(state, params):
                        "undone) - roster only takes back the items it just saved")
     doing(f"deleting from {provider}")
     try:
-        with item_writes(provider, UNDO_TIME):
+        with item_writes(state, provider, UNDO_TIME):
             providers.delete_item(provider, item_id)
     except BaseException as e:
         state.created[item_id] = provider       # not known to be deleted: it can be undone again
@@ -2887,8 +2839,8 @@ def discover_add(state, params):
     old_text = edit.read_text(repo.path)
     try:
         new_text, added = discover.added_text(old_text, group, picked, scan.targets, today, set(cfg["hosts"]))
-    except SystemExit as e:
-        raise Problem(INVALID_EDIT, die_message(e)) from None
+    except Problem as e:
+        raise Problem(INVALID_EDIT, e.message) from None
     after = edit.load_text(repo.path, new_text)
     names = [a["name"] for a in added]
     if any(after["hosts"].get(n) != cfg["hosts"].get(n) for n in cfg["hosts"]) or \
@@ -3196,7 +3148,7 @@ def respond(state, req):
             with claimed(state, spec.claims(params), method):
                 started_running()
                 result = {"jsonrpc": "2.0", "id": rid, "result": spec.fn(state, params)}
-    except (Problem, SystemExit) as e:          # a die() inside roster: its message (and code) is the answer
+    except (Problem, Exit) as e:                # a die() inside roster: its message (and code) is the answer
         result = error_response(rid, problem_of(e))
     except Exception as e:
         if _doing.what:                         # never its words: they might hold the password

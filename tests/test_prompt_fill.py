@@ -7,7 +7,7 @@ import json
 import pytest
 
 from roster.config import load_config_text
-from roster.errors import Problem
+from roster.errors import InventoryError, Problem
 from roster.fill import FILL_REFUSED, NOTHING_TO_FILL, login_for
 
 INVENTORY = """\
@@ -119,10 +119,10 @@ def test_sudo_cascades_from_the_group_and_stays_off_the_host():
     ("sudo: {auth: agent}", "a vault reference"),
 ])
 def test_a_bad_sudo_block_says_how(block, says):
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config_text(INVENTORY.replace("{ip: 10.0.0.6, enroll: false}", f"{{ip: 10.0.0.6, {block}}}"),
                          "/tmp/roster.yml")
-    assert says in str(e.value.code)
+    assert says in e.value.message
 
 
 # ---------------------------------------------------------------- session.fill, as the app's core calls it

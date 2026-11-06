@@ -305,4 +305,8 @@ PROVIDERS["kp"].update(unlock=_unlock, lock=_lock, status=_status, not_logged_in
                        logout_help=f"{NAME} has no account to sign out of: it opens a local database file. To use "
                                    "another one, change vault.kp.database in init.lua",
                        create=_create, delete=_delete, targets=_targets, resolve=_resolve,
-                       box_paths=("database", "key_file"))
+                       box_paths=("database", "key_file"), save_to=frozenset({"group"}), old_save_to="group",
+                       unlock_hint="KeePassXC has no session roster can reuse: give the address and user yourself "
+                                   "(roster add NAME --ip ADDR --user USER --auth kp:ENTRY), or unlock it in the app",
+                       no_session="KeePassXC keeps no session: each run opens the database with its password, so "
+                                  "there's nothing to keep unlocked")

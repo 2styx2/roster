@@ -224,8 +224,12 @@ NEW_KEY_REFUSED = 208       # setup --rotate: a Host it reached refused the new 
 # The vault's own state, not an item's: the codes a provider's failure keeps wherever it's reported
 VAULT_CODES = (WRONG_PASSWORD, NOT_LOGGED_IN, CLI_MISSING, UNSUPPORTED, VAULT_LOCKED, ALREADY_SIGNED_OUT,
                SIGN_OUT_FAILED)
-# The CLI's plain refusals: a die()'s text never shows these, which name no catalog row of their own
-PLAIN = (INVENTORY_ERROR, UNKNOWN_HOST, ROSTER_ERROR)
+# The codes the command line prints without their `[CODE] `: the plain refusals, which name no catalog row of their
+# own, and those whose message has always stood alone there (the named Inventories', a new Inventory's, the Mesh's
+# rotate). Every other code is shown.
+UNTAGGED = frozenset({INVENTORY_ERROR, UNKNOWN_HOST, ROSTER_ERROR, NOT_A_SOURCE, UNKNOWN_INVENTORY, INVENTORY_TAKEN,
+                      BAD_INVENTORY, INVENTORIES_UNREADABLE, INVENTORY_THERE, NOT_AN_INVENTORY, CLONE_FAILED,
+                      SSH_CONFIG_UNREADABLE, FOLDER_NOT_WRITABLE})
 # data.path of a roster.yml roster won't repeat (a -c value shaped like a token)
 PATH_NOT_REPEATED = "(not repeated)"
 
@@ -249,34 +253,63 @@ class Problem(Exception):
         return err
 
 
-class Exit(SystemExit):
-    """A die(): roster refusing on the command line, as the Problem it is. Python prints its text, `error: MESSAGE`
-    (`error: [CODE] MESSAGE` when TAG and the code isn't PLAIN; with FULL, ` (DETAILS) - FIX` after it, for a
-    library's Problem whose message doesn't say them), and exits 1; serve and --json answer with the Problem."""
+class InventoryError(Problem):
+    """roster.yml wasn't found or doesn't load (catalog row 1): roster's MESSAGE, the PATH as roster may show it
+    (PATH_NOT_REPEATED when it mustn't be; None when no file is in question yet) and, for a YAML error, the LINE.
+    An error in one Host's entry names the HOST, and WHY is the message without it. data: path and line; the fix
+    names the file."""
 
-    def __init__(self, problem, tag=True, full=False):
-        shown = f"[{problem.code}] " if tag and problem.code not in PLAIN else ""
+    def __init__(self, message, path=None, line=None, host=None, why=None):
+        where = ("roster.yml" if path is None else f"the roster.yml at that path {PATH_NOT_REPEATED}"
+                 if path == PATH_NOT_REPEATED else path) + (f" at line {line}" if line else "")
+        super().__init__(INVENTORY_ERROR, message, {"path": path} | ({"line": line} if line else {}),
+                         fix=f"fix {where}, or make one if there's none yet: `roster init --blank` (`roster init "
+                             "--help`: the others)")
+        self.path, self.line, self.host, self.why = path, line, host, why or message
+
+    def at(self, path):
+        """This error, about the file roster shows as PATH (when it named none yet)."""
+        if self.path is not None:
+            return self
+        return InventoryError(self.message, path, self.line, self.host, self.why)
+
+
+
+def tagged(problem):
+    """PROBLEM's message as the command line shows it: `[CODE] MESSAGE`, or MESSAGE alone for an UNTAGGED code."""
+    return problem.message if problem.code in UNTAGGED else f"[{problem.code}] {problem.message}"
+
+
+class HostRefused(Problem, RuntimeError):
+    """A Problem where callers catch a Host's failure as a RuntimeError (a script there refused): its str() is the
+    line the command line reports it with, tagged()."""
+
+    def __str__(self):
+        return tagged(self)
+
+
+
+class Exit(SystemExit):
+    """A die(): roster refusing on the command line, as the Problem it is. Python prints its text, `error: ` and the
+    message tagged(), with FULL ` (DETAILS) - FIX` after it (for a library's Problem whose message doesn't say them),
+    and exits 1; serve and --json answer with the Problem."""
+
+    def __init__(self, problem, full=False):
         more = ((f" ({problem.details})" if problem.details else "") + (f" - {problem.fix}" if problem.fix else "")
                 if full else "")
-        super().__init__(f"error: {shown}{problem.message}{more}")
+        super().__init__(f"error: {tagged(problem)}{more}")
         self.problem = problem
 
 
-def die_message(e):
-    """The text of a die() (SystemExit("error: ...")), without the prefix."""
-    msg = str(e.code) if e.code is not None else "exited"
-    return msg.removeprefix("error: ")
-
-
 def problem_of(e: BaseException) -> "Problem":
-    """Any exception as the Problem to answer with: a Problem as it is, a die() with its code (3 when it has none of
-    its own), anything else -32603 with its type and words (so never for code that may hold a secret)."""
+    """Any exception as the Problem to answer with: a Problem as it is, a die() with its code, another exit 3,
+    anything else -32603 with its type and words (so never for code that may hold a secret)."""
     if isinstance(e, Problem):
         return e
     if isinstance(e, Exit):
         return e.problem
     if isinstance(e, SystemExit):
-        return Problem(ROSTER_ERROR, die_message(e))
+        return Problem(ROSTER_ERROR, str(e.code) if e.code is not None else "exited")
     return Problem(INTERNAL_ERROR, f"{type(e).__name__}: {e}")
 
 
@@ -346,7 +379,7 @@ def login_problem(e, h, what="ssh"):
 
 
 def unknown_provider(h, auth, what="ssh"):
-    name = str(auth).partition(":")[0].strip()
+    name = str(auth).partition(":")[0].strip()      # hosts.provider_of (errors imports nothing of roster's)
     return Problem(NO_PROVIDER, f"{h['name']}'s {what} Login uses '{name}:', which isn't set up on this box",
                    {"provider": name}, fix="see `roster vault status` for the ones that are, then fix auth: in "
                                            "roster.yml (or add the provider)")

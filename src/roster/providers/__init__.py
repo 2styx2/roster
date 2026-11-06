@@ -10,8 +10,10 @@ import sys
 import threading
 from pathlib import Path
 
-from ..common import die, filter_env, program_argv, run, run_filtered, say, time_left, user_config_dir
-from ..hosts import NO_PASSWORD  # noqa: F401 (providers.NO_PASSWORD: what its callers read)
+from ..common import filter_env, program_argv, run, run_filtered, say, time_left
+from ..context import user_config_dir
+from ..errors import InventoryError
+from ..hosts import NO_PASSWORD, prompted, provider_of
 from .problems import (  # noqa: F401 (what a provider or plugin raises: providers.ItemNotFound, ...)
     AlreadyLoggedIn,
     ApiKeyRejected,
@@ -97,6 +99,16 @@ PROVIDERS = {}            # name -> {"get": fn(spec, ctx) -> str, "help": str, "
 #                     roster add --from-vault, and `roster vault sync` (vaultsync.py)
 #             "saved_session": fn(ctx) -> (state, why): a session saved for every run on this Box
 #                              (bw-session): "none", "working", "expired", "ignored" or "unknown" (why: the reason); never in serve
+#             "manual": fn(ctx), only_unlock_unlocks(): forget what this process inherited that would unlock
+#                       it by itself (bw's BW_PASSWORD and BW_SESSION; op's OP_SESSION_*, moved into its state)
+#             "save_to": the keys of a save_to that names a target of this provider ({organization, collection},
+#                        {group}); "old_save_to": an older setting of its own that means save_to: {it: value}
+#             "holds_items": False for a provider with no items to list or sync (prompt, env, cmd)
+#             "unlock_hint": what to run so a locked vault can answer (roster add --from-vault, vault sync)
+#             "session": a session saved for every run on this Box (`roster vault unlock`/`lock`): {"unlock":
+#                        fn(ctx) -> how, "lock": fn(ctx) -> (said, problem), "remove": fn() -> removed, "file": fn(),
+#                        "until": how long it lasts, "missing": the CLI isn't installed}; "no_session": why a
+#                        provider keeps none
 #             "box_paths": settings naming files on this Box (e.g. kp's database); a change to one
 #                          from vault.configure locks the provider (what it holds was for the old one)
 PROVIDER_SETTINGS = {}    # name -> settings dict from roster.yml `providers:`
@@ -119,14 +131,15 @@ def bad_name(name):
     return None
 
 
-def register(name, help="", tool=""):
-    """Decorator for provider functions:  @register("vault", help="...", tool="vault")"""
+def register(name, help="", tool="", **facts):
+    """Decorator for provider functions:  @register("vault", help="...", tool="vault"); FACTS: more of PROVIDERS'
+    optional keys."""
     if why := bad_name(name):
         raise ValueError(why)
 
     def deco(fn):
         PROVIDERS[name] = {"get": fn, "help": help, "tool": tool,
-                           "kind": "built-in" if fn.__module__.startswith("roster.") else "plugin"}
+                           "kind": "built-in" if fn.__module__.startswith("roster.") else "plugin", **facts}
         return fn
     return deco
 
@@ -290,12 +303,11 @@ def get_secret(ref, group):
     """Resolve an auth reference via its provider. Cached for this run, never written anywhere."""
     if ref in (None, "") or ref in NO_PASSWORD:
         return None
-    name, _, spec = str(ref).partition(":")
-    name = name.strip()
+    name, spec = provider_of(ref), str(ref).partition(":")[2]
     if name not in PROVIDERS:
         raise SecretError(f"unknown password source {name!r} in auth {ref!r} - available: "
                           f"{', '.join(sorted(PROVIDERS))} (see `roster vault status`)")
-    cache_key = (ref, group) if name == "prompt" else ref
+    cache_key = (ref, group) if prompted(ref) else ref
     with _secret_lock:
         if cache_key in _secrets:
             return _secrets[cache_key]
@@ -423,6 +435,23 @@ def lock(name, cli=True):
             fn(Ctx(name, None))
 
 
+def only_unlock_unlocks():
+    """`roster serve`: the app opens locked and only its lock screen unlocks (unlock()). Each provider forgets what
+    this process inherited that would unlock it by itself (its "manual"), and none unlocks on its own from now on (no
+    session file, no environment variable, no prompt)."""
+    global MANUAL_UNLOCK
+    MANUAL_UNLOCK = True
+    for name, p in list(PROVIDERS.items()):
+        if p.get("manual"):
+            p["manual"](Ctx(name, None))
+
+
+def set_json_output(on):
+    """ON: this command prints --json, so no provider adds a note or a question on stderr (it would break the JSON)."""
+    global JSON_OUTPUT
+    JSON_OUTPUT = bool(on)
+
+
 def reset():
     """Forget everything this process holds for its vaults, as if a new run started: cached secrets, each provider's
     state and settings, serve's and --json's modes, and what a provider keeps itself ("reset", e.g. bw's session key).
@@ -478,14 +507,29 @@ PERSONAL = "personal"
 SAVE_TO_SHAPES = '"personal", {organization, collection} (Bitwarden, by name or id) or {group} (KeePassXC)'
 
 
+def save_to_fits(value):
+    """The providers a save_to VALUE (checked) can name a target of: every one with targets for PERSONAL."""
+    return [n for n, p in PROVIDERS.items() if p.get("save_to") and (value == PERSONAL or set(value) == p["save_to"])]
+
+
 def check_save_to(value):
     """VALUE as a save_to setting, or ValueError saying what it may be."""
     if value == PERSONAL:
         return value
-    if isinstance(value, dict) and set(value) in ({"organization", "collection"}, {"group"}) \
+    if isinstance(value, dict) and save_to_fits(value) \
             and all(isinstance(v, str) and v.strip() for v in value.values()):
         return {k: v.strip() for k, v in value.items()}
     raise ValueError(f"must be {SAVE_TO_SHAPES}, not {value!r}")
+
+
+def box_paths():
+    """{provider: its settings naming files on this Box}, the ones vault.configure takes from init.lua."""
+    return {n: p["box_paths"] for n, p in PROVIDERS.items() if p.get("box_paths")}
+
+
+def holds_items(name):
+    """Does provider NAME keep items of its own (a vault: something to list, sync or unlock), unlike prompt, env, cmd?"""
+    return PROVIDERS.get(name, {}).get("holds_items", True)
 
 
 def save_to_setting(ctx):
@@ -493,8 +537,9 @@ def save_to_setting(ctx):
     save_to:` (KeePassXC: its older `group:`), else the personal vault. source: "init.lua", "roster.yml" or None."""
     if ctx.settings.get("save_to") is not None:
         return ctx.settings["save_to"], "init.lua" if "save_to" in ctx.from_box else "roster.yml"
-    if ctx.provider == "kp" and ctx.settings.get("group"):         # kp's group: came before save_to
-        return {"group": str(ctx.settings["group"])}, "roster.yml"
+    old = PROVIDERS[ctx.provider].get("old_save_to")
+    if old and ctx.settings.get(old):
+        return {old: str(ctx.settings[old])}, "roster.yml"
     return PERSONAL, None
 
 
@@ -502,8 +547,8 @@ def save_to_field(ctx, source, part=None):
     """The name of the setting a save_to came from, for messages (PART: organization, collection, group)."""
     if source == "init.lua":
         return "vault.save_to" + (f".{part}" if part else "") + " in init.lua"
-    if source == "roster.yml" and ctx.settings.get("save_to") is None:       # kp's group:
-        return f"providers: {ctx.provider}: group: in roster.yml"
+    if source == "roster.yml" and ctx.settings.get("save_to") is None:       # its old_save_to
+        return f"providers: {ctx.provider}: {PROVIDERS[ctx.provider]['old_save_to']}: in roster.yml"
     if source == "roster.yml":
         return f"providers: {ctx.provider}: save_to: " + (f"{part}: " if part else "") + "in roster.yml"
     return "save_to" + (f".{part}" if part else "")                          # the choice at save time
@@ -704,11 +749,11 @@ def setup_providers(cfg):
     for name, conf in ((cfg or {}).get("providers") or {}).items():
         conf = conf or {}
         if not isinstance(conf, dict):
-            die(f"providers.{name} in roster.yml must be a mapping")
+            raise InventoryError(f"providers.{name} in roster.yml must be a mapping")
         PROVIDER_SETTINGS[name] = {**conf, "_base": base}     # _base: where relative paths in it start
         if conf.get("command"):
             if why := bad_name(name):
-                die(why)
+                raise InventoryError(why)
             add_template_provider(name, conf)
 
 

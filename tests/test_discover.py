@@ -6,6 +6,7 @@ import yaml
 
 from roster.config import load_config
 from roster.discover import defaults_user, guess_identity, parse_nmap_xml, scan_entry, write_discovered
+from roster.errors import Problem
 from roster.example import EXAMPLE_CONFIG
 
 NMAP_XML = """<?xml version="1.0"?>
@@ -136,7 +137,7 @@ def test_new_group_gets_user_placeholder_when_only_other_groups_have_users(isola
 def test_inline_groups_are_refused(isolated):
     path = isolated["work"] / "roster.yml"
     path.write_text("groups: {}\n")
-    with pytest.raises(SystemExit, match="inline"):
+    with pytest.raises(Problem, match="inline"):
         write_discovered(path, "g", entries(), "n", True, "2026-10-07")
 
 

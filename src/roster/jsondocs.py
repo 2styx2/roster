@@ -161,6 +161,7 @@ class BoxCheck(Part, frozen=True):
     message: str = Field(repr=False)
     fix: str | None = None
     topic: str | None = None
+    code: int | None = None                     # the check's own code (the CLI shows it as `[CODE] `)
     saved_session: Literal["none", "working", "expired", "ignored", "unknown"] | None = None   # a vault's saved session
 
 

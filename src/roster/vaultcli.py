@@ -3,9 +3,11 @@ commands (T202, decision Q178 for bw; T223, decision Q197 for op), read-only unl
 command it allows, or die()s saying why not; nothing after the command is ever repeated, as it may hold a password
 or a token."""
 
+import os
 import re
+import subprocess
 
-from .common import die
+from .common import die, program_argv
 from .errors import (
     BW_NEEDS_WRITE,
     BW_NOT_ALLOWED,
@@ -155,3 +157,38 @@ def op_command(argv, write):
         die(f"op {cmd} {what}, and roster vault op is read-only unless you say so: "
             f"roster vault op --write -- {cmd} ...", code=OP_NEEDS_WRITE)
     return cmd
+
+
+# ---------------------------------------------------------------- running them
+
+def run_bw(argv, write, session):
+    """bw ARGV (bw_command's checks first) with SESSION (this box's key, or None) as its BW_SESSION; read-only unless
+    WRITE; never prompts (--nointeraction is added) but `login` and `unlock`. bw's output goes straight to the
+    terminal: roster never reads it. Returns bw's exit code."""
+    cmd = bw_command(argv, write)
+    if "--nointeraction" not in argv and cmd not in BW_PROMPTS:   # before a `--`, after which it'd be an argument
+        argv = list(argv)
+        argv.insert(argv.index("--") if "--" in argv else len(argv), "--nointeraction")
+    # only bw's session: no 1Password variable (OP_SESSION_*, OP_SERVICE_ACCOUNT_TOKEN, OP_CONNECT_TOKEN, ...) goes to
+    # bw. Windows upper-cases env names
+    env = {**{k: v for k, v in os.environ.items() if not k.upper().startswith("OP_")},
+           **({"BW_SESSION": session} if session else {})}
+    return _run(["bw", *argv], env, "bw (the Bitwarden CLI) isn't installed")
+
+
+def run_op(argv, write):
+    """op ARGV (op_command's checks first), read-only unless WRITE. op's sign-in (the app integration, or an
+    OP_SESSION_* / OP_SERVICE_ACCOUNT_TOKEN in your shell) reaches op in its environment, never its command line, and
+    no Bitwarden variable (BW_*) does. op's input and output are the terminal's: roster never reads them."""
+    op_command(argv, write)
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("BW_")}  # Windows upper-cases env names
+    return _run(["op", *argv], env, "op (the 1Password CLI) isn't installed")
+
+
+def _run(argv, env, missing):
+    try:
+        return subprocess.run(program_argv(argv), env=env).returncode
+    except ValueError as e:
+        die(str(e))
+    except FileNotFoundError:
+        die(missing)

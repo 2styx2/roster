@@ -8,6 +8,7 @@ import sys
 import pytest
 
 from roster.config import load_config, load_inventory
+from roster.errors import InventoryError
 from roster.example import EXAMPLE_CONFIG
 from roster.models import Host, Inventory, Service, WifiResource
 
@@ -49,10 +50,10 @@ def test_a_link_keeps_its_from_key(write_config):
 def test_a_bad_number_is_roster_s_error_naming_the_key(write_config, key):
     """Was a raw ValueError traceback; now roster's own error (code 1 in serve), with the key and not the value."""
     p = write_config(f"{key}: hunter2-not-a-number\ngroups:\n  a:\n    user: u\n    hosts:\n      h1: 10.0.0.1\n")
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(InventoryError) as e:
         load_config(p)
-    msg = str(e.value.code)
-    assert msg.startswith("error: ") and key in msg
+    msg = e.value.message
+    assert e.value.code == 1 and key in msg
     assert "hunter2" not in msg and "pydantic" not in msg.lower()
 
 

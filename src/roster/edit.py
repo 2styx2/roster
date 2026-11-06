@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from .common import NAME_RE, die_message, oneline, replace_file
+from .common import NAME_RE, oneline, replace_file
 from .config import GROUP_ONLY, OS_VALUES, first, host_os, key_type, load_config_text, resolve_ssh, sudo_auth
 from .errors import (
     GROUP_NOT_EMPTY,
@@ -21,6 +21,7 @@ from .errors import (
     UNKNOWN_GROUP,
     UNKNOWN_HOST,
     WOULD_CHANGE,
+    InventoryError,
     Problem,
 )
 from .hosts import ip_of
@@ -258,11 +259,6 @@ def read_text(path):
         return f.read()
 
 
-def write_text(path, text):
-    with open(path, "w", encoding="utf-8", newline="") as f:
-        f.write(text)
-
-
 def keep_backup(bak, text, like):
     """TEXT (what an edit replaced) as the backup BAK, with LIKE's (roster.yml's) mode, never through a symlink
     (T212, #409's S1): BAK's folder may not be one (a planted .git/roster -> elsewhere), and BAK itself is replaced,
@@ -279,10 +275,10 @@ def keep_backup(bak, text, like):
 def load_text(path, text):
     """load_config of TEXT as if it were PATH, in memory (nothing written anywhere). Raises Problem(INVALID_EDIT)."""
     try:
-        return load_config_text(text, path)
-    except SystemExit as e:
-        msg = die_message(e)
-        raise refuse("the result wouldn't load", msg.replace(str(Path(path).resolve()), path.name)) from None
+        return load_config_text(text, path, Path(path).name)
+    except InventoryError as e:
+        raise refuse("the result wouldn't load", e.message) from None
+
 
 
 def same_except(before, after, name):

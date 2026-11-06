@@ -4,13 +4,18 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .common import roster_command, say
+from .common import replace_file, roster_command, say
 from .config import access_label, load_config
 from .context import Context, current
+from .errors import InventoryError
 from .hosts import vault_login
 from .resources import login, summary
 
 # ---------------------------------------------------------------- Claude files
+
+
+# The first line of the ROSTER.md `roster mesh` writes on a Host (mesh.roster_md), and its scripts look for
+MESH_MARK = "<!-- roster-mesh: written by roster for "
 
 
 def written_by_the_mesh(md: Path) -> bool:
@@ -19,9 +24,15 @@ def written_by_the_mesh(md: Path) -> bool:
     overwrites the other's."""
     try:
         with md.open(encoding="utf-8", errors="replace") as f:
-            return f.readline().startswith("<!-- roster-mesh:")
+            return f.readline().startswith(MESH_MARK)
     except OSError:
         return False
+
+
+def shared(path: Path, text: str) -> None:
+    """Write PATH whole or not at all (common.replace_file), keeping its mode; a new one is readable by others, as
+    the team's files beside roster.yml are."""
+    replace_file(path, text, 0o644, like=path if path.exists() else None)
 
 
 def write_roster_md(cfg: dict[str, Any], ctx: Context | None = None, only_if_there: bool = False) -> bool:
@@ -33,7 +44,7 @@ def write_roster_md(cfg: dict[str, Any], ctx: Context | None = None, only_if_the
         return False
     text = roster_md(cfg, ctx)
     if not (only_if_there and md.read_text() == text):
-        md.write_text(text)
+        shared(md, text)
     return True
 
 
@@ -63,7 +74,7 @@ def refresh_roster_md(inv: Any = None, skip: Context | None = None) -> None:
             continue
         try:
             write_roster_md(load_config(path), Context(name, path), only_if_there=True)
-        except (SystemExit, OSError):
+        except (InventoryError, OSError):  # a file that doesn't load keeps the ROSTER.md it has
             continue
 
 
@@ -171,7 +182,7 @@ def write_claude_settings(cfg):
     claude_md = proj / "CLAUDE.md"
     text = claude_md.read_text() if claude_md.exists() else ""
     if "@ROSTER.md" not in text:
-        claude_md.write_text((text.rstrip() + "\n\n" if text.strip() else "") + "@ROSTER.md\n")
+        shared(claude_md, (text.rstrip() + "\n\n" if text.strip() else "") + "@ROSTER.md\n")
 
     # Guardrail for Claude Code: keep Claude out of the key directory.
     settings = proj / ".claude" / "settings.json"
@@ -188,5 +199,5 @@ def write_claude_settings(cfg):
             if rule not in deny:
                 deny.append(rule)
         settings.parent.mkdir(exist_ok=True)
-        settings.write_text(json.dumps(data, indent=2) + "\n")
+        shared(settings, json.dumps(data, indent=2) + "\n")
     say(f"claude       {proj / 'ROSTER.md'} (imported from CLAUDE.md), .claude/settings.json")

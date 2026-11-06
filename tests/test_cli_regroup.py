@@ -231,7 +231,7 @@ def bw(fakes, monkeypatch, tmp_path, write_config):
 
 
 def snapshot_files():
-    from roster.common import user_config_dir
+    from roster.context import user_config_dir
     return sorted((user_config_dir() / "vault-sync").glob("*"))
 
 

@@ -6,6 +6,7 @@ import json
 import subprocess
 import threading
 import time
+import types
 
 import pytest
 
@@ -268,7 +269,7 @@ def test_vault_lock_forgets_at_once_then_waits_for_the_holders_and_never_fails(s
     # in memory while the app showed its lock screen
     monkeypatch.setattr(rpc, "LOCK_WAIT", 0)                       # any wait at all would have been 4
     forgot = []
-    monkeypatch.setattr(rpc, "ON_VAULT_LOCK", [lambda st: forgot.append(time.monotonic())])
+    state.askpass = types.SimpleNamespace(forget=lambda: forgot.append(time.monotonic()))   # the askpass tokens
     release = holder(state.vault, "session.prepare", shared=True)   # a request holding a secret
     answer = []
     t = threading.Thread(target=lambda: answer.append(call(state, "vault.lock")), daemon=True)
@@ -470,7 +471,7 @@ def test_two_item_creations_at_once_go_to_the_vault_one_after_the_other(state, m
     entered.wait(5)
     second = threading.Thread(target=create, args=("b ssh",), daemon=True)
     second.start()
-    wait_until(lambda: rpc.item_lock("bw").writers_waiting == 1)    # the second waits for the first
+    wait_until(lambda: state.item_lock("bw").writers_waiting == 1)    # the second waits for the first
     assert made == []
     go.set()
     first.join(5)

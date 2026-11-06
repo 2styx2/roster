@@ -194,3 +194,19 @@ def test_a_box_name_other_boxes_likely_share_is_a_warning(write_config, capsys, 
     assert bool(warned) == shared, out
     if shared:
         assert (box_name or name) in warned[0] and "box_name:" in out and "E222" in out
+
+
+def test_every_topic_is_a_catalog_row_and_each_codes_row_is_its_own():
+    """The checks' `:help` topics (E<row>) name rows of docs/app/errors.md, and the row health gives a code is the
+    row the catalog gives it: the topics are written once, in health.ROWS, and checked here."""
+    import re
+    from pathlib import Path
+
+    from roster import health
+    root = Path(__file__).resolve().parents[1]
+    catalog = (root / "docs" / "app" / "errors.md").read_text(encoding="utf-8")
+    rows = {int(m.group(1)): m.group(2) for m in re.finditer(r"(?m)^\| (\d+) \| ([^|]*) \|", catalog)}
+    for code, row in health.ROWS.items():
+        assert rows.get(row, "").split()[:1] == [str(code)], (code, row, rows.get(row))
+    used = {int(n) for n in re.findall(r'"E(\d+)"', (root / "src" / "roster" / "health.py").read_text())}
+    assert used and used <= set(rows), used - set(rows)

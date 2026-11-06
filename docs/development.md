@@ -55,7 +55,11 @@ src/roster/
   rotation.py       the Box key rotation's state (T240, Q204): its pending record (key-rotation), KEY.new and KEY.old,
                     and the ssh config's second IdentityFile while a Host is pending
   rotate.py         `roster setup --rotate`: the rotation itself, Host by Host over a one-key ssh config
-  boxlock.py        the Box-wide lock (run.lock): one run at a time changes an Inventory's Hosts (setup, revoke, Mesh writes)
+  boxsetup.py       `roster setup`: this Box's key onto the Hosts that don't take it yet, re-tagged after a rename, then
+                    the Mesh; the Hosts a plain `ssh NAME` wouldn't reach are skipped (revoke too)
+  revoke.py         `roster revoke` and `revoke --all`: this Box's key off the Hosts, and which key files to delete after
+  boxlock.py        the Box-wide lock (run.lock): one run at a time changes an Inventory's Hosts (setup, revoke, Mesh writes);
+                    serve's first-run lock (inventory.create one at a time on this Box)
   boxsync.py        `roster sync` for this Box after roster changed roster.yml: run by store.py's write, serve's and the CLI's
   addhost.py        adding one Host (T220, Q190): the one implementation behind serve's host.add and `roster add`
                     (checks, the write through store.py, this Box's sync), and a vault item's address and user

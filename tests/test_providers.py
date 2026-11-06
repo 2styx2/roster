@@ -7,7 +7,7 @@ import pytest
 from conftest import WINDOWS, posix_shell
 
 from roster import providers
-from roster.common import user_config_dir
+from roster.context import user_config_dir
 from roster.providers import Ctx, SecretError, bitwarden, get_secret, setup_providers
 
 
@@ -238,9 +238,8 @@ def test_an_inherited_onepassword_sign_in_is_moved_out_of_the_env(isolated, fake
 
 
 def test_serve_moves_an_inherited_onepassword_sign_in_out_and_lock_forgets_it(isolated, fakes, monkeypatch):
-    from roster import serve as rpc
     monkeypatch.setenv("OP_SESSION_test", "tok")
-    rpc.only_vault_unlock_unlocks()
+    providers.only_unlock_unlocks()
     assert "OP_SESSION_test" not in os.environ
     env = providers.PROVIDER_STATE["op"]["env"]                       # Windows upper-cases env names
     assert {k.upper(): v for k, v in env.items()} == {"OP_SESSION_TEST": "tok"}

@@ -10,8 +10,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from . import rotation, sshconfig
-from .common import WINDOWS, die, program_argv, replace_file, say, ssh_path
+from . import context, rotation, sshconfig
+from .common import die, program_argv, replace_file, say, ssh_path
 from .context import Context, current, ssh_dir
 from .errors import NOT_SET_UP, Problem
 from .hosts import is_windows, password_login
@@ -224,7 +224,7 @@ def host_block(cfg, name, h, waiting=(), ctx=None):
             ("ConnectTimeout", 10), ("ServerAliveInterval", 30)]
     if is_windows(h):                       # a Windows Host's sshd refuses a second session on a shared connection
         opts += [("ControlMaster", "no")]   # ("No existing session"), so never share one with it
-    elif not WINDOWS:                       # Windows' OpenSSH can't share a connection (no Unix sockets)
+    elif not context.WINDOWS:                       # Windows' OpenSSH can't share a connection (no Unix sockets)
         opts += [("ControlMaster", "auto"),     # reuse one connection for many commands
                  ("ControlPath", f"{token_path(ssh_dir())[:-1]}/cm-%C\""), ("ControlPersist", "10m")]
     # Offer only roster's key (key Hosts) or no key at all (password Hosts): an agent holding many keys

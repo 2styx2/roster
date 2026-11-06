@@ -13,6 +13,7 @@ from conftest import FAKES, WINDOWS, stand_in_hosts
 from roster import sshops
 from roster.cli import main
 from roster.config import load_config
+from roster.errors import InventoryError
 
 CASCADE = """\
 defaults: { user: admin }
@@ -39,7 +40,7 @@ def test_os_cascades_from_defaults_to_group_to_host(write_config):
 
 @pytest.mark.parametrize("value", ["linux", "win", "true", "''"])
 def test_os_takes_only_windows_or_posix(write_config, value):
-    with pytest.raises(SystemExit, match="os: must be windows or posix"):
+    with pytest.raises(InventoryError, match="os: must be windows or posix"):
         load_config(write_config(f"defaults: {{ user: admin }}\ngroups:\n  a:\n    hosts:\n"
                                  f"      h1: {{ ip: 10.0.0.5, os: {value} }}\n"))
 
@@ -69,7 +70,7 @@ def test_type_windows_without_os_warns_and_suggests_os_windows(write_config, cap
 def test_a_windows_hosts_ssh_config_never_shares_a_connection(isolated, write_config):
     """A Windows Host's sshd refuses a second session on a shared connection ("No existing session"): its block says
     ControlMaster no, with no ControlPath or ControlPersist to reuse one."""
-    from roster.common import WINDOWS
+    from roster.context import WINDOWS
     from roster.sshops import write_ssh_config
     write_ssh_config(load_config(write_config(CASCADE)))
     text = (isolated["home"] / ".ssh" / "config.d" / "roster").read_text()
