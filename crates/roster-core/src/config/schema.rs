@@ -1218,7 +1218,7 @@ pub struct FolderDef {
 
 /// A Package named in `init.lua` (ticket 24): where its git repo is, which version, and the
 /// settings it's handed. At most one of `tag`, `branch` and `commit`; none means the repo's
-/// default branch. Checked by [`crate::package::check_spec`].
+/// default branch. Checked by [`super::package_spec::check_specs`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

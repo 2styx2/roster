@@ -63,7 +63,8 @@ crates/roster-core/   Tauri-free core: Backend detection and the plan from init.
                       session.prepare → command (wsl --exec …, env via WSLENV) and the PTY manager (session.rs; its `fill` types a prompt's password after a no-echo probe, ticket 119),
                       the State file (state.rs), where the window reopens (window.rs), the OS and the Windows build (platform.rs),
                       running a short command to its end (process.rs), atomic writes and paths kept inside a folder (files.rs),
-                      the Plugins' proxy address (proxy.rs), help anchors (anchor.rs),
+                      the Plugins' proxy address (proxy.rs), help anchors (anchor.rs), the repaint check (screen.rs) and
+                      character widths from xterm.js (wcwidth.rs), wiped secrets (wipe.rs),
                       Windows Terminal's settings.json → an init.lua block, previewed as a diff (wt.rs, ticket 33),
                       the ROSTER_APP_* env vars with their old names and the app's data folder (env.rs), the one-time copy from roster-desk (migrate.rs),
                       opening a web service's URL in the default browser, http/https only, no user or password (browser.rs)
@@ -120,7 +121,8 @@ app/src/lock/         the Lock: useVault.ts (lock state, idle lock), idle.ts (id
 crates/roster-core/src/config/
                       the Lua Config (ticket 21, docs/app/config.md): schema.rs (every option and default), lua.rs
                       (sandboxed Lua 5.4, `require` in the config dir, the `roster` table), locate.rs (file:line
-                      for schema errors), watch.rs (live reload), folders.rs (folders.yml's text, read once to move its Folders in), editor.rs (`:config`: the commented-out
+                      for schema errors), watch.rs (live reload), package_spec.rs (`packages` entries: sources, names,
+                      `dir`; the installer applies the same rules), folders.rs (folders.yml's text, read once to move its Folders in), editor.rs (`:config`: the commented-out
                       starter file, made once, and opening it in the `editor`), mod.rs (load, Loader
                       keeping the last good one)
 app/src/config/       the Config in the frontend (ImportPanel.tsx: `:config import-terminal`'s diff): core.gen.ts (the TypeScript types of what the

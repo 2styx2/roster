@@ -295,7 +295,7 @@ fn shown_name(list: &str, index: usize, item: &Json) -> Result<String, String> {
         };
     }
     let spec: super::PackageSpec = serde_json::from_value(item.clone()).map_err(|e| format!("{at}: {e}"))?;
-    crate::package::name_of(&spec).map_err(|e| format!("{at}: {e}"))
+    super::package_spec::name_of(&spec).map_err(|e| format!("{at}: {e}"))
 }
 
 /// The name a person gave to find an item by.

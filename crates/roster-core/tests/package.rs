@@ -3,8 +3,9 @@
 
 mod common;
 
+use roster_core::config::package_spec::{check_specs, name_of, url_of};
 use roster_core::config::{self, PackageSpec};
-use roster_core::package::{Packages, check_specs, name_of, url_of};
+use roster_core::package::Packages;
 use roster_core::plugin::{Limits, Load, PluginHost, Serve, Source};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
