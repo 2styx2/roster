@@ -4,7 +4,7 @@ roster \- give this box (and Claude) access to the hosts in roster.yml
 .SH SYNOPSIS
 .nf
 roster init [\-\-blank | \-\-inventory HOW] [\-\-name NAME]
-roster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force] [\-\-key\-type TYPE] [\-\-rotate]
+roster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force] [\-\-key\-type TYPE] [\-\-rotate] [\-\-retire\-keys]
 roster sync [\-\-no\-vault]
 roster check [\-\-box] [\-\-auth] [\-\-only LIST | \-\-host NAME] [\-\-json] [host]
 roster hosts [\-\-resources] [\-\-only LIST] [\-\-find TEXT] [\-\-all] [\-\-long] [\-\-json] [NAME ...]
@@ -65,9 +65,9 @@ blank, file:PATH (a copy of that roster.yml, once it loads), repo:URL (a git clo
 name the new Inventory too (`roster inv add NAME PATH`), e.g. beside one you keep
 .SS setup
 .PP
-\fBroster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force] [\-\-key\-type TYPE] [\-\-rotate]\fR
+\fBroster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force] [\-\-key\-type TYPE] [\-\-rotate] [\-\-retire\-keys]\fR
 .PP
-One\-time per box: key, fingerprints, key install, SSH config, Claude files (\fB\-\-only\fR, \fB\-\-host NAME\fR, \fB\-\-dry\-run\fR, \fB\-\-key\-type TYPE\fR, \fB\-\-rotate\fR). \fB\-\-rotate\fR replaces the Box key on every Host, the new one proven on each before the old one's line goes (Rotating the Box key); plain \fBsetup\fR exits 1 while a rotation is pending. Each Host gets the key of its own \fBkey_type:\fR (one key per type on this Box, made on first need); a Host whose key type changed gets the new key, and loses the old one only once the new one logs in. \fB\-\-host NAME \-\-key\-type TYPE\fR tries TYPE on that Host for this run, over \fBroster.yml\fR (it needs \fB\-\-host\fR): its line goes in beside this Box's line of \fBroster.yml\fR\&'s type, which stays, so the next \fBroster sync\fR (which writes \fBroster.yml\fR\&'s type back) still logs in; another try takes the one before off; set \fBkey_type:\fR to keep it (FIPS Hosts). Where the key already works, a line of this Box's of another type that \fB~/.config/roster/key\-types\fR records there (a \fB\-\-key\-type\fR try's, a cleanup that failed) is taken off over the key login (T245). A type change puts the new key's line in, tests it, and only then takes the old type's line off; a Host that refuses the new type keeps the old line. \fB\-\-host NAME\fR is exactly the Host by that name, never a group, type or product NAME that \fB\-\-only NAME\fR would take too; like \fB\-\-only\fR it leaves the Mesh to \fBroster mesh\fR\&. After a rename, it re\-tags this Box's key where it works; a Host where another key's line already has the new name fails with 190 and is left as it is, unless \fB\-\-force\fR
+One\-time per box: key, fingerprints, key install, SSH config, Claude files (\fB\-\-only\fR, \fB\-\-host NAME\fR, \fB\-\-dry\-run\fR, \fB\-\-key\-type TYPE\fR, \fB\-\-rotate\fR, \fB\-\-retire\-keys\fR). \fB\-\-rotate\fR replaces the Box key on every Host, the new one proven on each before the old one's line goes (Rotating the Box key); plain \fBsetup\fR exits 1 while a rotation is pending. Each Host gets the key of its own \fBkey_type:\fR (one key per type on this Box, made on first need); a Host whose key type changed gets the new key, and loses the old one only once the new one logs in. \fB\-\-host NAME \-\-key\-type TYPE\fR tries TYPE on that Host for this run, over \fBroster.yml\fR (it needs \fB\-\-host\fR): its line goes in beside this Box's line of \fBroster.yml\fR\&'s type, which stays, so the next \fBroster sync\fR (which writes \fBroster.yml\fR\&'s type back) still logs in; another try takes the one before off; set \fBkey_type:\fR to keep it (FIPS Hosts). Where the key already works, a line of this Box's of another type that \fB~/.config/roster/key\-types\fR records there (a \fB\-\-key\-type\fR try's, a cleanup that failed) is taken off over the key login (T245). A type change puts the new key's line in, tests it, and only then takes the old type's line off; a Host that refuses the new type keeps the old line. \fB\-\-host NAME\fR is exactly the Host by that name, never a group, type or product NAME that \fB\-\-only NAME\fR would take too; like \fB\-\-only\fR it leaves the Mesh to \fBroster mesh\fR\&. After a rename, it re\-tags this Box's key where it works; a Host where another key's line already has the new name fails with 190 and is left as it is, unless \fB\-\-force\fR
 .TP
 \fB\-\-only LIST\fR
 only these hosts, groups, types or products (comma\-separated)
@@ -86,6 +86,9 @@ with \-\-host: try this SSH key type there, over roster.yml's key_type: (ed25519
 .TP
 \fB\-\-rotate\fR
 replace the Box key (this Box's own key, not a Mesh key: `roster mesh \-\-rotate HOST` does those) on every Host: a new key, proven on each Host before the old key's line goes, then the old key deleted. \-\-host NAME (a Host or a group) narrows it; a Host not reached stays pending until setup \-\-rotate runs again
+.TP
+\fB\-\-retire\-keys\fR
+also delete this Box's key of a type nothing uses any more (after a key_type: change): only once setup reached every Host, no Host of any Inventory on this Box uses or holds it, and your ssh config doesn't name it. setup and setup \-\-rotate say when there is one; \-\-dry\-run says what this would delete
 .SS sync
 .PP
 \fBroster sync [\-\-no\-vault]\fR
@@ -551,7 +554,7 @@ The Hosts the last \fBroster setup\fR that reached them didn't finish, by name (
 When roster made or rotated each of this Box's keys, for \fBkey_max_age:\fR
 .TP
 \fB~/.config/roster/run.lock\fR
-The lock one run that changes Hosts at a time holds (a named Inventory's: \fBrun\-NAME.lock\fR): its pid and command, nothing secret
+The lock one run that changes Hosts at a time holds, one for every Inventory on this Box: its pid and command, nothing secret (\fBrun\-NAME.lock\fR, an older roster's lock per Inventory, isn't used any more)
 .TP
 \fB~/.ssh/roster_known_hosts\fR
 Host keys recorded on first contact (a named Inventory's: \fB~/.ssh/roster_known_hosts\-NAME\fR)

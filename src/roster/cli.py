@@ -149,10 +149,13 @@ def say_made(made, value):
 
 
 def cmd_setup(cfg, args):
+    if args.retire_keys and (args.rotate or args.host or args.only):
+        die("--retire-keys goes with a whole `roster setup` (no --rotate, --host or --only): it deletes a key only "
+            "once setup has reached every Host and nothing roster knows uses it")
     if args.rotate:
         return cmd_rotate(cfg, args)
     return setup(cfg, only=args.only, host=args.host, dry_run=args.dry_run, key_type=args.key_type,
-                 force=args.force)
+                 force=args.force, retire=args.retire_keys)
 
 
 def cmd_rotate(cfg, args):
@@ -166,8 +169,7 @@ def cmd_rotate(cfg, args):
     if args.dry_run:
         rotate.run(cfg, scope, dry_run=True, say=say)
         return 0
-    groups = rotate.group(cfg)
-    with locked("setup --rotate", [ctx for ctx, _ in groups]):
+    with locked("setup --rotate"):
         r = rotate.run(cfg, scope, say=say)
         failed = dict(r["failed"])
         # setup's own Mesh apply: once the new key is proven on every Host, over it, never --rotate

@@ -22,6 +22,7 @@ Inventories that share the key file (rotated together, Q204) are reached at thei
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -35,9 +36,9 @@ from . import boxkeys, keyline, sshconfig, winhost
 from .authorized import add_key_script, key_named, remove_key_script
 from .common import die, program_argv, replace_file, ssh_path
 from .config import load_config
-from .context import Context, current
+from .context import WINDOWS, Context, current
 from .errors import NEW_KEY_REFUSED, UNKNOWN_HOST, InventoryError, Problem, tagged
-from .hosts import is_windows
+from .hosts import account, is_windows
 from .keyline import key_ere
 from .rotation import (
     Record,
@@ -106,15 +107,74 @@ class Unreached(RuntimeError):
     """ssh itself failed (no answer, refused the key, no host key): nothing ran there."""
 
 
-def one_key_config(m: Member, keys: list[Path]) -> str:
+# T253 item 3: the user's own ssh options a Host may need to be reached at all (an old sshd's algorithms, a jump
+# host), as `ssh -G NAME` says `ssh NAME` uses them. Never the ones that choose the key, the account, the address or
+# the host keys trusted: those stay roster's, so the proof is exactly the key meant.
+CARRIED = {"hostkeyalgorithms": "HostKeyAlgorithms", "pubkeyacceptedalgorithms": "PubkeyAcceptedAlgorithms",
+           "kexalgorithms": "KexAlgorithms", "ciphers": "Ciphers", "macs": "MACs"}
+ALGORITHMS_RE = re.compile(r"[A-Za-z0-9@.,_+^-]+\Z")
+JUMP_RE = re.compile(r"[A-Za-z0-9@.,:_\[\]/=-]+\Z")         # [user@]host[:port] or ssh://… hops, comma-separated
+PRINTABLE_RE = re.compile(r"[^\x00-\x1f\x7f]+\Z")
+
+
+def ssh_g(name: str, *opts: str) -> list[tuple[str, str]] | None:
+    """`ssh -G [OPTS] NAME`: what ssh would use for NAME, as (option, lowercase; value) pairs in order (an option
+    given more than once, IdentityFile, is there each time); None when ssh can't say. Nothing connects."""
+    try:
+        r = subprocess.run(program_argv(["ssh", "-G", *opts, name]), stdin=subprocess.DEVNULL, capture_output=True,
+                           text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    return [(k.lower(), v.strip()) for k, _, v in (line.partition(" ") for line in r.stdout.splitlines()) if k]
+
+
+def user_options(name: str) -> dict[str, str]:
+    """The options the user's ssh config (or the system's) sets for NAME: what `ssh -G NAME` says that differs from
+    `ssh -G -F none NAME`, ssh's own defaults (#546's review LOW-1: a default written out, HostKeyAlgorithms above
+    all, would turn off ssh's ordering by the host key types known_hosts holds). {option, lowercase: value}; {}
+    when ssh can't say."""
+    seen, defaults = ssh_g(name), ssh_g(name, "-F", "none")
+    if seen is None or defaults is None:
+        return {}
+    base: dict[str, str] = {}
+    for k, v in defaults:
+        base.setdefault(k, v)
+    out: dict[str, str] = {}
+    for k, v in seen:
+        out.setdefault(k, v)
+    return {k: v for k, v in out.items() if base.get(k) != v}
+
+
+def carried(seen: dict[str, str]) -> list[tuple[str, object]]:
+    """The options of SEEN (user_options) the rotation's connection takes on: CARRIED's, when each is an algorithm
+    list; the user's ProxyCommand; a ProxyJump as a ProxyCommand that runs ssh with the user's own config (ssh would
+    look the jump host up in roster's one-Host file, which knows only the Host)."""
+    out: list[tuple[str, object]] = [(kw, seen[k]) for k, kw in CARRIED.items()
+                                     if ALGORITHMS_RE.match(seen.get(k, ""))]
+    command, jump = seen.get("proxycommand", "none"), seen.get("proxyjump", "none")
+    if command.lower() != "none" and PRINTABLE_RE.match(command):
+        out.append(("ProxyCommand", command))
+    elif jump.lower() != "none" and JUMP_RE.match(jump) and not any(hop.startswith("-") for hop in jump.split(",")):
+        *via, last = jump.split(",")
+        target = "[%h]:%p" if WINDOWS else "'[%h]:%p'"
+        out.append(("ProxyCommand", "ssh -o BatchMode=yes" + (f" -J {','.join(via)}" if via else "")
+                    + f" -W {target} {last}"))
+    return out
+
+
+def one_key_config(m: Member, keys: list[Path], seen: dict[str, str] | None = None) -> str:
     """A one-Host ssh config for M: its address, user and port, roster's known_hosts for its Inventory (its key must
-    be recorded), and only KEYS, offered in order."""
+    be recorded), only KEYS, offered in order, and the user's own options that reach it (carried(); SEEN: what
+    user_options says, asked when not given)."""
     h = m.h
     opts: list[tuple[str, object]] = [
         ("HostName", h["ip"]), ("User", h["ssh"]["user"]), ("Port", h["ssh"]["port"]),
         ("UserKnownHostsFile", token_path(m.ctx.known_hosts)), ("StrictHostKeyChecking", "yes"),
         ("BatchMode", "yes"), ("ConnectTimeout", 10), ("ControlMaster", "no"), ("ControlPath", "none"),
-        ("IdentitiesOnly", "yes"), *[("IdentityFile", token_path(k)) for k in keys]]
+        ("IdentitiesOnly", "yes"), *[("IdentityFile", token_path(k)) for k in keys],
+        *carried(user_options(m.name) if seen is None else seen)]
     return "\n".join(sshconfig.host_block(h["name"], opts)) + "\n"
 
 
@@ -123,13 +183,16 @@ class Connect:
 
     def __init__(self) -> None:
         self.dir = Path(tempfile.mkdtemp(prefix="roster-rotate-"))
+        self.seen: dict[str, dict[str, str]] = {}          # user_options per Host name, asked once a run
 
     def close(self) -> None:
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def config(self, m: Member, keys: list[Path]) -> Path:
         f = self.dir / "config"
-        f.write_text(one_key_config(m, keys), encoding="utf-8")
+        if m.name not in self.seen:
+            self.seen[m.name] = user_options(m.name)
+        f.write_text(one_key_config(m, keys, self.seen[m.name]), encoding="utf-8")
         os.chmod(f, 0o600)
         return f
 
@@ -205,6 +268,12 @@ def key_users(cfg: dict[str, Any]) -> list[KeyUser]:
         theirs = {Path(h["key_file"]) for h in other["hosts"].values() if h["enroll"]} | {other["key"]}
         out.append(KeyUser(Context(name, path), label, other, mine & theirs))
     return out
+
+
+def entries_elsewhere(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """The key Host entries of every other Inventory on this Box that loads (key_users): one may be on an account
+    of this Inventory's under another name or key type (T253 item 4, Q200 (c)), and its line there is its own."""
+    return [h for u in key_users(cfg) if u.cfg is not None for h in u.cfg["hosts"].values() if h["enroll"]]
 
 
 def group(cfg: dict[str, Any]) -> list[tuple[Context, dict[str, Any]]]:
@@ -284,22 +353,106 @@ def swap(slot: Slot, entry: dict[str, Any], keep_old: bool) -> None:
 def delete_old(slot: Slot) -> None:
     """The old private key and its .pub, gone (NIST SP 800-57 Pt 1 r5 §5.5.2: keys destroyed once no longer
     needed; a kept retired key defeats a rotation done because of a leak)."""
-    for f in (old_of(slot.key), pub_of(old_of(slot.key))):
-        f.unlink(missing_ok=True)
+    boxkeys.destroy(old_of(slot.key))
 
 
-def old_lines_re(m: Member, groups: Groups, new_words: list[str]) -> str:
+def retire_keys(cfg: dict[str, Any], say: Callable[[str], None], mode: str = "hint") -> list[Path]:
+    """T253 item 5, opt-in (#546's review MED-1/MED-2, the coordinator's call): the roster_<type> keys of this Box's
+    (boxkeys.all_keys beside key_path:) nothing roster knows needs now. MODE `hint` (a plain setup or rotation): say
+    once that `roster setup --retire-keys` deletes each, never delete; `dry-run`: say what that would delete or keep;
+    `delete` (--retire-keys): delete them, saying each one kept and why. Returns the keys deleted.
+
+    Kept: one an Inventory on this Box makes its own key (key_path:) or gives a key Host the type of, or whose line a
+    Host holds by an Inventory's key-types record; every key while an Inventory doesn't load, a rotation is under way
+    or its record can't be read; one not vouched for (boxkeys.vouched), with no roster tag, or with a .new/.old
+    beside it. And, before it's said or deleted: every one while a key Host of a loaded Inventory has no key-types
+    row (set up before roster kept one: unknown is never unused), and one the user's own ssh config names
+    (sshconfig.mentions: ~/.ssh/config and its Includes, roster's own files aside) or that `ssh -G` offers a Host
+    roster knows."""
+    users = key_users(cfg)
+    if any(u.cfg is None for u in users):
+        return []
+    inventories = [(current(), cfg), *((u.ctx, u.cfg) for u in users if u.cfg is not None)]
+    needed: set[Path] = set()
+    unknown: list[str] = []
+    for ctx, c in inventories:
+        try:
+            if not read(ctx).empty:
+                return []
+        except Unreadable:
+            return []
+        needed.add(c["key"])
+        needed |= {Path(h["key_file"]) for h in c["hosts"].values() if h["enroll"]}
+        rows = boxkeys.installed(ctx)
+        for types in rows.values():
+            needed |= {boxkeys.key_file(c["key"], c["key_type"], t) for t in types}
+        unknown += [label(ctx, n) for n, h in sorted(c["hosts"].items()) if h["enroll"] and n not in rows]
+    found: list[boxkeys.BoxKey] = []
+    for k in boxkeys.all_keys(cfg):
+        if k.key in needed or k.key.name.endswith((".new", ".old")) or k.key.name != k.type.file_name \
+                or new_of(k.key).exists() or old_of(k.key).exists() or not boxkeys.vouched(k, cfg["key"]):
+            continue
+        words = pub_of(k.key).read_text(encoding="utf-8", errors="replace").split()
+        if len(words) >= 3 and keyline.tag_box(words[2]):
+            found.append(k)
+    if not found:
+        return []
+    offered: dict[str, set[str]] = {}       # ssh -G NAME's IdentityFile names, for each Host roster knows
+    for _, c in inventories:
+        for n in c["hosts"]:
+            offered.setdefault(n, {Path(v.strip('"')).name for k, v in ssh_g(n) or [] if k == "identityfile"})
+    out: list[Path] = []
+    for k in found:
+        named = sshconfig.mentions(k.key.name)
+        by = sorted(n for n, files in offered.items() if k.key.name in files)
+        why = (f"roster has no record of the key types on {', '.join(unknown)} (set up before roster kept one), so "
+               "it can't tell they don't hold it: a full `roster setup` of their Inventory records them"
+               if unknown else f"your ssh config names it ({', '.join(map(str, named))})" if named else
+               f"`ssh -G` offers it to {', '.join(by)}" if by else "")
+        what = f"{k.key} ({k.type.name})"
+        if mode == "delete" and not why:
+            boxkeys.destroy(k.key)
+            out.append(k.key)
+            say(f"retired key  {what}: deleted (no Host of any Inventory on this Box uses or holds it, and your ssh "
+                "config doesn't name it)")
+        elif mode == "delete" or (mode == "dry-run" and why):
+            say(f"retire       kept {what}: {why}")
+        elif mode == "dry-run":
+            say(f"  would retire {what} with --retire-keys (nothing roster knows uses it now)")
+        elif not why:
+            say(f"retire       nothing roster knows uses {what} now: `roster setup --retire-keys` deletes it")
+    return out
+
+
+def old_lines_re(m: Member, groups: Groups, new_words: list[str], abandoned: list[str] | None = None,
+                 kept: list[list[str]] | None = None) -> str:
     """This Box's key lines on M that aren't its new key's: each of this Box's public keys but the new one, only those
-    boxkeys.all_keys vouches for (KEY.old included only when this user's and its .pub is its own: #482's LOW-4), with
-    a roster-managed tag of any Box name. Never a roster-mesh: line."""
-    found: list[list[str]] = []
+    boxkeys.all_keys vouches for (KEY.old included only when this user's and its .pub is its own: #482's LOW-4), and
+    the rotation's own earlier new keys whose file went away (ABANDONED, `TYPE BASE64` as the record names them: T253
+    item 1), with a roster-managed tag of any Box name. Never a roster-mesh: line, nor one of KEPT's keys (the ones
+    another Host entry on M's account logs in with: T253 item 4)."""
+    found: list[list[str]] = [w for w in (str(a).split()[:2] for a in abandoned or []) if len(w) == 2]
     for _, c in groups:
         for key in boxkeys.all_keys(c):
             w = boxkeys.public_words(key.pub)
             if w:
                 found.append(w)
-    alts = dict.fromkeys(key_ere(*w[:2]) for w in found if w[:2] != new_words[:2])
+    keep = [new_words[:2], *(w[:2] for w in kept or [])]
+    alts = dict.fromkeys(key_ere(*w[:2]) for w in found if w[:2] not in keep)
     return "|".join(alts)
+
+
+def kept_keys(m: Member, groups: Groups, elsewhere: list[dict[str, Any]], rotated: set[Path]) -> list[list[str]]:
+    """The public keys another Host entry on M's account (hosts.account) logs in with, in any Inventory on this Box,
+    of the key files this run doesn't rotate (ROTATED): their lines there are theirs (T253 item 4, as T258's)."""
+    out: list[list[str]] = []
+    for o in [h for _, c in groups for h in c["hosts"].values()] + elsewhere:
+        if o is m.h or not o["enroll"] or account(o) != account(m.h) or Path(o["key_file"]) in rotated:
+            continue
+        w = boxkeys.public_words(pub_of(Path(o["key_file"])))
+        if w:
+            out.append(w[:2])
+    return out
 
 
 def old_keys(m: Member, groups: Groups) -> list[Path]:
@@ -446,9 +599,12 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
         if not slot.done and not new_of(key).exists():
             # stopped before ssh-keygen wrote it (or it was moved away): make it again, never take KEY for it
             if entry.get("new"):
-                say(f"rotation     the rotation's new key {new_of(key)} isn't there any more: making another (a "
-                    "line of the one gone may be left on a Host it reached; it can't log in, its private key is "
-                    "gone, and `roster revoke` takes it)")
+                # T253 item 1 (#482's C4): it may have been moved aside, not deleted, and its line is on the Hosts
+                # it reached: the record keeps it, and its lines go with the old key's
+                entry["abandoned"] = sorted({*entry.get("abandoned", []), str(entry["new"])})
+                say(f"rotation     the rotation's new key {new_of(key)} isn't there any more: making another. A "
+                    "Host it reached may hold its line, which still logs in for whoever kept that file: its line "
+                    "is taken off with the old key's")
             make_new(slot, cfg, say)
             entry["new"] = " ".join((boxkeys.public_words(pub_of(new_of(key))) or [])[:2]) or None
             save_all()
@@ -462,6 +618,7 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
             die(f"{slot.new} isn't the key the Box key rotation's record names as its new key (the record, or the key "
                 f"file, changed since): nothing was changed. Restore whichever changed, then run roster setup --rotate")
 
+    elsewhere = entries_elsewhere(cfg)
     conn = Connect()
     failed: dict[Member, str] = {}
     proven: list[Member] = []
@@ -523,8 +680,15 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
         sync(groups, say)
         done: list[Member] = []
         notes: dict[str, str] = {}
+        abandoned: list[str] = []                # every key file's new keys moved aside (item 1)
+        for key in slots:
+            gone: list[Any] = entries[str(key)].get("abandoned") or []
+            abandoned += [str(a) for a in gone]
         for m in proven:                         # pass 2: the old lines off, over the new key
-            ere = old_lines_re(m, groups, news[m.slot.key])
+            # never a new key's line, whichever key file's (two rotated together can share an account), nor one
+            # another entry on the account logs in with; the new keys moved aside, any key file's
+            ere = old_lines_re(m, groups, news[m.slot.key], abandoned,
+                               kept_keys(m, groups, elsewhere, set(slots)) + list(news.values()))
             try:
                 taken = conn.script(m, [m.slot.key], remove_key_script(ere, m.h["ssh"]["user"]), "remove", ere) \
                     if ere else []
@@ -551,6 +715,8 @@ def run(cfg: dict[str, Any], scope: set[str] | None = None, dry_run: bool = Fals
             del slots[key]
     save_all()
     sync(groups, say)
+    if not held:
+        retire_keys(cfg, say)
     return {"done": [m.label for m in done], "pending": labels(recs, groups), "failed": {}, "notes": notes,
             "groups": groups}
 

@@ -264,7 +264,7 @@ def revoke_all(yes: bool = False) -> int:
             return 1
     jobs = [(label, h, box_key_re(cfg)) for label, cfg, hosts in plan for h in hosts]
     bad = 0
-    with locked("revoke --all", [Context(name) for _, name, _ in targets]), \
+    with locked("revoke --all"), \
             cf.ThreadPoolExecutor(max([cfg["workers"] for _, cfg, _ in plan] or [1])) as ex:
         # one account may be in two Inventories: one set of locks for them all
         whys = ex.map(in_turn(AccountLocks()), [h for _, h, _ in jobs], [r for _, _, r in jobs])

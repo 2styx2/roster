@@ -764,19 +764,19 @@ def test_a_lock_file_that_is_a_link_is_refused_on_every_os(isolated, tmp_path):
     import os
 
     from roster import boxlock
-    from roster.context import current
+    from roster.context import box_file
     from roster.errors import Problem
     victim = tmp_path / "victim"
     victim.write_text("precious\n")
-    current().lock.parent.mkdir(parents=True, exist_ok=True)
-    os.link(victim, current().lock)                                # a hard link
+    box_file("lock").parent.mkdir(parents=True, exist_ok=True)
+    os.link(victim, box_file("lock"))                                # a hard link
     with pytest.raises(Problem, match="isn't a plain file"):
         with boxlock.held("setup"):
             pass
     assert victim.read_text() == "precious\n"
-    current().lock.unlink()
+    box_file("lock").unlink()
     try:
-        current().lock.symlink_to(victim)
+        box_file("lock").symlink_to(victim)
     except OSError:                                             # Windows without the privilege to make one
         return
     with pytest.raises(Problem, match="isn't a plain file"):
@@ -803,3 +803,205 @@ def test_revoke_never_says_to_delete_a_key_file_another_inventory_uses(lab, caps
     note = next(ln for ln in out.splitlines() if ln.startswith("note: [221]"))
     assert note.startswith(f"note: [221] keep {lab.key}: the Inventories home, ") and "use it too" in note
     assert str(lab.key) not in out.replace(note, "")                          # neither it nor its .pub to delete
+
+
+# ---------------------------------------------------------------- T253 (#499): the rotation's follow-ups
+
+def test_a_new_key_moved_aside_after_a_stop_has_its_lines_taken_off_too(lab, capsys, tmp_path):
+    """T253 item 1 (#482's C4): after a 208 stop the first KEY.new's line is on the Hosts it reached. Moved aside
+    (not deleted), the re-run makes another key; the first one's line goes with the old ones, so the moved file no
+    longer logs in anywhere, and the run says what happened to it."""
+    (lab.hosts / "web-02" / "refuse").write_text("*.new\n")
+    assert main(["setup", "--rotate"]) == 1
+    first = lab.key.with_name("roster_ed25519.new")
+    moved = tmp_path / "moved"
+    first.rename(moved)
+    first.with_name(first.name + ".pub").rename(tmp_path / "moved.pub")
+    abandoned = pub_key(moved)
+    assert abandoned in lab.keys("web-01")
+    (lab.hosts / "web-02" / "refuse").unlink()
+    capsys.readouterr()
+    assert main(["setup", "--rotate"]) == 0, capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "its private key is gone" not in out
+    assert "its line is taken off with the old key's" in out
+    new_pub = pub_key(lab.key)
+    for name in ("web-01", "web-02", "db-01"):
+        assert lab.keys(name) == [new_pub], name
+        assert not lab.logs_in(name, moved), name
+
+
+HOLDER_IN = """\
+import os, sys, time
+from pathlib import Path
+from roster import boxlock, context
+context.use(sys.argv[2])
+with boxlock.held("mesh"):
+    print("held", os.getpid(), flush=True)
+    while not Path(sys.argv[1]).exists():
+        time.sleep(0.02)
+"""
+
+
+def test_the_lock_covers_every_inventory_on_the_box_shared_key_file_or_not(isolated, tmp_path, monkeypatch):
+    """T253 item 2: two named Inventories can hold one Host (one account's authorized_keys) under different key
+    files. A run in one holds the lock against a run in the other, so neither's rewrite drops the other's line."""
+    import os
+
+    from roster import boxlock, context
+    from roster.errors import Problem
+    monkeypatch.setattr(boxlock, "WAIT", 0.3)
+    go = tmp_path / "let-go"
+    p = subprocess.Popen([sys.executable, "-c", HOLDER_IN, str(go), "home"], stdout=subprocess.PIPE, text=True,
+                         env=dict(os.environ))
+    try:
+        assert p.stdout is not None
+        said = p.stdout.readline().split()
+        assert said[:1] == ["held"]
+        for name in ("work", None):
+            context.use(name)
+            with pytest.raises(Problem, match=rf"^another roster run \(mesh, pid {said[1]}\)") as e:
+                with boxlock.held("setup"):
+                    pass
+            assert e.value.code == 205
+    finally:
+        go.touch()
+        p.wait(timeout=30)
+        context.use(None)
+    context.use("work")
+    with boxlock.held("setup"):
+        pass
+    context.use(None)
+
+
+def test_the_rotation_carries_the_users_own_ssh_options_for_a_host(lab, capsys, isolated):
+    """T253 item 3: an old Host whose sshd needs the user's own `KexAlgorithms` (from ~/.ssh/config) is rotated, not
+    left pending for good: the rotation's one-Host config carries the options that let `ssh NAME` reach it."""
+    (lab.hosts / "web-02" / "needs").write_text("KexAlgorithms +diffie-hellman-group14-sha1\n")
+    with (isolated["home"] / ".ssh" / "config").open("a") as f:
+        f.write("\nHost web-02\n    KexAlgorithms +diffie-hellman-group14-sha1\n    IdentityFile ~/.ssh/id_own\n")
+    capsys.readouterr()
+    assert main(["setup", "--rotate"]) == 0, capsys.readouterr().out
+    new_pub = pub_key(lab.key)
+    assert all(lab.keys(n) == [new_pub] for n in ("web-01", "web-02", "db-01"))
+
+
+def test_the_one_host_config_pins_one_key_and_turns_a_proxyjump_into_its_own_ssh(lab, monkeypatch):
+    """T253 item 3: the user's algorithms and jump host go in; their IdentityFile, User, HostName and known_hosts
+    never do (the proof is exactly the key meant, at the Host's own address). A ProxyJump becomes a ProxyCommand
+    running ssh with the user's own config, since ssh would look the jump host up in roster's one-Host file."""
+    from roster import rotate
+    from roster.config import load_config
+    from roster.context import current
+    cfg = load_config(current().path)
+    seen = {"proxyjump": "ops@jump-01:2222,bastion", "hostkeyalgorithms": "+ssh-rsa",
+            "pubkeyacceptedalgorithms": "+ssh-rsa", "kexalgorithms": "+diffie-hellman-group14-sha1",
+            "identityfile": "~/.ssh/id_own", "user": "root", "hostname": "10.9.9.9",
+            "userknownhostsfile": "~/.ssh/known_hosts", "ciphers": "aes128-ctr\nHost *"}
+    monkeypatch.setattr(rotate, "user_options", lambda name: dict(seen))
+    m = rotate.Member(current(), cfg, cfg["hosts"]["web-01"], rotate.Slot(rotate.boxkeys.parse("ed25519"), lab.key))
+    text = rotate.one_key_config(m, [lab.key])
+    lines = [ln.strip() for ln in text.splitlines()]
+    assert "HostKeyAlgorithms +ssh-rsa" in lines and "PubkeyAcceptedAlgorithms +ssh-rsa" in lines
+    assert "KexAlgorithms +diffie-hellman-group14-sha1" in lines
+    assert "ProxyCommand ssh -o BatchMode=yes -J ops@jump-01:2222 -W '[%h]:%p' bastion" in lines
+    assert not any(ln.startswith(("ProxyJump", "Ciphers")) for ln in lines)       # a value with a line break: not taken
+    assert [ln for ln in lines if ln.startswith("IdentityFile")] == [f'IdentityFile "{lab.key}"']
+    assert "HostName 10.0.0.4" in lines and "User ops" in lines and "id_own" not in text and "root" not in text
+
+
+@pytest.mark.parametrize("argv", [["setup", "--rotate"], ["setup"]])
+def test_an_old_types_key_file_is_only_deleted_by_retire_keys_once_no_host_holds_or_uses_it(lab, capsys, argv):
+    """T253 item 5 (opt-in after #546's review MED-1/MED-2, the coordinator's call): roster.yml's key_type: goes
+    ed25519 -> ecdsa. A plain setup or rotation never deletes a key: once nothing roster knows uses roster_ed25519, it
+    says `roster setup --retire-keys` deletes it; that does, and setup --dry-run says it would."""
+    ecdsa = lab.key.with_name("roster_ecdsa")
+    lab.write("key_type: ecdsa\n" + LAB_YML)
+    lab.down("db-01")
+    capsys.readouterr()
+    assert main(argv) == 1
+    assert "--retire-keys" not in capsys.readouterr().out            # db-01 still holds the Ed25519 line
+    lab.down("db-01", False)
+    assert main(argv) == 0, capsys.readouterr().out
+    assert all(lab.keys(n) == [pub_key(ecdsa)] for n in ("web-01", "web-02", "db-01"))
+    assert lab.key.exists() and lab.key.with_name("roster_ed25519.pub").exists()     # never deleted by itself
+    hint = f"nothing roster knows uses {lab.key} (ed25519) now: `roster setup --retire-keys` deletes it"
+    assert hint in capsys.readouterr().out
+    assert main(["setup", "--dry-run"]) == 0
+    assert f"would retire {lab.key} (ed25519) with --retire-keys" in capsys.readouterr().out
+    assert lab.key.exists()
+    assert main(["setup", "--retire-keys"]) == 0, capsys.readouterr().out
+    assert not lab.key.exists() and not lab.key.with_name("roster_ed25519.pub").exists()
+    assert f"retired key  {lab.key} (ed25519): deleted" in capsys.readouterr().out
+
+
+def test_retire_keys_keeps_a_key_the_users_own_ssh_config_uses(lab, capsys, isolated):
+    """#546's review MED-1: the user also logs in to a NAS with roster's key (named in a file their ~/.ssh/config
+    includes). Neither setup nor setup --retire-keys deletes it, and --retire-keys says why."""
+    extra = isolated["home"] / ".ssh" / "mine.conf"
+    extra.write_text(f'Host nas\n    HostName 10.0.0.99\n    IdentityFile "{lab.key}"\n')
+    with (isolated["home"] / ".ssh" / "config").open("a") as f:
+        f.write("\nInclude mine.conf\n")
+    lab.write("key_type: ecdsa\n" + LAB_YML)
+    capsys.readouterr()
+    assert main(["setup"]) == 0, capsys.readouterr().out
+    assert lab.key.exists()
+    assert main(["setup", "--retire-keys"]) == 0
+    out = capsys.readouterr().out
+    assert lab.key.exists()
+    assert f"kept {lab.key} (ed25519): your ssh config names it ({extra})" in out
+
+
+def test_retire_keys_keeps_a_key_while_a_host_has_no_record_of_its_types(lab, capsys, isolated, tmp_path):
+    """#546's review MED-2: a Host set up before T245 has no key-types row, so roster can't tell which keys it
+    holds: unknown is never unused. And a plain setup of a second roster.yml (-c) never deletes a key at all."""
+    from roster.context import Context, current
+    b = tmp_path / "b" / "roster.yml"
+    b.parent.mkdir()
+    b.write_text("box_name: ws1\nkey_type: ecdsa\ngroups:\n  lab:\n    user: ops\n    auth: env:PW\n    hosts:\n"
+                 "      db-01: 10.0.0.6\n")
+    current().file("key_types").unlink(missing_ok=True)                  # as before T245
+    capsys.readouterr()
+    assert main(["-c", str(b), "setup"]) == 0, capsys.readouterr().out
+    assert lab.key.exists() and lab.logs_in("web-01", lab.key)
+    lab.write("key_type: ecdsa\n" + LAB_YML)
+    assert main(["setup"]) == 0, capsys.readouterr().out
+    b.write_text(b.read_text().replace("db-01:", "db-02:"))            # db-01's account under another name
+    (lab.hosts / "db-02").symlink_to(lab.hosts / "db-01", target_is_directory=True)
+    assert main(["inv", "add", "home", str(b)]) == 0                    # B as a named Inventory, set up before T245
+    assert main(["--inv", "home", "setup"]) == 0, capsys.readouterr().out
+    Context("home").file("key_types").unlink()
+    capsys.readouterr()
+    assert main(["setup", "--retire-keys"]) == 0
+    out = capsys.readouterr().out
+    assert lab.key.exists()
+    assert f"kept {lab.key} (ed25519): roster has no record of the key types on home: db-02" in out, out
+
+
+def test_retire_keys_is_a_whole_setup_only(lab):
+    for argv in (["setup", "--retire-keys", "--rotate"], ["setup", "--retire-keys", "--host", "web-01"],
+                 ["setup", "--retire-keys", "--only", "lab"]):
+        with pytest.raises(SystemExit, match="--retire-keys"):
+            main(argv)
+
+
+def test_only_the_options_the_user_set_are_carried_so_ssh_still_orders_host_keys(lab, capsys, isolated):
+    """#546's review LOW-1: `ssh -G` prints every option, defaults too. Only what differs from `ssh -G -F none`
+    (what the user's config set) is carried; a default HostKeyAlgorithms written out would turn off ssh's ordering by
+    the host key types known_hosts holds, and a Host recorded by its ECDSA key (Ed25519 first by default) would
+    never be reached."""
+    from roster import rotate
+    assert rotate.user_options("web-02") == {}
+    (lab.hosts / "web-02" / "hostkeys").write_text("ssh-ed25519 ecdsa-sha2-nistp256\n")
+    kh = isolated["home"] / ".ssh" / "roster_known_hosts"
+    kh.write_text(kh.read_text().replace("10.0.0.5 ssh-ed25519 ", "10.0.0.5 ecdsa-sha2-nistp256 "))
+    capsys.readouterr()
+    assert main(["setup", "--rotate"]) == 0, capsys.readouterr().out
+    assert all(lab.keys(n) == [pub_key(lab.key)] for n in ("web-01", "web-02", "db-01"))
+
+
+def test_a_proxyjump_hop_that_reads_as_an_option_is_never_carried():
+    """#546's review NIT: a hop starting with `-` would be an option to the inner ssh."""
+    from roster import rotate
+    assert rotate.carried({"proxyjump": "-oProxyCommand=x,bastion"}) == []
+    assert rotate.carried({"proxyjump": "bastion,-x"}) == []

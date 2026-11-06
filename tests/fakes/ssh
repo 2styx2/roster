@@ -54,11 +54,57 @@
 #                                                   config gives NAME (as fips's) whose line is in the file sshd reads
 #                                                   for the account; else any roster-managed line lets it in. A
 #                                                   password login (no BatchMode) is never checked
+#                                 DIR/NAME/needs    `Option value` lines its sshd needs from the client (an old
+#                                                   Host's KexAlgorithms, say): a connection whose ssh config (-F
+#                                                   FILE's, else $HOME/.ssh/config's) doesn't give NAME each one
+#                                                   fails as ssh does ("no matching key exchange method", exit 255)
+#                                 DIR/NAME/hostkeys the host key types its sshd has (`ssh-ed25519 ecdsa-sha2-nistp256`):
+#                                                   with -F FILE whose block gives UserKnownHostsFile, the client
+#                                                   picks the first of its HostKeyAlgorithms the server has (the
+#                                                   config's when set, else the default list with the types that
+#                                                   file knows for HostName first, as ssh orders them) and fails
+#                                                   ("Host key verification failed", 255) unless the file knows it
+# -G NAME                       print what $HOME/.ssh/config gives NAME (`option value`, lowercase, the first value
+#                               of each), then ssh's defaults (DEFAULTS) for the rest, as ssh -G does; `-F none`
+#                               (or /dev/null): the defaults alone. Nothing connects (T253)
 # FAKE_SH=PATH                  the sh a stand-in Host runs its side with (default /bin/sh; on native Windows, Git for
 #                               Windows' sh.exe, with the Host's paths written C:/... as that sh reads them)
 import base64, fnmatch, os, shutil, subprocess, sys, time
 args = sys.argv[1:]
 os.environ.get("FAKE_LOG") and open(os.environ["FAKE_LOG"], "a").write("ssh " + " ".join(args) + "\n")
+
+
+def config_options(path, dest):
+    """What the ssh config at PATH gives DEST: {option (lowercase): value}, the first of each as ssh takes it (Host
+    patterns matched with globs; Include and Match aren't read)."""
+    out, on = {}, False
+    try:
+        text = open(path).read()
+    except OSError:
+        return out
+    for line in text.splitlines():
+        words = line.strip().split(None, 1)
+        if not words or words[0].startswith("#"):
+            continue
+        if words[0].lower() == "host":
+            on = any(fnmatch.fnmatch(dest, pat) for pat in (words[1].split() if len(words) > 1 else []))
+        elif on and len(words) == 2:
+            out.setdefault(words[0].lower(), words[1].strip())
+    return out
+
+
+DEFAULTS = {"port": "22", "hostkeyalgorithms": "ssh-ed25519,ecdsa-sha2-nistp256,rsa-sha2-512",
+            "kexalgorithms": "curve25519-sha256,ecdh-sha2-nistp256", "ciphers": "chacha20-poly1305@openssh.com,aes128-ctr",
+            "macs": "hmac-sha2-256-etm@openssh.com", "pubkeyacceptedalgorithms": "ssh-ed25519,ecdsa-sha2-nistp256,rsa-sha2-512",
+            "identityfile": "~/.ssh/id_ed25519"}
+
+if "-G" in args:
+    name = [a for i, a in enumerate(args) if not a.startswith("-") and (i == 0 or args[i - 1] != "-F")][-1]
+    given = args[args.index("-F") + 1] if "-F" in args else os.path.join(os.environ.get("HOME", ""), ".ssh", "config")
+    conf = {} if given in ("none", "/dev/null") else config_options(given, name)
+    for k, v in {**DEFAULTS, **conf}.items():
+        print(f"{k} {v}")
+    sys.exit(0)
 
 
 def destination(argv):
@@ -279,6 +325,34 @@ if hosts:
             print(f"ssh: connect to host {dest} port 22: Connection timed out", file=sys.stderr)
             sys.exit(255)
         open(log, "a").write(f"start {dest}\n")
+        needs = os.path.join(root, "needs")
+        if os.path.exists(needs):
+            given = config_options(args[args.index("-F") + 1] if "-F" in args else
+                                   os.path.join(os.environ.get("HOME", ""), ".ssh", "config"), dest)
+            for want in open(needs).read().splitlines():
+                k, _, v = want.strip().partition(" ")
+                if k and given.get(k.lower()) != v.strip():
+                    print(f"Unable to negotiate with 10.0.0.9 port 22: no matching key exchange method found ({k})",
+                          file=sys.stderr)
+                    open(log, "a").write(f"end {dest}\n")
+                    sys.exit(255)
+        hostkeys = os.path.join(root, "hostkeys")
+        if os.path.exists(hostkeys) and "-F" in args:
+            given = config_options(args[args.index("-F") + 1], dest)
+            kh = given.get("userknownhostsfile", "").strip('"')
+            if kh:
+                ip = given.get("hostname", dest).replace("%%", "%")
+                known = [ln.split()[1] for ln in (open(kh).read().splitlines() if os.path.exists(kh) else [])
+                         if len(ln.split()) >= 3 and ln.split()[0] == ip]
+                default = DEFAULTS["hostkeyalgorithms"].split(",")
+                client = (given["hostkeyalgorithms"].split(",") if "hostkeyalgorithms" in given else
+                          [t for t in default if t in known] + [t for t in default if t not in known])
+                server = open(hostkeys).read().split()
+                chosen = next((t for t in client if t in server), None)
+                if chosen not in known:
+                    print(f"Host key verification failed ({chosen} key, not in {kh}).", file=sys.stderr)
+                    open(log, "a").write(f"end {dest}\n")
+                    sys.exit(255)
         windows = os.path.exists(os.path.join(root, "windows"))     # its own key login (windows_key_login)
         if not windows and any(os.path.exists(os.path.join(root, m)) for m in ("fips", "keys")) and not key_taken(root, dest):
             open(log, "a").write(f"end {dest}\n")

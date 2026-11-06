@@ -177,3 +177,41 @@ def includes(text: str, path: Path) -> bool:
     """Does the ssh config TEXT include PATH itself (a whole Include line, however written; not a longer name)?"""
     want = ssh_path(path)
     return any(want in include_targets(line) for line in text.splitlines())
+
+
+def user_files() -> list[Path]:
+    """The user's own ssh config files: ~/.ssh/config and every file its Include lines name (globs, relative to
+    ~/.ssh, followed in turn), but not roster's own (its Inventories' ssh configs and their index)."""
+    import glob
+    ssh = ssh_dir()
+    mine = {ssh / "config.d" / "roster", ssh / "config.d" / "roster.inventories"}
+    out: list[Path] = []
+    todo = [ssh / "config"]
+    while todo and len(out) < 256:
+        f = todo.pop(0)
+        if f in out or f in mine or ssh / "roster-inventories" in f.parents:
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        out.append(f)
+        for line in text.splitlines():
+            words = line.strip().replace("=", " ", 1).split(None, 1)
+            if len(words) == 2 and words[0].lower() == "include":
+                for pat in shlex.split(words[1], posix=True) if '"' in words[1] else words[1].split():
+                    pat = os.path.expanduser(pat)
+                    todo += sorted(Path(p) for p in glob.glob(pat if os.path.isabs(pat) else str(ssh / pat)))
+    return out
+
+
+def mentions(word: str) -> list[Path]:
+    """The user's own ssh config files (user_files) whose text has WORD (a key file's name) in it."""
+    out: list[Path] = []
+    for f in user_files():
+        try:
+            if word in f.read_text(encoding="utf-8", errors="replace"):
+                out.append(f)
+        except OSError:
+            continue
+    return out
