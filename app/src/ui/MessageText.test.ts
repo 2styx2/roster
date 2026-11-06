@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { messageParts } from "./MessageText";
+import { keyCancelled } from "../session/Sessions";
 
 const commands = (text: string) => messageParts(text).filter((p) => p.command).map((p) => p.text);
 
@@ -16,6 +17,14 @@ describe("the commands a message names (round 18)", () => {
     expect(commands("No help for zzqxj.")).toEqual(["zzqxj"]);
     expect(commands("Not a command: host.add. :help commands lists them.")).toEqual(["host.add", ":help commands"]);
     expect(commands("Saved. Not a word was changed.")).toEqual([]);
+  });
+
+  it("sets the Host a cancelled key question names as data, not its \"'s\" (round 22)", () => {
+    const text = keyCancelled("linux-1-000");
+    expect(commands(text)).toEqual(["linux-1-000"]);
+    expect(messageParts(text).map((p) => p.text).join("")).toBe(text);
+    expect(commands(keyCancelled("10.0.0.5"))).toEqual(["10.0.0.5"]);
+    expect(commands("I didn't trust it's key.")).toEqual([]);
   });
 
   it("keeps the whole text, in order", () => {

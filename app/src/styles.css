@@ -1490,14 +1490,20 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
 }
 /* ↵ shows only on the button Enter acts on (Sessions.tsx `enterOn`; round 21: a dim ↵ on Trust
    read as the default while the focused Cancel was what Enter pressed): the focused button, or
-   Quick Connect's Trust while its password field or the card has focus. Hidden, never removed,
-   so each button keeps one width and its label one place whatever has focus (round 18). No
-   transition: focus moves with a key. On a Quick Connect Trust not yet armed by the tick it's at
-   0.68: 3:1 or more on the button (3.4:1 dark, 3.1:1 light), plainly quieter than the armed
-   key's 5.7:1 and 6.6:1. */
+   Quick Connect's Trust while its password field has focus. No transition: focus moves with a
+   key. On a Quick Connect Trust not yet armed by the tick it's at 0.68: 3:1 or more on the button
+   (3.4:1 dark, 3.1:1 light), plainly quieter than the armed key's 5.7:1 and 6.6:1.
+   Hidden, it leaves the line and its room becomes padding, half each side, so the label and
+   its keys sit centred in the button's one width (round 22: a hidden ↵ kept in place left a
+   31 px empty tail on "Trust and connect" and a 26 px gap before Esc on Cancel). The cap has a
+   fixed width so the room it gives back is exact: 23 px, plus the 8 px before a button's keys
+   when it's the only one (Trust), or the 3 px gap before Esc (Cancel). */
 .btn-keys { gap: 3px; }
-.btn-keys .key-enter { visibility: hidden; }
-.btn-keys .key-enter.on { visibility: visible; }
+.btn-keys .key-enter .keycap { width: 23px; padding: 0; }
+.btn-keys .key-enter:not(.on) { display: none; }
+.btn-keys:has(> .key-enter:only-child:not(.on)) { display: none; }
+.key-actions > button:has(.btn-keys > .key-enter:not(.on)) { padding-inline: calc(12px + 13px); }
+.key-actions > button:has(.btn-keys > .key-enter:only-child:not(.on)) { padding-inline: calc(12px + 15.5px); }
 .btn-keys .key-dim { opacity: 0.68; }
 /* Quick Connect's box and, after a blocked Enter, what it needs: one row, the words beside the
    box in the room the row already has, one line that never wraps, so nothing moves when they
@@ -1565,8 +1571,10 @@ button.danger { background: var(--danger); color: var(--danger-text); border-col
   /* 3 px above and below, given back by the margin, so it's a 24 px target (round 19: 21 px)
      on the line's own baseline. Across, its 4 px are kept and 2 px more before it, so its 4 px
      focus ring (2 px halo, 2 px apricot) clears the "." of "trust it." by 2 px (round 21: a
-     -4 px margin had laid the ring over it). */
-  height: auto; padding: 3px 4px; margin: -3px 0 -3px 2px; display: inline; vertical-align: baseline;
+     -4 px margin had laid the ring over it). Up and down it's an inline block with 5 px of air
+     above, so its line opens 7 px lower than the advice's leading and the ring stops 2.6 px
+     short of the line above (round 22: the ring reached 4.6 px into it). */
+  height: auto; padding: 3px 4px; margin: 5px 0 -3px 2px; display: inline-block; vertical-align: baseline;
   background: transparent; border-color: transparent; color: var(--muted);
   font: 500 var(--text-xs) var(--font-mono); white-space: nowrap;
   text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px;

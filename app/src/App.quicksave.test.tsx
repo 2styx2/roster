@@ -132,6 +132,29 @@ describe('"Save to vault" on Quick Connect', () => {
     expect(backend.held()).toEqual([]);
   });
 
+  it("Enter on the save box never connects: before the tick it points at the key, after it goes on to Trust (round 22)", async () => {
+    const backend = backendWith();
+    const user = await ready(backend);
+    await user.keyboard(`{Control>} {/Control}:connect ${LABEL}{Enter}`);
+    const q = await within(pane()).findByRole("alertdialog", { name: `Quick Connect to ${LABEL}` });
+    const box = within(q).getByRole("checkbox", { name: "I've checked this key" });
+    const save = within(q).getByRole("checkbox", { name: /save to vault/i });
+    const trust = within(q).getByRole("button", { name: "Trust and connect" });
+    save.focus();
+    await user.keyboard("{Enter}");
+    expect(box).toHaveFocus();
+    expect(within(q).getByRole("alert")).toHaveTextContent("Tick it to trust and connect.");
+    await user.keyboard(" ");
+    save.focus();
+    await user.keyboard("{Enter}");
+    expect(trust).toHaveFocus();
+    expect(trust.querySelector(".key-enter.on")).not.toBeNull();
+    expect(backend.quickConnects()).toEqual([]);
+    await user.keyboard("{Enter}");
+    await within(pane()).findByText(`Connected to ${LABEL}`, { exact: false });
+    expect(backend.quickConnects()).toHaveLength(1);
+  });
+
   it("isn't offered by a roster older than API 13", async () => {
     const user = await ready(backendWith({ apiVersion: QUICK_CONNECT_API_VERSION }));
     await user.keyboard(`{Control>} {/Control}:connect ${LABEL}{Enter}`);

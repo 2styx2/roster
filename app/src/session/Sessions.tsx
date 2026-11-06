@@ -2,7 +2,7 @@
 // option shows instead of the Sidebar's Sessions section. Inactive terminals stay mounted, just
 // hidden, so their screens survive switching. Buttons here run command lines (`session N`,
 // `close N`, `reconnect`) like every other way in.
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { HostKeyScan } from "../backend/types";
 import type { ErrorRow } from "../errors/catalog";
 import { ErrorPanel, type ProblemActions } from "../errors/ErrorPanel";
@@ -241,8 +241,9 @@ export function ConnectCard({
   });
   const keysNote = useId();
   // Which button Enter acts on now, so its ↵ shows there and nowhere else (round 21): the
-  // focused button; in Quick Connect, Trust also while the password field or the card itself has
-  // focus (Enter there submits). Elsewhere (the box, the help pointer) neither shows it.
+  // focused button; in Quick Connect, Trust also while the password field has focus (Enter there
+  // submits). Elsewhere (the boxes, the card itself, the help pointer) Enter never connects, so
+  // neither shows it (round 22).
   const [enterOn, setEnterOn] = useState<"trust" | "cancel" | null>(null);
   const noteFocus = (at: EventTarget | null) => {
     const el = at instanceof Element ? at : null;
@@ -252,8 +253,7 @@ export function ConnectCard({
         : el.closest(".key-cancel")
           ? "cancel"
           : el === trustButton.current ||
-              (checkedBox.current !== null &&
-                (el === passwordField.current || el === card.current))
+              (checkedBox.current !== null && el === passwordField.current)
             ? "trust"
             : null,
     );
@@ -393,6 +393,22 @@ export function ConnectCard({
     } as FocusOptions);
     revealBox();
   };
+  // After the tick, Enter on a box or on the card moves on to the password field instead of
+  // connecting (round 22: Enter on the ticked box submitted the form with an empty password while
+  // no button showed ↵, the field still under the footer's fade). Only Enter in the field, or
+  // Trust itself, connects; an empty field is a key login ("Leave it empty…"), so it's allowed
+  // there. A character typed on the box goes into the field too, so nothing typed vanishes.
+  const toPassword = (typed?: string) => {
+    const field = passwordField.current;
+    const c = card.current;
+    if (!field || !c) return;
+    field.focus({ focusVisible: true, preventScroll: true } as FocusOptions);
+    if (typed !== undefined) {
+      const end = field.value.length;
+      field.setRangeText(typed, end, end, "end");
+    }
+    revealInCard(c, field, null, FADE_PX);
+  };
   const connectQuick = () => {
     const field = passwordField.current;
     const typed = field?.value ?? "";
@@ -427,12 +443,13 @@ export function ConnectCard({
               } else if (e.key === "Enter" && e.target === e.currentTarget) {
                 // Enter on the card itself (focus lands there when its text is clicked) never
                 // trusts a key: a host-key question needs Trust and connect itself (Q222), and
-                // Quick Connect's needs "I've checked this key" ticked (Q225). A password
-                // prompt (no key in question) still connects.
+                // Quick Connect's needs "I've checked this key" ticked (Q225), and even then
+                // Enter here goes on to the password field: only the field or Trust connects
+                // (round 22). A password prompt (no key in question) still connects.
                 e.preventDefault();
                 if (asksPassword) connectQuick();
                 else if (asksQuick) {
-                  if (checkedKey) connectQuick();
+                  if (checkedKey) toPassword();
                   else blocked();
                 }
               } else if (e.key === "Tab") {
@@ -640,6 +657,20 @@ export function ConnectCard({
                     setCheckedKey(e.target.checked);
                     setNudged(false);
                   }}
+                  onKeyDown={(e) => {
+                    // Enter on the box never submits (round 22): before the tick it says
+                    // what's missing, after it it goes on to the password field.
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (checkedKey) toPassword();
+                      else blocked();
+                    } else if (printable(e)) {
+                      // Typing on the box is typing the password: it lands in the field.
+                      e.preventDefault();
+                      toPassword(e.key);
+                    }
+                  }}
                 />
                 I've checked this key
               </label>
@@ -669,6 +700,19 @@ export function ConnectCard({
                   type="checkbox"
                   checked={save}
                   onChange={(e) => setSave(e.target.checked)}
+                  onKeyDown={(e) => {
+                    // Nor does Enter on "Save to vault" (round 22): it goes on to Trust, where ↵
+                    // shows, or says what's missing before the tick.
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!checkedKey) blocked();
+                    else
+                      trustButton.current?.focus({
+                        focusVisible: true,
+                        preventScroll: true,
+                      } as FocusOptions);
+                  }}
                 />
                 Save to vault once it logs in
               </label>
@@ -681,9 +725,9 @@ export function ConnectCard({
                 ref={trustButton}
               >
                 Trust and connect
-                {/* ↵ shows where Enter acts (round 21): here while Trust, the password field or
-                    the card has focus, dim until the tick arms it. Its room is always kept, so
-                    neither focus nor the tick resizes the button (round 18). */}
+                {/* ↵ shows where Enter acts (round 21): here while Trust or the password field
+                    has focus, dim until the tick arms it. Hidden, its room is even padding either
+                    side, so neither focus nor the tick resizes the button (round 22). */}
                 <span className="btn-keys" aria-hidden="true">
                   <Keys
                     keys="Enter"
@@ -719,8 +763,8 @@ export function ConnectCard({
             >
               {/* The question opens on Cancel, so trusting is deliberate (Q222): ↵ shows on Trust
                   only once Tab brings focus to it, on Cancel while it has focus (round 21: a dim
-                  ↵ on Trust read as the default while Enter cancelled), and keeps its room
-                  (round 18). */}
+                  ↵ on Trust read as the default while Enter cancelled); hidden, its room is
+                  even padding either side (round 22). */}
               Trust and connect
               <span className="btn-keys" aria-hidden="true">
                 <Keys
@@ -788,6 +832,15 @@ export function endedTone(exit: Exit): "warn" | null {
   return exit.closed || exit.code === 0 ? null : "warn";
 }
 
+/** A key that types a character into a field: one character, no shortcut modifier (AltGr's
+ * characters count), not Space (which ticks a box), not mid-composition. */
+function printable(e: KeyboardEvent): boolean {
+  if (e.key.length !== 1 || e.key === " " || e.nativeEvent.isComposing)
+    return false;
+  if (e.getModifierState("AltGraph")) return true;
+  return !e.ctrlKey && !e.metaKey && !e.altKey;
+}
+
 /** What the message line says when a key question is cancelled: nothing reaches roster's
  * known_hosts until Trust (`tabs.cancelKey` calls no Backend). */
 export function keyCancelled(host: string): string {
@@ -795,8 +848,8 @@ export function keyCancelled(host: string): string {
 }
 
 /** Cancel's keys on a key question: Esc always, and ↵ before it while Cancel has focus (Enter
- * then cancels, as the question opens; round 21). The ↵ keeps its room when hidden, so focus
- * never resizes the button. */
+ * then cancels, as the question opens; round 21). Hidden, its room is even padding either side
+ * of "Cancel Esc", so focus never resizes the button (round 22). */
 function CancelKeys({ enter }: { enter: boolean }) {
   return (
     <span className="btn-keys" aria-hidden="true">

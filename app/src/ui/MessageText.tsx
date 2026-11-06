@@ -25,6 +25,10 @@ const SETTING = /(^|[\s(“"'])([a-z][a-z_]*: (?:true|false))(?![\w-])/g;
  * too (round 19), set in Iosevka with no quote marks. The word runs to the sentence's end. */
 const TYPED = /(^|[\s(])((?<=(?:Not a command:|No help for) )[^\s]+?)(?=[.,]?(?:\s|$))/g;
 
+/** The Host a cancelled key question names ("Didn't trust linux-1-000's key; …"): data, so
+ * Iosevka like a quoted typo (round 22: it was set in Inter). The name runs to the "'s". */
+const HOST_KEY = /(^|\s)((?<=Didn't trust )[^\s]+?)(?='s key[;.,])/g;
+
 /** Keys a message names, as the keymap writes them: the Leader "␣" and one or more keys after it,
  * each one character, a chord ("Ctrl+x") or a function key ("␣ f", "␣ d d"). A trailing "." is
  * the sentence's. */
@@ -47,6 +51,7 @@ export function messageParts(text: string, files = false): MessagePart[] {
     ...[...text.matchAll(KEYS)].map((m) => ({ m, file: false, keys: true })),
     ...[...text.matchAll(COMMAND)].map((m) => ({ m, file: false, keys: false })),
     ...[...text.matchAll(TYPED)].map((m) => ({ m, file: false, keys: false })),
+    ...[...text.matchAll(HOST_KEY)].map((m) => ({ m, file: false, keys: false })),
     ...(files ? [...text.matchAll(FILE)].map((m) => ({ m, file: true, keys: false })) : []),
     ...(files ? [...text.matchAll(SETTING)].map((m) => ({ m, file: true, keys: false })) : []),
   ]

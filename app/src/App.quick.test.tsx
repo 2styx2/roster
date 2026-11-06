@@ -3,7 +3,7 @@
 // and asks for the password in a masked field that empties as soon as it's sent; Esc connects
 // nothing. Fake Backend, stub terminal.
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { FAKE_FINGERPRINT, FAKE_HOST_PASSWORD, FAKE_PASSWORD, fakeBackend, makeHosts, type FakeBackend } from "./backend/fake";
@@ -96,6 +96,109 @@ describe("Quick Connect", () => {
     await user.click(box);
     expect(trust.querySelector(".key-enter.key-dim")).toBeNull();
     expect(within(q).getByRole("alert")).toHaveTextContent("");
+  });
+
+  // Round 22's P2: Enter on the ticked box connected with an empty password while no button
+  // showed ↵, the field still under the footer's fade. After the tick Enter on the box or the card
+  // goes on to the password field; only Enter in the field, or Trust, connects. An empty field is
+  // a key login ("Leave it empty to log in with this Box's keys."), so it connects from there.
+  it("after the tick, Enter on the box goes on to the password field, revealed, and connects nothing (round 22)", async () => {
+    const backend = backendAt();
+    const user = await ready(backend);
+    await user.keyboard(`{Control>} {/Control}:connect root@10.0.0.5{Enter}`);
+    const q = await question("root@10.0.0.5");
+    const box = within(q).getByRole("checkbox", { name: "I've checked this key" });
+    const field = within(q).getByLabelText("Password for root");
+    const trust = within(q).getByRole("button", { name: "Trust and connect" });
+    expect(box).toHaveFocus();
+    await user.keyboard(" ");
+    expect(box).toBeChecked();
+    const reveal = vi.mocked(revealInCard);
+    reveal.mockClear();
+    await user.keyboard("{Enter}");
+    expect(field).toHaveFocus();
+    expect(reveal).toHaveBeenCalledWith(q, field, null, 22);
+    expect(backend.quickConnects()).toEqual([]);
+    // Now ↵ is on Trust: Enter in the field connects, empty or not.
+    expect(trust.querySelector(".key-enter.on")).not.toBeNull();
+    await user.keyboard("{Enter}");
+    await within(pane("root@10.0.0.5")).findByText("Connected to root@10.0.0.5", { exact: false });
+    expect(backend.quickConnects()).toEqual([
+      { user: "root", address: "10.0.0.5", port: 22, fingerprint: FAKE_FINGERPRINT, password: false },
+    ]);
+  });
+
+  it("after the tick, Enter on the card goes on to the password field too, and shows no ↵ (round 22)", async () => {
+    const backend = backendAt();
+    const user = await ready(backend);
+    await user.keyboard(`{Control>} {/Control}:connect root@10.0.0.5{Enter}`);
+    const q = await question("root@10.0.0.5");
+    const field = within(q).getByLabelText("Password for root");
+    const trust = within(q).getByRole("button", { name: "Trust and connect" });
+    await user.click(within(q).getByRole("checkbox", { name: "I've checked this key" }));
+    q.focus();
+    expect(trust.querySelector(".key-enter.on")).toBeNull();
+    await user.keyboard("{Enter}");
+    expect(field).toHaveFocus();
+    expect(backend.quickConnects()).toEqual([]);
+    // With a password typed it still goes to the field first; Enter there connects.
+    await user.keyboard(FAKE_HOST_PASSWORD);
+    q.focus();
+    await user.keyboard("{Enter}");
+    expect(field).toHaveFocus();
+    expect(field).toHaveValue(FAKE_HOST_PASSWORD);
+    expect(backend.quickConnects()).toEqual([]);
+    await user.keyboard("{Enter}");
+    await within(pane("root@10.0.0.5")).findByText("Connected to root@10.0.0.5", { exact: false });
+    expect(backend.quickConnects()).toEqual([
+      { user: "root", address: "10.0.0.5", port: 22, fingerprint: FAKE_FINGERPRINT, password: true },
+    ]);
+  });
+
+  it("after the tick, Trust connects, from a click or Enter on it, the field empty or not (round 22)", async () => {
+    for (const how of ["click", "enter"] as const) {
+      const backend = backendAt();
+      const user = await ready(backend);
+      await user.keyboard(`{Control>} {/Control}:connect root@10.0.0.5{Enter}`);
+      const q = await question("root@10.0.0.5");
+      await user.click(within(q).getByRole("checkbox", { name: "I've checked this key" }));
+      const trust = within(q).getByRole("button", { name: "Trust and connect" });
+      if (how === "click") await user.click(trust);
+      else {
+        trust.focus();
+        await user.keyboard("{Enter}");
+      }
+      await within(pane("root@10.0.0.5")).findByText("Connected to root@10.0.0.5", { exact: false });
+      expect(backend.quickConnects()).toEqual([
+        { user: "root", address: "10.0.0.5", port: 22, fingerprint: FAKE_FINGERPRINT, password: false },
+      ]);
+      cleanup();
+    }
+  });
+
+  it("a character typed on the box goes into the password field, not nowhere; Space still ticks it (round 22)", async () => {
+    const backend = backendAt();
+    const user = await ready(backend);
+    await user.keyboard(`{Control>} {/Control}:connect root@10.0.0.5{Enter}`);
+    const q = await question("root@10.0.0.5");
+    const box = within(q).getByRole("checkbox", { name: "I've checked this key" });
+    const field = within(q).getByLabelText("Password for root");
+    expect(box).toHaveFocus();
+    await user.keyboard("h");
+    expect(field).toHaveFocus();
+    expect(field).toHaveValue("h");
+    await user.keyboard("unter2");
+    box.focus();
+    await user.keyboard("!");
+    expect(field).toHaveFocus();
+    expect(field).toHaveValue("hunter2!");
+    box.focus();
+    await user.keyboard(" ");
+    expect(box).toBeChecked();
+    expect(box).toHaveFocus();
+    expect(field).toHaveValue("hunter2!");
+    expect(backend.quickConnects()).toEqual([]);
+    expect(document.body.innerHTML).not.toContain("hunter2");
   });
 
   it("a blocked Enter brings focus to the box and marks it until it's ticked: the button, Enter in the field, on the card (round 19)", async () => {

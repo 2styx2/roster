@@ -32,11 +32,12 @@ export interface RevealGeometry {
 }
 
 const EPS = 0.5;
-/** How far a line's glyph box may reach past an edge and still count as whole: the top and bottom
- * 1.5 px of an Inter or Iosevka glyph box at these sizes is the font's own leading, no ink. The
- * choice keeps 0.5 px in hand, since the card's sub-pixel offset moves lines by up to that much
- * from one scroll to the next. */
-const SLIVER = 1;
+/** How far a line's glyph box may reach past an edge and still count as whole: none (round 22:
+ * round 21 let a glyph box reach 1 px past, and at 480×320 Quick Connect's first sentence opened
+ * 1 px under the title's rule, which reviewers read as a cut line; one more pixel of scroll put
+ * it wholly under). Whole-pixel scrolls move every line by whole pixels, so the edge and a line
+ * keep the same fraction: 0.05 px only absorbs float noise. */
+const SLIVER = 0.05;
 
 /** How many lines straddle `edge` (the title's rule or the footer's top) at scroll `s`. */
 function straddles(g: RevealGeometry, s: number, edge: number): number {
@@ -58,11 +59,23 @@ function clear(g: RevealGeometry, span: Span, s: number, max: number): boolean {
   );
 }
 
+/** How many whole pixels of `span` sit between the two fades at scroll `s`. */
+function shown(g: RevealGeometry, span: Span | null, s: number, max: number): number {
+  if (span === null) return 0;
+  const d = s - g.scrollTop;
+  const top = Math.max(span.top - d, g.titleBottom + (s > 0 ? g.fade : 0));
+  const bottom = Math.min(span.bottom - d, g.footerTop - (s < max ? g.fade : 0));
+  return Math.max(0, Math.floor(bottom - top));
+}
+
 /** The scroll (whole pixels) that puts the target whole between the fades, moving as little as
  * it can. Among those, in order: no line cut by the title's rule (a sentence sliced under the
  * title was what round 20's reviewers saw), none cut by the footer's edge, the `also` span's top
- * in view too. When the target can't fit between the fades at all, its top goes just under the
- * title's fade. */
+ * in view too, then as much of `also` as can show (round 22: with no line allowed past an edge,
+ * a blocked Enter from the password field stopped at the nearest clean scroll, the fingerprint
+ * under the title, while one from the top showed it; the most of the key wins, so every way in
+ * lands on the same scroll). When the target can't fit between the fades at all, its top goes
+ * just under the title's fade. */
 export function revealTop(g: RevealGeometry): number {
   const max = Math.max(0, Math.floor(g.maxScroll));
   const now = Math.round(g.scrollTop);
@@ -76,6 +89,7 @@ export function revealTop(g: RevealGeometry): number {
       straddles(g, s, g.titleBottom),
       straddles(g, s, g.footerTop),
       alsoTop === null || clear(g, alsoTop, s, max) ? 0 : 1,
+      -shown(g, g.also ?? null, s, max),
       Math.abs(s - now),
     ];
     if (best === null || lexLess(score, bestScore)) {
