@@ -8,10 +8,8 @@ import type { QuickTarget } from "../quick/target";
 import {
   CHECK_STEPS,
   Code,
-  FORMS,
   LOGIN_FIELDS as SERVE_LOGIN_FIELDS,
   NO_PASSWORD_AUTHS,
-  SINCE,
   VAULT_STATUSES,
   VERIFY_STEPS,
 } from "./serveContract";
@@ -150,9 +148,6 @@ export class BackendCallError extends Error {
   }
 }
 
-/** The first `api_version` with `host.check`. */
-export const CHECK_API_VERSION = SINCE["host.check"];
-
 /** `host.check`'s steps, in the order roster runs them. */
 export { CHECK_STEPS };
 export type CheckStepName = (typeof CHECK_STEPS)[number];
@@ -175,9 +170,6 @@ export interface HostCheck {
   steps: CheckStep[];
 }
 
-/** The first `api_version` with `box.check`: `:check` with no Host (ticket 49). */
-export const BOX_CHECK_API_VERSION = SINCE["box.check"];
-
 /** How a health check came out (`box.check`), as Neovim's `:checkhealth` says them. */
 export type HealthLevel = "ok" | "warn" | "error";
 
@@ -198,12 +190,6 @@ export interface BoxCheck {
   roster_version: string;
   api_version: number;
 }
-
-/** The first `api_version` with `inventory.pull`, `host.verify_login`, `host.update` and `changes.*` (ticket 10). */
-export const EDIT_API_VERSION = SINCE["host.update"];
-
-/** The first `api_version` with `changes.publish` and `changes.diff`'s `message` (ticket 12). */
-export const PUBLISH_API_VERSION = SINCE["changes.publish"];
 
 /** The Host fields the edit form changes (`host.update`'s `changes`). */
 export interface HostFields {
@@ -309,11 +295,6 @@ export interface PublishResult {
   sync: BoxSync;
 }
 
-/** The first `api_version` with the Live Inventory (ticket 28): `host.remove`, `host.rename`,
- * `host.move`, `group.new|rename|delete`, `inventory.reload` (`:source`), `inventory.watch` and the
- * `inventory.changed` notification, and `hosts.list`'s `error`. */
-export const LIVE_API_VERSION = SINCE["inventory.watch"];
-
 /** roster's codes for the Live Inventory (ticket 28). A bad name is 80, an unknown Host 2. */
 export const LiveError = {
   nameTaken: Code.NAME_TAKEN,
@@ -361,12 +342,6 @@ export const EditError = {
   invalidEdit: Code.INVALID_EDIT,
   notVerified: Code.NOT_VERIFIED,
 } as const;
-
-/** The first `api_version` with `host.add`, `host.scan_key` and `host.review` (ticket 11). */
-export const ADD_API_VERSION = SINCE["host.add"];
-
-/** The first `api_version` whose `host.review` takes `reviewed: false` (un-review; issue #78). */
-export const UNREVIEW_API_VERSION: number = FORMS["host.review"][1];
 
 /** `host.add`'s params. A Login is either `auth` (an existing vault item, `bw:<host> ssh`) or
  * `password` (typed into the form, saved as `item` after the test login). Without one the Host
@@ -420,9 +395,6 @@ export const AddError = {
   hostExists: Code.HOST_EXISTS,
 } as const;
 
-/** The first `api_version` with `vault.configure`: init.lua's vault settings reach roster (tickets 35, 41). */
-export const VAULT_CONFIG_API_VERSION = SINCE["vault.configure"];
-
 /** `vault.configure`'s params: this Box's vault settings from init.lua, as roster takes them.
  * Paths and choices only, never a secret. A key left out is roster.yml's again. */
 export interface VaultSettings {
@@ -465,14 +437,6 @@ export interface SaveTargets {
   problem: { code: number; message: string; fix: string } | null;
 }
 
-/** The first `api_version` with `vault.item_fields` (T220): the add-Host form's "Fill from this item" (#437). */
-export const ITEM_FIELDS_API_VERSION = SINCE["vault.item_fields"];
-
-/** The first `api_version` whose roster has `roster setup --host NAME`, that Host alone (#437, Q198).
- * T227 added the flag with no API bump of its own, at API 29, and v0.6.0 is the first release with
- * API 29, so every roster speaking 29 has it. An older one has only `--only NAME` (#461). */
-export const SETUP_HOST_API_VERSION = 29;
-
 /** `vault.item_fields`: what a vault item says about its Host, never its password. A field the item
  * doesn't have is left out; `note` says why its URI gave no address. */
 export interface VaultItemFields {
@@ -512,26 +476,6 @@ export interface VaultAccount {
   email: string;
   server: string | null;
 }
-
-/** The first `api_version` with `vault.logout` and `vault.status`'s `account` (ticket 42). */
-export const SIGN_OUT_API_VERSION = SINCE["vault.logout"];
-
-/** The first `api_version` with the Mesh's methods (ticket 39): `mesh.plan`, `mesh.apply`,
- * `mesh.cut`, `mesh.status`, and a Host's `mesh`. The app's controls for them are T50's Plugin. */
-export const MESH_API_VERSION = SINCE["mesh.plan"];
-
-/** serve API 20 (ticket 101, decision Q112): serve answers requests concurrently, its jobs push
- * `job.progress`, and `host.get` takes `settled`. */
-export const JOBS_API_VERSION = SINCE["jobs.list"];
-/** serve API 21 (ticket 108): a Host's check is a job, with `job.progress` and in `jobs.list`. */
-export const CHECK_JOBS_API_VERSION = SINCE["host.check_job"];
-
-/** serve API 27 (ticket 115): named Inventories, `inventories.list` and `inventories.use`. */
-export const INVENTORIES_API_VERSION = SINCE["inventories.list"];
-
-/** serve API 28 (T212): `inventory.info`'s `store` (a plain file or a team repo), and
- * `inventory.create`, the first-run dialog's call when there's no Inventory. */
-export const STORE_API_VERSION = SINCE["inventory.create"];
 
 /** The first-run dialog's three ways (T212): a blank roster.yml, a copy of one, or a clone. */
 export type NewInventoryHow = "blank" | "file" | "repo";
@@ -831,10 +775,6 @@ export const SessionRefusal = {
   passwordNeeded: Code.PASSWORD_NEEDED,
 } as const;
 
-/** The first `api_version` whose Sessions check host keys strictly and ask first (ticket 36, Q60):
- * `session.prepare`'s 44, `host.scan_key {host}`, `host.trust_key`. */
-export const HOST_KEY_API_VERSION = SINCE["host.trust_key"];
-
 /** `host.scan_key {host}` (API 11, ticket 36): the key a Host offers, to ask about. */
 export interface HostKeyScan extends ScannedKey {
   host: string;
@@ -845,9 +785,6 @@ export interface HostKeyTrust extends Omit<HostKeyScan, "recorded"> {
   recorded: boolean;
 }
 
-/** The first `api_version` with Quick Connect (ticket 14): `quick.prepare`. */
-export const QUICK_CONNECT_API_VERSION = SINCE["quick.prepare"];
-
 /** A Quick Connect's box and the fingerprint the user was shown (`scanKey`): what `quick.prepare`
  * takes besides the password. */
 export interface QuickConnect extends QuickTarget {
@@ -857,13 +794,6 @@ export interface QuickConnect extends QuickTarget {
 /** Login references with no password behind them: roster's providers.NO_PASSWORD. (`prompt` has
  * none saved either, but it's a provider of its own.) */
 export { NO_PASSWORD_AUTHS };
-
-/** The first `api_version` with `session.fill` (ticket 119): filling a password prompt. */
-export const FILL_API_VERSION = SINCE["session.fill"];
-
-/** The first `api_version` with `session.fill`'s `hop` (ticket 120): filling a nested ssh's
- * prompt, or that Host's sudo, with that Host's Login. */
-export const NESTED_FILL_API_VERSION: number = FORMS["session.fill"][1];
 
 /** The Inventory Host a nested ssh went to and what roster resolved it to (`session.fill`'s
  * `hop`). Never a password. */
@@ -885,10 +815,6 @@ export const FillRefusal = {
   /** The Login that would answer has no saved password. */
   nothingToFill: Code.NOTHING_TO_FILL,
 } as const;
-
-/** The first `api_version` with "Save to vault" after a Session's own login (tickets 15, 16):
- * `quick.prepare`'s `save`, `quick.save`, `vault.forget_typed` and `session.logged_in`. */
-export const SAVE_TO_VAULT_API_VERSION = SINCE["quick.save"];
 
 /** `quick.save`'s params: the Quick Connect (serve's id) and the Host it becomes. The password
  * isn't here: serve holds it, and saves it only after that Session logged in with it (Q43). */

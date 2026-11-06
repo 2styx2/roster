@@ -651,7 +651,7 @@ function Workspace({
   const frame = (content: ReactNode) => (
     <TypedPasswordsContext.Provider value={typed}>
       <HintsShown value={hintsShown}>
-        <RosterApi.Provider value={info ? caps.api : undefined}>
+        <RosterApi.Provider value={info ? caps : undefined}>
           <WindowFrame
             layout={layout}
             controls={platform.window}

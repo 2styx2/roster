@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { XtermPromptScreen } from "./promptScreen";
 import { FAKE_FINGERPRINT, FAKE_HOST_PASSWORD, fakeBackend, makeHosts, type FakeScenario } from "../backend/fake";
-import { BackendCallError, FillRefusal, QUICK_CONNECT_API_VERSION, SAVE_TO_VAULT_API_VERSION, SessionRefusal, type SessionEvents } from "../backend/types";
+import { BackendCallError, FillRefusal, SessionRefusal, type SessionEvents } from "../backend/types";
 import { IDLE_MS, hookLine } from "./shellHooks";
 import { PromptWatch } from "./prompt";
 import { Tabs, type TabStatus } from "./tabs";
+import { sinceOf } from "../backend/capabilities";
 
 const hosts = makeHosts(12);
 const reviewed = hosts.hosts.filter((h) => h.reviewed).map((h) => h.name);
@@ -732,7 +733,7 @@ describe("Quick Connect (ticket 14)", () => {
   const to = { user: "root", address: "10.0.0.5", port: 22 };
   const PASSWORD = FAKE_HOST_PASSWORD;
   function quick(extra: Partial<FakeScenario> = {}) {
-    const backend = fakeBackend({ ...unlocked, hosts, apiVersion: QUICK_CONNECT_API_VERSION, ...extra });
+    const backend = fakeBackend({ ...unlocked, hosts, apiVersion: sinceOf("quickConnect"), ...extra });
     return { backend, tabs: new Tabs(backend) };
   }
   const status = (tabs: Tabs) => tabs.snapshot().tabs[0]?.status;
@@ -854,7 +855,7 @@ describe('"Save to vault" on Quick Connect (ticket 15)', () => {
     const backend = fakeBackend({
       ...unlocked,
       hosts,
-      apiVersion: SAVE_TO_VAULT_API_VERSION,
+      apiVersion: sinceOf("saveToVault"),
       quickBoxes: { "10.0.0.5": { hostname: "nas-01" } },
       ...extra,
     });
@@ -932,7 +933,7 @@ describe('"Save to vault" on Quick Connect (ticket 15)', () => {
 describe("a held password, around the Session's life (iteration-4 review)", () => {
   /** The fake Backend, but the test resolves the Session's opening and says when it logged in. */
   function heldSessions() {
-    const backend = fakeBackend({ ...unlocked, hosts, apiVersion: SAVE_TO_VAULT_API_VERSION });
+    const backend = fakeBackend({ ...unlocked, hosts, apiVersion: sinceOf("saveToVault") });
     let events: SessionEvents | null = null;
     let resolve: (held: string) => void = () => {};
     backend.openSession = (_host, _size, ev) => {

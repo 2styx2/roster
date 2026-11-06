@@ -1,55 +1,45 @@
 // What the connected roster serve can do, from its `api_version`: one place that knows which
 // feature needs which version, and the one way the app says a feature needs a newer roster.
-import {
-  ADD_API_VERSION,
-  BOX_CHECK_API_VERSION,
-  CHECK_API_VERSION,
-  CHECK_JOBS_API_VERSION,
-  EDIT_API_VERSION,
-  FILL_API_VERSION,
-  HOST_KEY_API_VERSION,
-  INVENTORIES_API_VERSION,
-  ITEM_FIELDS_API_VERSION,
-  JOBS_API_VERSION,
-  LIVE_API_VERSION,
-  NESTED_FILL_API_VERSION,
-  PUBLISH_API_VERSION,
-  QUICK_CONNECT_API_VERSION,
-  SAVE_TO_VAULT_API_VERSION,
-  SIGN_OUT_API_VERSION,
-  STORE_API_VERSION,
-  UNREVIEW_API_VERSION,
-  VAULT_CONFIG_API_VERSION,
-  type InventoryInfo,
-} from "./types";
+import { FORMS, SINCE } from "./serveContract";
+import type { InventoryInfo } from "./types";
 
-/** Each feature: the first API version with it, and what the user tried, as the refusal names it. */
+/** Each feature: the first API version with it (the serve method's, from serveContract.ts), and
+ * what the user tried, as the refusal names it. */
 const FEATURES = {
-  check: { since: CHECK_API_VERSION, what: ":check" },
-  boxCheck: { since: BOX_CHECK_API_VERSION, what: ":check" },
-  checkJobs: { since: CHECK_JOBS_API_VERSION, what: "Stopping a check" },
-  edit: { since: EDIT_API_VERSION, what: ":edit" },
-  changes: { since: EDIT_API_VERSION, what: ":changes" },
-  pull: { since: EDIT_API_VERSION, what: ":pull" },
-  publish: { since: PUBLISH_API_VERSION, what: ":publish" },
-  add: { since: ADD_API_VERSION, what: "Adding a Host" },
-  review: { since: ADD_API_VERSION, what: ":review" },
-  unreview: { since: UNREVIEW_API_VERSION, what: ":host unreview" },
-  live: { since: LIVE_API_VERSION, what: "Changing the Inventory here" },
-  vaultConfig: { since: VAULT_CONFIG_API_VERSION, what: "init.lua's vault settings" },
-  hostKey: { since: HOST_KEY_API_VERSION, what: "Asking about a new Host's host key" },
-  quickConnect: { since: QUICK_CONNECT_API_VERSION, what: "Quick Connect" },
-  saveToVault: { since: SAVE_TO_VAULT_API_VERSION, what: "Save to vault" },
-  signOut: { since: SIGN_OUT_API_VERSION, what: ":vault signout" },
-  jobs: { since: JOBS_API_VERSION, what: "Plugins' job progress" },
-  inventories: { since: INVENTORIES_API_VERSION, what: ":inventory" },
-  fill: { since: FILL_API_VERSION, what: "Filling a password prompt" },
-  nestedFill: { since: NESTED_FILL_API_VERSION, what: "Filling a nested ssh's prompt" },
-  itemFields: { since: ITEM_FIELDS_API_VERSION, what: "Fill from this item" },
-  store: { since: STORE_API_VERSION, what: "A plain roster.yml" },
+  check: { since: SINCE["host.check"], what: ":check" },
+  boxCheck: { since: SINCE["box.check"], what: ":check" },
+  checkJobs: { since: SINCE["host.check_job"], what: "Stopping a check" },
+  edit: { since: SINCE["host.update"], what: ":edit" },
+  changes: { since: SINCE["host.update"], what: ":changes" },
+  pull: { since: SINCE["host.update"], what: ":pull" },
+  publish: { since: SINCE["changes.publish"], what: ":publish" },
+  add: { since: SINCE["host.add"], what: "Adding a Host" },
+  review: { since: SINCE["host.add"], what: ":review" },
+  unreview: { since: FORMS["host.review"][1], what: ":host unreview" },
+  live: { since: SINCE["inventory.watch"], what: "Changing the Inventory here" },
+  vaultConfig: { since: SINCE["vault.configure"], what: "init.lua's vault settings" },
+  hostKey: { since: SINCE["host.trust_key"], what: "Asking about a new Host's host key" },
+  quickConnect: { since: SINCE["quick.prepare"], what: "Quick Connect" },
+  saveToVault: { since: SINCE["quick.save"], what: "Save to vault" },
+  signOut: { since: SINCE["vault.logout"], what: ":vault signout" },
+  /** serve answers concurrently and its jobs push `job.progress` (decision Q112). */
+  jobs: { since: SINCE["jobs.list"], what: "Plugins' job progress" },
+  inventories: { since: SINCE["inventories.list"], what: ":inventory" },
+  fill: { since: SINCE["session.fill"], what: "Filling a password prompt" },
+  nestedFill: { since: FORMS["session.fill"][1], what: "Filling a nested ssh's prompt" },
+  itemFields: { since: SINCE["vault.item_fields"], what: "Fill from this item" },
+  /** `inventory.info`'s `store` (a plain file or a team repo) came with `inventory.create`. */
+  store: { since: SINCE["inventory.create"], what: "A plain roster.yml" },
+  /** `roster setup --host NAME`, that Host alone (#437, Q198): a CLI option, not a serve method.
+   * T227 added it with no API bump of its own, at 29, and v0.6.0 is the first release with API 29,
+   * so every roster speaking 29 has it; an older one has only `--only NAME` (#461). */
+  setupHost: { since: 29, what: "roster setup --host" },
 } as const satisfies Record<string, { since: number; what: string }>;
 
 export type Feature = keyof typeof FEATURES;
+
+/** The first API version with `feature`: for a fake Backend or a test that speaks just enough. */
+export const sinceOf = (feature: Feature): number => FEATURES[feature].since;
 
 export interface Capabilities {
   /** serve's API version; 0 while it isn't up. */
