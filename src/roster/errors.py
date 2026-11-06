@@ -7,6 +7,8 @@ Nothing else of roster's is imported here: serve, the CLI, the providers and the
 this module, and a provider's kinds of failure carry their own (providers/problems.py). The app and the Rust core
 read them by name from docs/serve-contract.json (scripts/gen-serve-api.py)."""
 
+from typing import Any
+
 # ---- JSON-RPC's own codes, which serve answers with too
 PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
@@ -237,7 +239,8 @@ PATH_NOT_REPEATED = "(not repeated)"
 class Problem(Exception):
     """A clean error: a stable code, roster's message, and (optionally) the fix and extra data."""
 
-    def __init__(self, code, message, data=None, fix=None, details=None):
+    def __init__(self, code: int, message: str, data: dict[str, Any] | None = None, fix: str | None = None,
+                 details: str | None = None) -> None:
         super().__init__(message)
         self.code, self.message, self.fix, self.details = code, message, fix, details
         self.data = data if fix is None else {**(data or {}), "fix": fix}
@@ -275,7 +278,7 @@ class InventoryError(Problem):
 
 
 
-def tagged(problem):
+def tagged(problem: Problem) -> str:
     """PROBLEM's message as the command line shows it: `[CODE] MESSAGE`, or MESSAGE alone for an UNTAGGED code."""
     return problem.message if problem.code in UNTAGGED else f"[{problem.code}] {problem.message}"
 
@@ -294,7 +297,7 @@ class Exit(SystemExit):
     message tagged(), with FULL ` (DETAILS) - FIX` after it (for a library's Problem whose message doesn't say them),
     and exits 1; serve and --json answer with the Problem."""
 
-    def __init__(self, problem, full=False):
+    def __init__(self, problem: Problem, full: bool = False) -> None:
         more = ((f" ({problem.details})" if problem.details else "") + (f" - {problem.fix}" if problem.fix else "")
                 if full else "")
         super().__init__(f"error: {tagged(problem)}{more}")

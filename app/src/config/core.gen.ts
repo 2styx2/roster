@@ -1049,3 +1049,42 @@ export type PackageChecked = {
   update: PackageUpdate | null,
   error: string | null,
 };
+
+/**
+ * A serve method the frontend calls as it is, through `serve_call` (serve_api.rs's `PASS_THROUGH`).
+ */
+export type PassThrough =
+  | "hosts.list"
+  | "host.get"
+  | "host.add"
+  | "host.update"
+  | "host.review"
+  | "host.verify_login"
+  | "host.scan_key"
+  | "box.check"
+  | "jobs.list"
+  | "host.remove"
+  | "host.rename"
+  | "host.move"
+  | "group.new"
+  | "group.rename"
+  | "group.delete"
+  | "inventory.reload"
+  | "inventory.watch"
+  | "inventory.pull"
+  | "changes.diff"
+  | "changes.discard"
+  | "changes.publish"
+  | "inventories.list"
+  | "inventories.use"
+  | "vault.status"
+  | "vault.unlock"
+  | "vault.login"
+  | "vault.lock"
+  | "vault.logout"
+  | "vault.configure"
+  | "vault.targets"
+  | "vault.item_fields"
+  | "quick.save"
+  | "host.save_login"
+  | "vault.forget_typed";

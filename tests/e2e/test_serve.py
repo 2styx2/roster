@@ -4,7 +4,6 @@ argv run for real (a key Login and an askpass one), $/cancel, and the error answ
 locked vault."""
 
 import json
-import time
 
 import pytest
 
@@ -230,8 +229,9 @@ def test_cancel(serve, lab):
         pytest.skip("this container engine can't pause a container (cgroups)")
     try:
         rid = serve.request("host.check", {"host": "lab-02"})
-        serve.wait_note("job.progress", lambda p: p.get("host") == "lab-02" and p.get("state") == "running")
-        time.sleep(1)
+        # the paused container accepts the connection, so the check hangs in its handshake: cancelled there
+        serve.wait_note("job.progress", lambda p: p.get("host") == "lab-02" and p.get("state") == "running"
+                        and p.get("at") == "host-key")
         c = result(serve.call("$/cancel", {"id": rid}, step="cancel-running"))
         assert c["cancelled"] is True and c["was"] == "running"
         r = result(serve.answer(rid, "cancelled-check"))

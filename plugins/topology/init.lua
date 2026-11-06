@@ -281,7 +281,7 @@ local function cut_poll()
       roster.notify("Cut " .. cutting.host .. ": roster serve lost track of it; :topology shows where the Mesh is now.", "warn")
       return cut_over()
     end
-    if j.state == "running" then
+    if j.state == "running" or j.state == "stopping" then
       roster.progress.set("topology-cut", { title = "Cutting " .. cutting.host .. " from the Mesh", done = j.done or 0, total = j.total or 0 })
       if cutting.again then cut_poll() end
       return

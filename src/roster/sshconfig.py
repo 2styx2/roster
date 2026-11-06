@@ -32,12 +32,12 @@ def token_path(path: str | Path) -> str:
     return ssh_quote(path, tokens=True)
 
 
-def comment(text) -> str:
+def comment(text: object) -> str:
     """TEXT on a comment line: no control character can end the line early."""
     return re.sub(r"[\x00-\x1f\x7f]", "?", str(text))
 
 
-def header(source) -> str:
+def header(source: object) -> str:
     """The first line of an ssh config roster writes from the roster.yml SOURCE."""
     return HEADER + comment(source)
 

@@ -556,7 +556,7 @@ export function topologyPlugin(): FakePlugin {
             roster.notify(`Cut ${cutting.host}: roster serve lost track of it; :topology shows where the Mesh is now.`, "warn");
             return cutOver();
           }
-          if (j.state === "running") {
+          if (j.state === "running" || j.state === "stopping") {
             roster.progress.set("topology-cut", { title: `Cutting ${cutting.host} from the Mesh`, done: j.done ?? 0, total: j.total ?? 0 });
             if (cutting.again) cutPoll();
             return;

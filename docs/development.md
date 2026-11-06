@@ -26,7 +26,9 @@ src/roster/
   jsonout.py        `--json` on the read commands: one document with a version, `cmd:`/`env:` references cut (Q92, Q110)
   jsondocs.py       each `--json` document as a Pydantic model (T176), imported only when one prints
   context.py        the Inventory a run uses (name, roster.yml) and the one table of files roster keeps per Inventory
-                    (ssh config, known_hosts, Mesh state, key-name, rotation record, lock); `inv remove` walks it
+                    (ssh config, known_hosts, Mesh state, key-name, rotation record, lock); `inv remove` walks it;
+                    BOX_FILES: the ones kept once for this Box (key-created, inventories.json, the first-run lock,
+                    vault-seen/, vault-sync/), which uninstall.sh removes
   common.py         small shared helpers: output, the one atomic writer (replace_file, write_private), reading a
                     private file, text, starting and ending programs
   conpty.py         a program on a Windows pseudoconsole (ConPTY, ctypes), in a job object: native Windows' PTY for bw_login
@@ -54,10 +56,13 @@ src/roster/
                     making one, when each was made (key-created) and key_max_age:
   rotation.py       the Box key rotation's state (T240, Q204): its pending record (key-rotation), KEY.new and KEY.old,
                     and the ssh config's second IdentityFile while a Host is pending
-  rotate.py         `roster setup --rotate`: the rotation itself, Host by Host over a one-key ssh config
+  rotate.py         `roster setup --rotate`: the Hosts it covers and what it refuses, then the rotation itself, Host by
+                    Host over a one-key ssh config
   boxsetup.py       `roster setup`: this Box's key onto the Hosts that don't take it yet, re-tagged after a rename, then
                     the Mesh; the Hosts a plain `ssh NAME` wouldn't reach are skipped (revoke too)
   revoke.py         `roster revoke` and `revoke --all`: this Box's key off the Hosts, and which key files to delete after
+  run.py            `roster run HOST -- COMMAND`: over the key or the Login's password, --sudo with the password on
+                    stdin, a Windows Host's under PowerShell; never by a name that reaches another Inventory's Host
   boxlock.py        the Box-wide lock (run.lock): one run at a time changes an Inventory's Hosts (setup, revoke, Mesh writes);
                     serve's first-run lock (inventory.create one at a time on this Box)
   boxsync.py        `roster sync` for this Box after roster changed roster.yml: run by store.py's write, serve's and the CLI's
@@ -98,6 +103,8 @@ src/roster/
                     nothing else of roster's
   mesh.py           the Mesh: who reaches whom (mesh:, links:), plan/apply over ssh one Host at a time, cut, status,
                     drift for `roster check`; the sh it runs on Hosts (docs/mesh.md)
+  meshview.py       the Mesh as text: a plan, an apply, `roster check`'s drift and whether it fails, a cut not finished;
+                    the apply `roster setup` and `setup --rotate` run
   diagnose.py       a Host's Login checked before ssh runs, `roster check HOST` / host.check's steps, host.verify_login, host.scan_key
   fill.py           a prompt fill (session.fill): which of a Host's Logins answers a sudo, su or ssh prompt, or why none may
   health.py         this Box's health: `roster check --box` / box.check's sections (roster.yml, ssh, vault CLIs, askpass,

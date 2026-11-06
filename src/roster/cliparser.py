@@ -9,7 +9,7 @@ import functools
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NoReturn, cast
 
 from . import __version__, clihelp, jsonout
 from .errors import ROSTER_ERROR
@@ -43,7 +43,7 @@ class Typed:
     """The command line roster's parsers judge: its WORDS (no usage error repeats one), whether it asks for --json
     (a usage error is JSON then), and ROOT, roster's own parser (the names that may be repeated)."""
 
-    words: list[str] = field(default_factory=list)
+    words: list[str] = field(default_factory=list[str])
     json_errors: bool = False
     root: "Parser | None" = None
 
@@ -55,15 +55,15 @@ class Parser(argparse.ArgumentParser):
     its TYPED."""
     commands_text = ""
 
-    def __init__(self, *args, typed: Typed | None = None, **kwargs):
+    def __init__(self, *args: Any, typed: Typed | None = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.typed = typed if typed is not None else Typed()
 
-    def add_subparsers(self, **kwargs):
+    def add_subparsers(self, **kwargs: Any) -> "argparse._SubParsersAction[Parser]":
         kwargs.setdefault("parser_class", functools.partial(Parser, typed=self.typed))
-        return super().add_subparsers(**kwargs)
+        return cast("argparse._SubParsersAction[Parser]", super().add_subparsers(**kwargs))
 
-    def error(self, message):
+    def error(self, message: str) -> NoReturn:
         # a value typed in the wrong place (`roster --session TOKEN vault …`, `vault bw --write=VALUE`) may be a
         # password or a session token: no usage error repeats one
         root = self.typed.root or self
@@ -74,30 +74,31 @@ class Parser(argparse.ArgumentParser):
         self.print_usage(sys.stderr)
         self.exit(2, f"{self.prog}: error: {message}\n(`{self.prog} --help` shows how)\n")
 
-    def names(self):
+    def names(self) -> set[str]:
         """Every name roster's parsers know (options, commands, choices): a typed one may be repeated."""
-        found = set()
+        found: set[str] = set()
         for a in self._actions:
             found.update(a.option_strings)
             if isinstance(a, argparse._SubParsersAction):
-                found.update(a.choices)
-                for s in a.choices.values():
+                choices = cast("argparse._SubParsersAction[Parser]", a).choices
+                found.update(choices)
+                for s in choices.values():
                     found |= s.names()
             elif a.choices:
                 found.update(str(c) for c in a.choices)
         return found
 
-    def all_options(self):
+    def all_options(self) -> list[str]:
         """Every --option of this parser and its commands' (an unknown one is reported by roster's own parser)."""
-        found = []
+        found: list[str] = []
         for a in self._actions:
             found += [o for o in a.option_strings if o.startswith("--")]
             if isinstance(a, argparse._SubParsersAction):
-                for s in a.choices.values():
+                for s in cast("argparse._SubParsersAction[Parser]", a).choices.values():
                     found += s.all_options()
         return sorted(set(found))
 
-    def format_help(self):
+    def format_help(self) -> str:
         text = super().format_help()
         if not self.commands_text:
             return text
@@ -327,7 +328,7 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
     return p
 
 
-def describe(sub, prefix=""):
+def describe(sub: "argparse._SubParsersAction[Parser]", prefix: str = "") -> dict[str, str]:
     """Each command's --help opens with its one-line help as a sentence and ends with examples (clihelp), a command
     with actions of its own (vault) too. Returns {name: one-line help}."""
     helps = {a.dest: a.help or "" for a in sub._choices_actions}
@@ -337,11 +338,11 @@ def describe(sub, prefix=""):
         s.formatter_class = clihelp.Formatter
         for a in s._actions:
             if isinstance(a, argparse._SubParsersAction):
-                describe(a, f"{prefix}{name} ")
+                describe(cast("argparse._SubParsersAction[Parser]", a), f"{prefix}{name} ")
     return helps
 
 
-def check(parser, args):
+def check(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     """Options a command takes but not together (or not without another): a usage error from PARSER."""
     if args.cmd == "discover" and args.json and args.write:
         parser.error("--json goes with discover's preview, not --write: drop one of them")
@@ -378,10 +379,11 @@ def check(parser, args):
         parser.error("revoke --all revokes every Inventory's Hosts: drop --only, --inv and -c")
 
 
-def command_parser(parser, words):
+def command_parser(parser: argparse.ArgumentParser, words: Sequence[str]) -> argparse.ArgumentParser:
     """The parser of `roster WORDS...` (`vault bw`), or a usage error naming the word that isn't a command."""
     for i, w in enumerate(words):
-        found = next((a.choices for a in parser._actions if isinstance(a, argparse._SubParsersAction)), {})
+        found = next((cast("argparse._SubParsersAction[argparse.ArgumentParser]", a).choices for a in parser._actions
+                      if isinstance(a, argparse._SubParsersAction)), dict[str, argparse.ArgumentParser]())
         if w not in found:
             lists = f"`roster help {' '.join(words[:i])}` lists its commands" if i else "`roster help` lists the commands"
             parser.error(f"no help for that {clihelp.HIDDEN}: {lists}")

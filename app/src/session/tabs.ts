@@ -608,6 +608,7 @@ export class Tabs {
         run.watch?.hookSent();
         run.watch?.typed(line);
         run.echoWindow = { tail: new Uint8Array(0) };
+        // A write fails only once the Session has ended, which its exit reports; the hooks are gone with it.
         void entry.session.write(line).catch(() => {});
         return true;
       },
@@ -771,6 +772,7 @@ export class Tabs {
     entry.run.stop();
     this.dropSave(entry);
     entry.sink = null;
+    // A Session that already ended can't be closed again: the tab goes either way.
     void entry.session?.close().catch(() => {});
     entry.session = null;
     this.entries.splice(i, 1);

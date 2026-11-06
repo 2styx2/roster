@@ -504,10 +504,9 @@ def test_reloading_while_a_box_setting_locks_a_provider_leaves_both_whole(state,
     def lock(ctx):
         in_lock.set()
         go.wait(5)
-    monkeypatch.setitem(providers.PROVIDERS, "aaa-test", {"get": lambda spec, ctx: "x", "lock": lock,
-                                                          "box_paths": ("db",), "help": "", "tool": "", "kind": "plugin"})
-    monkeypatch.setitem(providers.PROVIDER_STATE, "aaa-test", {"ready": True})
-    monkeypatch.setattr(providers, "BOX_SETTINGS", {})
+    providers.register("aaa-test", box_paths=("db",), lock=lock,
+                       unlock=lambda password, ctx: ctx.state.update(ready=True))(lambda spec, ctx: "x")
+    providers.unlock("aaa-test", "pw")
     errors = []
 
     def configure():
@@ -524,7 +523,8 @@ def test_reloading_while_a_box_setting_locks_a_provider_leaves_both_whole(state,
         go.set()
         t.join(5)
     finally:
-        providers.PROVIDERS.pop(added, None)
+        for name in (added, "aaa-test"):
+            providers.PROVIDERS.pop(name, None)
     assert errors == []
 
 

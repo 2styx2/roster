@@ -13,11 +13,11 @@ from datetime import datetime, timezone
 
 from . import providers
 from .common import UTC_TIME, NotPrivate, plain, read_private, say, utc_now, write_private
-from .context import user_config_dir
+from .context import box_file
 
 
 def snapshot_path(provider):
-    return user_config_dir() / "vault-sync" / f"{provider}.json"
+    return box_file("vault_sync") / f"{provider}.json"
 
 
 def load(provider, quiet=False):

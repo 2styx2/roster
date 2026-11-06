@@ -308,9 +308,10 @@ remove "install.sh's kept answers" "$CONF_DIR/install-choices"
 # roster's own folder: what roster wrote (Mesh state, the Inventory list) goes; what you put there is asked about.
 # Kept with roster: revoke --all and mesh cut --all need them.
 mine=()
-# Every file context.FILES keeps in this folder, plus key-created (tests/test_uninstall_state.py holds the two together)
+# Every file context.FILES and context.BOX_FILES keep in this folder (tests/test_uninstall_state.py holds them together)
 for p in "$CONF_DIR"/mesh*.json* "$CONF_DIR"/inventories.json* "$CONF_DIR"/*.removed-* "$CONF_DIR"/key-name* \
-         "$CONF_DIR"/key-rotation* "$CONF_DIR"/run*.lock "$CONF_DIR"/key-created; do [[ -e $p ]] && mine+=("$p"); done
+         "$CONF_DIR"/key-rotation* "$CONF_DIR"/run*.lock "$CONF_DIR"/key-created "$CONF_DIR"/inventory.create.lock \
+         "$CONF_DIR"/vault-seen "$CONF_DIR"/vault-sync; do [[ -e $p ]] && mine+=("$p"); done
 remove "roster's state in $(home "$CONF_DIR")" ${mine[@]+"${mine[@]}"}
 yours=()
 for p in "$CONF_DIR"/*; do [[ -e $p ]] && yours+=("$p"); done

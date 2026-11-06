@@ -732,9 +732,8 @@ def test_a_command_past_4096_bytes_runs_though_the_hosts_sshd_never_sends_eof(wi
 
 
 def test_a_command_too_long_for_the_script_is_refused_before_anything_is_sent(win, capsys, monkeypatch):
-    from roster import cli
     main(["sync"])
-    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: pytest.fail("something was sent"))
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("something was sent"))
     from roster import winhost
     monkeypatch.setattr(winhost.subprocess, "Popen", lambda *a, **k: pytest.fail("something was sent"))
     with pytest.raises(SystemExit) as e:
@@ -768,10 +767,9 @@ def test_run_on_a_posix_host_marked_windows_says_to_fix_os(win, capfd, monkeypat
 
 @pytest.mark.parametrize("enroll", [True, False])
 def test_run_sudo_on_a_windows_host_is_refused_before_the_vault(write_config, monkeypatch, capsys, enroll):
-    from roster import cli
     write_config(WIN.replace("      dc-01: 10.0.0.5\n", f"      dc-01: {{ ip: 10.0.0.5, enroll: {str(enroll).lower()} }}\n"))
-    monkeypatch.setattr(cli, "get_secret", lambda *a: pytest.fail("the vault was asked"))
-    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: pytest.fail("something ran"))
+    monkeypatch.setattr("roster.run.get_secret", lambda *a: pytest.fail("the vault was asked"))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("something ran"))
     with pytest.raises(SystemExit) as e:
         main(["run", "--sudo", "dc-01", "--", "whoami"])
     assert "[159]" in str(e.value) and "sudo" in str(e.value) and "Administrators" in str(e.value)

@@ -1,5 +1,5 @@
 """uninstall.sh removes every file roster itself keeps in its own folder (~/.config/roster), and only asks about the
-rest. Its list is shell globs; context.FILES and key_created_file are where roster names those files."""
+rest. Its list is shell globs; context.FILES and context.BOX_FILES are where roster names those files."""
 
 import fnmatch
 import re
@@ -19,7 +19,7 @@ def removed_globs() -> list[str]:
 
 
 def roster_state_names() -> list[str]:
-    names = ["key-created", context.key_created_file().name]
+    names = list(context.BOX_FILES.values())
     for f in context.FILES.values():
         if f.folder is context.user_config_dir:
             names += [f.unnamed, f.named.format("work"), f.named.format("work") + ".removed-20260101T000000"]

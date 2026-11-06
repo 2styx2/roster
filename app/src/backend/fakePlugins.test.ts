@@ -150,7 +150,7 @@ describe("what a fake Plugin gets has its cmd:/env: Login references cut (decisi
     const plugins = fakePluginHost({ watcher }, () => [host], undefined, serve);
     const loaded = await plugins.pluginLoad("watcher", watcher.manifest.permissions);
     const look = (loaded.reply.ops.find((o) => (o as { op: string }).op === "command") as { run: { handler: number } }).run.handler;
-    const r = await plugins.pluginCall("watcher", look, { args: "", words: [] }, true);
+    const r = await plugins.pluginCall("watcher", look, { args: "", words: [] }, "user");
     expect(r.error).toBeNull();
     await plugins.pluginSettled("watcher");
     await plugins.pluginEvent("job_progress", { kind: "check", job: "check-1", state: "failed", error: "auth env:LAB_PW is unset" });
@@ -189,7 +189,7 @@ describe("a fake Plugin's roster.cmd and roster's own commands (issue #184)", ()
     const loaded = await host.pluginLoad("probe", [], null, []);
     const tryIt = (loaded.reply.ops as { op: string; name?: string; run?: { handler: number } }[]).find((o) => o.op === "command" && o.name === "try")?.run?.handler ?? 0;
     const said = async (line: string, builtins: string[]) => {
-      const r = await host.pluginCall("probe", tryIt, { args: line, words: [line] }, true, builtins);
+      const r = await host.pluginCall("probe", tryIt, { args: line, words: [line] }, "user", builtins);
       return (r.ops.find((o) => (o as { op: string }).op === "notify") as { text: string } | undefined)?.text;
     };
     expect(await said("mine", [])).toBe("ran");

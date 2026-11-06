@@ -30,7 +30,7 @@ BW_FLAGS = frozenset({"--pretty", "--raw", "--response", "--cleanexit", "--quiet
                       "-h", "--help", "-v", "--version"})  # bw's own options that may come before its command
 
 
-def bw_command(argv, write):
+def bw_command(argv: list[str], write: bool) -> str | None:
     """The bw command ARGV runs (None for bw's bare options, `--help` or `--version`), or die() saying why it may not
     run. Nothing after the command is ever repeated: it may hold a password."""
     if any(a == "--session" or a.startswith("--session=") for a in argv):
@@ -94,14 +94,14 @@ OP_FLAGS = frozenset({"--debug", "--no-color", "--iso-timestamps", "-h", "--help
 #                                                                    value and may come before its command
 
 
-def op_writes_file(a):
+def op_writes_file(a: str) -> bool:
     """Does argument A ask op to write a file here: --out-file in any form, or a short-option cluster with o in it
     (-o, -fo PATH, -oPATH; pflag reads -abc as -a -b -c)? Over-strict for an odd positional, which fails closed."""
     return a == "--out-file" or a.startswith("--out-file=") or (a.startswith("-") and not a.startswith("--")
                                                                  and "o" in a.split("=", 1)[0])
 
 
-def op_command(argv, write):
+def op_command(argv: list[str], write: bool) -> str | None:
     """The op command ARGV runs ("item get"; None for op's bare options, `--help`), or die() saying why it may not run.
     The command is the words right after op's own valueless options, and must be one op has (or one of its groups,
     alone, which prints its help): an option among the words could make op take another command than roster checked.
@@ -122,7 +122,7 @@ def op_command(argv, write):
         die(f"roster vault op takes only these op options before the command: "
             f"{', '.join(sorted(OP_FLAGS))}; put the others (--account, --format, --vault, ...) after it",
             code=OP_NOT_ALLOWED)
-    words = []
+    words: list[str] = []
     for a in argv[start:]:
         if a.startswith("-"):
             break
@@ -161,7 +161,7 @@ def op_command(argv, write):
 
 # ---------------------------------------------------------------- running them
 
-def run_bw(argv, write, session):
+def run_bw(argv: list[str], write: bool, session: str | None) -> int:
     """bw ARGV (bw_command's checks first) with SESSION (this box's key, or None) as its BW_SESSION; read-only unless
     WRITE; never prompts (--nointeraction is added) but `login` and `unlock`. bw's output goes straight to the
     terminal: roster never reads it. Returns bw's exit code."""
@@ -176,7 +176,7 @@ def run_bw(argv, write, session):
     return _run(["bw", *argv], env, "bw (the Bitwarden CLI) isn't installed")
 
 
-def run_op(argv, write):
+def run_op(argv: list[str], write: bool) -> int:
     """op ARGV (op_command's checks first), read-only unless WRITE. op's sign-in (the app integration, or an
     OP_SESSION_* / OP_SERVICE_ACCOUNT_TOKEN in your shell) reaches op in its environment, never its command line, and
     no Bitwarden variable (BW_*) does. op's input and output are the terminal's: roster never reads them."""
@@ -185,7 +185,7 @@ def run_op(argv, write):
     return _run(["op", *argv], env, "op (the 1Password CLI) isn't installed")
 
 
-def _run(argv, env, missing):
+def _run(argv: list[str], env: dict[str, str], missing: str) -> int:
     try:
         return subprocess.run(program_argv(argv), env=env).returncode
     except ValueError as e:

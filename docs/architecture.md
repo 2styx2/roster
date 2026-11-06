@@ -28,7 +28,7 @@ The seam vocabulary (module, interface, depth, seam, adapter) is from the `codeb
 | `base` | `common`, `winfile`, `conpty`, `providers.problems` | Shared helpers over the leaves: output, the one atomic writer, private files, running programs; a provider failure's code. |
 | `format` | `sshconfig`, `boxkeys`, `boxlock`, `rotation`, `resources`, `named`, `models`, `askpass`, `vaultcli`, `jobs` | One owner per file or format roster keeps (ssh config blocks, this Box's keys, the lock, the rotation record, `inventories.json`, roster.yml's models), and the small services over them. |
 | `core` | `config`, `edit`, `changes`, `claude`, `sshops`, `servemodels`, `jsondocs`, `jsonout`, `providers`, `providers.bitwarden`, `providers.builtin`, `providers.bw_login`, `providers.keepassxc`, `providers.onepassword` | roster.yml loaded, searched and edited as text; its git; ROSTER.md; ssh from this Box; the vaults; serve's and `--json`'s documents. |
-| `feature` | `boxsync`, `store`, `inventories`, `newinventory`, `mesh`, `diagnose`, `fill`, `health`, `web`, `discover`, `addhost`, `fromvault`, `authorized`, `winhost`, `rotate`, `vaultsync`, `cliparser`, `completion`, `manpage`, `boxsetup`, `revoke` | What a command or a serve method does. Both front doors call the same function, so neither holds logic the other needs. |
+| `feature` | `boxsync`, `store`, `inventories`, `newinventory`, `mesh`, `diagnose`, `fill`, `health`, `web`, `discover`, `addhost`, `fromvault`, `authorized`, `winhost`, `rotate`, `vaultsync`, `cliparser`, `completion`, `manpage`, `meshview`, `boxsetup`, `revoke`, `run` | What a command or a serve method does. Both front doors call the same function, so neither holds logic the other needs. |
 | `top` | `serve`, `cli`, `__main__` | The front doors. Nothing imports them, except `__main__` → `cli` and `cli` → `serve` (the `roster serve` command). |
 <!-- /layers:python -->
 
@@ -80,7 +80,7 @@ Rules, as `crates/roster-core/tests/layers.rs` checks them (a `crate::` path in 
 
 ### Pure modules and components
 
-A pure module holds data and rules with no component: a test, the docs build or another feature can load it alone. It may use React hooks, never a `.tsx` module. The pure modules are `sidebar/model.ts`, `session/status.ts`, `graph/model.ts`, `ui/table.ts`, `ui/when.ts`, `ui/dot.ts`, `backend/capabilities.ts`, `panel/stack.ts`, `view/segments.ts`, `edit/diff.ts` and `plugins/sessionEvents.ts` (`PURE` in `app/src/architecture.test.ts`). A component file (`.tsx`) draws; when a type or a word list that a component defines is needed elsewhere, move it into a pure module (as `ui/dot.ts` holds `StateDot`'s states and words).
+A pure module holds data and rules with no component: a test, the docs build or another feature can load it alone. It may use React hooks, never a `.tsx` module. The pure modules are <!-- pure:app -->`sidebar/model.ts`, `session/status.ts`, `graph/model.ts`, `ui/table.ts`, `ui/when.ts`, `ui/dot.ts`, `backend/capabilities.ts`, `panel/stack.ts`, `view/segments.ts`, `edit/diff.ts` and `plugins/sessionEvents.ts`<!-- /pure:app --> (`app/src/architecture.test.ts` reads this list). A component file (`.tsx`) draws; when a type or a word list that a component defines is needed elsewhere, move it into a pure module (as `ui/dot.ts` holds `StateDot`'s states and words).
 
 ### The docs build runs under Node
 
@@ -88,11 +88,13 @@ A pure module holds data and rules with no component: a test, the docs build or 
 
 ### Dependencies between folders
 
-Modules never import each other in a circle, and feature folders depend one way: the test finds every cycle between folders, of any length (the strongly connected folders), not only pairs. The fake Backend counts as an adapter of its own beside `backend/`, and `config/`'s data (`core.gen.ts`, `types.ts`, `defaults.ts`, `ranges.ts`, which `terminal/options.ts` and `panel/layout.ts` read) counts apart from applying it (`apply.ts`, `useConfigActions.ts`). Shared helpers with no feature of their own (`Clock` in `ui/clock.ts`) go in `ui/`. The folder imports that go up today, each listed with its reason in `KNOWN_BACK_EDGES` (the list only shrinks; an entry that no longer closes a cycle fails too):
+Modules never import each other in a circle, and feature folders depend one way: the test finds every cycle between folders, of any length (the strongly connected folders), not only pairs. The fake Backend counts as an adapter of its own beside `backend/`, and `config/`'s data (`core.gen.ts`, `types.ts`, `defaults.ts`, `ranges.ts`, which `terminal/options.ts` and `panel/layout.ts` read) counts apart from applying it (`apply.ts`, `useConfigActions.ts`). Shared helpers with no feature of their own (`Clock` in `ui/clock.ts`) go in `ui/`. The folder imports that go up today, each with its reason (`app/src/architecture.test.ts` reads this list; it only shrinks, and an entry that no longer closes a cycle fails too):
 
+<!-- back-edges:app -->
 - `theme` → `terminal`: `terminal/options.ts` holds the ANSI palette a Theme is made of, and the terminal is drawn with the Theme.
 - `platform` → `terminal`: the browser and Tauri Platforms probe fonts with `terminal/fonts.ts`; the terminal asks `platform/os.ts`.
 - `plugins` → `tutor`: `opRegistry.ts` applies every op kind into its feature, the tutorial's too; `tutor/demo.ts` loads the demo's Plugins.
+<!-- /back-edges:app -->
 
 ## Where new code goes
 
@@ -102,6 +104,7 @@ Modules never import each other in a circle, and feature folders depend one way:
 | An error code | Its name and number in `errors.py`, raised as `die(msg, code=NAME)` or a `Problem` | Run `gen-serve-api.py` (the app and core read it by name from the contract), a row in `docs/app/errors.md` and in `app/src/errors/catalog.ts`, or the code on `NO_ROW` in `catalog.test.ts`. The code in `docs/serve-api.md` if serve returns it. |
 | A CLI command or option | The option in `cliparser.py` (`build_parser`; tag a name-taking argument for completion), its description and examples in `clihelp.py`, `cmd_x` in `cli.py` that calls a feature module and prints | Its section in `docs/cli-reference.md`, `uv run python -m roster.manpage`, an old name in `aliases.py`. |
 | A file roster keeps per Inventory | A row in `context.FILES` (folder, unnamed name, named pattern, `delete` or `set aside` on `inv remove`) | Read it as `current().file(kind)`. `inv remove` walks the table. |
+| A file roster keeps once for this Box | A row in `context.BOX_FILES` | Read it as `box_file(kind)`; a glob for it in uninstall.sh's `mine=()` loop (`tests/test_uninstall_state.py` fails without one). |
 | A piece of a format on disk | Its owner: `keyline.py` (authorized_keys lines, markers, the key scripts' output), `sshconfig.py` (Host blocks, roster's header), `claude.py` (ROSTER.md), `boxkeys.py`, `rotation.py`, `named.py`, `edit.py` (roster.yml as text), `models.py` (roster.yml's meaning) | `winhost.py`'s PowerShell regexes come from `keyline.powershell`, never a second copy. Write through `common.replace_file` or `write_private`; roster.yml through `store.write`, which syncs this Box. |
 | A Host fact (Windows, password Login, placeholder user) | A predicate in `hosts.py`, or a field on `models.Host` | |
 | An `init.lua` option | Its declaration in `crates/roster-core/src/config/shape/table.rs` (type, default, allowed values and bounds, summary, example) and its field in `config/schema.rs` | `cargo run -p roster-core --example gen_config_options`; a row in `docs/app/config.md`. The app reads bounds from `config/ranges.ts`, defaults from `config/defaults.ts`, both generated data. Raise `CONFIG_VERSION` when a name changes meaning (CONTRIBUTING.md, "Lua API"). |
@@ -124,13 +127,13 @@ Never hand-copy a value across languages or modules: generate it from its source
 | `docs/serve-api.md`'s tables, `docs/serve-contract.json`, `app/src/backend/serveContract.ts` | `serve.py`'s `@method` registry and docstrings, `errors.py`, `models.py` and `servemodels.py` | `uv run python scripts/gen-serve-api.py` | `tests/test_serve_api_doc.py`; `backend.rs`'s `contract` tests read the JSON (codes, API versions, deadlines, `PASS_THROUGH`, the Plugin serve list) |
 | `docs/plugin-api.md`, `examples/plugins/types/roster.lua`, `crates/roster-core/tests/fixtures/plugin-api.json`, `app/src/plugins/core.gen.ts` | `crates/roster-core/src/plugin/api/` | `cargo run -p roster-core --example gen_plugin_api` | `crates/roster-core/tests/plugin_api.rs` |
 | `docs/app/options.md`, `examples/types/roster-config.lua`, `crates/roster-core/tests/fixtures/config-options.json`, `config-version/N.json` | `crates/roster-core/src/config/shape/` | `cargo run -p roster-core --example gen_config_options` | `tests/config_shape.rs`, `tests/config_version.rs` |
-| `app/src/config/core.gen.ts` | the Rust types listed in `tests/ts_types.rs` | `ROSTER_WRITE_TS=1 cargo test --test ts_types` | `tests/ts_types.rs` |
+| `app/src/config/core.gen.ts` | the Rust types listed in `tests/ts_types.rs`, and `PassThrough` (the type of `tauri.ts`'s `serve(method)`) from `serve_api::PASS_THROUGH` | `ROSTER_WRITE_TS=1 cargo test --test ts_types` | `tests/ts_types.rs` |
 | `crates/roster-core/tests/fixtures/config-defaults.json` | `Config::default()` | `UPDATE_FIXTURES=1 cargo test --test config` | `tests/config.rs` |
 | `app/src/plugins/*.transcript.json` | the real Lua of each first-party Plugin, in one scripted run | `ROSTER_UPDATE_TRANSCRIPT=1 cargo test --test plugin_mesh` (or `plugin_discover`, `plugin_topology`, `recent_alerts`) | the same Rust tests; the TS tests replay them against the fakes |
 | `src/roster/roster.1` | `cliparser.build_parser` and `docs/cli-reference.md` | `uv run python -m roster.manpage` | `tests/test_manpage.py` |
 | `crates/roster-core/tests/fixtures/repaints.json`, `repaint-fuzz.json` | `scripts/gen-repaint-cases.py`, the core's verdicts | the script, then `ROSTER_WRITE_REPAINT_FUZZ=1 cargo test -p roster-core --lib repaint_fuzz` | `screen.rs`'s tests and `app/src/terminal/repaints.test.ts` |
 
-Shared fixtures that two implementations both read: `tests/vectors/redaction.json` (the `cmd:`/`env:` cut, in `jsonout.py` and the core's `runtime.rs`), `crates/roster-core/tests/fixtures/demo-mesh.json` (`:tutor`'s Mesh and the demo's refusal words, in `plugin/demo.rs` and `backend/fake.ts`), `web-urls.json` (which URLs open, in `browser.rs` and `details/details.ts`), `plugin-permissions.json` (each permission's words). Add a case to the fixture, not to one side's tests.
+Shared fixtures that two implementations both read: `tests/vectors/redaction.json` (the `cmd:`/`env:` cut, in `jsonout.py` and the core's `runtime.rs`), `crates/roster-core/tests/fixtures/demo-mesh.json` (`:tutor`'s Mesh and the demo's refusal words, in `plugin/demo.rs` and `backend/fake.ts`), `web-urls.json` (which URLs open, in `browser.rs` and `details/details.ts`), `plugin-permissions.json` (each permission's words), `addresses.json` (which addresses are public, in `plugin/network.rs` and `fakePlugins.ts`), `own-marks.json` (what counts as a shell's own OSC 133 mark, in `screen.rs` and `session/prompt.test.ts`), `demo-inventory.json` and `demo-mesh-status.json` (the demo's Inventory and Mesh, in the core's Plugin tests and `tutor/tutor.test.ts`), and `tests/vectors/quick-target.json` (how a Quick Connect is named, in `serve.py`'s `quick_label` and `quick/target.ts`). Add a case to the fixture, not to one side's tests.
 
 ## Standards
 
@@ -175,7 +178,7 @@ Run the checks CI runs (or `scripts/check-local.sh`, [development.md](developmen
 ```bash
 uv run ruff check src tests scripts app/scripts && uv run pyright && uv run pytest -n auto
 cd app && npm run check            # tsc, ESLint, Vitest, the docs build
-cargo test && cargo clippy -p roster-core --all-targets -- -D warnings && cargo fmt --check
+cargo test && cargo clippy -p roster-core --all-targets -- -D warnings && cargo fmt --check   # CI: clippy --workspace (WSL can't build the Tauri crate)
 ```
 
 The structure tests, each failing with the rule and this page's section:
@@ -185,6 +188,7 @@ The structure tests, each failing with the rule and this page's section:
 | `tests/test_layers.py` | Python: every module has a layer, imports go down, leaves import nothing, nothing imports `cli`/`serve`, no new cycle, the table here matches the test's |
 | `app/src/architecture.test.ts` | App: the docs site and `:help` load no xterm, terminal view or PluginManager; pure modules load no `.tsx`; only wiring imports wiring; no module cycle; no folder cycle (of any length) but through `KNOWN_BACK_EDGES` |
 | `app/src/docs-site/build.test.ts` | `npm run docs` builds under Node |
+| `app/src/plugins/luaContract.test.ts` | The first-party Plugins (`plugins/`) name serve's codes as the contract does (`local SCAN_RUNNING = 120`, never a bare number after `model.code(r) ==`) and compare a job's state only with serve's job states |
 | `crates/roster-core/tests/layers.rs` | Rust: every module has a row in the table here, neutral modules use nothing of the crate's, parts use no facade, no cycle through any path |
 | `crates/roster-core/tests/backend.rs`, `backend.rs`'s `contract` tests | `PASS_THROUGH` holds no method the core keeps (Q129) and only methods serve has |
 | The "Fails when stale" column above | Every generated file matches its source |

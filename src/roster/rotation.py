@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -97,7 +98,7 @@ def pending(cfg: dict[str, Any]) -> dict[str, str]:
     return {n: why for n, why in load().items() if n in cfg["hosts"]}
 
 
-def forget(names, ctx: Context | None = None, everything: bool = False) -> None:
+def forget(names: Iterable[str], ctx: Context | None = None, everything: bool = False) -> None:
     """revoke took this Box's key off NAMES (#482's review LOW-3): they hold neither key now. EVERYTHING: every Host
     of the Inventory lost it, so the record goes (the key files are revoke's to name for deletion)."""
     try:
@@ -189,7 +190,7 @@ def own_pair(f: Path, want: Any) -> bool:
     return want is None or (boxkeys.public_words(pub_of(f)) or [])[:2] == str(want).split()[:2]
 
 
-def repair(key: Path, entry: dict[str, Any] | None, say=None) -> bool:
+def repair(key: Path, entry: dict[str, Any] | None, say: Callable[[str], None] | None = None) -> bool:
     """A swap killed between its two renames (#482's review MED-2), finished: KEY.pub is the new key's already and
     KEY.new (the new private key) has no .pub, so KEY.new goes to KEY; or KEY is the new private key already and
     KEY.new.pub is left, so it goes to KEY.pub. Only when the record names that new key. True when it did one."""
@@ -228,7 +229,7 @@ def check_files(key: Path, entry: dict[str, Any] | None) -> None:
                 f"isn't the key the rotation's record names)" + stray)
 
 
-def repair_all(cfg: dict[str, Any], say=None) -> None:
+def repair_all(cfg: dict[str, Any], say: Callable[[str], None] | None = None) -> None:
     """Plain setup's first step (#482's MED-2): finish a swap a rotation was stopped in the middle of."""
     try:
         rec = read()

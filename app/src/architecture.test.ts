@@ -9,6 +9,15 @@ import { describe, expect, it } from "vitest";
 
 const SRC = dirname(fileURLToPath(import.meta.url));
 const DOC = "docs/architecture.md";
+const DOC_TEXT = readFileSync(resolve(SRC, "../..", DOC), "utf8");
+
+/** The doc's text between `<!-- NAME -->` and `<!-- /NAME -->`. */
+function marked(name: string): string {
+  const start = DOC_TEXT.indexOf(`<!-- ${name} -->`);
+  const end = DOC_TEXT.indexOf(`<!-- /${name} -->`);
+  if (start < 0 || end < start) throw new Error(`${DOC} has no <!-- ${name} --> ... <!-- /${name} --> list`);
+  return DOC_TEXT.slice(start, end);
+}
 
 /** The modules that wire features together: they may import any feature, and only wiring imports
  * them. backend/index.ts and backend/fixtureProps.ts pick the real or the fake Backend for main.tsx. */
@@ -17,17 +26,12 @@ const WIRING = (p: string) => WIRING_FILES.includes(p) || p.startsWith("app/") |
 
 /** The pure modules: data and rules with no component, so a test, the docs build or another
  * feature can load them alone. */
-const PURE = ["sidebar/model.ts", "session/status.ts", "graph/model.ts", "ui/table.ts", "ui/when.ts", "backend/capabilities.ts", "panel/stack.ts", "ui/dot.ts", "view/segments.ts", "edit/diff.ts", "plugins/sessionEvents.ts"];
+const PURE = [...marked("pure:app").matchAll(/`([^`]+)`/g)].map((m) => m[1] ?? "");
 
 /** The folder imports that go up, each with why. Without them the folders depend one way: the test
- * fails on any other import that closes a cycle (of any length), and on an entry here that's gone
- * or no longer closes one (take it off: the list only shrinks). */
-const KNOWN_BACK_EDGES: Record<string, string> = {
-  "theme -> terminal":
-    "terminal/options.ts holds the ANSI palette a Theme is made of (theme/theme.ts), and the terminal is drawn with the Theme (useTerminalEnv.ts)",
-  "platform -> terminal": "the browser and Tauri Platforms probe fonts with terminal/fonts.ts; the terminal asks platform/os.ts",
-  "plugins -> tutor": "plugins/opRegistry.ts applies every op kind into its feature (tutor's too); tutor/demo.ts loads the demo's Plugins",
-};
+ * fails on any other import that closes a cycle (of any length), and on an entry that's gone or no
+ * longer closes one (take it off: the list only shrinks). */
+const KNOWN_BACK_EDGES = new Set([...marked("back-edges:app").matchAll(/^- `([^`]+)` → `([^`]+)`: \S/gm)].map((m) => `${m[1]} -> ${m[2]}`));
 
 /** A folder that holds two layers, split so the lower one counts on its own: the Config's data
  * (generated from the core; terminal/ and panel/ read it) under applying it (apply.ts). */
@@ -156,9 +160,10 @@ describe("the frontend's import rules", () => {
   });
 
   it("keeps the pure modules free of components", () => {
+    expect(PURE.length, `${DOC}'s list of pure modules`).toBeGreaterThan(0);
     const broken: string[] = [];
     for (const root of PURE) {
-      expect(MODS.has(root), `${root} is gone: update PURE here and ${DOC}`).toBe(true);
+      expect(MODS.has(root), `${root} is gone: take it off ${DOC}'s list of pure modules`).toBe(true);
       for (const [p, chain] of reach(root)) if (p.endsWith(".tsx")) broken.push(chain.join(" -> "));
     }
     expect(broken, `${DOC}, "Pure modules and components": a pure module loads no .tsx`).toEqual([]);
@@ -189,7 +194,7 @@ describe("the frontend's import rules", () => {
         edges.set(from, out);
       }
     }
-    const back = (a: string, b: string) => `${a} -> ${b}` in KNOWN_BACK_EDGES;
+    const back = (a: string, b: string) => KNOWN_BACK_EDGES.has(`${a} -> ${b}`);
     const next = (a: string) => [...(edges.get(a)?.keys() ?? [])].filter((b) => !back(a, b));
     const cycles = stronglyConnected([...edges.keys()], next).map((scc) =>
       scc.flatMap((a) => next(a).filter((b) => scc.includes(b)).map((b) => `${a} -> ${b} (${edges.get(a)!.get(b)})`)).join("; "),
@@ -207,11 +212,11 @@ describe("the frontend's import rules", () => {
         }
       return false;
     };
-    const gone = Object.keys(KNOWN_BACK_EDGES).filter((edge) => {
+    const gone = [...KNOWN_BACK_EDGES].filter((edge) => {
       const [a = "", b = ""] = edge.split(" -> ");
       return !edges.get(a)?.has(b) || !reaches(b, a);
     });
     expect(cycles, `${DOC}, "Dependencies between folders": feature folders depend one way`).toEqual([]);
-    expect(gone, "these no longer close a cycle: take them off KNOWN_BACK_EDGES (and the doc's list)").toEqual([]);
+    expect(gone, `these no longer close a cycle: take them off ${DOC}'s list of folder imports that go up`).toEqual([]);
   });
 });

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import IO, Any, NoReturn, cast
@@ -179,7 +180,7 @@ def git_program() -> str:
     return (find_program("git.exe") or "git") if context.WINDOWS else "git"
 
 
-def program_argv(argv):
+def program_argv(argv: Sequence[str]) -> list[str]:
     """ARGV ready for subprocess. On Windows the program is looked up on PATH alone with its extension (find_program: a
     tool installed as bw.cmd is found as bw, one in the current folder never is; FileNotFoundError if it isn't on
     PATH, as subprocess would raise, rather than leave Windows to look in the current folder), and a .cmd or .bat
@@ -420,7 +421,7 @@ def plain(text):
     return bool(text) and text.isprintable()
 
 
-def say(msg=""):
+def say(msg: object = "") -> None:
     print(msg, flush=True)
 
 
@@ -481,5 +482,5 @@ def time_left(timeout, floor=1):
     return max(floor, min(timeout, at - time.monotonic()))
 
 
-def plural(n, word):
+def plural(n: int, word: str) -> str:
     return f"{n} {word}" + ("" if n == 1 else "s")

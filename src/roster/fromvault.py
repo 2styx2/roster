@@ -22,7 +22,7 @@ import yaml
 
 from . import addhost, providers
 from .common import NAME_RE, NotPrivate, plain, read_private, say, utc_now, write_private
-from .context import user_config_dir
+from .context import box_file
 from .errors import LIST_FAILED, NO_LISTABLE_VAULT, VAULT_LOCKED, Problem
 
 # ---------------------------------------------------------------- what roster.yml refers to
@@ -60,7 +60,7 @@ def named(provider, specs):
 
 def seen_path(path):
     key = hashlib.sha256(os.path.realpath(path).encode()).hexdigest()[:16]
-    return user_config_dir() / "vault-seen" / f"{key}.json"
+    return box_file("vault_seen") / f"{key}.json"
 
 
 def load_seen(path):

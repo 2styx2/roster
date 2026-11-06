@@ -5,6 +5,7 @@ The key files are deleted by hand, and only once every Host has lost the key: ro
 import concurrent.futures as cf
 import shlex
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,7 @@ from .errors import KEY_FILE, InventoryError
 from .hosts import is_windows
 
 
-def revoke_on(h, tag_re):
+def revoke_on(h: dict[str, Any], tag_re: str) -> object:
     """Take this Box's key (TAG_RE) off Host H (authorized.revoke): None when it says it's done, else why not. A
     Windows Host's warnings, and the lines it took under another name, are said on stderr: the ok/FAIL lines stay
     one per Host."""
@@ -31,7 +32,7 @@ def revoke_on(h, tag_re):
     return done.why
 
 
-def other_names(h, tag_re, names):
+def other_names(h: dict[str, Any], tag_re: str, names: Iterable[str]) -> None:
     """#423's M3: revoke took this Box's key line tagged with NAMES; one that isn't this Inventory's name (another
     Inventory's box_name: for the same key, or this Box's earlier name) is said, on stderr."""
     mine = keyline.name_in(tag_re)
@@ -41,7 +42,7 @@ def other_names(h, tag_re, names):
               file=sys.stderr, flush=True)
 
 
-def key_files(cfg):
+def key_files(cfg: dict[str, Any]) -> list[str]:
     """This Box's key files for CFG's Inventory, to delete once revoke is done: its own key's, and every other key
     type's it has (T239)."""
     out = [str(cfg["key"]), str(cfg["pub"])]
@@ -51,11 +52,11 @@ def key_files(cfg):
     return out
 
 
-def revoke_line(label, h, why):
+def revoke_line(label: str, h: dict[str, Any], why: object) -> None:
     say(f"  {'ok  ' if why is None else 'FAIL'}  {label}{h['name']}" + ("" if why is None else f": {why}"))
 
 
-def check_ssh_takes(script):
+def check_ssh_takes(script: str) -> None:
     """Before revoke asks or connects: an ssh roster won't hand SCRIPT (on Windows, a batch file, as cmd.exe would act
     on the script's characters) is a clean error (code 149), not a traceback half way through the Hosts."""
     from .errors import SSH_REFUSES_SCRIPT
@@ -65,13 +66,13 @@ def check_ssh_takes(script):
         die(f"{e} - nothing was revoked: put OpenSSH's ssh.exe first on PATH", code=SSH_REFUSES_SCRIPT)
 
 
-def revoke(cfg, only=None, yes=False):
+def revoke(cfg: dict[str, Any], only: str | None = None, yes: bool = False) -> int:
     """`roster revoke` (ONLY: --only; YES: don't ask), holding the Box-wide lock."""
     with locked("revoke"):
         return revoke_run(cfg, only, yes)
 
 
-def revoke_run(cfg, only, yes):
+def revoke_run(cfg: dict[str, Any], only: str | None, yes: bool) -> int:
     keyed = [h for h in selected(cfg, only) if h["enroll"]]
     hosts = skip_left_out(keyed)
     warn_os(hosts)
@@ -83,9 +84,9 @@ def revoke_run(cfg, only, yes):
         if ans.strip().lower() != "y":
             return 1
     bad = 0
-    gone = []
+    gone: list[str] = []
     with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
-        for h, why in zip(hosts, ex.map(lambda h: revoke_on(h, mine), hosts), strict=True):
+        for h, why in zip(hosts, ex.map(revoke_on, hosts, [mine] * len(hosts)), strict=True):
             bad += why is not None
             revoke_line("", h, why)
             if why is None:
@@ -113,7 +114,7 @@ def revoke_run(cfg, only, yes):
     return 1 if bad or len(hosts) < len(keyed) or not hosts else 0
 
 
-def revoke_targets():
+def revoke_targets() -> list[tuple[str, str | None, Path]]:
     """`revoke --all`'s Inventories: [(label, name or None, roster.yml)], every named one in the order they were
     named, then the unnamed one: the roster.yml roster's unnamed ssh config was last written from (the only unnamed
     one whose Hosts `ssh NAME` reaches), unless it's a named one's file."""
@@ -127,7 +128,7 @@ def revoke_targets():
     return out
 
 
-def revoke_all(yes=False):
+def revoke_all(yes: bool = False) -> int:
     """T183 (#347): `roster revoke` for every Inventory on this Box at once, with one question and one summary. Each
     Inventory is loaded and reached by its own name (this run's Inventory is never switched), and a Host is reached
     only by a name `ssh NAME` takes to that Inventory's Host: never a left-out one, never one whose Inventory isn't in
@@ -159,7 +160,7 @@ def revoke_all(yes=False):
                 problems += 1
             continue
         left = named.left_out_hosts(Context(name))
-        hosts = []
+        hosts: list[dict[str, Any]] = []
         for h in keyed:
             if h["name"] in reach:
                 hosts.append(h)
@@ -186,12 +187,13 @@ def revoke_all(yes=False):
     bad = 0
     with locked("revoke --all", [Context(name) for _, name, _ in targets]), \
             cf.ThreadPoolExecutor(max([cfg["workers"] for _, cfg, _ in plan] or [1])) as ex:
-        for (label, h, _), why in zip(jobs, ex.map(lambda j: revoke_on(j[1], j[2]), jobs), strict=True):
+        whys = ex.map(revoke_on, [h for _, h, _ in jobs], [r for _, _, r in jobs])
+        for (label, h, _), why in zip(jobs, whys, strict=True):
             bad += why is not None
             revoke_line(f"{label}: ", h, why)
             if why is None:                 # each Inventory's record
                 rotation.forget([h["name"]], Context(next(n for lb, n, _ in targets if lb == label)))
-    files = []
+    files: list[str] = []
     for _, cfg, _ in plan:
         files += key_files(cfg)
     for kind in ("ssh_config", "key_name"):

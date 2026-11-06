@@ -639,6 +639,8 @@ Each script is short: on every Tab it asks roster (`roster __complete`, hidden) 
 | `~/.ssh/config.d/roster.inventories` | With named Inventories: what `~/.ssh/config` includes, every Inventory's Hosts with the active one's first (a name an earlier one has is left out) |
 | `~/.config/roster/vault-sync/PROVIDER.json` | What `roster vault sync` compares against (0600): each login item's id and revision date and when it was taken, never a name or value ([The vault isn't watched](#the-vault-isnt-watched-roster-vault-sync)) |
 | `~/.config/roster/inventories.json` | The named Inventories and which one is active (`roster inv`) |
+| `~/.config/roster/vault-seen/` | Per `roster.yml`, the vault items `roster add --from-vault` has seen (0600): ids and names, never a value |
+| `~/.config/roster/inventory.create.lock` | Held while the app's first run makes an Inventory, so two windows can't both make one |
 | `ROSTER.md`, `CLAUDE.md`, `.claude/settings.json` | What Claude reads, written next to `roster.yml` by `setup` and `sync` |
 | `~/.config/roster/mesh.json` | What `roster mesh` couldn't finish (pending Hosts, cuts pending) and when it last applied, on this box (a named Inventory's: `~/.config/roster/mesh-NAME.json`) |
 | `~/.ssh/roster-mesh/` (or the Host's `mesh_dir:`; on ESXi, `.roster-mesh` on a datastore), `~/ROSTER.md` (on Hosts) | A Mesh source's key, known hosts, ssh config and its peers for Claude, written by `roster mesh` ([The Mesh](mesh.md)) |

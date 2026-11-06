@@ -2,7 +2,6 @@
 
 import concurrent.futures as cf
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import NoReturn
@@ -11,20 +10,21 @@ from urllib.parse import urlparse
 from . import (
     addhost,
     aliases,
-    boxkeys,
     boxsync,
     edit,
     fromvault,
     jsonout,
     mesh,
+    meshview,
     providers,
     revoke,
     rotate,
     rotation,
+    run,
     store,
     vaultcli,
 )
-from .authorized import box_key_re, key_named
+from .authorized import box_key_re
 from .boxsetup import locked, setup, setup_mesh, skip_left_out, warn_os, warn_overlaps
 from .claude import write_claude_files
 from .cliparser import build_parser, check, command_parser, wants_json
@@ -32,12 +32,9 @@ from .common import (
     die,
     find_program,
     never_look_in_the_current_folder,
-    not_reviewed,
     plural,
-    program_argv,
     refuse,
     replace_file,
-    run_instead,
     say,
     tcp_ok,
     typed_token,
@@ -58,9 +55,8 @@ from .example import EXAMPLE_CONFIG
 from .hosts import NO_PASSWORD, PLACEHOLDER_USER, is_windows, placeholder_user, prompted
 from .providers import PROVIDERS, get_secret, setup_providers
 from .resources import TYPES, fields, login, summary, wifi_uri
-from .sshops import password_exec, ssh_ok, sudo_wrap, write_ssh_config
-from .web import cmd_web, mask
-from .winhost import clean
+from .sshops import ssh_ok, write_ssh_config
+from .web import cmd_web
 
 # ---------------------------------------------------------------- commands
 
@@ -123,21 +119,10 @@ def say_made(made, value):
         say(f"optional     `git -C {shown_path(path.parent) or 'ITS-FOLDER'} init` keeps its history; roster works the same without git")
 
 
-def refuse_left_out(h):
-    """`roster run` (and --sudo) over ssh: never by a name that reaches another Inventory's Host (its sudo password
-    would go there), or that this Inventory's part of this Box's ssh config doesn't have."""
-    from .sshops import left_out, not_reached, sync_fix
-    why = not_reached(h["name"])
-    if why:
-        fix = ("make this Inventory the active one (`roster inv use`), or rename one of the two in its roster.yml"
-               if left_out(h["name"]) else sync_fix())
-        die(f"{why} - not running anything: {fix}")
-
-
 def cmd_setup(cfg, args):
     if args.rotate:
         return cmd_rotate(cfg, args)
-    return setup(cfg, mesh_apply, only=args.only, host=args.host, dry_run=args.dry_run, key_type=args.key_type,
+    return setup(cfg, only=args.only, host=args.host, dry_run=args.dry_run, key_type=args.key_type,
                  force=args.force)
 
 
@@ -148,31 +133,7 @@ def cmd_rotate(cfg, args):
     if args.only:
         die("setup --rotate is narrowed with --host NAME (a Host or a group), not --only: the Hosts left out stay "
             "pending until a run reaches them")
-    scope = None
-    if args.host is not None:
-        if args.host in cfg["hosts"]:
-            scope = {args.host}
-        elif args.host in cfg["groups"]:
-            scope = {n for n, h in cfg["hosts"].items() if h["group"] == args.host}
-        else:
-            die(f"unknown host or group {args.host!r} (see `roster hosts`): setup --rotate --host takes a Host or a "
-                "group", code=UNKNOWN_HOST)
-    if args.key_type:
-        try:
-            kt = boxkeys.parse(args.key_type).name
-        except ValueError as e:
-            die(f"--key-type: {e}")
-        other = sorted(n for n, h in cfg["hosts"].items() if h["enroll"] and h["reviewed"] and (scope is None or n in
-                       scope) and h["key_type"] != kt)
-        if other:
-            die(f"--key-type {kt} with --rotate: roster.yml gives {', '.join(other)} another key type. Set key_type: "
-                f"{kt} in roster.yml (on them, their group or defaults), then run roster setup --rotate: one pass "
-                "makes the new key of that type, proves it, and takes the old type's lines off (a type for this "
-                "run only would come back at the next sync and lock them out, Q200 (e))")
-    was = key_named(cfg)
-    if was not in (None, cfg["box"]):
-        die(f"this Box's key lines carry the name {was}, not {cfg['box']} (box_name:, or the hostname, changed): run "
-            "`roster setup` first (it re-tags them), then roster setup --rotate. A rotation never renames the Box")
+    scope = rotate.hosts_for(cfg, args.host, args.key_type)
     if args.dry_run:
         rotate.run(cfg, scope, dry_run=True, say=say)
         return 0
@@ -182,7 +143,7 @@ def cmd_rotate(cfg, args):
         failed = dict(r["failed"])
         # setup's own Mesh apply: once the new key is proven on every Host, over it, never --rotate
         if not failed and not r["pending"] and r["done"]:
-            failed.update(setup_mesh(cfg, "--host" if scope is not None else None, mesh_apply))
+            failed.update(setup_mesh(cfg, "--host" if scope is not None else None))
         elif r["pending"] and mesh.graph(cfg)["links"]:
             say("mesh         not applied while the Box key rotation is pending (run `roster mesh` to apply it "
                 "now: the ssh config offers the pending Hosts both keys)")
@@ -214,61 +175,6 @@ def cmd_sync(cfg, args):
 
 
 # ---------------------------------------------------------------- the Mesh (ticket 39, decision Q63)
-
-LINK_WORDS = {"ok": "ok", "untested": "ok (port not tested: no nc or bash there)", "unreachable": "UNREACHABLE",
-              "no-host-key": "NO HOST KEY", "no-via": "NO LINK TO ITS HOP", "pending": "pending", "skipped": "skipped"}
-BROKEN_LINKS = ("unreachable", "no-host-key", "no-via")       # make `roster check` fail
-
-
-def show_mesh(r, drift=False):
-    """A plan or an apply as text: the links, what changes where, what's left out, what's unfinished."""
-    links = r["links"]
-    if not drift:
-        say(f"links        {plural(len(links), 'link')} "
-            f"({sum(x['kind'] == 'key' for x in links)} key, {sum(x['kind'] == 'password' for x in links)} password)")
-        def pair(x):
-            return f"{x['from']} -> {x['to']}" + (f" via {x['via']}" if x.get("via") else "")
-        width = max((len(pair(x)) for x in links), default=0)
-        for x in links:
-            word = LINK_WORDS[x["status"]]
-            word = "ok (hop not tested)" if x["status"] == "untested" and x.get("via") else word
-            why = f" - {x['why']}" if x.get("why") and (x["status"] != "untested" or x.get("via")) else ""
-            note = " (ssh asks the person for the password)" if x["kind"] == "password" and x["status"] == "ok" else ""
-            say(f"  {pair(x):<{width}} {x['kind']:<9}{word}{note}{why}")
-    else:
-        for x in links:
-            if x["status"] in BROKEN_LINKS:
-                say(f"  link {x['from']} -> {x['to']}: {x['why']}")
-    changed = [h for h in r["hosts"] if h["changes"]]
-    if changed:
-        say("mesh drift (on the Hosts, not what roster wrote):" if drift else
-            "changes" if r["applied"] else "would change")
-        for h in changed:
-            say(f"  {h['host']}: {', '.join(h['changes'])}")
-    if r["excluded"] and not drift:
-        say("left out: " + ", ".join(f"{n} ({why})" for n, why in r["excluded"].items()))
-    for w in r["warnings"]:
-        say(f"warning: {w}")
-    if r["pending"]:
-        say(f"pending on {plural(len(r['pending']), 'Host')} (finished by the next `roster mesh` once they answer):")
-        for n, why in r["pending"].items():
-            say(f"  {n}: {why}")
-    warn_cut(r.get("cut_pending") or {})
-
-
-def warn_cut(cut):
-    for host, peers in cut.items():
-        print(f"WARNING: CUT PENDING ON {plural(len(peers), 'HOST').upper()}: {', '.join(peers)} - {host}'s cut isn't "
-              "finished there; `roster mesh cut " + host + "` again, or `roster mesh`, once they answer",
-              file=sys.stderr, flush=True)
-        say(f"cut pending on {plural(len(peers), 'Host')} for {host}: {', '.join(peers)}")
-
-
-def mesh_apply(cfg):
-    r = mesh.run(cfg, apply=True, say=say)
-    show_mesh(r)
-    return r["pending"]
-
 
 def mesh_cut_all(cfg, args):
     """`roster mesh cut --all` (T193): every Mesh entry off every Host, before removing roster from this Box."""
@@ -340,7 +246,7 @@ def cmd_mesh(cfg, args):
             say("left out: " + ", ".join(f"{n} ({why})" for n, why in st["excluded"].items()))
         if st["pending"]:
             say(f"pending on {plural(len(st['pending']), 'Host')}: {', '.join(st['pending'])}")
-        warn_cut(st["cut_pending"])
+        meshview.warn_cut(st["cut_pending"])
         say("mesh out of date: run `roster mesh`" if st["out_of_date"] else "mesh up to date")
         if not mesh.load_state()["known"]:         # new here, or roster removed and installed again
             say("no Mesh record on this Box: the Hosts may hold Mesh entries an earlier roster left here (or another "
@@ -385,7 +291,7 @@ def cmd_mesh(cfg, args):
             say(f"  not confirmed  {n}: {why}")
         for w in r["warnings"]:
             say(f"warning: {w}")
-        warn_cut({args.target: sorted(r["pending"])} if r["pending"] else {})
+        meshview.warn_cut({args.target: sorted(r["pending"])} if r["pending"] else {})
         return 1 if r["pending"] or change.get("error") else 0
     if args.target:
         die(f"unexpected {args.target!r}: roster mesh [--dry-run] [--rotate HOST], or roster mesh cut HOST")
@@ -398,7 +304,7 @@ def cmd_mesh(cfg, args):
         r = mesh.run(cfg, apply=not args.dry_run, rotate=args.rotate or (), say=say)
     except Problem as e:
         raise Exit(e) from None
-    show_mesh(r)
+    meshview.show_mesh(r)
     if args.dry_run:
         say("dry run: nothing was changed")
     elif r["already"]:
@@ -427,8 +333,7 @@ def cmd_check(cfg, args):
             results = [{"name": h["name"], "ok": all(res.values()), "ssh": "login" if h["enroll"] else "port",
                         "checks": res} for h, res in ex.map(check, hosts)]
         drift = mesh.drift(cfg) if not args.only else None
-        broken = drift is not None and bool(drift["pending"] or any(h["changes"] for h in drift["hosts"])
-                                            or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
+        broken = drift is not None and meshview.broken(drift)
         waiting = rotation_waiting(cfg, wanted)
         found = [tagged(p) for p in rotation.problems(cfg)]
         ok = all(r["ok"] for r in results) and not broken and not skipped and not waiting and not found
@@ -448,9 +353,8 @@ def cmd_check(cfg, args):
     drift = mesh.drift(cfg) if not args.only else None
     if drift is not None:
         say()
-        show_mesh(drift, drift=True)
-        bad += bool(drift["pending"] or any(h["changes"] for h in drift["hosts"])
-                    or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
+        meshview.show_mesh(drift, drift=True)
+        bad += meshview.broken(drift)
         if drift["already"]:
             say("mesh         every Host holds what roster wrote")
     if not args.only:          # a Windows Host in a Link or meshed group is left out, not an error; say why
@@ -769,81 +673,7 @@ def login_label(s):
 
 
 def cmd_run(cfg, args):
-    h = cfg["hosts"].get(args.host)
-    if not h:
-        die(f"unknown host {args.host!r} (see `roster hosts`)", code=UNKNOWN_HOST)
-    words = args.command[1:] if args.command[:1] == ["--"] else args.command
-    if not words:
-        die("nothing to run: roster run HOST -- COMMAND")
-    command = " ".join(words)
-    if not h["reviewed"]:
-        die(not_reviewed(h))
-    if is_windows(h):
-        return run_windows(h, command, args.sudo)
-    if args.sudo:
-        return run_sudo(h, command)
-    if h["enroll"]:
-        refuse_left_out(h)
-        return run_instead(["ssh", "-o", "BatchMode=yes", h["name"], command])
-    try:
-        rc, out, err = password_exec(h, command, get_secret(h["ssh"]["auth"], h["group"]))
-    except RuntimeError as e:
-        die(f"{h['name']}: {clean(str(e))}")
-    sys.stdout.write(out)
-    sys.stderr.write(err)
-    if words[0] == "sudo" and rc != 0 and ("password is required" in err or "terminal is required" in err):
-        print(f"hint: sudo wants a password - use  roster run --sudo {h['name']} -- {' '.join(words[1:])}",
-              file=sys.stderr)
-    return rc if rc >= 0 else 1
-
-
-def run_windows(h, command, sudo):
-    """`roster run` on an os: windows Host (T196, decision Q176): COMMAND always under PowerShell (winhost.run), the
-    same whatever sshd's DefaultShell. --sudo is refused before the vault is asked: Windows has no sudo over ssh."""
-    from . import winhost
-    from .errors import RUN_SUDO_WINDOWS
-    if sudo:
-        die(f"{h['name']} is a Windows Host (os: windows), which has no sudo over ssh: nothing "
-            "ran. Log in as an account in Administrators (its ssh session is already elevated) and run it without "
-            "--sudo", code=RUN_SUDO_WINDOWS)
-    try:
-        if h["enroll"]:
-            refuse_left_out(h)
-            return winhost.run(h, command)
-        return winhost.run(h, command, get_secret(h["ssh"]["auth"], h["group"]), key=False)
-    except ValueError as e:                 # the script with CMD in it is over 1 MB: nothing was sent
-        die(f"{h['name']}: {e}: nothing ran")
-    except RuntimeError as e:
-        die(f"{h['name']}: {clean(str(e))}")
-
-
-def run_sudo(h, command):
-    """Run COMMAND as root: sudo gets the host's login password on stdin, never on screen."""
-    try:
-        secret = get_secret(h["ssh"]["auth"], h["group"])
-    except RuntimeError as e:
-        die(f"{h['name']}: {clean(str(e))}")
-    if not secret:
-        die(f"{h['name']}: --sudo needs the login's password, but its auth is {h['ssh']['auth']!r} "
-            "(set auth: to the vault item that holds the password)")
-    wrapped = sudo_wrap(command)
-    if h["enroll"]:
-        refuse_left_out(h)
-        # bytes: text mode on Windows would send "password\r\n", and sudo would take the "\r" as part of it
-        r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", h["name"], wrapped]),
-                           input=(secret + "\n").encode(), capture_output=True)
-        rc, out, err = r.returncode, r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace")
-    else:
-        try:
-            rc, out, err = password_exec(h, wrapped, secret, stdin=secret + "\n")
-        except RuntimeError as e:
-            die(f"{h['name']}: {clean(mask(str(e), [secret]))}")
-    sys.stdout.write(mask(out, [secret]))
-    sys.stderr.write(mask(err, [secret]))
-    if "incorrect password" in err or "no password was provided" in err:
-        print(f"{h['name']}: sudo refused the password from {h['ssh']['auth']} - "
-              f"is {h['ssh']['user']} allowed to sudo there?", file=sys.stderr)
-    return rc if rc >= 0 else 1
+    return run.run(cfg, args.host, args.command[1:] if args.command[:1] == ["--"] else args.command, args.sudo)
 
 
 def cmd_revoke(cfg, args):
@@ -949,7 +779,7 @@ def set_up(name, path):
     say(f"\nsetup        roster setup --host {name}")
     # exactly this Host, never what --only NAME would match too (a group, type or product NAME); the whole
     # Inventory stays in cfg, as setup writes the ssh config from all of it
-    done = setup(cfg, mesh_apply, host=name)
+    done = setup(cfg, host=name)
     say(f"\ncheck        roster check {name}")
     check = check_host(name, config=str(path))
     say()

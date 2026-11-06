@@ -126,7 +126,7 @@ def start_transport(sock, key_types, timeout=10, log_channel=None):
     return t
 
 
-def left_out(name):
+def left_out(name: str) -> str | None:
     """Why NAME's block isn't in this Box's ssh config though this Inventory has it: another named Inventory, ahead of
     this one, has a Host by that name (ticket 115). None otherwise."""
     from . import named  # Pydantic: only once it's used, never at roster's start
@@ -136,7 +136,7 @@ def left_out(name):
             "that name, and `ssh " + name + "` reaches that one")
 
 
-def not_reached(name):
+def not_reached(name: str) -> str | None:
     """Why roster mustn't `ssh NAME` for this run's Host NAME, or None. With named Inventories (~/.ssh/config includes
     their index), `ssh NAME` reaches this Inventory's Host only when NAME is in this Inventory's part of the index:
     one left out (left_out) reaches another Inventory's Host, and one not there at all (this Inventory isn't synced on
@@ -155,7 +155,7 @@ def not_reached(name):
                               "wouldn't reach it")
 
 
-def sync_fix():
+def sync_fix() -> str:
     """The command that writes this run's ssh config: `roster sync` with what picks this run's roster.yml."""
     here = current()
     if here.name is not None:
@@ -180,7 +180,7 @@ def not_in_ssh_config(name, missing, fix=None):
     return Problem(NOT_SET_UP, missing, fix=fix)
 
 
-def record_fingerprints(cfg, hosts):
+def record_fingerprints(cfg: dict[str, Any], hosts: list[dict[str, Any]]) -> set[str]:
     """Trust-on-first-use: store each host's SSH host key so later logins can detect impostors."""
     ssh_dir().mkdir(mode=0o700, exist_ok=True)
     current().known_hosts.touch(mode=0o600, exist_ok=True)
@@ -255,7 +255,7 @@ def ssh_config_lines(cfg, ctx=None):
     return out
 
 
-def write_ssh_config(cfg, ctx=None):
+def write_ssh_config(cfg: dict[str, Any], ctx: Context | None = None) -> None:
     """Write this Box's ssh config for the Inventory CFG (CTX: its context, default this run's), and make
     ~/.ssh/config reach it: through the named Inventories' index when there are any (or one is left to clean up),
     else by including roster's one file."""
@@ -288,7 +288,7 @@ def write_ssh_config(cfg, ctx=None):
 LOGIN_PROBE = "exit 0"
 
 
-def ssh_ok(name, timeout=10):
+def ssh_ok(name: str, timeout: int = 10) -> bool:
     if not_reached(name):               # `ssh NAME` would reach another named Inventory's Host, or nothing of ours
         return False
     # ControlPath=none: never trust a cached connection, really log in with the key
@@ -306,7 +306,8 @@ def sudo_wrap(command):
     return "sudo -S -p '' -- sh -c " + shlex.quote("exec </dev/null; " + command)
 
 
-def password_exec(h, command, password, timeout=15, stdin=None):
+def password_exec(h: dict[str, Any], command: str, password: str | None, timeout: float = 15,
+                  stdin: str | bytes | None = None) -> tuple[int, str, str]:
     """Run a command over SSH with a password (or agent key). Host key must already be recorded.
     STDIN, if given, is written to the command's stdin (used to hand sudo its password)."""
     try:

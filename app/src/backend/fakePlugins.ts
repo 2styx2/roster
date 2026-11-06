@@ -8,7 +8,7 @@ import { api_version as pluginApiVersion } from "../../../crates/roster-core/tes
 import { CORE } from "../plugins/core.gen";
 import { fakeFoldersPlugin } from "./fakeFolders";
 import { PluginServeError, pluginServeError, redact } from "./redact";
-import { BackendCallError, type Host, type OpenSession, type PluginEventName, type PluginCaller, type PluginData, type PluginLoaded, type PluginManifest, type PluginReply } from "./types";
+import { BackendCallError, type Host, type OpenSession, type PluginEventName, type PluginCallBy, type PluginData, type PluginLoaded, type PluginManifest, type PluginReply } from "./types";
 import { errorText } from "../ui/format";
 
 type Fn = (arg: Record<string, unknown>) => unknown;
@@ -465,7 +465,7 @@ export function fakePluginHost(
   pluginData(names: readonly string[]): Promise<Record<string, PluginData>>;
   /** What each Plugin keeps in its data folder (tests look). */
   pluginFiles(plugin: string): Map<string, string>;
-  pluginCall(plugin: string, handler: number, args: unknown, user?: PluginCaller, builtins?: readonly string[]): Promise<PluginReply>;
+  pluginCall(plugin: string, handler: number, args: unknown, user?: PluginCallBy, builtins?: readonly string[]): Promise<PluginReply>;
   pluginEvent(name: PluginEventName, payload: Record<string, unknown>, builtins?: readonly string[]): Promise<PluginReply[]>;
   pluginSessions(open: OpenSession[]): Promise<void>;
   pluginUnload(plugin: string): Promise<boolean>;
@@ -931,7 +931,7 @@ export function fakePluginHost(
       const reply = run(manifest.name, r, () => p.load(module(r, config)), true);
       return { manifest, dir: path, reply, refused: [] };
     },
-    async pluginCall(plugin, handler, args, user = true, names) {
+    async pluginCall(plugin, handler, args, user = "user", names) {
       told(names);
       const r = running.get(plugin);
       if (!r || r.disabled) {
@@ -946,7 +946,7 @@ export function fakePluginHost(
         r.timers.delete(handler);
         r.handlers.delete(handler);
       }
-      userCall = user !== false && timer === undefined && !quiet.has(handler);
+      userCall = user !== "app" && timer === undefined && !quiet.has(handler);
       carried = userCall && user === "carried";
       try {
         return run(plugin, r, () => f((args ?? {}) as Record<string, unknown>));

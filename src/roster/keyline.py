@@ -86,7 +86,7 @@ class Said:
     no line in (None: it found one), and the TAKEN and OTHERS signs."""
 
     ok: bool = False
-    names: list[str] = field(default_factory=list)
+    names: list[str] = field(default_factory=list[str])
     none: str | None = None
     taken: bool = False
     others: bool = False

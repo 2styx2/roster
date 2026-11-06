@@ -14,6 +14,7 @@ import type {
   PluginData,
   PluginErrorInfo,
   PluginLoaded as CorePluginLoaded,
+  PluginCallBy,
   PluginManifest,
   PluginPermission,
   PluginReply as CorePluginReply,
@@ -36,7 +37,7 @@ import {
 } from "./serveContract";
 
 // The core's own shapes, generated from its Rust types (config/core.gen.ts).
-export type { BackendProblem, BackendProblemKind, CheckStarted } from "../config/core.gen";
+export type { BackendProblem, BackendProblemKind, CheckStarted, PluginCallBy } from "../config/core.gen";
 
 /** A Host as `hosts.list` returns it (roster's own object; only the fields the UI reads). */
 export interface Host {
@@ -1043,7 +1044,7 @@ export interface Backend {
    * what the app runs on its own (a finder's items, a `:check`, a timer, a question's cancel
    * because another took its place, a command a carried run's `roster.cmd` named), which is never
    * the user's call. */
-  pluginCall(plugin: string, handler: number, args: unknown, user?: PluginCaller, builtins?: readonly string[]): Promise<PluginReply>;
+  pluginCall(plugin: string, handler: number, args: unknown, user?: PluginCallBy, builtins?: readonly string[]): Promise<PluginReply>;
   /** Tells every Plugin that listens and may hear it; the ones that changed something or failed answer. */
   pluginEvent(name: PluginEventName, payload: Record<string, unknown>, builtins?: readonly string[]): Promise<PluginReply[]>;
   /** The Sessions open now, in the order the app saw them open: the whole list, which replaces
@@ -1099,9 +1100,6 @@ export function notOnDemo(method: string): string {
   return DEMO.refusal.replace("{method}", method);
 }
 
-/** Whose call a Plugin's run is: the user's (true), the user's carried one hop (a command the
- * Plugin's `roster.cmd` ran from the user's call), or the app's (false). Decision Q98, issue #183. */
-export type PluginCaller = boolean | "carried";
 
 /** An open Session as the core's `roster.sessions.list()` gets it: a Quick Connect Session's host is null. */
 export interface OpenSession {

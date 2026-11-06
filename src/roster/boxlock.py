@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from .context import Context, current, user_config_dir
+from .context import Context, box_file, current
 from .errors import BOX_BUSY, INVENTORY_THERE, Problem
 
 WAIT = 5.0                  # seconds a second run waits before it refuses
@@ -79,7 +79,7 @@ def first_run():
     """serve's inventory.create one at a time on this Box, whichever serve (#417 L3), so two app windows can't both
     make and name one: a lock file in roster's config folder, as the Inventories' own. Refuses at once (170) while
     another holds it."""
-    path = user_config_dir() / "inventory.create.lock"
+    path = box_file("first_run_lock")
     _take(path, "inventory.create", 0, lambda _: Problem(
         INVENTORY_THERE, "another first run is making an Inventory on this Box right now", {"lock": str(path)},
         fix="wait for it, then Retry"))
