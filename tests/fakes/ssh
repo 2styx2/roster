@@ -58,8 +58,15 @@
 #                                                   Host's KexAlgorithms, say): a connection whose ssh config (-F
 #                                                   FILE's, else $HOME/.ssh/config's) doesn't give NAME each one
 #                                                   fails as ssh does ("no matching key exchange method", exit 255)
+#                                 DIR/NAME/hostkeys the host key types its sshd has (`ssh-ed25519 ecdsa-sha2-nistp256`):
+#                                                   with -F FILE whose block gives UserKnownHostsFile, the client
+#                                                   picks the first of its HostKeyAlgorithms the server has (the
+#                                                   config's when set, else the default list with the types that
+#                                                   file knows for HostName first, as ssh orders them) and fails
+#                                                   ("Host key verification failed", 255) unless the file knows it
 # -G NAME                       print what $HOME/.ssh/config gives NAME (`option value`, lowercase, the first value
-#                               of each, as ssh -G), and nothing more: no defaults; nothing connects (T253)
+#                               of each), then ssh's defaults (DEFAULTS) for the rest, as ssh -G does; `-F none`
+#                               (or /dev/null): the defaults alone. Nothing connects (T253)
 # FAKE_SH=PATH                  the sh a stand-in Host runs its side with (default /bin/sh; on native Windows, Git for
 #                               Windows' sh.exe, with the Host's paths written C:/... as that sh reads them)
 import base64, fnmatch, os, shutil, subprocess, sys, time
@@ -86,9 +93,16 @@ def config_options(path, dest):
     return out
 
 
+DEFAULTS = {"port": "22", "hostkeyalgorithms": "ssh-ed25519,ecdsa-sha2-nistp256,rsa-sha2-512",
+            "kexalgorithms": "curve25519-sha256,ecdh-sha2-nistp256", "ciphers": "chacha20-poly1305@openssh.com,aes128-ctr",
+            "macs": "hmac-sha2-256-etm@openssh.com", "pubkeyacceptedalgorithms": "ssh-ed25519,ecdsa-sha2-nistp256,rsa-sha2-512",
+            "identityfile": "~/.ssh/id_ed25519"}
+
 if "-G" in args:
-    name = [a for a in args if not a.startswith("-")][-1]
-    for k, v in config_options(os.path.join(os.environ.get("HOME", ""), ".ssh", "config"), name).items():
+    name = [a for i, a in enumerate(args) if not a.startswith("-") and (i == 0 or args[i - 1] != "-F")][-1]
+    given = args[args.index("-F") + 1] if "-F" in args else os.path.join(os.environ.get("HOME", ""), ".ssh", "config")
+    conf = {} if given in ("none", "/dev/null") else config_options(given, name)
+    for k, v in {**DEFAULTS, **conf}.items():
         print(f"{k} {v}")
     sys.exit(0)
 
@@ -320,6 +334,23 @@ if hosts:
                 if k and given.get(k.lower()) != v.strip():
                     print(f"Unable to negotiate with 10.0.0.9 port 22: no matching key exchange method found ({k})",
                           file=sys.stderr)
+                    open(log, "a").write(f"end {dest}\n")
+                    sys.exit(255)
+        hostkeys = os.path.join(root, "hostkeys")
+        if os.path.exists(hostkeys) and "-F" in args:
+            given = config_options(args[args.index("-F") + 1], dest)
+            kh = given.get("userknownhostsfile", "").strip('"')
+            if kh:
+                ip = given.get("hostname", dest).replace("%%", "%")
+                known = [ln.split()[1] for ln in (open(kh).read().splitlines() if os.path.exists(kh) else [])
+                         if len(ln.split()) >= 3 and ln.split()[0] == ip]
+                default = DEFAULTS["hostkeyalgorithms"].split(",")
+                client = (given["hostkeyalgorithms"].split(",") if "hostkeyalgorithms" in given else
+                          [t for t in default if t in known] + [t for t in default if t not in known])
+                server = open(hostkeys).read().split()
+                chosen = next((t for t in client if t in server), None)
+                if chosen not in known:
+                    print(f"Host key verification failed ({chosen} key, not in {kh}).", file=sys.stderr)
                     open(log, "a").write(f"end {dest}\n")
                     sys.exit(255)
         windows = os.path.exists(os.path.join(root, "windows"))     # its own key login (windows_key_login)

@@ -153,6 +153,10 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
                    "`roster mesh --rotate HOST` does those) on every Host: a new key, proven on each Host before the "
                    "old key's line goes, then the old key deleted. --host NAME (a Host or a group) narrows it; a Host "
                    "not reached stays pending until setup --rotate runs again")
+    s.add_argument("--retire-keys", action="store_true", help="also delete this Box's key of a type nothing uses any "
+                   "more (after a key_type: change): only once setup reached every Host, no Host of any Inventory on "
+                   "this Box uses or holds it, and your ssh config doesn't name it. setup and setup --rotate say "
+                   "when there is one; --dry-run says what this would delete")
     s = sub.add_parser("sync", help="rewrite this Box's ssh config and Claude files from roster.yml, and sync the "
                        "vault (as roster vault sync); it touches no Host. Ends with what changed and the next command, "
                        "if any")

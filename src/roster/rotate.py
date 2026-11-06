@@ -117,19 +117,34 @@ JUMP_RE = re.compile(r"[A-Za-z0-9@.,:_\[\]/=-]+\Z")         # [user@]host[:port]
 PRINTABLE_RE = re.compile(r"[^\x00-\x1f\x7f]+\Z")
 
 
-def user_options(name: str) -> dict[str, str]:
-    """What the user's own ssh config gives NAME (`ssh -G NAME`: {option, lowercase: value}); {} when ssh can't say.
-    Nothing connects."""
+def ssh_g(name: str, *opts: str) -> list[tuple[str, str]] | None:
+    """`ssh -G [OPTS] NAME`: what ssh would use for NAME, as (option, lowercase; value) pairs in order (an option
+    given more than once, IdentityFile, is there each time); None when ssh can't say. Nothing connects."""
     try:
-        r = subprocess.run(program_argv(["ssh", "-G", name]), stdin=subprocess.DEVNULL, capture_output=True,
+        r = subprocess.run(program_argv(["ssh", "-G", *opts, name]), stdin=subprocess.DEVNULL, capture_output=True,
                            text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    return [(k.lower(), v.strip()) for k, _, v in (line.partition(" ") for line in r.stdout.splitlines()) if k]
+
+
+def user_options(name: str) -> dict[str, str]:
+    """The options the user's ssh config (or the system's) sets for NAME: what `ssh -G NAME` says that differs from
+    `ssh -G -F none NAME`, ssh's own defaults (#546's review LOW-1: a default written out, HostKeyAlgorithms above
+    all, would turn off ssh's ordering by the host key types known_hosts holds). {option, lowercase: value}; {}
+    when ssh can't say."""
+    seen, defaults = ssh_g(name), ssh_g(name, "-F", "none")
+    if seen is None or defaults is None:
         return {}
+    base: dict[str, str] = {}
+    for k, v in defaults:
+        base.setdefault(k, v)
     out: dict[str, str] = {}
-    for line in r.stdout.splitlines() if r.returncode == 0 else []:
-        k, _, v = line.partition(" ")
-        out.setdefault(k.lower(), v.strip())
-    return out
+    for k, v in seen:
+        out.setdefault(k, v)
+    return {k: v for k, v in out.items() if base.get(k) != v}
 
 
 def carried(seen: dict[str, str]) -> list[tuple[str, object]]:
@@ -141,7 +156,7 @@ def carried(seen: dict[str, str]) -> list[tuple[str, object]]:
     command, jump = seen.get("proxycommand", "none"), seen.get("proxyjump", "none")
     if command.lower() != "none" and PRINTABLE_RE.match(command):
         out.append(("ProxyCommand", command))
-    elif jump.lower() != "none" and JUMP_RE.match(jump):
+    elif jump.lower() != "none" and JUMP_RE.match(jump) and not any(hop.startswith("-") for hop in jump.split(",")):
         *via, last = jump.split(",")
         target = "[%h]:%p" if WINDOWS else "'[%h]:%p'"
         out.append(("ProxyCommand", "ssh -o BatchMode=yes" + (f" -J {','.join(via)}" if via else "")
@@ -341,18 +356,25 @@ def delete_old(slot: Slot) -> None:
     boxkeys.destroy(old_of(slot.key))
 
 
-def retire_keys(cfg: dict[str, Any], say: Callable[[str], None]) -> list[Path]:
-    """T253 item 5: delete each roster_<type> key of this Box's (boxkeys.all_keys beside key_path:) that nothing needs
-    now: no Inventory on this Box makes it its own key (key_path:) or gives a key Host its type, no Host holds its
-    line as roster last left them (boxkeys.installed, every Inventory's), and no Box key rotation is under way. Only
-    a key this Box vouches for whose comment is a roster tag (a key of the user's own is never deleted), and nothing
-    at all while another Inventory doesn't load or a rotation record can't be read: roster can't tell then. The
-    keys deleted (said)."""
+def retire_keys(cfg: dict[str, Any], say: Callable[[str], None], mode: str = "hint") -> list[Path]:
+    """T253 item 5, opt-in (#546's review MED-1/MED-2, the coordinator's call): the roster_<type> keys of this Box's
+    (boxkeys.all_keys beside key_path:) nothing roster knows needs now. MODE `hint` (a plain setup or rotation): say
+    once that `roster setup --retire-keys` deletes each, never delete; `dry-run`: say what that would delete or keep;
+    `delete` (--retire-keys): delete them, saying each one kept and why. Returns the keys deleted.
+
+    Kept: one an Inventory on this Box makes its own key (key_path:) or gives a key Host the type of, or whose line a
+    Host holds by an Inventory's key-types record; every key while an Inventory doesn't load, a rotation is under way
+    or its record can't be read; one not vouched for (boxkeys.vouched), with no roster tag, or with a .new/.old
+    beside it. And, before it's said or deleted: every one while a key Host of a loaded Inventory has no key-types
+    row (set up before roster kept one: unknown is never unused), and one the user's own ssh config names
+    (sshconfig.mentions: ~/.ssh/config and its Includes, roster's own files aside) or that `ssh -G` offers a Host
+    roster knows."""
     users = key_users(cfg)
     if any(u.cfg is None for u in users):
         return []
     inventories = [(current(), cfg), *((u.ctx, u.cfg) for u in users if u.cfg is not None)]
     needed: set[Path] = set()
+    unknown: list[str] = []
     for ctx, c in inventories:
         try:
             if not read(ctx).empty:
@@ -361,20 +383,44 @@ def retire_keys(cfg: dict[str, Any], say: Callable[[str], None]) -> list[Path]:
             return []
         needed.add(c["key"])
         needed |= {Path(h["key_file"]) for h in c["hosts"].values() if h["enroll"]}
-        for types in boxkeys.installed(ctx).values():
+        rows = boxkeys.installed(ctx)
+        for types in rows.values():
             needed |= {boxkeys.key_file(c["key"], c["key_type"], t) for t in types}
-    out: list[Path] = []
+        unknown += [label(ctx, n) for n, h in sorted(c["hosts"].items()) if h["enroll"] and n not in rows]
+    found: list[boxkeys.BoxKey] = []
     for k in boxkeys.all_keys(cfg):
         if k.key in needed or k.key.name.endswith((".new", ".old")) or k.key.name != k.type.file_name \
                 or new_of(k.key).exists() or old_of(k.key).exists() or not boxkeys.vouched(k, cfg["key"]):
             continue
         words = pub_of(k.key).read_text(encoding="utf-8", errors="replace").split()
-        if len(words) < 3 or not keyline.tag_box(words[2]):
-            continue
-        boxkeys.destroy(k.key)
-        out.append(k.key)
-        say(f"retired key  {k.key} ({k.type.name}): no Host of any Inventory on this Box uses or holds it now, so "
-            "roster deleted it")
+        if len(words) >= 3 and keyline.tag_box(words[2]):
+            found.append(k)
+    if not found:
+        return []
+    offered: dict[str, set[str]] = {}       # ssh -G NAME's IdentityFile names, for each Host roster knows
+    for _, c in inventories:
+        for n in c["hosts"]:
+            offered.setdefault(n, {Path(v.strip('"')).name for k, v in ssh_g(n) or [] if k == "identityfile"})
+    out: list[Path] = []
+    for k in found:
+        named = sshconfig.mentions(k.key.name)
+        by = sorted(n for n, files in offered.items() if k.key.name in files)
+        why = (f"roster has no record of the key types on {', '.join(unknown)} (set up before roster kept one), so "
+               "it can't tell they don't hold it: a full `roster setup` of their Inventory records them"
+               if unknown else f"your ssh config names it ({', '.join(map(str, named))})" if named else
+               f"`ssh -G` offers it to {', '.join(by)}" if by else "")
+        what = f"{k.key} ({k.type.name})"
+        if mode == "delete" and not why:
+            boxkeys.destroy(k.key)
+            out.append(k.key)
+            say(f"retired key  {what}: deleted (no Host of any Inventory on this Box uses or holds it, and your ssh "
+                "config doesn't name it)")
+        elif mode == "delete" or (mode == "dry-run" and why):
+            say(f"retire       kept {what}: {why}")
+        elif mode == "dry-run":
+            say(f"  would retire {what} with --retire-keys (nothing roster knows uses it now)")
+        elif not why:
+            say(f"retire       nothing roster knows uses {what} now: `roster setup --retire-keys` deletes it")
     return out
 
 

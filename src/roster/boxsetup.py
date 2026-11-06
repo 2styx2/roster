@@ -67,16 +67,16 @@ def locked(what: str) -> Generator[None, None, None]:
 
 
 def setup(cfg: dict[str, Any], only: str | None = None, host: str | None = None, dry_run: bool = False,
-          key_type: str | None = None, force: bool = False) -> int:
-    """`roster setup`, holding the Box-wide lock unless DRY_RUN (read-only)."""
+          key_type: str | None = None, force: bool = False, retire: bool = False) -> int:
+    """`roster setup`, holding the Box-wide lock unless DRY_RUN (read-only). RETIRE: --retire-keys (T253 item 5)."""
     if dry_run:
-        return setup_run(cfg, only, host, dry_run, key_type, force)
+        return setup_run(cfg, only, host, dry_run, key_type, force, retire)
     with locked("setup"):
-        return setup_run(cfg, only, host, dry_run, key_type, force)
+        return setup_run(cfg, only, host, dry_run, key_type, force, retire)
 
 
 def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: bool, override: str | None,
-              force: bool) -> int:
+              force: bool, retire: bool = False) -> int:
     # `--host NAME` (Q198; `roster add --setup` too): exactly that Host, never what --only NAME would match too
     # (a group, type or product by that name)
     if host is not None and host not in cfg["hosts"]:
@@ -168,6 +168,8 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
                 say(f"  would take this Box's {' and '.join(took)} key line off {name}")
             if left:
                 say(f"  would leave this Box's {' and '.join(left)} key line on {name}: {unmatched_words(left)}")
+        if not narrowed:                    # as things are now: what --retire-keys would delete, or keep and why
+            rotate.retire_keys(cfg, say, "dry-run")
         return 0
 
     # renamed onto a name another Box's key line has on a Host: the same-name rule (this Box's revoke
@@ -297,7 +299,10 @@ def setup_run(cfg: dict[str, Any], only: str | None, host: str | None, dry_run: 
     if not narrowed and not failed and len(key_hosts) == sum(h["enroll"] for h in hosts):
         if was != cfg["box"]:
             replace_file(current().key_name, f"{cfg['box']}\n")
-        rotate.retire_keys(cfg, say)        # another type's key no Host uses or holds now (T253 item 5)
+        # another type's key no Host uses or holds now: said, deleted only with --retire-keys (T253 item 5)
+        rotate.retire_keys(cfg, say, "delete" if retire else "hint")
+    elif retire:
+        say("retire       --retire-keys deleted nothing: setup didn't finish on every Host (run it again once it does)")
     write_claude_files(cfg)
     warn_overlaps(cfg)
     failed.update(setup_mesh(cfg, "--only" if only else "--host" if narrowed else None))

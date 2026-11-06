@@ -911,20 +911,97 @@ def test_the_one_host_config_pins_one_key_and_turns_a_proxyjump_into_its_own_ssh
 
 
 @pytest.mark.parametrize("argv", [["setup", "--rotate"], ["setup"]])
-def test_an_old_types_key_file_goes_once_no_host_holds_or_uses_it(lab, capsys, argv):
-    """T253 item 5: roster.yml's key_type: goes ed25519 -> ecdsa. While a Host still holds the Ed25519 line (down
-    for this run), roster_ed25519 stays; once every Host is on ECDSA, roster deletes it, and says so."""
+def test_an_old_types_key_file_is_only_deleted_by_retire_keys_once_no_host_holds_or_uses_it(lab, capsys, argv):
+    """T253 item 5 (opt-in after #546's review MED-1/MED-2, the coordinator's call): roster.yml's key_type: goes
+    ed25519 -> ecdsa. A plain setup or rotation never deletes a key: once nothing roster knows uses roster_ed25519, it
+    says `roster setup --retire-keys` deletes it; that does, and setup --dry-run says it would."""
     ecdsa = lab.key.with_name("roster_ecdsa")
     lab.write("key_type: ecdsa\n" + LAB_YML)
     lab.down("db-01")
     capsys.readouterr()
     assert main(argv) == 1
-    assert lab.key.exists() and lab.key.with_name("roster_ed25519.pub").exists()
-    assert "retired" not in capsys.readouterr().out
+    assert "--retire-keys" not in capsys.readouterr().out            # db-01 still holds the Ed25519 line
     lab.down("db-01", False)
     assert main(argv) == 0, capsys.readouterr().out
-    assert all([ln.split()[0] for ln in lab.lines(n)] == ["ecdsa-sha2-nistp384"] for n in ("web-01", "web-02", "db-01"))
     assert all(lab.keys(n) == [pub_key(ecdsa)] for n in ("web-01", "web-02", "db-01"))
+    assert lab.key.exists() and lab.key.with_name("roster_ed25519.pub").exists()     # never deleted by itself
+    hint = f"nothing roster knows uses {lab.key} (ed25519) now: `roster setup --retire-keys` deletes it"
+    assert hint in capsys.readouterr().out
+    assert main(["setup", "--dry-run"]) == 0
+    assert f"would retire {lab.key} (ed25519) with --retire-keys" in capsys.readouterr().out
+    assert lab.key.exists()
+    assert main(["setup", "--retire-keys"]) == 0, capsys.readouterr().out
     assert not lab.key.exists() and not lab.key.with_name("roster_ed25519.pub").exists()
-    assert f"retired key  {lab.key} (ed25519): no Host of any Inventory on this Box uses or holds it now" \
-        in capsys.readouterr().out
+    assert f"retired key  {lab.key} (ed25519): deleted" in capsys.readouterr().out
+
+
+def test_retire_keys_keeps_a_key_the_users_own_ssh_config_uses(lab, capsys, isolated):
+    """#546's review MED-1: the user also logs in to a NAS with roster's key (named in a file their ~/.ssh/config
+    includes). Neither setup nor setup --retire-keys deletes it, and --retire-keys says why."""
+    extra = isolated["home"] / ".ssh" / "mine.conf"
+    extra.write_text(f'Host nas\n    HostName 10.0.0.99\n    IdentityFile "{lab.key}"\n')
+    with (isolated["home"] / ".ssh" / "config").open("a") as f:
+        f.write("\nInclude mine.conf\n")
+    lab.write("key_type: ecdsa\n" + LAB_YML)
+    capsys.readouterr()
+    assert main(["setup"]) == 0, capsys.readouterr().out
+    assert lab.key.exists()
+    assert main(["setup", "--retire-keys"]) == 0
+    out = capsys.readouterr().out
+    assert lab.key.exists()
+    assert f"kept {lab.key} (ed25519): your ssh config names it ({extra})" in out
+
+
+def test_retire_keys_keeps_a_key_while_a_host_has_no_record_of_its_types(lab, capsys, isolated, tmp_path):
+    """#546's review MED-2: a Host set up before T245 has no key-types row, so roster can't tell which keys it
+    holds: unknown is never unused. And a plain setup of a second roster.yml (-c) never deletes a key at all."""
+    from roster.context import Context, current
+    b = tmp_path / "b" / "roster.yml"
+    b.parent.mkdir()
+    b.write_text("box_name: ws1\nkey_type: ecdsa\ngroups:\n  lab:\n    user: ops\n    auth: env:PW\n    hosts:\n"
+                 "      db-01: 10.0.0.6\n")
+    current().file("key_types").unlink(missing_ok=True)                  # as before T245
+    capsys.readouterr()
+    assert main(["-c", str(b), "setup"]) == 0, capsys.readouterr().out
+    assert lab.key.exists() and lab.logs_in("web-01", lab.key)
+    lab.write("key_type: ecdsa\n" + LAB_YML)
+    assert main(["setup"]) == 0, capsys.readouterr().out
+    b.write_text(b.read_text().replace("db-01:", "db-02:"))            # db-01's account under another name
+    (lab.hosts / "db-02").symlink_to(lab.hosts / "db-01", target_is_directory=True)
+    assert main(["inv", "add", "home", str(b)]) == 0                    # B as a named Inventory, set up before T245
+    assert main(["--inv", "home", "setup"]) == 0, capsys.readouterr().out
+    Context("home").file("key_types").unlink()
+    capsys.readouterr()
+    assert main(["setup", "--retire-keys"]) == 0
+    out = capsys.readouterr().out
+    assert lab.key.exists()
+    assert f"kept {lab.key} (ed25519): roster has no record of the key types on home: db-02" in out, out
+
+
+def test_retire_keys_is_a_whole_setup_only(lab):
+    for argv in (["setup", "--retire-keys", "--rotate"], ["setup", "--retire-keys", "--host", "web-01"],
+                 ["setup", "--retire-keys", "--only", "lab"]):
+        with pytest.raises(SystemExit, match="--retire-keys"):
+            main(argv)
+
+
+def test_only_the_options_the_user_set_are_carried_so_ssh_still_orders_host_keys(lab, capsys, isolated):
+    """#546's review LOW-1: `ssh -G` prints every option, defaults too. Only what differs from `ssh -G -F none`
+    (what the user's config set) is carried; a default HostKeyAlgorithms written out would turn off ssh's ordering by
+    the host key types known_hosts holds, and a Host recorded by its ECDSA key (Ed25519 first by default) would
+    never be reached."""
+    from roster import rotate
+    assert rotate.user_options("web-02") == {}
+    (lab.hosts / "web-02" / "hostkeys").write_text("ssh-ed25519 ecdsa-sha2-nistp256\n")
+    kh = isolated["home"] / ".ssh" / "roster_known_hosts"
+    kh.write_text(kh.read_text().replace("10.0.0.5 ssh-ed25519 ", "10.0.0.5 ecdsa-sha2-nistp256 "))
+    capsys.readouterr()
+    assert main(["setup", "--rotate"]) == 0, capsys.readouterr().out
+    assert all(lab.keys(n) == [pub_key(lab.key)] for n in ("web-01", "web-02", "db-01"))
+
+
+def test_a_proxyjump_hop_that_reads_as_an_option_is_never_carried():
+    """#546's review NIT: a hop starting with `-` would be an option to the inner ssh."""
+    from roster import rotate
+    assert rotate.carried({"proxyjump": "-oProxyCommand=x,bastion"}) == []
+    assert rotate.carried({"proxyjump": "bastion,-x"}) == []
