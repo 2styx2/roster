@@ -147,18 +147,25 @@ for y in ${yamls[@]+"${yamls[@]}"}; do
 done
 (( ${#own_keys[@]} )) || own_keys=("$HOME/.ssh/roster_ed25519")
 
-holds() {                       # holds KEY: this user's alone, and ssh-keygen -y of it gives KEY.pub
-    local k=$1 m a b c d
-    [[ -f $k && ! -L $k && -O $k && -f $k.pub && ! -L $k.pub ]] || return 1
-    m=$(LC_ALL=C ls -ln -- "$k" 2>/dev/null) && [[ ${m:4:6} == ------ ]] || return 1     # no group or other bits
+why_not() {                     # why_not KEY: says why this Box doesn't hold KEY (1), or nothing when it does (0):
+    local k=$1 m a b c d        # it's this user's alone, and ssh-keygen -y of it gives KEY.pub
+    if [[ -L $k || -L $k.pub ]]; then echo "it's a symbolic link"; return 1; fi
+    [[ -f $k ]] || { echo "it isn't a file"; return 1; }
+    [[ -O $k ]] || { echo "it isn't yours"; return 1; }
+    m=$(LC_ALL=C ls -ln -- "$k" 2>/dev/null)
+    [[ ${m:4:6} == ------ ]] || { echo "others may read or write it"; return 1; }
+    [[ -f $k.pub ]] || { echo "no .pub beside it"; return 1; }
+    have ssh-keygen || { echo "no ssh-keygen here to check it"; return 1; }
     read -r a b _ < <(ssh-keygen -y -P '' -f "$k" < /dev/null 2>/dev/null)
     read -r c d _ < "$k.pub" 2>/dev/null
-    [[ -n $a && -n $b && $a == "$c" && $b == "$d" ]]
+    [[ -n $a && -n $b && $a == "$c" && $b == "$d" ]] && return 0
+    echo "its .pub isn't its own public key, or it has a passphrase"; return 1
 }
-tag_of() {                      # tag_of PUB -> the Box name in its roster-managed: tag (an older roster's fleet-managed:)
+holds() { why_not "$1" > /dev/null; }
+tag_of() {                      # tag_of PUB -> its roster-managed:NAME tag (an older roster's fleet-managed:NAME)
     local a b c rest
     read -r a b c rest < "$1" 2>/dev/null || [[ -n ${c:-} ]] || return 1
-    [[ -z $rest && $c =~ ^(roster-managed|fleet-managed):([A-Za-z0-9_-]+)$ ]] && printf '%s' "${BASH_REMATCH[2]}"
+    [[ -z $rest && $c =~ ^(roster-managed|fleet-managed):[A-Za-z0-9_-]+$ ]] && printf '%s' "$c"
 }
 # this Box's names: the ones roster recorded its key lines under (key-name, key-name-INVENTORY), each roster.yml's
 # box_name: (else this box's hostname, as roster names it), and the tag on each roster.yml's own key this Box holds
@@ -172,9 +179,12 @@ for y in ${yamls[@]+"${yamls[@]}"}; do
     [[ -n $v ]] && box_names+=("$(printf '%s' "$v" | sed 's/[^A-Za-z0-9_-]/-/g')")
 done
 have ssh-keygen && for k in "${own_keys[@]}"; do
-    holds "$k" && v=$(tag_of "$k.pub") && box_names+=("$v")
+    holds "$k" && v=$(tag_of "$k.pub") && box_names+=("${v#*:}")
 done
-roster_key_files=() box_keys=() not_vouched=()
+roster_key_files=()
+box_keys=() box_tags=()         # this Box's roster_* keys, and the tag that vouched for each (shown before deleting)
+named_keys=() named_tags=()     # this Box's keys at a key_path: of another name: each asked about apart, default no
+not_vouched=() not_why=()       # the rest, and why each isn't this Box's
 for d in "${key_dirs[@]}"; do
     for k in "$d"/roster_*; do
         [[ ${k##*/} =~ $KEY_RE ]] && [[ -e $k || -L $k ]] && roster_key_files+=("$k")
@@ -184,12 +194,22 @@ for k in ${other_keys[@]+"${other_keys[@]}"}; do
     for f in "$k" "$k.old" "$k.new"; do [[ -e $f || -L $f ]] && roster_key_files+=("$f"); done
 done
 for k in ${roster_key_files[@]+"${roster_key_files[@]}"}; do
-    if have ssh-keygen && holds "$k" && v=$(tag_of "$k.pub") && listed "$v" ${box_names[@]+"${box_names[@]}"}; then
-        box_keys+=("$k")
-    else
-        not_vouched+=("$k")
+    if r=$(why_not "$k"); then
+        v=$(tag_of "$k.pub")
+        if [[ -z $v ]]; then r="its .pub has no roster-managed: tag"
+        elif ! listed "${v#*:}" ${box_names[@]+"${box_names[@]}"}; then r="tagged $v, not a name of this box's"
+        fi
     fi
+    if [[ -n $r ]]; then not_vouched+=("$k"); not_why+=("$r")
+    elif [[ ${k##*/} == roster_* ]]; then box_keys+=("$k"); box_tags+=("$v")
+    else named_keys+=("$k"); named_tags+=("$v"); fi
 done
+tag_for() {                     # tag_for KEY: " (the tag that vouched for it)" when KEY is one of this Box's keys
+    local i
+    for i in ${box_keys[@]+"${!box_keys[@]}"}; do [[ ${box_keys[i]} == "$1" ]] && printf ' (%s)' "${box_tags[i]}"; done
+    for i in ${named_keys[@]+"${!named_keys[@]}"}; do [[ ${named_keys[i]} == "$1" ]] && printf ' (%s)' "${named_tags[i]}"; done
+    return 0
+}
 
 printf '\n%sroster uninstaller%s\n' "$B" "$N"
 info "Takes this box off its hosts, then removes roster and the files it wrote here. Your vault is not touched."
@@ -297,7 +317,7 @@ else
         info "(roster revoke --all), only by editing each host's authorized_keys"
         go=N
     fi
-    for p in ${there[@]+"${there[@]}"}; do info "$(home "$p")"; done
+    for p in ${there[@]+"${there[@]}"}; do info "$(home "$p")$(tag_for "$p")"; done
     if ask "Delete these, and the Include line in ~/.ssh/config?" "$go"; then
         remove "this box's roster keys and ssh config" ${there[@]+"${there[@]}"} || fail_stage
         gone_keys=(${box_keys[@]+"${box_keys[@]}"})
@@ -315,22 +335,27 @@ else
     fi
 fi
 # A roster_* key file roster can't vouch for (not this user's alone, no .pub of its own, no tag of this Box's) isn't
-# roster's to delete: said, and kept
-for k in ${not_vouched[@]+"${not_vouched[@]}"}; do
+# roster's to delete: said, with why, and kept
+for i in ${not_vouched[@]+"${!not_vouched[@]}"}; do
+    k=${not_vouched[i]}
     listed "$k" ${other_keys[@]+"${other_keys[@]}"} && continue                   # asked about below
-    if ! have ssh-keygen; then
-        info "kept $(home "$k"): no ssh-keygen here to check it's this box's roster key"
-    else
-        info "kept $(home "$k"): not this box's roster key (its .pub isn't this box's roster-managed: key for it)"
-    fi
+    info "kept $(home "$k"): not this box's roster key (${not_why[i]})"
 done
-# A key_path: elsewhere (~/.ssh/id_ed25519?) may be your own key for other servers too: never deleted by default
+# A key_path: of another name (~/.ssh/id_ed25519?) may be your own key for other servers too, even when roster made it
+# (ssh offers ~/.ssh/id_* keys to every server): asked about apart, never deleted by default
 for k in ${other_keys[@]+"${other_keys[@]}"}; do
     [[ -e $k ]] || continue
-    listed "$k" ${box_keys[@]+"${box_keys[@]}"} && continue          # this Box's, tagged: went with the rest
-    warn "roster.yml's key_path: is $(home "$k"): if roster made it just for this box, it can go too"
+    if listed "$k" ${named_keys[@]+"${named_keys[@]}"}; then
+        warn "roster.yml's key_path: is $(home "$k"), which roster made for this box$(tag_for "$k"); ssh offers"
+        info "~/.ssh/id_* keys to every server, so you may use it elsewhere too"
+    else
+        warn "roster.yml's key_path: is $(home "$k"): if roster made it just for this box, it can go too"
+    fi
     if (( REVOKED )) && ask "Delete $(home "$k") and its .pub? (no if you use it for anything else)" N; then
-        remove "$(home "$k")" "$k" "$k.pub"
+        drop=("$k" "$k.pub")
+        for f in "$k.old" "$k.new"; do listed "$f" ${named_keys[@]+"${named_keys[@]}"} && drop+=("$f" "$f.pub"); done
+        remove "$(home "$k")" "${drop[@]}"
+        gone_keys+=("${drop[@]}")
     else info "kept $(home "$k")"; fi
 done
 

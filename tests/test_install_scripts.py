@@ -160,6 +160,7 @@ def test_uninstall_removes_this_box_s_key_of_every_type(box):
     r = run(UNINSTALL_SH, env)
     assert r.returncode == 0, r.stdout + r.stderr
     assert not (home / ".ssh/roster_ecdsa").exists() and not (home / ".ssh/roster_ecdsa.pub").exists()
+    assert "~/.ssh/roster_ecdsa (roster-managed:ws1)" in r.stdout          # the tag that vouched for it, shown
 
 
 @posix_shell
@@ -195,7 +196,11 @@ def test_uninstall_never_deletes_a_key_it_cannot_vouch_for(box):
     assert left == ["config", "id_ecdsa", "id_ecdsa.pub", "roster_ecdsa", "roster_ecdsa-256", "roster_ecdsa-256.pub",
                     "roster_ecdsa.pub", "roster_ed25519.new", "roster_ed25519.new.pub", "roster_rsa",
                     "roster_rsa.pub"]
-    assert "kept ~/.ssh/roster_rsa: not this box's roster key" in r.stdout
+    for key, why in [("roster_rsa", "its .pub has no roster-managed: tag"),
+                     ("roster_ecdsa", "tagged roster-managed:other-box, not a name of this box's"),
+                     ("roster_ecdsa-256", "its .pub isn't its own public key"),
+                     ("roster_ed25519.new", "others may read or write it")]:
+        assert f"kept ~/.ssh/{key}: not this box's roster key ({why}" in r.stdout
 
 
 @posix_shell
@@ -206,6 +211,19 @@ def test_uninstall_removes_a_key_path_of_another_name_roster_made(box):
     r = run(UNINSTALL_SH, env)
     assert r.returncode == 0, r.stdout + r.stderr
     assert not (home / ".ssh/roster_custom").exists() and not (home / ".ssh/roster_custom.pub").exists()
+
+
+@posix_shell
+def test_uninstall_asks_apart_about_a_key_path_roster_made_at_an_id_name(box):
+    """ssh offers ~/.ssh/id_* keys to every server: one roster made may be in use elsewhere since (#511's review)."""
+    home, env = box
+    (home / "infra/roster.yml").write_text("key_path: ~/.ssh/id_ed25519\ngroups: {}\n")
+    keygen(home / ".ssh/id_ed25519")
+    r = run(UNINSTALL_SH, env, "--purge")
+    assert (home / ".ssh/id_ed25519").exists() and (home / ".ssh/id_ed25519.pub").exists()
+    assert "which roster made for this box (roster-managed:ws1)" in r.stdout and "kept ~/.ssh/id_ed25519" in r.stdout
+    r = run(UNINSTALL_SH, env, answers="y\n" * 20)
+    assert not (home / ".ssh/id_ed25519").exists() and not (home / ".ssh/id_ed25519.pub").exists()
 
 
 @posix_shell
