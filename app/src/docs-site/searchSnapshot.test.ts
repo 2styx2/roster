@@ -1,10 +1,10 @@
 // The docs website's search gives the same results over the index the build writes, query for query
 // (T260, #528): a fixed set of queries, each result list summed up as its counts, its first few
 // results and a hash of every result, so a change to how the index is written or loaded that
-// changes any result shows here.
+// changes any result shows here. Recorded from the one search-index.js, before it was sharded.
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { searchDocs, type SearchIndex } from "./search";
+import { joinIndex, searchDocs, type SearchIndex, type SearchTopics } from "./search";
 import { buildSite, siteContext } from "./site";
 
 const OPTS = { sha: "0123456789abcdef0123456789abcdef01234567", repo: "example/roster", version: "9.8.7", fileExists: () => true };
@@ -34,11 +34,19 @@ const QUERIES = [
   "zzqqxx",
 ];
 
+/** The index as a page's search.js gets it: search-topics.js first, then every text shard it
+ * names, each run as the script it is (the build writes plain scripts, for file:// too). */
 function loadIndex(files: { path: string; body: string }[]): SearchIndex {
-  const js = files.find((f) => f.path === "search-index.js")?.body ?? "";
-  const m = /^window\.rosterSearchIndex = (.*);\n$/s.exec(js);
-  if (!m) throw new Error("no search-index.js");
-  return JSON.parse(m[1] as string) as SearchIndex;
+  const win: Record<string, unknown> = {};
+  const run = (path: string) => {
+    const f = files.find((x) => x.path === path);
+    if (!f) throw new Error(`no ${path}`);
+    new Function("window", f.body)(win);
+  };
+  run("search-topics.js");
+  const topics = win.rosterSearchTopics as SearchTopics;
+  for (const shard of topics.shards) run(shard);
+  return joinIndex(topics, topics.shards.map((_, i) => (win.rosterSearchText as SearchIndex["texts"][])[i] ?? []));
 }
 
 const hash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex").slice(0, 16);

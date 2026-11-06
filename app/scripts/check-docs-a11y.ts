@@ -78,7 +78,8 @@ export async function main(argv: string[]): Promise<number> {
       // The combobox, open: a query with topics and places in the text, the first option chosen.
       await page.goto(pathToFileURL(join(root, "index.html")).href);
       await page.fill("#site-topic", "connect");
-      await page.locator('[role="option"]').first().waitFor();
+      // The text's options come once every shard has loaded (T260): the list as a reader sees it then.
+      await page.locator('[role="option"].site-hit-text').first().waitFor();
       await page.keyboard.press("ArrowDown");
       problems += report(`index.html search box open (${scheme})`, await audit(page, OPEN_BOX_OFF));
       checks++;
