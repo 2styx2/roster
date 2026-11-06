@@ -42,7 +42,11 @@ def ensure_key(key, tag):
             die(f"{key.key} exists but {key.pub} is missing")
         from . import boxkeys
         from .errors import KEY_TYPE_MISMATCH
-        fix = "move it away (roster makes the new key there), or point key_path at another file"
+        # T245 (#478 item 3): key_path written out by an older template names the Ed25519 key's file, which a later
+        # top-level key_type: then finds holding another type
+        fix = (f"remove key_path from roster.yml (roster then keeps this key at {key.key.with_name(key.type.file_name)}) "
+               "or point it at another file" if key.key.name != key.type.file_name else
+               "move it away (roster makes the new key there), or point key_path at another file")
         if key.type.name != "ed25519":
             have = (key.pub.read_text().split() or ["nothing"])[0]
             if have != key.type.public_word:
@@ -108,10 +112,13 @@ def box_key_re(cfg):
 
 
 def box_public_keys(cfg):
-    """[[type, key, comment...]] of each of this Box's public keys that's there and reads as one."""
+    """[[type, key, comment...]] of each of this Box's public keys that's there and reads as one, and whose private key
+    this Box holds (boxkeys.vouched, #471's review LOW-6: every key, not only the leftover ones)."""
     from . import boxkeys
     out = []
     for key in boxkeys.all_keys(cfg):
+        if not boxkeys.vouched(key, cfg["key"]):
+            continue
         try:
             parts = key.pub.read_text().split()
         except OSError:
@@ -611,24 +618,27 @@ def enroll(h, pub, tag_re, taken=None, own=None, keep_others=False):
     name's tag_re, on a renamed Box) is given and another key's line (one OWN, this Box's keys, doesn't match) is under
     that name there.
     T239 (#471's review LOW-1): PUB's line goes in first beside this Box's other lines (TAG_RE: another key type's),
-    a key login tests it, and only then do those go, over that key login: a Host that refuses PUB's type keeps the
-    line that worked. KEEP_OTHERS (setup --key-type, MED-1): they stay, so roster.yml's type still works after."""
+    a key login tests it, and only then do those go, over that key login (drop_others), and only when the install
+    said there are any (on Windows too since T245, #471's NIT-1). KEEP_OTHERS (setup --key-type, MED-1): they stay, so
+    roster.yml's type still works after; TAG_RE then names only the lines that go (cli.cleanup_re)."""
     from . import winhost
     this = key_ere(*pub.split()[:2])
     pw = get_secret(h["ssh"]["auth"], h["group"])
     if is_windows(h):
-        done = winhost.install(h, pub, this, pw, taken or "", (own or this) if taken else "")
+        done = winhost.install(h, pub, this, pw, taken or "", (own or this) if taken else "", others=tag_re)
         if done.taken:
             raise NameTaken(pub.split()[2])
         if not ssh_ok(h["name"]):
             raise RuntimeError(f"key written to {', '.join(done.files) or 'its key file'} but key login still fails "
                                "(check that file's permissions and encoding, and whether sshd_config's Match Group "
-                               "administrators applies to this account); this Box's other key lines there were kept")
-        if not keep_others:
-            winhost.over_key(h, "add", tag_re, pub=pub)         # this Box's other lines go, PUB's stays
+                               "administrators applies to this account)"
+                               + ("; this Box's other key lines there were kept" if done.others else ""))
         from .errors import KEY_FILE
-        return ([f"key file {f}" for f in done.files] + ([f"note: {winhost.admins_note(h['name'])}"] if done.admins else [])
-                + [f"warning: [{KEY_FILE}] {w}" for w in done.warnings])
+        notes = ([f"key file {f}" for f in done.files] + ([f"note: {winhost.admins_note(h['name'])}"] if done.admins
+                 else []) + [f"warning: [{KEY_FILE}] {w}" for w in done.warnings])
+        if done.others and not keep_others:
+            notes += [n for n in drop_others(h, pub, tag_re) if n not in notes]
+        return notes
     _, out, err = password_exec(h, "sh -c " + shlex.quote(add_key_script(pub, this, h["ssh"]["user"], taken, own,
                                                                          others=tag_re)), pw)
     if "ROSTER_TAKEN" in out.split():
@@ -642,10 +652,26 @@ def enroll(h, pub, tag_re, taken=None, own=None, keep_others=False):
                            "permissions, or a key type it refuses?)"
                            + ("; this Box's other key lines there were kept" if "ROSTER_OTHERS" in out.split() else ""))
     if "ROSTER_OTHERS" in out.split() and not keep_others:
-        r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
-                                         "sh -c " + shlex.quote(add_key_script(pub, tag_re, h["ssh"]["user"]))]),
-                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
-        if "ROSTER_OK" not in r.stdout:
-            raise RuntimeError("the new key works, but this Box's other key lines there couldn't be taken off: "
-                               + ((r.stderr or r.stdout).strip()[:200] or f"exit {r.returncode}"))
+        drop_others(h, pub, tag_re)
+    return []
+
+
+def drop_others(h, pub, drop_re, why="the new key works"):
+    """Over this Box's key login to Host H (PUB's key, whose line stays): this Box's lines DROP_RE matches go, and PUB's
+    line is written once (DROP_RE matches it too, or it would be there twice). The notes a Windows Host's script gave
+    (its key file's warnings). RuntimeError `WHY, but this Box's other key lines there couldn't be taken off: ...`."""
+    from . import winhost
+    fail = f"{why}, but this Box's other key lines there couldn't be taken off: "
+    if is_windows(h):
+        try:
+            done = winhost.over_key(h, "add", drop_re, pub=pub)
+        except RuntimeError as e:
+            raise RuntimeError(fail + str(e)) from None
+        from .errors import KEY_FILE
+        return [f"warning: [{KEY_FILE}] {w}" for w in done.warnings]
+    r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none", h["name"],
+                                     "sh -c " + shlex.quote(add_key_script(pub, drop_re, h["ssh"]["user"]))]),
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
+    if "ROSTER_OK" not in r.stdout:
+        raise RuntimeError(fail + ((r.stderr or r.stdout).strip()[:200] or f"exit {r.returncode}"))
     return []

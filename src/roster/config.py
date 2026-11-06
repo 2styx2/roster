@@ -258,7 +258,8 @@ def parse_inventory(text, path):
         m["key_file"] = str(boxkeys.key_file(key, box_type, m["key_type"]))
         if m["key_type"] != box_type and Path(m["key_file"]) == key:
             die(f"{path}: key_path ({key_path}) is where roster keeps the {m['key_type']} key that {m['name']} uses "
-                f"(key_type: {m['key_type']}): point key_path at another file")
+                f"(key_type: {m['key_type']}): remove key_path (roster then keeps this Box's {box_type} key at "
+                f"~/.ssh/{boxkeys.parse(box_type).file_name}) or point it at another file")
     # matches this box's key line in authorized_keys, including tags from older versions, and a line that ends in CRLF
     # or spaces (T226, #435: sshd still reads it)
     tag_re = f" ({'|'.join((KEY_TAG,) + LEGACY_KEY_TAGS)}):{box}{KEY_TRAIL}"

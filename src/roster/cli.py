@@ -53,6 +53,7 @@ from .sshops import (
     NameTaken,
     box_key_re,
     box_public_keys,
+    drop_others,
     enroll,
     ensure_key,
     key_ere,
@@ -205,6 +206,7 @@ def setup_run(cfg, args):
     if not hosts:
         return 0
     warn_os(hosts)
+    yml = cfg                               # roster.yml's own key types, before --key-type's for this run
     override = getattr(args, "key_type", None)
     if override:
         if host is None:            # #471's review MED-1: a Host at a time, never a group or the whole Inventory
@@ -245,6 +247,25 @@ def setup_run(cfg, args):
                f"this Box's key was made as {KEY_TAG}:{was}, so its lines may carry that name")
         say(f"key tag      {why}: re-tag it as {cfg['tag']} on {plural(len(retag), 'host')} where it works")
 
+    # T245 (#478 items 4, 7, 12): the record says which types this Box's lines on each Host are; where the key works,
+    # the lines of other types go now (setup --key-type's, a cleanup that failed), over that key login. --key-type's
+    # Host keeps roster.yml's type's line too, so its tries never pile up
+    held = boxkeys.installed()
+    pending_rotation = rotation.pending(cfg)
+
+    def keep(h):
+        return {h["key_type"], yml["hosts"][h["name"]]["key_type"]} if override else {h["key_type"]}
+
+    tidy = {h["name"]: sorted(set(held.get(h["name"], [])) - keep(h)) for h in key_hosts
+            if works[h["name"]] and h["name"] not in pending_rotation and set(held.get(h["name"], [])) - keep(h)}
+    # #505's review (NIT): the cleanup writes the key's .pub back after taking this Box's lines off, so only where
+    # roster can tell that .pub is the key that logged in (a passphrase on it: it can't), never losing the working line
+    for h in key_hosts:
+        if h["name"] in tidy and not boxkeys.matches(boxkeys.for_host(h).key):
+            say(f"  note  {h['name']}: this Box's {' and '.join(tidy.pop(h['name']))} key line is still there, and "
+                f"roster can't check that {boxkeys.for_host(h).pub} is the key that logs in (a passphrase on it?), so "
+                "it left the lines as they are: remove that line by hand, or roster revoke takes it")
+
     failed = {h["name"]: "no answer on SSH port" for h in hosts if h["name"] in no_answer}
     if args.dry_run:
         for h in todo:
@@ -252,6 +273,8 @@ def setup_run(cfg, args):
                 f"{h['key_type']} key)")
         for h in retag:
             say(f"  would re-tag key on {h['name']}")
+        for name, types in tidy.items():
+            say(f"  would take this Box's {' and '.join(types)} key line off {name}")
         return 0
 
     # T226 (#435, 2): renamed onto a name another Box's key line has on a Host: the same-name rule (this Box's revoke
@@ -271,6 +294,37 @@ def setup_run(cfg, args):
                 else:
                     failed[h["name"]] = f"re-tag: {why}"
                     say(f"  FAIL  {h['name']}: re-tag: {why}")
+
+    if tidy:
+        by_name = {h["name"]: h for h in key_hosts}
+
+        unmatched = {}                      # #505's review L2: an earlier try's type with no key of it here
+
+        def tidy_on(name):
+            h = by_name[name]
+            if not override:
+                return drop_others(h, pub(h), box_key_re(cfg), why="the key works")
+            drop_re, unmatched[name] = cleanup_re(cfg, pub(h), tidy[name])
+            return drop_others(h, pub(h), drop_re, why="the key works")
+        with cf.ThreadPoolExecutor(cfg["workers"]) as ex:
+            futs = {ex.submit(tidy_on, n): n for n in tidy if n not in failed}
+            for f in cf.as_completed(futs):
+                name = futs[f]
+                try:
+                    notes = f.result()
+                    boxkeys.record({name: (set(held.get(name, [])) - set(tidy[name])) | set(unmatched.get(name, ()))})
+                    say(f"  ok    {name} (took this Box's {' and '.join(tidy[name])} key line off)")
+                    for note in notes:
+                        say(f"        {note}")
+                except Exception as e:
+                    failed[name] = str(e)
+                    say(f"  FAIL  {name}: {e}")
+    # a Host where the key works holds at least its type's line
+    known = {h["name"]: set(held.get(h["name"], [])) | {h["key_type"]} for h in key_hosts
+             if works[h["name"]] and h["name"] not in tidy and h["name"] not in failed
+             and set(held.get(h["name"], [])) | {h["key_type"]} != set(held.get(h["name"], []))}
+    if known:
+        boxkeys.record(known)
 
     locked_vaults = set()                   # the providers a Login's lookup found locked (their own fix each)
     for ref, group in sorted({(h["auth"], h["group"]) for h in todo}, key=lambda t: (str(t[0]), t[1])):
@@ -296,6 +350,15 @@ def setup_run(cfg, args):
                 try:
                     notes = f.result()
                     installed.append(h["name"])
+                    if override:            # roster.yml's type's line stayed, and any other try's: those go (NIT-3)
+                        have = set(held.get(h["name"], [])) | keep(h)
+                        left = []
+                        if extra := sorted(have - keep(h)):
+                            drop_re, left = cleanup_re(cfg, pub(h), extra)
+                            notes = [*(notes or []), *drop_others(h, pub(h), drop_re)]
+                        boxkeys.record({h["name"]: keep(h) | set(left)})      # L2: a line it couldn't match stays
+                    else:
+                        boxkeys.record({h["name"]: [h["key_type"]]})
                     say(f"  ok    {h['name']}")
                     for note in notes or ():
                         say(f"        {note}")
@@ -356,20 +419,30 @@ def setup_next_line(installed, locked_vaults=()):
     return next_line(changed if installed else [], left)
 
 
+def cleanup_re(cfg, pub, types):
+    """What drop_others takes on a Host for `setup --key-type` (T245, #471's NIT-3): PUB's line (written again) and
+    this Box's lines of TYPES' keys (the ones this Box holds, boxkeys.vouched), never roster.yml's type's line. Returns
+    (that ERE, the TYPES with no such key here: their lines stay, and the record keeps them, #505's review L2)."""
+    by_type = {k.type.name: k for k in boxkeys.all_keys(cfg)}
+    alts, missing = [key_ere(*pub.split()[:2])], []
+    for t in types:
+        k = by_type.get(t)
+        words = boxkeys.public_words(k.pub) if k is not None and boxkeys.vouched(k, cfg["key"]) else None
+        if words:
+            alts.append(key_ere(*words))
+        else:
+            missing.append(t)
+    return "|".join(alts), missing
+
+
 def setup_mesh(cfg, narrowed_by):
     """Setup's own Mesh apply (Q63), once the Box key works on the Hosts: never with a narrowed run (NARROWED_BY, the
-    flag), never one that would take a member out for its key type. {host: why} for what it left pending."""
+    flag). {host: why} for what it left pending. (Since T245 the Mesh follows key_type, so no Host is left out for
+    it, and #471's MED-2 guard has nothing left to guard.)"""
     if not mesh.graph(cfg)["links"]:
         return {}
     if narrowed_by:
         say(f"mesh         not applied with {narrowed_by} (it covers the whole Mesh): run `roster mesh`")
-        return {}
-    if dropped := mesh.key_type_dropped(cfg):
-        # #471's review MED-2: never take a member's Mesh entries off as a side effect of setup
-        say(f"warning: mesh         NOT applied: {', '.join(dropped)} {'is' if len(dropped) == 1 else 'are'} in "
-            "the Mesh now, but key_type: leaves them out of it (the Mesh is Ed25519 only), so applying it would "
-            "take their Mesh entries off and their peers' for them. See what it would change with `roster mesh "
-            "--dry-run`, then run `roster mesh` to do it (or set key_type: back)")
         return {}
     say("mesh         applying the Mesh for meshed groups and links (one Host at a time)...")
     return {n: f"mesh: {why}" for n, why in mesh_apply(cfg).items()}
@@ -474,6 +547,8 @@ def cmd_sync(cfg, args):
     write_ssh_config(cfg)
     write_claude_files(cfg)
     warn_overlaps(cfg)
+    for message in boxkeys.drift(cfg).values():         # T245 (#478 item 4)
+        say(f"warning: {message}")
     changed, unmapped = [], []
     if not getattr(args, "no_vault", False):
         parts = []
@@ -829,10 +904,11 @@ def cmd_check(cfg, args):
                                             or any(x["status"] in BROKEN_LINKS for x in drift["links"]))
         waiting = rotation_waiting(cfg, wanted)
         found = [message for message, _ in rotation.problems(cfg)]
-        ok = all(r["ok"] for r in results) and not broken and not skipped and not waiting and not found
+        types = boxkeys.drift(cfg, wanted)
+        ok = all(r["ok"] for r in results) and not broken and not skipped and not waiting and not found and not types
         from . import jsondocs
         jsonout.emit(jsondocs.CheckDoc.model_validate({"hosts": results, "mesh": drift, "rotation_pending": waiting,
-                                                       "rotation_problems": found, "ok": ok}))
+                                                       "rotation_problems": found, "key_type_drift": types, "ok": ok}))
         return 0 if ok else 1
     bad = 0
     width = max((len(h["name"]) for h in hosts), default=0)
@@ -852,9 +928,7 @@ def cmd_check(cfg, args):
         if drift["already"]:
             say("mesh         every Host holds what roster wrote")
     if not narrowed:           # T196: a Windows Host in a Link or meshed group is left out, not an error; say why
-        # (and T239: a Host whose key_type isn't Ed25519)
-        windows = {n: why for n, why in mesh.graph(cfg)["excluded"].items()
-                   if is_windows(cfg["hosts"][n]) or mesh.key_type_out(cfg["hosts"][n])}
+        windows = {n: why for n, why in mesh.graph(cfg)["excluded"].items() if is_windows(cfg["hosts"][n])}
         if windows:
             say("mesh         left out: " + ", ".join(f"{n} ({why})" for n, why in windows.items()))
     if waiting := rotation_waiting(cfg, wanted):
@@ -864,6 +938,9 @@ def cmd_check(cfg, args):
         bad += 1
     for message, fix in rotation.problems(cfg):         # #482's review LOW-1, LOW-2, MED-1
         say(f"warning: {message} ({fix})")
+        bad += 1
+    for message in boxkeys.drift(cfg, wanted).values():  # T245 (#478 items 4, 7): a key line of another type
+        say(f"warning: {message}")
         bad += 1
     if skipped:
         say("not every Host was checked: " + ("the ones above were skipped" if hosts else "none was reached"))
@@ -1362,6 +1439,29 @@ def key_files(cfg):
     return out
 
 
+def kept_key_files(cfg, files):
+    """Take out of FILES (revoke's to delete) each key file another Inventory on this Box uses too, and its .pub: a
+    note (221) for each, naming the Inventory. When another Inventory's roster.yml doesn't load, no key file is
+    listed: roster can't tell which it uses."""
+    from .errors import KEY_FILE_SHARED
+    notes = []
+    users = rotation.key_users(cfg)
+    broken = [u.label for u in users if u.cfg is None]
+    keys = [Path(f) for f in files[::2]]                # key_files: each key, then its .pub
+    for key in keys:
+        base = Path(str(key).removesuffix(".new").removesuffix(".old"))    # a rotation's: its key's users' too
+        who = [u.label for u in users if base in u.shared]
+        if not who and not broken:
+            continue
+        files.remove(str(key))
+        files.remove(str(key) + ".pub")
+        why = ((f"the Inventory {who[0]} uses" if len(who) == 1 else f"the Inventories {', '.join(who)} use") +
+               " it too: revoke there (`roster --inv NAME revoke`, or `roster revoke --all`) before deleting it" if who
+               else f"{', '.join(broken)}: its roster.yml doesn't load, so roster can't tell whether it uses it")
+        notes.append(f"note: [{KEY_FILE_SHARED}] keep {key}: {why}")
+    return notes
+
+
 def revoke_line(label, h, why):
     say(f"  {'ok  ' if why is None else 'FAIL'}  {label}{h['name']}" + ("" if why is None else f": {why}"))
 
@@ -1402,6 +1502,7 @@ def revoke_run(cfg, args):
                 gone.append(h["name"])
     # #482's review LOW-3: a Host without this Box's key holds no old key either; with every one done, no record
     rotation.forget(gone, everything=not bad and len(hosts) == len(keyed) and not args.only)
+    boxkeys.record(dict.fromkeys(gone))     # T245: no line of this Box's there now
     done = f"\nremoved from {len(hosts) - bad}/{len(hosts)} hosts."
     # T194 (#371): the files go only once every Host this file names has lost the key; with any skipped, failed or
     # left to --only, deleting the key would leave it on those for good
@@ -1414,12 +1515,19 @@ def revoke_run(cfg, args):
     else:
         from .inventories import unnamed_from_elsewhere
         files = key_files(cfg)
+        # T245 (#478 item 6): never a key file another Inventory on this Box uses too (its Hosts still need it)
+        for message in kept_key_files(cfg, files):
+            say(message)
         # never another roster.yml's config.d/roster (#371): its Hosts still need it
         if unnamed_from_elsewhere() is None:
             files.append(str(ssh_config_file()))
         if key_name_file().is_file():       # the name setup recorded the key's lines under (T226, #435)
             files.append(str(key_name_file()))
-        say(f"{done} To finish, delete {', '.join(files[:-1])} and {files[-1]} on this box.")
+        if not files:
+            say(done)
+        else:
+            say(f"{done} To finish, delete " + (f"{', '.join(files[:-1])} and {files[-1]}" if len(files) > 1 else
+                                                files[0]) + " on this box.")
     return 1 if bad or len(hosts) < len(keyed) or not hosts else 0
 
 
@@ -1500,7 +1608,9 @@ def cmd_revoke_all(args):
             bad += why is not None
             revoke_line(f"{label}: ", h, why)
             if why is None:                 # #482's review LOW-3, each Inventory's record
-                rotation.forget([h["name"]], next(n for lb, n, _ in targets if lb == label))
+                inv = next(n for lb, n, _ in targets if lb == label)
+                rotation.forget([h["name"]], inv)
+                boxkeys.record({h["name"]: None}, inv)
     files = []
     for _, cfg, _ in plan:
         files += key_files(cfg)

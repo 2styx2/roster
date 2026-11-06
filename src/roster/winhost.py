@@ -366,6 +366,11 @@ function Main {
         if ($mine -ne $adminFile -and -not $created) { User-AclWarnings $mine $me }
         if ($created -or $new -cne $old) { Write-Keys $mine $new $secure }
         if ($mine -eq $adminFile) { Set-AdminAcl $mine; Say 'SCOPE admins' }
+        # T245 (#471's NIT-1): this Box's other lines (another key type's) still there, which setup takes off once
+        # the new line has logged in, and only then
+        if ($Others -and @($new -split '\n' | Where-Object { $_.TrimEnd() -cmatch $Others -and -not ($_.TrimEnd() -cmatch $TagRe) }).Count) {
+            Say 'OTHERS'
+        }
         Say "FILE $mine"
     } elseif ($Mode -eq 'remove') {
         # both files sshd could have read this account's keys from (it may have joined or left Administrators since)
@@ -419,17 +424,18 @@ try { Main } catch {
 MODES = ("add", "remove", "check", "retag")
 
 
-def script(mode, tag_re, pub="", taken="", own=""):
+def script(mode, tag_re, pub="", taken="", own="", others=""):
     """The PowerShell script for MODE (add PUB, remove, or check this Box's key, matched by TAG_RE; retag: the lines
     TAG_RE matches, this Box's key under any roster name, get PUB's tag in place, NOLINE when there's none): sent on
     stdin. TAKEN and OWN (add and retag on a renamed Box, T226): a line TAKEN (the new name's tag) matches that OWN
-    (this Box's key) doesn't is another Box's, and the script says TAKEN and changes nothing."""
+    (this Box's key) doesn't is another Box's, and the script says TAKEN and changes nothing. OTHERS (add, T245): it
+    says OTHERS when a line OTHERS matches (this Box's, any key) and TAG_RE doesn't is still there after the add."""
     if mode not in MODES:
         raise ValueError(mode)
     # Is-Mine trims each line first, and .NET reads [[:space:]] as a set of its letters: the plain end of line
-    tag_re, taken, own = (x.replace(KEY_TRAIL, "$") for x in (tag_re, taken, own))
+    tag_re, taken, own, others = (x.replace(KEY_TRAIL, "$") for x in (tag_re, taken, own, others))
     header = (f"$Mode = {ps_literal(mode)}\n$Pub = {ps_literal(pub)}\n$TagRe = {ps_literal(tag_re)}\n"
-              f"$Taken = {ps_literal(taken)}\n$Own = {ps_literal(own)}\n")
+              f"$Taken = {ps_literal(taken)}\n$Own = {ps_literal(own)}\n$Others = {ps_literal(others)}\n")
     return header + SCRIPT
 
 
@@ -676,10 +682,11 @@ class Result:
     """What the script said: the files it wrote or read, its warnings, and whether the file is the administrators'
     (a key there logs in as every administrator on the Host: Microsoft's design)."""
 
-    def __init__(self, files, warnings, admins=False, tags=(), noline=False, taken=False):
+    def __init__(self, files, warnings, admins=False, tags=(), noline=False, taken=False, others=False):
         self.files, self.warnings, self.admins = files, warnings, admins
         self.tags, self.noline = list(tags), noline       # remove: the names of the lines taken; retag: none found
         self.taken = taken                                # add, retag: another key's line under the new name (T226)
+        self.others = others                              # add: this Box's lines of another key are still there (T245)
 
 
 def admins_note(name):
@@ -703,7 +710,7 @@ def outcome(name, rc, out, err):
             raise RuntimeError(not_windows(name))
     if "ROSTER_OK" in lines:
         return Result(files, warnings, "SCOPE admins" in lines, [ln[4:] for ln in lines if ln.startswith("TAG ")],
-                      "NOLINE" in lines, "TAKEN" in lines)
+                      "NOLINE" in lines, "TAKEN" in lines, "OTHERS" in lines)
     said = (err or out).strip()
     low = said.lower()
     if "powershell" in low and ("not found" in low or "no such file" in low):
@@ -733,10 +740,10 @@ def over_key(h, mode, tag_re, timeout=60, pub="", taken="", own="", ssh_opts=())
     return outcome(h["name"], r.returncode, out, err)
 
 
-def install(h, pub, tag_re, password, taken="", own=""):
+def install(h, pub, tag_re, password, taken="", own="", others=""):
     """Add this Box's key line PUB on Windows Host H, logging in with PASSWORD (paramiko; None: an agent's key).
-    TAKEN, OWN: script's."""
+    TAKEN, OWN, OTHERS: script's."""
     from .sshops import password_exec
     rc, out, err = password_exec(h, remote_command(), password, timeout=15,
-                                 stdin=framed(script("add", tag_re, pub, taken, own)))
+                                 stdin=framed(script("add", tag_re, pub, taken, own, others)))
     return outcome(h["name"], rc, out, err)

@@ -181,7 +181,7 @@ roster mesh cut --all      # this box's Mesh entries off every host (with a Mesh
 roster revoke --all        # removes this box's key from every host, in every Inventory here
 ```
 
-Then delete `~/.ssh/roster_ed25519*`, `~/.ssh/config.d/roster*`, `~/.ssh/roster-inventories/` and what roster wrote in `~/.config/roster`: everything there but your `roster.yml` and `providers/` (the vault session `bw-session`, the Mesh state `mesh*.json`, `inventories.json`, the run lock `run*.lock`, the key's `key-name*` and `key-created`, `vault-sync/` and `vault-seen/`). `uninstall.sh` keeps a key rotation's record (`key-rotation*`) while a `~/.ssh/roster_*.old` or `.new` key is still there: the record is what says roster made that key; delete both once no host holds it. `roster revoke --all` covers every named Inventory and the unnamed one; plain `roster revoke` covers only the Inventory it runs on (`roster --inv home revoke`). Its summary lists the files to delete.
+Then delete `~/.ssh/roster_ed25519*`, `~/.ssh/config.d/roster*`, `~/.ssh/roster-inventories/` and what roster wrote in `~/.config/roster`: everything there but your `roster.yml` and `providers/` (the vault session `bw-session`, the Mesh state `mesh*.json`, `inventories.json`, the run lock `run*.lock`, the key's `key-name*`, `key-types*` and `key-created`, `vault-sync/` and `vault-seen/`). `uninstall.sh` keeps a key rotation's record (`key-rotation*`) while a `~/.ssh/roster_*.old` or `.new` key is still there: the record is what says roster made that key; delete both once no host holds it. `roster revoke --all` covers every named Inventory and the unnamed one; plain `roster revoke` covers only the Inventory it runs on (`roster --inv home revoke`). Its summary lists the files to delete.
 
 ## See also
 

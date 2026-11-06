@@ -781,3 +781,23 @@ def test_a_lock_file_that_is_a_link_is_refused_on_every_os(isolated, tmp_path):
         with boxlock.held("setup"):
             pass
     assert victim.read_text() == "precious\n"
+
+
+def test_revoke_never_says_to_delete_a_key_file_another_inventory_uses(lab, capsys, isolated):
+    """T245 (#478 item 6, #471's review): revoke's "delete these files" list leaves out a key file another named
+    Inventory on this Box still uses (a type's roster_<type> too), and says why (221)."""
+    work, home = (isolated["home"].parent / d / "roster.yml" for d in ("inv-work", "inv-home"))
+    home_yml = LAB_YML.replace("      web-01: 10.0.0.4\n      web-02: 10.0.0.5\n", "").replace("ws1", "ws1-home")
+    for f, text in ((work, LAB_YML.replace("      db-01: 10.0.0.6\n", "")), (home, home_yml)):
+        f.parent.mkdir()
+        f.write_text(text)
+    assert main(["inv", "add", "work", str(work)]) == 0
+    assert main(["inv", "add", "home", str(home)]) == 0
+    assert main(["--inv", "home", "setup"]) == 0, capsys.readouterr().out
+    assert main(["--inv", "work", "setup"]) == 0, capsys.readouterr().out
+    capsys.readouterr()
+    assert main(["--inv", "work", "revoke", "-y"]) == 0
+    out = capsys.readouterr().out
+    note = next(ln for ln in out.splitlines() if ln.startswith("note: [221]"))
+    assert note.startswith(f"note: [221] keep {lab.key}: the Inventories home, ") and "use it too" in note
+    assert str(lab.key) not in out.replace(note, "")                          # neither it nor its .pub to delete
