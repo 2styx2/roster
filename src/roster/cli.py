@@ -120,23 +120,28 @@ def say_made(made, value):
     from . import newinventory, store
     path = made.path
     shown = shown_path(path) or HIDDEN_PATH         # init's messages name the path the way every other does
+    if made.how == "ssh-config":                    # its source too: never one in a token-named folder (#529)
+        source = newinventory.source_named(Path(value), "the ssh config")[0] if value else "~/.ssh/config"
+    elif made.how == "file":
+        source = newinventory.source_named(Path(value).expanduser(), "the roster.yml")[0]
     if made.how == "blank":
         say(f"wrote {shown}, a blank Inventory - add Hosts under hosts: (or `roster discover CIDR --write`), then "
             "run: roster setup")
     elif made.how == "file":
-        say(f"copied {value} to {shown} - then run: roster setup")
+        say(f"copied {source} to {shown} - then run: roster setup")
     elif made.how == "repo":
         say(f"cloned {newinventory.shown_url(value)} into {path.parent} - then run: roster setup")
     elif made.hosts:
-        say(f"wrote {shown} with {plural(len(made.hosts), 'Host')} from {value or '~/.ssh/config'} (your ssh config "
+        say(f"wrote {shown} with {plural(len(made.hosts), 'Host')} from {source} (your ssh config "
             "is unchanged) - check them, then run: roster setup")
     else:
-        say(f"no Host in {value or '~/.ssh/config'} to import (only wildcards or Match blocks), so {shown} is a blank "
+        say(f"no Host in {source} to import (only wildcards or Match blocks), so {shown} is a blank "
             "Inventory - add Hosts under hosts:, then run: roster setup")
     if made.skipped:
         say(f"skipped      {', '.join(made.skipped)} (patterns and Match blocks aren't single Hosts)")
     if store.at(path, for_show=True).kind == store.FILE and made.how != "repo":
-        say(f"optional     `git -C {shown_path(path.parent) or 'ITS-FOLDER'} init` keeps its history; roster works the same without git")
+        git = f"`git -C {Path(shown).parent} init`" if shown != HIDDEN_PATH else "`git init` in its folder"
+        say(f"optional     {git} keeps its history; roster works the same without git")   # as `wrote` names it
 
 
 def cmd_setup(cfg, args):

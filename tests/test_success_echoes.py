@@ -245,3 +245,41 @@ def test_another_roster_yml_never_names_a_hidden_one_that_wrote_the_ssh_config(c
     use(None, tmp_path / "other" / "roster.yml")
     why = sshops.not_reached("esx-02") or ""
     assert "written from the roster.yml at that path (not repeated)," in why and "sha256" not in why, why
+
+
+# #529 item 5: init --inventory file:SRC (and ssh-config:SRC) repeated a source in a token-named folder.
+def test_init_from_a_hidden_source_doesnt_name_it(capsys, hidden):
+    code, out, err = run(capsys, ["-c", "new/roster.yml", "init", "--inventory", f"file:{hidden}"])
+    assert "copied the roster.yml at that path (not repeated) to " in out and code in ("0", "None"), out + err
+    assert not leaks(out + err), out + err
+
+
+@pytest.mark.parametrize("text", [None, "groups: [unclosed\n", "- a list\n", "box_name: x\n",
+                                  "groups:\n  lab:\n    hosts:\n      esx: {ip: 10.0.0.5, port: nope}\n"],
+                         ids=["missing", "not-yaml", "not-a-mapping", "no-groups", "doesnt-load"])
+def test_init_refusing_a_hidden_source_doesnt_name_it(capsys, hidden, text):
+    src = f"{Path(hidden).parent}/{'gone.yml' if text is None else 'bad.yml'}"
+    if text is not None:
+        Path(src).write_text(text)
+    code, out, err = run(capsys, ["-c", "new/roster.yml", "init", "--inventory", f"file:{src}"])
+    said = code + out + err                                 # a refusal's words are its exit's
+    assert code not in ("0", "None") and "(not repeated)" in said and not leaks(said), said
+    assert not Path("new/roster.yml").exists()
+
+
+def test_init_from_a_hidden_ssh_config_doesnt_name_it(capsys, hidden):
+    cfg = Path(hidden).parent / "config"
+    cfg.write_text("Host web-01\n  HostName 10.0.0.7\n  User ops\n")
+    code, out, err = run(capsys, ["-c", "new/roster.yml", "init", "--inventory", f"ssh-config:{cfg}"])
+    assert "from the ssh config at that path (not repeated)" in out, out + err
+    assert not leaks(out + err), out + err
+
+
+def test_inits_git_hint_names_the_folder_its_wrote_line_names(capsys, tmp_path):
+    """#502's NIT: an absolute path through a token-named folder outside the cwd and $HOME is shown (Q207 (e)), and
+    the git hint said `git -C ITS-FOLDER` beside it. Both follow the one decision now."""
+    folder = tmp_path / "outside" / OP_SESSION
+    folder.mkdir(parents=True)
+    code, out, err = run(capsys, ["-c", str(folder / "roster.yml"), "init", "--blank"])
+    assert f"wrote {folder / 'roster.yml'}" in out and f"`git -C {folder} init`" in out, out
+    assert "ITS-FOLDER" not in out, out
