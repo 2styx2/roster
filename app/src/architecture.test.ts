@@ -26,7 +26,7 @@ const WIRING = (p: string) => WIRING_FILES.includes(p) || p.startsWith("app/") |
 
 /** The pure modules: data and rules with no component, so a test, the docs build or another
  * feature can load them alone. */
-const PURE = [...marked("pure:app").matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+const PURE = [...marked("pure:app").matchAll(/`([^`]+)`/g)].map((m) => m[1] ?? "");
 
 /** The folder imports that go up, each with why. Without them the folders depend one way: the test
  * fails on any other import that closes a cycle (of any length), and on an entry that's gone or no

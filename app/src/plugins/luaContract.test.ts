@@ -30,7 +30,7 @@ describe("the first-party Plugins' serve literals", () => {
   it("names a serve code as the contract does, with its value", () => {
     const wrong: string[] = [];
     for (const { file, text } of FILES) {
-      for (const [, name, value] of text.matchAll(/^local ([A-Z][A-Z_]+) = (-?\d+)\b/gm)) {
+      for (const [, name = "", value = ""] of text.matchAll(/^local ([A-Z][A-Z_]+) = (-?\d+)\b/gm)) {
         if (name in CODES && CODES[name] !== Number(value)) wrong.push(`${file}: ${name} = ${value}, the contract says ${CODES[name]}`);
       }
     }
@@ -48,7 +48,7 @@ describe("the first-party Plugins' serve literals", () => {
   it("compares a job's state only with the job states serve has", () => {
     const unknown: string[] = [];
     for (const { file, text } of FILES) {
-      for (const [, state] of text.matchAll(/\.state\s*[~=]=\s*"([^"]*)"/g)) {
+      for (const [, state = ""] of text.matchAll(/\.state\s*[~=]=\s*"([^"]*)"/g)) {
         if (!STATES.includes(state)) unknown.push(`${file}: "${state}"`);
       }
     }
