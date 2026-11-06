@@ -104,6 +104,9 @@ NOTES = {
     "serve": "The desktop app starts this itself; there's nothing to run by hand. See docs/serve-api.md.",
     "askpass": "ssh runs this for a `roster serve` password Session; there's nothing to run by hand.",
     "run": "Key hosts don't need roster: `ssh NAME` works once `roster setup` has run.",
+    "sync": "When your vault or roster.yml changes, there's no set order: sync, setup, check, run, vault sync and vault "
+            "unlock each catch up what they need, or end with `next:` and the one command that does (cli-reference: "
+            "When your vault changes; `:help vault-changes` in the app).",
 }
 
 COMMON = [("roster setup", "set up this box (once)"),

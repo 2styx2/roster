@@ -213,7 +213,9 @@ def vault_not_synced(p: str, e: Exception) -> str:
 NO_ANSWER = ("no route to host", "timed out", "network is unreachable", "host is down", "no answer")
 LOCKED = ("account has expired", "account is locked", "account locked", "password has expired",
           "password change required", "required to change your password", "account is disabled")
-DROPPED = ("kex_exchange_identification", "connection reset by peer")
+# a connection closed before the server's banner: a rate limiter, or OpenSSH 9.8+'s PerSourcePenalties (T258), which
+# looks the same from here; paramiko (setup's password login) says it as "Error reading SSH protocol banner"
+DROPPED = ("kex_exchange_identification", "connection reset by peer", "error reading ssh protocol banner")
 
 
 def has_answered(h: dict[str, Any]) -> bool:
@@ -257,8 +259,8 @@ def explain(cfg: dict[str, Any], h: dict[str, Any], stderr: str, password: bool 
     """What ssh's STDERR from one login to Host H means, as a Problem with its one fix (codes 209-215, else the step's
     own, diagnose.login_failure): a Host that never answered or stopped answering, no key there yet or one that no
     longer logs in, a password the vault item holds that the Host refuses, an account locked or expired, no password
-    login, a rate limiter, a FIPS Host (199, from ssh -v's kex lines). PASSWORD: the login used the Login's password.
-    ANSWERED: has_answered(H) as it was before the login (taken now when None). Never a value: the item by name."""
+    login, a rate limiter or sshd's PerSourcePenalties (T258), a FIPS Host (199, from ssh -v's kex lines). PASSWORD:
+    the login used the Login's password. ANSWERED: has_answered(H) as it was before the login (taken now when None). Never a value: the item by name."""
     from . import diagnose
     login_failure, unreachable_fix = cast(Any, diagnose).login_failure, cast(Any, diagnose).unreachable_fix
     name, addr, user = h["name"], h["ip"], h["ssh"]["user"]
@@ -274,8 +276,11 @@ def explain(cfg: dict[str, Any], h: dict[str, Any], stderr: str, password: bool 
                            "one in " + (f"vault item '{item}'" if item else "its Login"), details=stderr)
     if any(w in low for w in DROPPED):
         return Problem(errors.SSH_RATE_LIMITED, f"{name} dropped the connection before ssh spoke: a rate limiter "
-                       "after quick connections, most likely", fix="wait about 4 minutes before the next try, and "
-                       "run one command at a time there (roster stops here rather than try again)", details=stderr)
+                       "after quick connections, or sshd shutting out this Box's address for a while after failed "
+                       "logins from it (OpenSSH 9.8+'s PerSourcePenalties)", fix="wait about 4 minutes before the "
+                       "next try (sshd's penalty grows with each failed login, up to 10 minutes by default), and run "
+                       "one command at a time there (roster stops here rather than try again); if it keeps happening, "
+                       f"{name}'s admin can check PerSourcePenalties in its sshd_config", details=stderr)
     if any(w in low for w in NO_ANSWER):
         if not answered:
             return Problem(errors.NEVER_ANSWERED, f"{name} has never answered at {addr}: is it on, and is that its "
@@ -356,7 +361,8 @@ def login_checks(cfg: dict[str, Any], hosts: list[dict[str, Any]], workers: int)
 # What setup's password login (paramiko, sshops.password_exec) says, as ssh would: explain reads ssh's words
 SETUP_WORDS = (("takes no password login", "Permission denied (publickey)."),
                ("login refused", "Permission denied (password)."),
-               ("can't connect", ""))
+               ("can't connect", ""),
+               ("error reading ssh protocol banner", ""))
 
 
 def setup_failure(cfg: dict[str, Any], h: dict[str, Any], text: str) -> str:

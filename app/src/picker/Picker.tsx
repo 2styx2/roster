@@ -99,7 +99,7 @@ export interface PickerProps {
    * in the Sidebar (taste.md: the accent means live). */
   live?: ReadonlyMap<string, Light | "connecting">;
   /** Nine or more Sessions are open: as in the Sidebar, only the on-screen Host's node keeps its
-   * edge stub, so stubs stay a signal, not a texture (Q230 a, extended to the Picker by Q246). */
+   * edge stub, so stubs stay a signal, not a texture (Q231 a, extended to the Picker by Q247). */
   manySessions?: boolean;
   /** Add a Host (`:host add`), offered when nothing matches; left out on a roster that can't. */
   onAdd?: () => void;
@@ -206,7 +206,7 @@ function readGroupFit(list: HTMLElement | null): Omit<GroupFit, "measure"> & { f
   };
 }
 
-/** A group, cut in its middle to fit its column (round 20, amends Q234 b): its start, one "…" and
+/** A group, cut in its middle to fit its column (round 20, amends Q235 b): its start, one "…" and
  * its last whole parts, so "fieldwork-east-ridge-building-4-s1" and "…-s2" don't both read
  * "fieldwork-east-ridge-b…". One cut, measured, never the column's end cut on top. The cell's
  * tooltip has it whole, and so does a screen reader. */
@@ -621,7 +621,7 @@ export function Picker({
             {notice}
           </span>
           {/* The selected Host whole, in the footer's free room: shown only when its row is cut
-              (Q225, round 10: a strip of its own sat empty most of the time). Rows never wrap,
+              (Q226, round 10: a strip of its own sat empty most of the time). Rows never wrap,
               so the list never jumps; the option carries the name for screen readers. */}
           {!notice && (
             <span

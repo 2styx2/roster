@@ -45,7 +45,7 @@ export interface SidebarModel {
   /** Moves the cursor to `id`; outside App mode it isn't drawn (round 19), but App mode starts there again. */
   moveTo(id: string | null): void;
   /** Where the cursor goes on entering App mode: where it was left, else the Session on screen, else
-   * the first Host, else the top (`firstStop`, Q243 a). */
+   * the first Host, else the top (`firstStop`, Q244 a). */
   enterCursor(): void;
   cursorRow(): SidebarRow | null;
   /** j, k, gg, G: the cursor's next row. */
@@ -142,7 +142,7 @@ export function useSidebarModel(opts: {
   // The selected row (decision Q88): the one last clicked. Its buttons show; in App mode the cursor
   // row is the selected one. Where j/k left the cursor isn't drawn outside App mode (round 19: kept
   // selected, its name in the text colour read as another live Session); App mode starts there
-  // again (`lastStop`, Q243 a).
+  // again (`lastStop`, Q244 a).
   const [selected, setSelectedNow] = useState<string | null>(null);
   /** The row last clicked in the Sidebar, at once (the state above updates after the click's run). */
   const picked = useRef<string | null>(null);

@@ -201,7 +201,8 @@
     "BOX_KEY_REMADE": 218,
     "KEY_TYPE_DRIFT": 219,
     "MESH_KEY_PEER": 220,
-    "KEY_FILE_SHARED": 221
+    "KEY_FILE_SHARED": 221,
+    "MESH_DIR_UNSAFE": 222
   },
   "json_rpc": {
     "PARSE_ERROR": -32700,

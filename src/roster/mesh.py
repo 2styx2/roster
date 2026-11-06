@@ -34,8 +34,8 @@ from .common import (
     write_private,
 )
 from .context import current
-from .errors import MESH_KEY_PEER, MESH_WINDOWS, NOT_A_SOURCE, Problem
-from .hosts import is_windows
+from .errors import MESH_DIR_UNSAFE, MESH_KEY_PEER, MESH_WINDOWS, NOT_A_SOURCE, Problem
+from .hosts import AccountLocks, is_windows
 from .sshops import hk_name, not_reached, recorded_host_keys
 
 TAG = "roster-mesh"
@@ -271,6 +271,16 @@ tagged() { [ "$(keystate "$1" "$2")" = ours ]; }
 # left DIR K STATE: a file by a Mesh key's name that roster leaves (NOTOURS; HALF: a Mesh public key with no private
 # key that gives it, #509 item 2)
 left() { if [ "$3" = half ]; then echo "HALF $1/$2.pub"; else echo "NOTOURS $1/$2"; fi; }
+# place SRC DEST: SRC (this run's own file, made outside the Mesh's folder: mktemp's) becomes DEST there, moved, never
+# written through a name in that folder: a datastore others may write (ESXi, Q212 (k)) could hold a link planted at
+# DEST or at a temp name, and the Mesh's scripts run as root there (#532's review M1). mv to a fresh random name
+# beside DEST (a copy across file systems makes a new file), then a rename over DEST (a link there is replaced, not
+# followed), so a run cut short leaves DEST as it was
+place() {
+  n=$(mktemp -u "${2%/*}/.roster-new.XXXXXX") && [ ! -e "$n" ] && [ ! -L "$n" ] && mv -f "$1" "$n" && mv -f "$n" "$2" \
+    && { command -v restorecon >/dev/null 2>&1 && restorecon -F "$2" 2>/dev/null; return 0; }
+  [ -n "$n" ] && [ -f "$n" ] && [ ! -L "$n" ] && rm -f "$n"; rm -f "$1"; return 1
+}
 mine() {
   for k in $(mkeys "$1"); do grep -qs " $TAG:" "$1/$k.pub" && return 0; done
   head -n 1 "$1/config" 2>/dev/null | grep -q '^# Written by roster mesh'
@@ -348,6 +358,51 @@ if [ -n "$MD" ]; then
     for v in /vmfs/volumes/*/.roster-mesh; do [ -n "$(mkeys "$v")" ] && stale "$v"; done
   elif [ -n "$(mkeys "$HOME/.ssh/roster-mesh")" ]; then stale "$HOME/.ssh/roster-mesh"; fi
 fi
+# Who else may write the Mesh's folder (T259, #522 item 1; decision Q212 (k)): another account that may write there could plant a
+# whole key pair there, which roster would send to every peer, and a tag can't tell whose a key is (Q212 (j)).
+# unsafe: one line per folder at fault, as T248 checks the session file's: the Mesh's folder itself ($P, when it's
+# there) is the login's own and nobody else may write in it (sticky or not: anyone may still add a file by a name
+# that isn't there yet); each one above it, up to the account's home (to / for a folder outside it), is the login's or
+# root's (whoever owns it may make it writable at any time: sshd's StrictModes rule, #532's review L2) and nobody else
+# may write in it unless it's sticky (as /tmp: only an entry's owner may rename or remove it). Above the path as it
+# resolves and as it's written (#532's review L1: a link to a safe folder, kept in one others may write, could be
+# pointed elsewhere between the check and the key's use)
+fold() {  # fold DIR LAST: what's wrong with folder DIR (a real path), LAST: it's the Mesh's folder itself
+  set -- "$1" "$2" $(ls -ldn "$1" 2>/dev/null)
+  case "$3" in ?????w*|????????w*) w=1;; *) w=;; esac
+  case "$3" in ?????????[tT]*) st=1;; *) st=;; esac
+  if [ -n "$2" ] && [ -n "$5" ] && [ "$5" != "$me" ]; then
+    echo "$1 isn't this account's (another user owns it): chown it to this account, or give the Mesh another mesh_dir:"
+  elif [ -z "$2" ] && [ -n "$5" ] && [ "$5" != "$me" ] && [ "$5" != 0 ]; then
+    echo "$1 isn't this account's or root's (another user owns it): they could make it writable and put a key pair of their own in the Mesh's place: chown it to this account or root, or give the Mesh another mesh_dir:"
+  elif [ -n "$w" ] && { [ -n "$2" ] || [ -z "$st" ]; }; then
+    echo "$1 is writable by others (its group or everyone$([ -n "$st" ] && echo ', sticky or not')): another account could put a key pair there that roster would send to every peer: chmod go-w $1"
+  fi
+}
+unsafe() {
+  me=$(id -u 2>/dev/null); hm=$(cd "$HOME" 2>/dev/null && pwd -P)
+  if [ -d "$P" ]; then d=$(cd "$P" && pwd -P) || return 0; last=1; a=$P
+  else d=$(cd "${P%/*}" 2>/dev/null && pwd -P) || return 0; last=; a=${P%/*}; fi
+  while :; do     # as it resolves
+    fold "$d" "$last"; last=
+    [ "$d" = "$hm" ] || [ "$d" = / ] && break
+    d=${d%/*}; [ -n "$d" ] || d=/
+  done
+  while [ "$a" != "$HOME" ] && [ "$a" != / ] && [ -n "$a" ]; do     # as it's written: each folder holding the next
+    a=${a%/*}; [ -n "$a" ] || a=/
+    r=$(cd "$a" 2>/dev/null && pwd -P) || continue
+    fold "$r"
+    [ "$r" = "$hm" ] && break
+  done
+}
+# refused, so the source is pending and nothing is used or made there; on ESXi said (UNSAFE) and used: a datastore's
+# modes are the storage's (an NFS export, vSAN), roster can't set them, and every ESXi sharing it writes there anyway
+guard() {
+  x=$(unsafe); [ -n "$x" ] || return 0
+  if [ -n "$ESXI" ]; then printf '%s\n' "$x" | sed 's/^/UNSAFE /'
+  else echo "ERROR [@UNSAFE@] $(printf '%s\n' "$x" | head -n 1)"; echo ROSTER_DONE; exit 0; fi
+}
+guard
 # the directory the Include after roster's mark in ~/.ssh/config names: an earlier mesh_dir: (or roster's own pick)
 O=$(awk -v m="$MARK" 'p { print; exit } $0 == m { p = 1 }' "$HOME/.ssh/config" 2>/dev/null)
 case "$O" in "Include "/*/config) O=${O#Include }; O=${O%/config}; [ -n "$(mkeys "$O")" ] && mine "$O" && stale "$O";; esac
@@ -392,10 +447,28 @@ if [ "$ROTATE" = 1 ] && [ -f "$K" ]; then
   if [ "$MODE" = apply ]; then rm -f "$K" "$K.pub"; fi
   echo "KEY rotate"
 fi
+# this Box's own key under an earlier tag (a renamed Box or Host, or the owner of an earlier apply its record proves:
+# ours, #522 item 3): its .pub's comment gets this run's, as Q188 re-tags authorized_keys lines; the key stays. A key
+# under another owner's tag is used as it is (Q212 (j)), never re-tagged
+if [ "$ROTATE" != 1 ] && [ "$K" = "$P/$KF" ] && [ -f "$K.pub" ] && ours_by "$WHO" && [ "$(keystate "$P" "$KF")" = ours ]; then
+  c=$(cat "$K.pub"); case "$c" in *" $TAG:$NAME@$OWNER") ;; *)
+    echo "KEY retag"
+    if [ "$MODE" = apply ]; then
+      t=$(mktemp) && printf '%s %s\n' "$(printf '%s\n' "$c" | cut -d ' ' -f 1,2)" "$TAG:$NAME@$OWNER" > "$t" && place "$t" "$K.pub" \
+        || { echo "ERROR couldn't re-tag $K.pub as this Box's"; echo ROSTER_DONE; exit 0; }
+    fi;;
+  esac
+fi
 if [ ! -f "$K" ] || [ ! -f "$K.pub" ]; then
   if [ "$MODE" = apply ]; then
-    mkdir -p "$P" && rm -f "$K" "$K.pub" && "$KG" -q $KT -N '' -C "$TAG:$NAME@$OWNER" -f "$K" >/dev/null 2>&1 \
-      || { echo "ERROR ssh-keygen couldn't make the Mesh's key in $P"; echo ROSTER_DONE; exit 0; }
+    mkdir -p "$P" || { echo "ERROR couldn't make $P"; echo ROSTER_DONE; exit 0; }
+    guard           # again: a folder someone else made there since the first check (in a sticky folder) is theirs
+    # made in a folder of this run's own (mktemp -d: 0700, outside the Mesh's folder), then moved into place (#532's
+    # review M1): ssh-keygen never opens a name in the Mesh's folder, where a link may have been planted
+    kd=$(mktemp -d) && "$KG" -q $KT -N '' -C "$TAG:$NAME@$OWNER" -f "$kd/k" </dev/null >/dev/null 2>&1 \
+      && rm -f "$K" "$K.pub" && place "$kd/k" "$K" && place "$kd/k.pub" "$K.pub" \
+      || { rm -rf "$kd"; echo "ERROR ssh-keygen couldn't make the Mesh's key in $P"; echo ROSTER_DONE; exit 0; }
+    rm -rf "$kd"
     echo "KEY made"
   else
     echo "KEY missing"
@@ -421,20 +494,35 @@ replace() {  # replace PATH < content: a temp file next to it, then mv, so a run
              # its SELinux label (a new inode may lack ssh_home_t, and sshd refuses it): chcon --reference before
              # the mv, restorecon after, where they exist (never fatal: busybox, macOS, Alpine have neither)
   f=$1; [ -L "$f" ] && f=$(readlink -f "$f" 2>/dev/null || echo "$f")
-  n=$f.roster-new; rm -f "$n"
-  if { [ ! -f "$f" ] || cp -p "$f" "$n"; } && cat > "$n"; then
+  # the temp file's name is this run's own (mktemp beside PATH, so the mv is a rename): two runs on one account at once
+  # (two Host entries for it, T258) never rename each other's away; no mktemp is said, never a fixed name (#524's F3)
+  command -v mktemp >/dev/null 2>&1 || { echo "ERROR this Host has no mktemp: roster needs it to rewrite $1"; return 1; }
+  if n=$(mktemp "$f.roster-new.XXXXXX") && { [ ! -f "$f" ] || cp -p "$f" "$n"; } && cat > "$n"; then
     [ -f "$f" ] && command -v chcon >/dev/null 2>&1 && chcon --reference="$f" "$n" 2>/dev/null
     if mv -f "$n" "$f"; then
       command -v restorecon >/dev/null 2>&1 && restorecon -F "$f" 2>/dev/null
       return 0
     fi
   fi
-  rm -f "$n"; echo "ERROR couldn't rewrite $1"; return 1
+  [ -n "$n" ] && rm -f "$n"; echo "ERROR couldn't rewrite $1"; return 1
 }
-put() {  # put PATH LABEL < content: write it when it differs
-  t=$(mktemp) || { echo "ERROR mktemp failed"; exit 1; }; cat > "$t"
+wrote() {  # wrote RC PATH: did the command that wrote PATH's new version (exit RC) finish? grep's 1 is "no line left";
+           # 2 (a read or write error: a full disk) or another command's failure leaves PATH as it was (#524's F1)
+  [ "$1" -le 1 ] && return 0; echo "ERROR couldn't write the new $2 (exit $1): nothing was changed"; return 1
+}
+put() {  # put PATH LABEL < content: write it when it differs; a failed write (a full disk) changes nothing (#524)
+  t=$(mktemp) || { echo "ERROR mktemp failed"; exit 1; }
+  cat > "$t" || { rm -f "$t"; echo "ERROR couldn't write the new $1: nothing was changed"; return 1; }
   if [ -f "$1" ] && cmp -s "$t" "$1"; then echo "SAME $2"
-  else echo "CHANGE $2"; [ "$MODE" = apply ] && { mkdir -p "${1%/*}" && replace "$1" < "$t"; }; fi
+  else
+    echo "CHANGE $2"
+    if [ "$MODE" = apply ]; then
+      case "$1" in    # the Mesh's own files are placed (never through a planted name: #532's review M1)
+        "$P"/*) mkdir -p "$P" && { place "$t" "$1" || echo "ERROR couldn't write $1"; };;
+        *) mkdir -p "${1%/*}" && replace "$1" < "$t";;
+      esac
+    fi
+  fi
   rm -f "$t"
 }
 drop() {  # drop PATH LABEL: remove it if it's there
@@ -463,8 +551,9 @@ else
   if [ "$MODE" = apply ]; then
     mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"; t=$(mktemp)
     # the Include after an earlier mark (another directory) goes with it
-    { echo "$MARK"; echo "$INC"; awk -v m="$MARK" 'd { d = 0; if (/^Include /) next } $0 == m { d = 1; next } { print }' "$C" 2>/dev/null; } > "$t"
-    replace "$C" < "$t"; rm -f "$t"
+    # set -e in the subshell: each command's failure counts, not only the last's
+    rc=0; ( set -e; echo "$MARK"; echo "$INC"; [ ! -f "$C" ] || awk -v m="$MARK" 'd { d = 0; if (/^Include /) next } $0 == m { d = 1; next } { print }' "$C" ) > "$t" || rc=2
+    wrote $rc "$C" && replace "$C" < "$t"; rm -f "$t"
   fi
 fi
 fi
@@ -479,8 +568,8 @@ if [ -z "$FOREIGN" ] && [ -z "$ESXI" ] && [ -d "$HOME/.claude" ]; then
     echo "CHANGE claude"
     if [ "$MODE" = apply ]; then
       t=$(mktemp)
-      { cat "$CM" 2>/dev/null; [ -s "$CM" ] && [ -n "$(tail -c 1 "$CM")" ] && echo; echo "$IMPORT"; } > "$t"
-      replace "$CM" < "$t"; rm -f "$t"
+      rc=0; ( set -e; [ ! -f "$CM" ] || cat "$CM"; if [ -s "$CM" ] && [ -n "$(tail -c 1 "$CM")" ]; then echo; fi; echo "$IMPORT" ) > "$t" || rc=2
+      wrote $rc "$CM" && replace "$CM" < "$t"; rm -f "$t"
     fi
   fi
 fi
@@ -517,8 +606,8 @@ if [ -z "$THEIRS" ] && grep -qxF -e "$MARK" -e "$INC" "$C" 2>/dev/null; then
   echo "CHANGE remove include"
   if [ "$MODE" = apply ]; then
     t=$(mktemp)
-    awk -v m="$MARK" -v i="$INC" 'd { d = 0; if (/^Include /) next } $0 == m { d = 1; next } $0 == i { next } { print }' "$C" > "$t"
-    replace "$C" < "$t"; rm -f "$t"; [ -s "$C" ] || rm -f "$C"
+    rc=0; awk -v m="$MARK" -v i="$INC" 'd { d = 0; if (/^Include /) next } $0 == m { d = 1; next } $0 == i { next } { print }' "$C" > "$t" || rc=2
+    wrote $rc "$C" && replace "$C" < "$t" && { [ -s "$C" ] || rm -f "$C"; }; rm -f "$t"
   fi
 fi
 [ -z "$ESXI" ] && [ -z "$FMD" ] && ours "$R" && drop "$R" "remove ROSTER.md"
@@ -526,7 +615,8 @@ CM=$HOME/.claude/CLAUDE.md
 if [ -z "$FMD" ] && grep -qxF "$IMPORT" "$CM" 2>/dev/null; then
   echo "CHANGE remove claude"
   if [ "$MODE" = apply ]; then
-    t=$(mktemp); grep -vxF "$IMPORT" "$CM" > "$t"; replace "$CM" < "$t"; rm -f "$t"; [ -s "$CM" ] || rm -f "$CM"
+    t=$(mktemp); rc=0; grep -vxF "$IMPORT" "$CM" > "$t" || rc=$?
+    wrote $rc "$CM" && replace "$CM" < "$t" && { [ -s "$CM" ] || rm -f "$CM"; }; rm -f "$t"
   fi
 fi
 """
@@ -567,9 +657,14 @@ S1=$(mktemp); S2=$(mktemp); sort "$H" > "$S1"; sort "$W" > "$S2"
 if [ "$MODE" = apply ] && { ! cmp -s "$S1" "$S2" || [ -s "$OL" ]; }; then
   d=${AK%/*}; mkdir -p "$d"; [ -z "$ESXI" ] && chmod 700 "$d"
   NEW=; [ -f "$AK" ] || NEW=1
-  t=$(mktemp)
-  if [ -s "$OL" ]; then grep -vE "$TAGS" "$AK" 2>/dev/null | grep -vxFf "$OL" > "$t"; else grep -vE "$TAGS" "$AK" 2>/dev/null > "$t"; fi
-  cat "$W" >> "$t"; replace "$AK" < "$t"; rm -f "$t"
+  t=$(mktemp); u=$(mktemp); rc=0
+  # each step's failure counted (#524's F1): a sh pipeline would say only its last command's
+  [ ! -f "$AK" ] || grep -vE "$TAGS" "$AK" > "$u" || rc=$?
+  if [ "$rc" -le 1 ]; then
+    if [ -s "$OL" ]; then grep -vxFf "$OL" "$u" > "$t" || { r=$?; [ $r -le 1 ] || rc=$r; }; else cat "$u" > "$t" || rc=2; fi
+  fi
+  [ "$rc" -le 1 ] && { cat "$W" >> "$t" || rc=2; }
+  wrote $rc "$AK" && replace "$AK" < "$t"; rm -f "$t" "$u"
   # ESXi keeps a file under /etc across a reboot only with the sticky bit (its own keys file is 1600); cp -p keeps
   # it on a rewrite, so only a file roster makes needs it
   [ -n "$ESXI" ] && [ -n "$NEW" ] && [ -f "$AK" ] && chmod 1600 "$AK"
@@ -624,13 +719,17 @@ def preamble(h, mode, own, prev=()):
             f"IMPORT={q(CLAUDE_IMPORT)}\n" + WHERE.replace("@MESH_FILES@", boxkeys.MESH_FILES))
 
 
-def heredoc(text):
-    return f"<<'ROSTER_MESH_EOF'\n{text}ROSTER_MESH_EOF\n"
+def stash(var, text):
+    """VAR=$(mktemp) holding TEXT, or the script stops there, said: a temporary file written in part (a full disk)
+    is never what a later step puts in place (#524's second pass)."""
+    return (f'{var}=$(mktemp)\ncat > "${var}" <<\'ROSTER_MESH_EOF\' || {{ echo "ERROR couldn\'t write a temporary file '
+            f'on this Host (a full disk?)"; exit 1; }}\n{text}ROSTER_MESH_EOF\n')
 
 
 def probe_script(h, peers, mode, rotate, own, prev=()):
     """Phase 1 on a source: its key (made on apply), its public key, and whether it reaches each peer's ssh port."""
-    lines = [preamble(h, mode, own, prev), f"ROTATE={1 if rotate else 0}\n", PROBE, REACH]
+    lines = [preamble(h, mode, own, prev), f"ROTATE={1 if rotate else 0}\n",
+             PROBE.replace("@UNSAFE@", str(MESH_DIR_UNSAFE)), REACH]
     lines += [f"reach {q(p['name'])} {q(p['ip'])} {p['ssh']['port']}\n" for p in peers]
     return "".join(lines) + "echo ROSTER_DONE\n"
 
@@ -652,7 +751,7 @@ def write_script(h, mode, files, keys, keep, own, prev=(), adopt=()):
     if files is not None:
         s.append(SOURCE)
         for name, text in files.items():
-            f = f"FC=$(mktemp)\ncat > \"$FC\" {heredoc(text)}"
+            f = stash("FC", text)
             if name == "ROSTER.md":
                 s.append(f + 'if [ -n "$FOREIGN" ]; then { [ -n "$R" ] && { [ ! -f "$R" ] || ours "$R"; }; } '
                          f'&& same "$R" {q(name)} 2 < "$FC"\n'
@@ -664,13 +763,13 @@ def write_script(h, mode, files, keys, keep, own, prev=(), adopt=()):
                          f'else put "$P/{name}" {q(name)} < "$FC"; fi\nrm -f "$FC"\n')
     else:
         s.append(NOT_SOURCE)
-    s.append("W=$(mktemp)\ncat > \"$W\" " + heredoc("".join(line + "\n" for line in keys)))
+    s.append(stash("W", "".join(line + "\n" for line in keys)))
     s.append(f"KEEP={q('|'.join(ere(k) for k in sorted(keep)))}\n")
     retag = sorted({k.rsplit(":", 1)[1].split("@", 1)[0] for k in keys} - set(keep))
     old = "-" in prev and bool(retag)
     pattern = [f"( {TAG}:{NAME_ERE}@{ere(p)}$)" for p in prev if p != "-"]
     s.append(f"RETAG={q('|'.join(pattern))}\n")
-    s.append("ADOPT=$(mktemp)\ncat > \"$ADOPT\" " + heredoc("".join(line + "\n" for line in sorted(adopt)) if old else ""))
+    s.append(stash("ADOPT", "".join(line + "\n" for line in sorted(adopt)) if old else ""))
     s.append(f"UNT={q('|'.join(ere(k) for k in retag) if old else '')}\n")
     s.append(AUTHORIZED)
     return "".join(s) + "echo ROSTER_DONE\n"
@@ -688,7 +787,8 @@ def cut_script(h, host, own, owner, prev=(), everything=False):
         s.append(NOT_SOURCE)
     s.append(f"""T=' {TAG}:{tag}{owners_re([owner, *prev])}$'
 if [ -f "$AK" ] && grep -qE "$T" "$AK"; then
-  t=$(mktemp); grep -vE "$T" "$AK" > "$t"; replace "$AK" < "$t"; rm -f "$t"; echo "CHANGE cut"
+  t=$(mktemp); rc=0; grep -vE "$T" "$AK" > "$t" || rc=$?; wrote $rc "$AK" && replace "$AK" < "$t"; rm -f "$t"
+  echo "CHANGE cut"
   [ -n "$ESXI" ] && [ -x /sbin/auto-backup.sh ] && /sbin/auto-backup.sh >/dev/null 2>&1
 fi
 grep -qE ' {TAG}:{tag}$' "$AK" 2>/dev/null && echo "UNTAGGED"
@@ -897,6 +997,10 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
                               "reach": dict(x.split(" ", 1) for x in report(lines, "REACH "))}
         stale(out, name, lines)
         not_ours(out, name, lines)
+        for x in dict.fromkeys(report(lines, "UNSAFE ")):    # ESXi only: elsewhere the probe refused (222)
+            out.setdefault("warnings", []).append(
+                f"[{MESH_DIR_UNSAFE}] {name}: {x} (ESXi: roster uses it anyway, as a datastore's permissions are its "
+                "storage's)")
         for d in report(lines, "OLDKEY "):
             out.setdefault("warnings", []).append(
                 f"{name}: {d} still holds an older Mesh key from before mesh_dir: changed, and roster uses it again: "
@@ -1092,8 +1196,8 @@ def stale(out, name, lines):
 
 
 def key_changes(probe, apply, rotate, kind=boxkeys.DEFAULT):
-    """What happens to a source's own key: [] / ["make key"] / ["replace key"]; a key of another type than KIND (its
-    key_type) is replaced by one of KIND (T245)."""
+    """What happens to a source's own key: [] / ["make key"] / ["replace key"] / ["re-tag key as this Box's"] (its
+    .pub's comment, #522 item 3); a key of another type than KIND (its key_type) is replaced by one of KIND (T245)."""
     if not probe or "key" not in probe:
         return []
     k = probe["key"]
@@ -1101,7 +1205,9 @@ def key_changes(probe, apply, rotate, kind=boxkeys.DEFAULT):
     if old is not None:     # the old key's type, from its file name (id_ed25519, roster_mesh_TYPE)
         was = "ed25519" if old == "id_ed25519" else old.removeprefix("roster_mesh_")
         return [f"replace key ({was} -> {kind}, its key_type)"]
-    return ["replace key"] if "rotate" in k else ["make key"] if ("made" in k or "missing" in k) else []
+    if "rotate" in k:
+        return ["replace key"]
+    return ["make key"] if ("made" in k or "missing" in k) else ["re-tag key as this Box's"] if "retag" in k else []
 
 
 def summary(cfg, g, links, out, apply, gone):
@@ -1232,9 +1338,11 @@ def cut(cfg, name, workers=16, progress=None, stopped=None):
     st = load_state()
     owner, was, proven = owner_of(cfg), earlier_owner(cfg, st), set(st["members"])
 
+    turn = AccountLocks()                       # Host entries that share an account take turns (T258)
+
     def one(item):
         n, own = item
-        with deadline_at(at):
+        with deadline_at(at), turn(hosts[n]):
             if why := not_now(stopped):
                 return n, None, why
             lines, err = on_host(hosts[n], cut_script(hosts[n], name, own, owner, was if n in proven else ()),
@@ -1284,8 +1392,10 @@ def cut_all(cfg, workers=16, progress=None, stopped=None):
     at = current_deadline()
     owner, was = owner_of(cfg), earlier_owner(cfg, load_state())
 
+    turn = AccountLocks()                       # Host entries that share an account take turns (T258)
+
     def one(n):
-        with deadline_at(at):
+        with deadline_at(at), turn(hosts[n]):
             if why := not_now(stopped):
                 return n, None, why
             lines, err = on_host(hosts[n], cut_script(hosts[n], n, True, owner, was, everything=True), timeout=CUT_TIMEOUT)
@@ -1458,7 +1568,7 @@ def remove_leftovers(cfg, found):
         if tags:
             s.append(f"""T=' {TAG}:({'|'.join(tags)})$'
 if [ -f "$AK" ] && grep -qE "$T" "$AK"; then
-  t=$(mktemp); grep -vE "$T" "$AK" > "$t"; replace "$AK" < "$t"; rm -f "$t"
+  t=$(mktemp); rc=0; grep -vE "$T" "$AK" > "$t" || rc=$?; wrote $rc "$AK" && replace "$AK" < "$t"; rm -f "$t"
   [ -n "$ESXI" ] && [ -x /sbin/auto-backup.sh ] && /sbin/auto-backup.sh >/dev/null 2>&1
 fi
 grep -qE "$T" "$AK" 2>/dev/null && {{ echo "ERROR a roster-mesh line is still there"; exit 0; }}

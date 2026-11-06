@@ -230,7 +230,7 @@ NO_KEY_YET = 211            # a to-do, not a failure: the key login was refused 
 KEY_GONE = 212              # this Box's key no longer logs in where setup put it (taken off there?)
 ACCOUNT_LOCKED = 213        # the Host's account is locked or its password expired (not a wrong password)
 NO_PASSWORD_LOGIN = 214     # the Host takes no password login, so setup can't put the key on with one
-SSH_RATE_LIMITED = 215      # the connection was dropped before ssh spoke: a rate limiter after quick connections
+SSH_RATE_LIMITED = 215      # dropped before ssh spoke: a rate limiter, or sshd's PerSourcePenalties (T258)
 VAULT_LOCKED_DURING_RUN = 216  # setup: the vault was open for one lookup and locked for the next; nothing more asked
 BRANCH_GONE = 217           # the Inventory's branch was merged and deleted upstream: pull from main instead
 BOX_KEY_REMADE = 218        # a warning: this Box's key was gone, so setup made a new one every Host needs again
@@ -239,6 +239,9 @@ BOX_KEY_REMADE = 218        # a warning: this Box's key was gone, so setup made 
 KEY_TYPE_DRIFT = 219        # a warning: a Host holds this Box's key lines of other types than roster.yml's
 MESH_KEY_PEER = 220         # a warning: a source's Ed25519 Mesh key goes to a peer whose key_type isn't ed25519
 KEY_FILE_SHARED = 221       # a note: revoke keeps a key file another Inventory on this Box still uses
+
+# Mesh folder permissions (T259, #522; decision Q212 (k); catalog row 284)
+MESH_DIR_UNSAFE = 222       # the Mesh's folder (or one above it) others may write in: a planted key would spread
 
 
 # The vault's own state, not an item's: the codes a provider's failure keeps wherever it's reported

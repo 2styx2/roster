@@ -183,4 +183,4 @@ def refuse_left_out(h):
     if why:
         fix = ("make this Inventory the active one (`roster inv use`), or rename one of the two in its roster.yml"
                if left_out(h["name"]) else sync_fix())
-        die(f"{why} - not running anything: {fix}")
+        die(f"{why} - not running anything: {fix}", code=errors.NOT_SET_UP)

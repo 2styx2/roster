@@ -282,7 +282,7 @@ export function RowMenu({
     el.style.maxHeight = `${Math.max(0, Math.floor(area.bottom - area.top - 2 * MARGIN))}px`;
     // From a key, a row too near the pane's foot scrolls up just enough for the menu to open under
     // it (round 20: flipped above, its edge sliced a row mid-glyph). Only from a key: under the
-    // pointer the tree never moves (Q227).
+    // pointer the tree never moves (Q228).
     if (keyboard) roomBelow(anchor(), el.offsetHeight, area.bottom);
     for (let e = anchor() ?? document.scrollingElement; e; e = e.parentElement)
       scrolledAt.current.set(e, [e.scrollTop, e.scrollLeft]);
