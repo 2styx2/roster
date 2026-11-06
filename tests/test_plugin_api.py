@@ -49,10 +49,12 @@ def test_a_host_from_serve_has_exactly_the_documented_fields(serve, write_config
     assert set(s.call("inventory.info")["result"]) == fields("InventoryInfo")
 
 
-def test_the_writes_a_plugin_has_are_the_ones_it_documents():
-    """inventory.write's functions are serve's host.update/rename/move/review (runtime.rs's WRITES)."""
-    runtime = (ROOT / "crates" / "roster-core" / "src" / "plugin" / "runtime.rs").read_text("utf-8")
+def test_the_writes_a_plugin_has_are_serves_inventory_writes():
+    """inventory.write's functions are serve's host.update/rename/move/review, each a method that writes roster.yml
+    (the Rust side's own tests check the Plugin runtime calls that method)."""
+    from roster import serve as rpc
     for name, method in [("update", "host.update"), ("rename", "host.rename"), ("move", "host.move"),
                          ("review", "host.review")]:
-        assert f'("{name}", "{method}"' in runtime
-        assert any(f["path"] == f"roster.inventory.{name}" for f in API["functions"])
+        [fn] = [f for f in API["functions"] if f["path"] == f"roster.inventory.{name}"]
+        assert fn["permission"] == "inventory.write" and fn["doc"].startswith(f"serve's [`{method}`]")
+        assert set(rpc.WRITES_INVENTORY) <= set(rpc.METHODS[method].locks)

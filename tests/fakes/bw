@@ -26,6 +26,10 @@
 # FAKE_BW_MAIL=FILE: one line per code bw "emailed" (two-step email, new-device OTP).
 # FAKE_BW_SLOW=JSON: {"sync": 30, "list": 5, ...}: sleep that many seconds before answering that command.
 # FAKE_BW_CREATE_HANG=SECONDS: `bw create item` saves the item, then hangs before answering (a slow server).
+# FAKE_BW_CREATE_ALSO=JSON: a list of items `bw create item` saves beside its own (someone else's, made meanwhile).
+# FAKE_BW_CREATE_RUNS=JSON: an argv `bw create item` runs once it saved the item (something else happens meanwhile).
+# FAKE_BW_LOCK_ON_CREATE=FILE: `bw create item` saves the item, then the vault is locked (as a `bw lock` elsewhere
+#   would): FILE marks it, and every later call that needs an unlocked vault says "Vault is locked."
 # FAKE_BW_DATA=FILE: bw's data file, which keeps ONE protected user key, encrypted with the session key of the last
 #   unlock (bitwarden/clients apps/cli at 1ae4af9b: unlock.command.ts setNewSessionKey() makes a new BW_SESSION key on
 #   every unlock, NodeEnvSecureStorageService saves the user key under one "__PROTECTED__" name with it; lock.command.ts
@@ -64,6 +68,9 @@ if os.environ.get("FAKE_BW_ITEMS"):
 data_file = os.environ.get("FAKE_BW_DATA")
 data = json.load(open(data_file)) if data_file and os.path.exists(data_file) else {"key": None, "unlocks": 0}
 unlocked = os.environ.get("BW_SESSION") == (data["key"] if data_file else SESSION) and os.environ.get("BW_SESSION")
+lock_mark = os.environ.get("FAKE_BW_LOCK_ON_CREATE")
+if lock_mark and os.path.exists(lock_mark):
+    unlocked = False
 if a and os.environ.get("FAKE_BW_SLOW"):
     time.sleep(json.loads(os.environ["FAKE_BW_SLOW"]).get(a[0], 0))
 os.environ.get("FAKE_LOG") and open(os.environ["FAKE_LOG"], "a").write("bw " + " ".join(a[:2]) + "\n")
@@ -262,7 +269,9 @@ if a[:2] == ["create", "item"]:
         req["collectionIds"] = [c for c in req.get("collectionIds") or [] if c in mine and not mine[c].get("readOnly")]
     item = {**req, "object": "item", "id": str(uuid.uuid4()), "revisionDate": "2026-10-30T12:00:00.000Z"}
     with open(os.environ["FAKE_BW_ITEMS"], "w") as f:
-        json.dump(items + [item], f)
+        json.dump(items + [item] + json.loads(os.environ.get("FAKE_BW_CREATE_ALSO") or "[]"), f)
+    if lock_mark: open(lock_mark, "w").close()
+    if os.environ.get("FAKE_BW_CREATE_RUNS"): subprocess.run(json.loads(os.environ["FAKE_BW_CREATE_RUNS"]), check=True)
     if os.environ.get("FAKE_BW_CREATE_HANG"): time.sleep(float(os.environ["FAKE_BW_CREATE_HANG"]))
     print(raw.get("create item", json.dumps(item))); sys.exit()      # like bw: the new item, password and all
 if a[:2] == ["delete", "item"]:

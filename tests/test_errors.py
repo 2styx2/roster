@@ -112,7 +112,7 @@ def in_process(write_config, capsys, vault):
 def test_askpass_says_why_with_the_same_code_and_wording(in_process, vault):
     call, logged, providers = in_process
     spec = call("session.prepare", {"host": "esx"})["result"]
-    providers._secrets.clear()
+    providers.forget_secrets()
     vault.write_text(json.dumps([dict(ITEMS[0], name="esx root")]))         # renamed in the vault since
     r = run_askpass(spec)
     assert (r.returncode, r.stdout) == (1, "")

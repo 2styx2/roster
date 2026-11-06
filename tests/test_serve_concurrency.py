@@ -158,10 +158,15 @@ def test_a_write_that_cant_get_roster_yml_in_time_is_busy_and_does_nothing(state
 
 
 def test_vault_lock_waits_for_whoever_holds_a_secret(state, monkeypatch):
-    holding(state.vault, "session.prepare", 0.5, shared=True)
-    t = time.monotonic()
-    assert "result" in call(state, "vault.lock")
-    assert time.monotonic() - t >= 0.3                                  # it waited until the lookup was done
+    release = holder(state.vault, "session.prepare", shared=True)
+    answer = []
+    t = threading.Thread(target=lambda: answer.append(call(state, "vault.lock")), daemon=True)
+    t.start()
+    wait_until(lambda: state.vault.writers_waiting == 1)                # vault.lock waits for the lookup
+    assert answer == []
+    release.set()
+    t.join(5)
+    assert "result" in answer[0]
 
 
 def test_secret_lookups_share_the_vault(state, monkeypatch):
@@ -172,12 +177,21 @@ def test_secret_lookups_share_the_vault(state, monkeypatch):
 
 
 def test_host_get_settled_waits_for_a_write_under_way(state):
-    holding(state.lock, "host.add", 0.6)
-    t = time.monotonic()
-    assert call(state, "host.get", {"name": "nas-1"})["result"]["name"] == "nas-1"
-    assert time.monotonic() - t < 0.3                                   # a plain read doesn't wait
-    assert call(state, "host.get", {"name": "nas-1", "settled": True})["result"]["name"] == "nas-1"
-    assert time.monotonic() - t >= 0.5
+    release = holder(state.lock, "host.add")
+    assert call(state, "host.get", {"name": "nas-1"})["result"]["name"] == "nas-1"     # a plain read doesn't wait
+    answered = []
+
+    def settled():
+        r = call(state, "host.get", {"name": "nas-1", "settled": True})
+        answered.append((time.monotonic(), r))
+    t = threading.Thread(target=settled, daemon=True)
+    t.start()
+    t.join(0.2)                                         # time to answer, were it not waiting
+    released = time.monotonic()
+    release.set()
+    t.join(5)
+    [(at, r)] = answered
+    assert at >= released and r["result"]["name"] == "nas-1"
     assert call(state, "host.get", {"name": "nas-1", "settled": "yes"})["error"]["code"] == -32602
 
 

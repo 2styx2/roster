@@ -101,10 +101,7 @@ class Terminal:
 
 def next_run():
     """What a new roster process starts with: no secret, no session key, no provider state."""
-    providers._secrets.clear()
-    providers.PROVIDER_STATE.clear()
-    bitwarden.forget_session()
-    bitwarden._offered["done"] = False
+    providers.reset()
 
 
 def session_path():
@@ -525,7 +522,7 @@ def test_a_saved_session_bw_cant_report_on_is_unknown_not_expired(isolated, fake
 def test_status_shows_an_unknown_saved_session(isolated, fakes, write_config, monkeypatch, capsys):
     from roster import health
     _saved()
-    monkeypatch.setattr(bitwarden, "_key_status", lambda ctx, key: None)
+    monkeypatch.setenv("FAKE_BW_STATUS_FAIL", "Something broke.")
     c = health.session_check("bw", "1 Login", "", "locked", *bitwarden.saved_session(providers.Ctx("bw", None)))
     assert c["saved_session"] == "unknown" and c["level"] == "warn"
     assert "saved session: unknown (bw status failed)" in c["message"]
