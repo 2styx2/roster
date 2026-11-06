@@ -512,18 +512,18 @@ Added and changed items are named, removed ones only counted. To tell, it keeps 
 
 ### When your vault changes
 
-An item added or changed in the vault, a Host added to `roster.yml`, a password changed on one side: there's no set routine after any of them. Run whichever of these you reach for first. Each catches up what it needs itself, or names the one command that does, and ends with what changed and, only if something is left, `next:` and that command.
+After a vault item or a Host is added, or a password changed, there's no set order: run whichever you reach for. Each catches up what it needs, or names the one command that does, and ends with what changed and, only if something is left, `next:` and that command.
 
-| Command | What it catches up | What it names when something's missing |
+| Command | Catches up | Names when something's missing |
 |---|---|---|
-| `roster sync` | The map: this Box's ssh config and ROSTER.md from `roster.yml` (Hosts added, removed, renamed, at a new address). The vault: each vault's local copy synced, unless `--no-vault` | A Host that needs this Box's key (`roster setup --host NAME`), a new vault item `roster.yml` doesn't name yet (`roster add --from-vault`, until it does), a locked vault (`roster vault unlock`), the Mesh or a Box key rotation left to do |
-| `roster setup` | This Box's key on every Host it isn't on yet, each Host's host key recorded, the ssh config. Its own lookup syncs the vault, so a new item needs no `vault sync` first | Each Host it couldn't finish, with the cause: never answered at its address, the vault item's password refused, no password login, the vault locked (from the start, or part way), then `roster check --host` for the Hosts it keyed |
-| `roster check` | Nothing: it reads. One login per Host, never a retry, and it stops trying Hosts behind a rate limiter that dropped one | Each failed login's cause and fix: no key yet (a to-do: `roster setup --host NAME`), the key taken off, never answered or stopped answering, a locked or expired account, a FIPS Host (`key_type: ecdsa`) |
-| `roster run HOST -- CMD` | Nothing: it runs one command | A Host not in this Box's ssh config yet (`roster sync`), no key there yet (`roster setup --host NAME`), a vault item renamed, deleted or doubled, a locked vault |
-| `roster vault sync` | The vault alone: each local copy synced, and what changed since the last sync, by name | A new item `roster.yml` doesn't name (`roster add --from-vault`); offline, when it last synced |
-| `roster vault unlock` | Bitwarden unlocked for every roster run on this Box | What the locked vault held up (`roster setup --host NAME`) |
+| `roster sync` | The map (ssh config, ROSTER.md) and, unless `--no-vault`, the vault | `roster setup --host NAME`, `roster add --from-vault`, `roster vault unlock`, the Mesh or a rotation left |
+| `roster setup` | This Box's key on each Host, host keys, ssh config; its lookup syncs the vault itself | Each Host it couldn't finish, with the cause; then `roster check --host` for the Hosts it keyed |
+| `roster check` | Nothing: one login per Host | Each failure's cause and fix (no key yet is a to-do) |
+| `roster run HOST -- CMD` | Nothing | `roster sync` for a Host not synced yet, `roster setup --host NAME`, a vault item gone or doubled |
+| `roster vault sync` | The vault alone, and what changed by name | `roster add --from-vault` for a new item; offline, when it last synced |
+| `roster vault unlock` | Bitwarden, for every roster run on this Box | What the locked vault held up |
 
-None of them asks for a password without a terminal; each says what it couldn't do and the command for it. `update.sh` ends with `roster sync`'s line (it syncs the map only, and never asks).
+None asks for a password without a terminal; `update.sh` ends with sync's line.
 
 ### Old command names
 
