@@ -59,6 +59,22 @@ impl Proxy {
     }
 }
 
+/// init.lua's `plugin_proxy` is read straight into a [`Proxy`]: a bad one is the Config's error at
+/// `plugin_proxy`, with [`Proxy::parse`]'s words.
+impl<'de> serde::Deserialize<'de> for Proxy {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Proxy, D::Error> {
+        let text = String::deserialize(d)?;
+        Proxy::parse(&text).map_err(serde::de::Error::custom)
+    }
+}
+
+/// The Config as the app gets it shows the proxy as text (`http://HOST:PORT`).
+impl serde::Serialize for Proxy {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
 /// The proxy as the user wrote it, for the user's own messages (init.lua's). Never in a message a
 /// Plugin hears: a Plugin doesn't see where the user's proxy is.
 impl fmt::Display for Proxy {

@@ -589,9 +589,6 @@ fn validate(c: &Config) -> Result<(), Invalid> {
             return Err(out_of_range(&["views", id, "width"], &w, PANEL_WIDTH, PERCENT));
         }
     }
-    if let Some(proxy) = &c.plugin_proxy {
-        crate::proxy::Proxy::parse(proxy).map_err(|e| at(&["plugin_proxy"], e))?;
-    }
     if !PULL_FRESH_MINUTES.holds(c.pull_fresh_minutes) {
         return Err(out_of_range(
             &["pull_fresh_minutes"],

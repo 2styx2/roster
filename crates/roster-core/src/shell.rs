@@ -157,22 +157,13 @@ fn session_error(e: SessionError) -> CallError {
     CallError::Io { message: e.to_string() }
 }
 
-/// `plugin_proxy` from a Config (decision Q116); the Config's check refused a bad one, so a
-/// value here parses.
-fn plugin_proxy(config: &Config) -> Option<plugin::network::Proxy> {
-    config
-        .plugin_proxy
-        .as_deref()
-        .and_then(|p| plugin::network::Proxy::parse(p).ok())
-}
-
 fn emit_json(emit: &Emit, event: &str, payload: impl serde::Serialize) {
     emit(event, serde_json::to_value(payload).unwrap_or(Value::Null));
 }
 
 /// A reload's Config reaches the running Plugins' proxy setting, then the frontend hears of it.
 fn config_changed(plugins: &PluginHost, emit: &Emit, report: &Report) {
-    plugins.set_proxy(plugin_proxy(&report.config));
+    plugins.set_proxy(report.config.plugin_proxy.clone());
     emit_json(emit, "config-changed", report);
 }
 
@@ -588,7 +579,7 @@ impl Shell {
         let host = self.plugin_host(builtins, on_demo)?;
         // The user's proxy for its requests to public names, from the Config in effect (decision
         // Q116), handed to this load; a reload that changes it reaches it later (set_proxy).
-        let proxy = self.config.as_ref().and_then(|l| plugin_proxy(&l.settled()));
+        let proxy = self.settled_config().plugin_proxy.clone();
         let (source, mut handed, shown) = self.plugin_source(path)?;
         // A built-in Plugin's settings come from the app (Folders: init.lua's Folders, and
         // folders.yml's to move in once); a Package's from init.lua, and a folder has none.

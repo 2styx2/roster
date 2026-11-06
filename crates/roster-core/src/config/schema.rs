@@ -64,7 +64,8 @@ pub struct Config {
     pub auto_reload: bool,
     /// The proxy Plugins' requests to public names go through (decision Q116): `http://HOST:PORT`,
     /// never with credentials. None: they go direct.
-    pub plugin_proxy: Option<String>,
+    #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    pub plugin_proxy: Option<crate::proxy::Proxy>,
     /// This Box's own vault settings, sent to roster serve (`vault.configure`, tickets 35 and 41).
     pub vault: Vault,
     /// Packages: Plugins from git repos, pinned in `roster.lock` (ticket 24, decision Q83). In
