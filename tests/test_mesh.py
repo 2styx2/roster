@@ -496,6 +496,89 @@ def test_moving_from_one_mesh_dir_to_another_warns_about_the_first(net):
     assert net.file("orion-2", "home/.ssh/config").count("Include ") == 1
 
 
+# ---------------------------------------------------------------- who else may write the Mesh's folder (T259, #522 item 1)
+
+posix_modes = pytest.mark.skipif(WINDOWS, reason="Git for Windows' sh shows every folder as 755 (noacl)")
+
+
+@posix_modes
+@pytest.mark.parametrize("mode", [0o777, 0o770, 0o1777])
+def test_a_mesh_dir_others_may_write_in_is_refused_and_no_key_is_made_there(net, mode):
+    """Another account that may write the Mesh's folder could plant a whole key pair there, which roster would send
+    to every peer: the source is pending (222), and nothing is made there. The sticky bit doesn't help in the folder
+    itself: anyone may still add a file by a name that isn't there yet."""
+    d = net.host("orion-2") / "srv/mesh"
+    d.mkdir(parents=True)
+    d.chmod(mode)
+    with_mesh_dir(net, net.seen(d), host="orion-2")
+    r = mesh.run(net.cfg(), apply=True)
+    assert r["pending"]["orion-2"].startswith(f"[222] {net.seen(d)} is writable by others")
+    assert "chmod go-w" in r["pending"]["orion-2"]
+    assert list(d.iterdir()) == []
+    assert not any("roster-mesh:orion-2" in x for x in net.mesh_lines("nas-1"))
+    assert any("roster-mesh:orion-3" in x for x in net.mesh_lines("db-9"))          # the rest of the Mesh goes ahead
+
+
+@posix_modes
+@pytest.mark.parametrize("mode, refused", [(0o777, True), (0o775, True), (0o1777, False), (0o755, False)])
+def test_a_folder_above_the_mesh_dir_others_may_write_in_is_refused_unless_sticky(net, mode, refused):
+    """Whoever may write a folder above it may rename the Mesh's folder away and put their own in its place, unless
+    the sticky bit says only an entry's owner may (as /tmp)."""
+    srv = net.host("orion-2") / "srv"
+    (srv / "mesh").mkdir(parents=True)
+    srv.chmod(mode)
+    with_mesh_dir(net, net.seen(srv / "mesh"), host="orion-2")
+    r = mesh.run(net.cfg(), apply=True)
+    if refused:
+        assert r["pending"]["orion-2"] == (
+            f"[222] {net.seen(srv)} is writable by others (its group or everyone): another account could put a key "
+            f"pair there that roster would send to every peer: chmod go-w {net.seen(srv)}")
+        assert not (srv / "mesh/id_ed25519").exists()
+    else:
+        assert "orion-2" not in r["pending"] and (srv / "mesh/id_ed25519").exists()
+
+
+@posix_modes
+@pytest.mark.parametrize("rel", ["home/.ssh", "home"])
+def test_the_default_mesh_folder_is_checked_up_to_the_accounts_home(net, rel):
+    (net.host("orion-2") / rel).chmod(0o777)
+    r = mesh.run(net.cfg(), apply=True)
+    assert r["pending"]["orion-2"].startswith(f"[222] {net.seen(net.host('orion-2') / rel)} is writable by others")
+    assert not (net.host("orion-2") / "home/.ssh/roster-mesh").exists()
+
+
+@posix_modes
+def test_a_mesh_folder_another_account_owns_is_refused(net, tmp_path, monkeypatch):
+    """The folder was made by someone else (in a sticky folder, before roster made it): it's theirs to fill."""
+    d = net.host("orion-2") / "home/.ssh/roster-mesh"
+    d.mkdir(mode=0o700)
+    tools = tmp_path / "other-uid"
+    tools.mkdir()
+    (tools / "id").write_text('#!/bin/sh\n[ "$1" = -u ] && { echo 4242; exit 0; }\nexec /usr/bin/id "$@"\n')
+    (tools / "id").chmod(0o755)
+    monkeypatch.setenv("FAKE_HOST_PATH", str(tools))           # the login is uid 4242 on every stand-in Host
+    r = mesh.run(net.cfg(), apply=True)
+    assert r["pending"]["orion-2"] == (
+        f"[222] {net.seen(d)} isn't this account's (another user owns it): chown it to this account, or give the Mesh "
+        "another mesh_dir:")
+    assert list(d.iterdir()) == []
+
+
+@posix_modes
+def test_an_esxi_datastore_others_may_write_in_is_said_and_used(net):
+    """ESXi (Q212 (k)): a datastore's modes are the storage's, which roster can't set, and every ESXi sharing it
+    writes there anyway: a warning (222), not a refusal."""
+    ds = net.host("esx-02") / "vmfs/volumes/5f0e-uuid"
+    ds.chmod(0o777)
+    r = mesh.run(net.cfg(), apply=True)
+    assert "esx-02" not in r["pending"] and (ds / ".roster-mesh/id_ed25519").exists()
+    said = [w for w in r["warnings"] if w.startswith("[222] esx-02:")]
+    assert said == ["[222] esx-02: /vmfs/volumes/5f0e-uuid is writable by others (its group or everyone): another "
+                    "account could put a key pair there that roster would send to every peer: chmod go-w "
+                    "/vmfs/volumes/5f0e-uuid (ESXi: roster uses it anyway, as a datastore's permissions are its "
+                    "storage's)"]
+
+
 def back_to_the_default_directory(net):
     """orion-2's default directory still holds the key from before a mesh_dir: (roster warned about it then);
     roster.yml then drops the mesh_dir:. Returns (the default directory, the mesh_dir:, the old public key)."""
@@ -2108,6 +2191,34 @@ def test_a_renamed_box_takes_its_entries_under_the_earlier_name_with_it(net):
     assert not any("roster-mesh:orion-2" in x for x in net.mesh_lines("nas-1"))      # its dropped Link's line too
     assert "(owner box2)" in net.file("orion-2", "home/.ssh/roster-mesh/config")
     assert mesh.run(net.cfg())["already"]
+
+
+def test_a_renamed_box_retags_its_mesh_keys_public_half(net):
+    """#522 item 3: after box_name: changed, the Mesh key's own comment gets the new owner too (as Q188 re-tags
+    authorized_keys lines): the same key, so the peers' lines stay; only the .pub's comment changes, once."""
+    mesh.run(net.cfg(), apply=True)
+    pub = net.host("orion-2") / "home/.ssh/roster-mesh/id_ed25519.pub"
+    esx = net.host("esx-02") / "vmfs/volumes/5f0e-uuid/.roster-mesh/id_ed25519.pub"
+    key, esx_key = pub.read_text().split()[:2], esx.read_text().split()[:2]
+    net.cfg_path.write_text(CONFIG.replace("box_name: box\n", "box_name: box2\n"))
+    plan = mesh.run(net.cfg())
+    assert "re-tag key as this Box's" in next(h for h in plan["hosts"] if h["host"] == "orion-2")["changes"]
+    assert pub.read_text().split()[2] == "roster-mesh:orion-2@box"                 # a plan changes nothing
+    assert mesh.run(net.cfg(), apply=True)["pending"] == {}
+    assert pub.read_text().split() == [*key, "roster-mesh:orion-2@box2"]
+    assert esx.read_text().split() == [*esx_key, "roster-mesh:esx-02@box2"]
+    assert net.mesh_lines("nas-1") == [key_line_of(net, "orion-2", "10.0.0.2").replace("@box", "@box2")]
+    assert mesh.run(net.cfg())["already"]
+
+
+def test_another_owners_mesh_key_is_never_retagged(net):
+    """A key under a tag this Box has no record of writing (another Box's, used as it is) keeps its comment."""
+    mesh.run(net.cfg(), apply=True)
+    pub = net.host("orion-2") / "home/.ssh/roster-mesh/id_ed25519.pub"
+    pub.write_text(pub.read_text().replace("@box", "@elsewhere"))
+    before = pub.read_text()
+    mesh.run(net.cfg(), apply=True)
+    assert pub.read_text() == before
 
 
 # ---------------------------------------------------------------- Windows Hosts (T196, #376, decision Q176)

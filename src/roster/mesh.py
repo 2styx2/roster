@@ -34,7 +34,7 @@ from .common import (
     write_private,
 )
 from .context import current
-from .errors import MESH_KEY_PEER, MESH_WINDOWS, NOT_A_SOURCE, Problem
+from .errors import MESH_DIR_UNSAFE, MESH_KEY_PEER, MESH_WINDOWS, NOT_A_SOURCE, Problem
 from .hosts import is_windows
 from .sshops import hk_name, not_reached, recorded_host_keys
 
@@ -348,6 +348,38 @@ if [ -n "$MD" ]; then
     for v in /vmfs/volumes/*/.roster-mesh; do [ -n "$(mkeys "$v")" ] && stale "$v"; done
   elif [ -n "$(mkeys "$HOME/.ssh/roster-mesh")" ]; then stale "$HOME/.ssh/roster-mesh"; fi
 fi
+# Who else may write the Mesh's folder (T259, #522 item 1; decision Q212 (k)): another account that may write there could plant a
+# whole key pair there, which roster would send to every peer, and a tag can't tell whose a key is (Q212 (j)).
+# unsafe: one line per folder at fault, as T248 checks the session file's: the Mesh's folder itself ($P, when it's
+# there) is the login's own and nobody else may write in it (sticky or not: anyone may still add a file by a name
+# that isn't there yet); each one above it, up to the account's home (to / for a folder outside it), nobody else may
+# write in unless it's sticky (as /tmp: only an entry's owner may rename or remove it)
+unsafe() {
+  me=$(id -u 2>/dev/null); hm=$(cd "$HOME" 2>/dev/null && pwd -P)
+  if [ -d "$P" ]; then d=$(cd "$P" && pwd -P) || return 0; last=1
+  else d=$(cd "${P%/*}" 2>/dev/null && pwd -P) || return 0; last=; fi
+  while :; do
+    set -- $(ls -ldn "$d" 2>/dev/null)
+    case "$1" in ?????w*|????????w*) w=1;; *) w=;; esac
+    case "$1" in ?????????[tT]*) st=1;; *) st=;; esac
+    if [ -n "$last" ] && [ -n "$3" ] && [ "$3" != "$me" ]; then
+      echo "$d isn't this account's (another user owns it): chown it to this account, or give the Mesh another mesh_dir:"
+    elif [ -n "$w" ] && { [ -n "$last" ] || [ -z "$st" ]; }; then
+      echo "$d is writable by others (its group or everyone$([ -n "$st" ] && echo ', sticky or not')): another account could put a key pair there that roster would send to every peer: chmod go-w $d"
+    fi
+    last=
+    [ "$d" = "$hm" ] || [ "$d" = / ] && break
+    d=${d%/*}; [ -n "$d" ] || d=/
+  done
+}
+# refused, so the source is pending and nothing is used or made there; on ESXi said (UNSAFE) and used: a datastore's
+# modes are the storage's (an NFS export, vSAN), roster can't set them, and every ESXi sharing it writes there anyway
+guard() {
+  x=$(unsafe); [ -n "$x" ] || return 0
+  if [ -n "$ESXI" ]; then printf '%s\n' "$x" | sed 's/^/UNSAFE /'
+  else echo "ERROR [@UNSAFE@] $(printf '%s\n' "$x" | head -n 1)"; echo ROSTER_DONE; exit 0; fi
+}
+guard
 # the directory the Include after roster's mark in ~/.ssh/config names: an earlier mesh_dir: (or roster's own pick)
 O=$(awk -v m="$MARK" 'p { print; exit } $0 == m { p = 1 }' "$HOME/.ssh/config" 2>/dev/null)
 case "$O" in "Include "/*/config) O=${O#Include }; O=${O%/config}; [ -n "$(mkeys "$O")" ] && mine "$O" && stale "$O";; esac
@@ -392,9 +424,22 @@ if [ "$ROTATE" = 1 ] && [ -f "$K" ]; then
   if [ "$MODE" = apply ]; then rm -f "$K" "$K.pub"; fi
   echo "KEY rotate"
 fi
+# this Box's own key under an earlier tag (a renamed Box or Host, or the owner of an earlier apply its record proves:
+# ours, #522 item 3): its .pub's comment gets this run's, as Q188 re-tags authorized_keys lines; the key stays. A key
+# under another owner's tag is used as it is (Q212 (j)), never re-tagged
+if [ "$ROTATE" != 1 ] && [ "$K" = "$P/$KF" ] && [ -f "$K.pub" ] && ours_by "$WHO" && [ "$(keystate "$P" "$KF")" = ours ]; then
+  c=$(cat "$K.pub"); case "$c" in *" $TAG:$NAME@$OWNER") ;; *)
+    echo "KEY retag"
+    if [ "$MODE" = apply ]; then
+      { printf '%s %s\n' "$(printf '%s\n' "$c" | cut -d ' ' -f 1,2)" "$TAG:$NAME@$OWNER" > "$K.pub.new" \
+        && chmod 644 "$K.pub.new" && mv -f "$K.pub.new" "$K.pub"; } \
+        || { rm -f "$K.pub.new"; echo "ERROR couldn't re-tag $K.pub as this Box's"; echo ROSTER_DONE; exit 0; }
+    fi;;
+  esac
+fi
 if [ ! -f "$K" ] || [ ! -f "$K.pub" ]; then
   if [ "$MODE" = apply ]; then
-    mkdir -p "$P" && rm -f "$K" "$K.pub" && "$KG" -q $KT -N '' -C "$TAG:$NAME@$OWNER" -f "$K" >/dev/null 2>&1 \
+    mkdir -p "$P" && [ -z "$(unsafe)" -o -n "$ESXI" ] && rm -f "$K" "$K.pub" && "$KG" -q $KT -N '' -C "$TAG:$NAME@$OWNER" -f "$K" >/dev/null 2>&1 \
       || { echo "ERROR ssh-keygen couldn't make the Mesh's key in $P"; echo ROSTER_DONE; exit 0; }
     echo "KEY made"
   else
@@ -630,7 +675,8 @@ def heredoc(text):
 
 def probe_script(h, peers, mode, rotate, own, prev=()):
     """Phase 1 on a source: its key (made on apply), its public key, and whether it reaches each peer's ssh port."""
-    lines = [preamble(h, mode, own, prev), f"ROTATE={1 if rotate else 0}\n", PROBE, REACH]
+    lines = [preamble(h, mode, own, prev), f"ROTATE={1 if rotate else 0}\n",
+             PROBE.replace("@UNSAFE@", str(MESH_DIR_UNSAFE)), REACH]
     lines += [f"reach {q(p['name'])} {q(p['ip'])} {p['ssh']['port']}\n" for p in peers]
     return "".join(lines) + "echo ROSTER_DONE\n"
 
@@ -897,6 +943,10 @@ def run(cfg, apply=False, rotate=(), say=None, progress=None, stopped=None, visi
                               "reach": dict(x.split(" ", 1) for x in report(lines, "REACH "))}
         stale(out, name, lines)
         not_ours(out, name, lines)
+        for x in dict.fromkeys(report(lines, "UNSAFE ")):    # ESXi only: elsewhere the probe refused (222)
+            out.setdefault("warnings", []).append(
+                f"[{MESH_DIR_UNSAFE}] {name}: {x} (ESXi: roster uses it anyway, as a datastore's permissions are its "
+                "storage's)")
         for d in report(lines, "OLDKEY "):
             out.setdefault("warnings", []).append(
                 f"{name}: {d} still holds an older Mesh key from before mesh_dir: changed, and roster uses it again: "
@@ -1092,8 +1142,8 @@ def stale(out, name, lines):
 
 
 def key_changes(probe, apply, rotate, kind=boxkeys.DEFAULT):
-    """What happens to a source's own key: [] / ["make key"] / ["replace key"]; a key of another type than KIND (its
-    key_type) is replaced by one of KIND (T245)."""
+    """What happens to a source's own key: [] / ["make key"] / ["replace key"] / ["re-tag key as this Box's"] (its
+    .pub's comment, #522 item 3); a key of another type than KIND (its key_type) is replaced by one of KIND (T245)."""
     if not probe or "key" not in probe:
         return []
     k = probe["key"]
@@ -1101,7 +1151,9 @@ def key_changes(probe, apply, rotate, kind=boxkeys.DEFAULT):
     if old is not None:     # the old key's type, from its file name (id_ed25519, roster_mesh_TYPE)
         was = "ed25519" if old == "id_ed25519" else old.removeprefix("roster_mesh_")
         return [f"replace key ({was} -> {kind}, its key_type)"]
-    return ["replace key"] if "rotate" in k else ["make key"] if ("made" in k or "missing" in k) else []
+    if "rotate" in k:
+        return ["replace key"]
+    return ["make key"] if ("made" in k or "missing" in k) else ["re-tag key as this Box's"] if "retag" in k else []
 
 
 def summary(cfg, g, links, out, apply, gone):
