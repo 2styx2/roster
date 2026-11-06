@@ -22,7 +22,7 @@ from typing import Any
 
 from .common import UTC_TIME, die, program_argv, replace_file, say, utc_now
 from .context import Context, box_file, current
-from .errors import KEY_TYPE_DRIFT, Problem
+from .errors import BOX_KEY_REMADE, KEY_TYPE_DRIFT, Problem, tagged
 
 DEFAULT = "ed25519"
 # key_max_age:'s default (decision Q204): the strict end of NIST SP 800-57 Part 1 Rev. 5's cryptoperiod for a
@@ -215,12 +215,17 @@ def ensure_key(key: BoxKey, tag: str) -> None:
                 f"{fix}", code=KEY_TYPE_MISMATCH)
         say(f"key          {key.key} ({key.type.name}, existing)")
         return
+    gone = was_made(key.key)                # T243: roster made it before, and it's gone (deleted)
     try:
         generate(key.type, key.key, tag)
     except subprocess.CalledProcessError as e:
         die(f"ssh-keygen couldn't make {key.key}: {(e.stderr or b'').decode(errors='replace').strip() or e}")
     stamp(key.key)                          # its age counts from now (key_max_age:)
     say(f"key          {key.key} ({key.type.name}, created)")
+    if gone:
+        say("warning: " + tagged(Problem(BOX_KEY_REMADE, f"{key.key} was gone, so this is a new key: every Host the old "
+                                         "one was on needs this one (setup puts it on each Host it can log in to with "
+                                         "a password; roster check names the rest)")))
 
 
 def public_key_line(key: BoxKey, tag: str) -> str:
@@ -355,6 +360,12 @@ def _created_rows() -> list[tuple[str, str]]:
     except (OSError, UnicodeDecodeError):
         return []
     return [(t, p) for t, _, p in (ln.partition("\t") for ln in text.splitlines()) if p]
+
+
+def was_made(key: Path) -> bool:
+    """Did roster make (or rotate) KEY on this Box before (its key-created record names it)? T243: a key file gone
+    since is a key every Host it was on lost."""
+    return any(p == str(key) for _, p in _created_rows())
 
 
 def created(key: Path):

@@ -427,6 +427,23 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).strftime(UTC_TIME)
 
 
+def ago(when: object, now: Any = None) -> str:
+    """'just now', '5 min ago', '3 h ago', '2 days ago' for an ISO time (NOW: a datetime, else now)."""
+    from datetime import datetime, timezone
+    try:
+        then = datetime.strptime(str(when)[:19] + "Z", UTC_TIME).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return str(when)
+    s = ((now or datetime.now(timezone.utc)) - then).total_seconds()
+    if s < 60:
+        return "just now"
+    if s < 3600:
+        return f"{int(s // 60)} min ago"
+    if s < 2 * 86400:
+        return f"{int(s // 3600)} h ago"
+    return f"{int(s // 86400)} days ago"
+
+
 def failure_text(e):
     """What went wrong, safe to show: an OSError's own words (paths only), else just the exception's type."""
     if isinstance(e, OSError):

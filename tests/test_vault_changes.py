@@ -6,6 +6,7 @@ sync, setup, vault sync and vault unlock end with as their "next" line. Fakes on
 import json
 
 import pytest
+from conftest import WINDOWS
 
 from roster import catchup
 from roster.cli import main
@@ -41,6 +42,12 @@ def answered(*addresses):
     with f.open("a") as out:
         for a in addresses:
             out.write(f"{a} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeHostKeyForTestsOnly{a.replace('.', '')}\n")
+
+
+def keyed_by_setup(*names):
+    """Setup put this Box's key on these Hosts: its record of them (key-types, T245), as a finished setup leaves it."""
+    from roster import boxkeys
+    boxkeys.record({n: ["ed25519"] for n in names})
 
 
 @pytest.fixture
@@ -312,6 +319,198 @@ def test_sync_says_a_host_renamed_at_the_same_address_is_the_same_machine(capsys
     assert "roster revoke" not in out and "roster setup" not in out    # its known_hosts line, by address, still works
 
 
+# ---------------------------------------------------------------- catchup.explain: a failed login's cause and its fix
+
+NO_ROUTE = "ssh: connect to host 10.0.0.6 port 22: No route to host"
+DENIED = "admin@10.0.0.6: Permission denied (publickey,password)."
+
+
+def explained(box, name, stderr, password=False):
+    cfg = load_config(box["path"])
+    return catchup.explain(cfg, cfg["hosts"][name], stderr, password)
+
+
+def test_a_host_that_never_answered_says_so_with_its_address_and_vault_item(box):
+    from roster import errors
+    p = explained(box, "new-01", NO_ROUTE)
+    assert p.code == errors.NEVER_ANSWERED
+    assert p.message == "new-01 has never answered at 10.0.0.6: is it on, and is that its address?"
+    assert "vault item 'new-01 ssh'" in p.fix and "roster.yml" in p.fix
+
+
+def test_a_host_that_answered_before_stopped_answering(box):
+    from roster import errors
+    answered("10.0.0.6")
+    p = explained(box, "new-01", NO_ROUTE)
+    assert p.code == errors.STOPPED_ANSWERING
+    assert p.message == "new-01 stopped answering at 10.0.0.6"
+
+
+def test_a_key_refused_on_a_host_setup_never_finished_is_no_key_yet(box):
+    from roster import errors
+    p = explained(box, "new-01", DENIED)
+    assert p.code == errors.NO_KEY_YET
+    assert p.message == "no key on new-01 yet" and p.fix == "roster setup --host new-01"
+
+
+def test_a_key_refused_on_a_host_set_up_before_says_it_no_longer_logs_in(box):
+    from roster import errors
+    answered("10.0.0.6")
+    keyed_by_setup("new-01")
+    p = explained(box, "new-01", DENIED)
+    assert p.code == errors.KEY_GONE
+    assert "no longer logs in" in p.message and "roster setup --host new-01" in p.fix
+
+
+def test_a_refused_password_names_the_vault_item_never_the_password(box):
+    from roster import errors
+    answered("10.0.0.6")
+    p = explained(box, "new-01", DENIED, password=True)
+    assert p.code == errors.PASSWORD_REFUSED
+    assert p.message == ("the password in vault item 'new-01 ssh' doesn't log in to new-01: was it changed on one side "
+                         "only?")
+
+
+@pytest.mark.parametrize("stderr", ["Your account has expired; please contact your system administrator",
+                                    "WARNING: Your password has expired.\nPassword change required but no TTY available.",
+                                    "Account locked due to 3 failed logins"])
+def test_a_locked_or_expired_account_is_told_apart_from_a_wrong_password(box, stderr):
+    from roster import errors
+    answered("10.0.0.6")
+    p = explained(box, "new-01", stderr, password=True)
+    assert p.code == errors.ACCOUNT_LOCKED
+    assert p.message == "the account admin on new-01 is locked or its password expired"
+
+
+def test_a_host_with_no_password_login_and_no_key_says_setup_needs_one(box):
+    from roster import errors
+    answered("10.0.0.6")
+    p = explained(box, "new-01", "admin@10.0.0.6: Permission denied (publickey).", password=True)
+    assert p.code == errors.NO_PASSWORD_LOGIN
+    assert "password login" in p.message and "by hand" in p.fix
+
+
+@pytest.mark.parametrize("stderr", ["kex_exchange_identification: read: Connection reset by peer",
+                                    "kex_exchange_identification: Connection closed by remote host"])
+def test_a_connection_dropped_before_ssh_spoke_is_the_rate_limiter(box, stderr):
+    from roster import errors
+    answered("10.0.0.6")
+    p = explained(box, "new-01", stderr)
+    assert p.code == errors.SSH_RATE_LIMITED
+    assert "wait about 4 minutes" in p.fix
+
+
+# ---------------------------------------------------------------- roster check: each FAIL's cause and its one fix
+
+@pytest.fixture
+def ssh_says(monkeypatch, tmp_path):
+    """The stand-in ssh's one login fails with STDERR (exit 255); FAKE_LOG counts the connections."""
+    monkeypatch.setenv("FAKE_LOG", str(tmp_path / "ssh.log"))
+
+    def say(stderr):
+        monkeypatch.setenv("FAKE_SSH_STDERR", stderr)
+        monkeypatch.setenv("FAKE_SSH_EXIT", "255")
+    return say
+
+
+def connections(tmp_path):
+    f = tmp_path / "ssh.log"
+    return len(f.read_text().splitlines()) if f.exists() else 0
+
+
+def test_check_before_setup_on_a_new_host_is_a_to_do_naming_setup(capsys, box, ssh_says, tmp_path):
+    run(capsys, "sync", "--no-vault")
+    answered("10.0.0.5")
+    ssh_says(DENIED)
+    rc, out, err = run(capsys, "check", "--host", "new-01")
+    assert "new-01  ssh:todo" in out
+    assert "  new-01: [211] no key on new-01 yet: roster setup --host new-01" in out
+    assert connections(tmp_path) == 1                       # one login, never a retry
+
+
+def test_check_names_a_host_that_never_answered_and_the_fix(capsys, box, ssh_says):
+    run(capsys, "sync", "--no-vault")
+    ssh_says(NO_ROUTE)
+    rc, out, _ = run(capsys, "check", "--host", "new-01")
+    assert rc == 1 and "new-01  ssh:FAIL" in out
+    assert "  new-01: [209] new-01 has never answered at 10.0.0.6: is it on, and is that its address?" in out
+
+
+def test_check_json_carries_the_cause_and_fix_and_no_next_line(capsys, box, ssh_says):
+    run(capsys, "sync", "--no-vault")
+    answered("10.0.0.6")
+    ssh_says(NO_ROUTE)
+    rc, out, _ = run(capsys, "check", "--host", "new-01", "--json")
+    (h,) = json.loads(out)["hosts"]
+    assert h["problem"]["code"] == 210 and h["problem"]["fix"]
+    assert "next:" not in out
+
+
+# ---------------------------------------------------------------- roster setup: each failed Host's cause
+
+def test_setup_says_a_host_that_never_answered_with_its_address(capsys, box, monkeypatch):
+    from roster import boxsetup
+    monkeypatch.setattr(boxsetup, "record_fingerprints", lambda cfg, hosts: {h["name"] for h in hosts})   # no answer
+    rc, out, _ = run(capsys, "setup", "--host", "new-01")
+    assert rc == 1
+    assert "  new-01: [209] new-01 has never answered at 10.0.0.6: is it on, and is that its address?" in out
+
+
+def test_setup_names_the_vault_item_whose_password_the_host_refused(capsys, box, scans, monkeypatch):
+    from roster import boxsetup
+    def refused(*a, **k):
+        raise RuntimeError("login refused (wrong user or password?)")
+    monkeypatch.setattr(boxsetup, "enroll", refused)
+    rc, out, err = run(capsys, "setup", "--host", "new-01")
+    assert rc == 1
+    assert ("  new-01: [45] the password in vault item 'new-01 ssh' doesn't log in to new-01: was it changed on one "
+            "side only?") in out
+    assert no_secret(out, err)
+
+
+def test_setup_says_a_host_with_no_password_login_needs_the_key_by_hand(capsys, box, scans, monkeypatch):
+    from roster import boxsetup
+    def no_password(*a, **k):
+        raise RuntimeError("login refused: the Host takes no password login (allowed: publickey)")
+    monkeypatch.setattr(boxsetup, "enroll", no_password)
+    rc, out, _ = run(capsys, "setup", "--host", "new-01")
+    assert rc == 1 and "  new-01: [214] new-01 takes no password login" in out
+
+
+# ---------------------------------------------------------------- roster run: never a bare ssh failure
+
+def test_run_before_sync_on_a_new_host_says_roster_sync(capsys, box, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_LOG", str(tmp_path / "ssh.log"))
+    with pytest.raises(SystemExit) as e:
+        main(["run", "new-01", "--", "uptime"])
+    assert "new-01 isn't in this Box's ssh config yet" in str(e.value) and " sync` writes it" in str(e.value)
+    assert connections(tmp_path) == 0
+
+
+def test_run_on_a_host_with_no_key_yet_says_setup_after_its_one_try(capsys, box, ssh_says, tmp_path):
+    run(capsys, "sync", "--no-vault")
+    ssh_says(DENIED)
+    rc, out, err = run(capsys, "run", "new-01", "--", "uptime")
+    assert rc == 255
+    assert DENIED in err                                     # ssh's own words still shown
+    assert "roster: [211] no key on new-01 yet: roster setup --host new-01" in err
+    assert connections(tmp_path) == 1
+
+
+def test_run_on_a_host_that_works_hands_over_to_ssh_as_before(capsys, box, monkeypatch):
+    from roster import run as run_module
+    run(capsys, "sync", "--no-vault")
+    answered("10.0.0.6")
+    keyed_by_setup("new-01")
+    handed = []
+    monkeypatch.setattr(run_module, "run_instead", lambda argv: handed.append(argv) or 0)
+    assert main(["run", "new-01", "--", "uptime"]) == 0
+    assert handed == [["ssh", "-o", "BatchMode=yes", "new-01", "uptime"]]
+
+
+# ---------------------------------------------------------------- a Login's vault item renamed, deleted, doubled
+
+PW_MAP = MAP.replace('auth: "bw:new-01 ssh"}', 'auth: "bw:new-01 ssh", enroll: false}')
 # ---------------------------------------------------------------- roster sync in a terminal (#503's review MED-1)
 
 UNLOCK_NOTE = "unlocking here locks the roster app and any other bw session on this Box"
@@ -324,7 +523,9 @@ def test_sync_in_a_terminal_says_what_an_unlock_costs_before_it_asks_once_and_of
     term = Terminal(monkeypatch, "\n")
     rc, out, err = run(capsys, "sync")
     assert rc == 0 and term.passwords == 1
-    assert UNLOCK_NOTE in err and OFFER in term.shown
+    assert UNLOCK_NOTE in term.shown and UNLOCK_NOTE not in err      # on the terminal: `sync 2>file` can't hide it
+    assert "this terminal has no Bitwarden session" in term.shown
+    assert term.shown.index(UNLOCK_NOTE) < term.shown.index(OFFER)
     assert no_secret(out, err)
 
 
@@ -332,7 +533,7 @@ def test_sync_in_a_terminal_with_a_working_session_never_asks(capsys, box, monke
     from test_vault_unlock import Terminal
     term = Terminal(monkeypatch, "\n")                     # BW_SESSION works (the box fixture's)
     rc, out, err = run(capsys, "sync")
-    assert rc == 0 and term.passwords == 0 and UNLOCK_NOTE not in err
+    assert rc == 0 and term.passwords == 0 and UNLOCK_NOTE not in err + term.shown
 
 
 def test_sync_skips_the_vault_cleanly_on_ctrl_d_at_the_prompt(capsys, box, monkeypatch):
@@ -347,7 +548,7 @@ def test_sync_skips_the_vault_cleanly_on_ctrl_d_at_the_prompt(capsys, box, monke
     monkeypatch.setattr(getpass, "getpass", eof)
     rc, out, _ = run(capsys, "sync")
     assert rc == 0
-    assert "vault: bw not synced (no master password given; run in a terminal: roster vault unlock)" in out
+    assert "vault: bw not synced (no master password given; roster vault unlock)" in out
     assert "Host new-01" in current().ssh_config.read_text()
 
 
@@ -398,6 +599,366 @@ def run_dies(*argv):
     return str(e.value)
 
 
+def test_a_renamed_or_deleted_item_names_the_host_the_item_and_the_fix(capsys, box, write_config):
+    write_config(PW_MAP)
+    items = [i for i in json.loads(box["items"].read_text()) if i["name"] != "new-01 ssh"]   # renamed away, or gone
+    box["items"].write_text(json.dumps(items))
+    said = run_dies("run", "new-01", "--", "uptime")
+    assert "[32] new-01: no vault item named 'new-01 ssh' (ssh Login of new-01)" in said
+    assert "renamed, deleted, or moved where this account can't read it" in said
+    assert "roster add --from-vault" in said and "auth:" in said
+    assert no_secret(said)
+
+
+def test_two_items_by_the_login_s_name_are_both_named_never_their_contents(capsys, box, write_config):
+    write_config(PW_MAP)
+    items = json.loads(box["items"].read_text()) + [
+        {"id": "eeee-5", "name": "new-01 ssh", "type": 1, "revisionDate": "2026-11-05T09:00:00.000Z",
+         "login": {"username": "admin", "password": "pw-other-SECRET"}}]
+    box["items"].write_text(json.dumps(items))
+    said = run_dies("run", "new-01", "--", "uptime")
+    assert "[33] new-01: 2 vault items are named 'new-01 ssh'" in said
+    assert no_secret(said)
+
+
+def test_a_locked_vault_with_no_terminal_says_14_and_vault_unlock(capsys, box, write_config, monkeypatch):
+    write_config(PW_MAP)
+    monkeypatch.delenv("BW_SESSION")
+    said = run_dies("run", "new-01", "--", "uptime")
+    assert said.startswith("error: [14] new-01: ") and "roster vault unlock" in said and "umask" not in said
+
+
+# ---------------------------------------------------------------- run --sudo: sudo's refusals told apart
+
+@pytest.mark.parametrize(("sudo_says", "told"), [
+    ("admin is not in the sudoers file.  This incident will be reported.",
+     "admin isn't allowed to sudo there (not in sudoers)"),
+    ("sudo: a terminal is required to read the password", "sudo there wants a terminal (requiretty in sudoers)"),
+    ("sudo: 1 incorrect password attempt", "sudo refused the password from bw:new-01 ssh: is the sudo password there "
+                                           "the login's?"),
+])
+@pytest.mark.skipif(WINDOWS, reason="the stand-in ssh is a .cmd shim on Windows, which won't take sudo's sh line")
+def test_run_sudo_tells_sudo_s_refusals_apart(capsys, box, monkeypatch, sudo_says, told):
+    run(capsys, "sync", "--no-vault")
+    answered("10.0.0.6")
+    monkeypatch.setenv("FAKE_SSH_STDERR", sudo_says)
+    monkeypatch.setenv("FAKE_SSH_EXIT", "1")
+    rc, out, err = run(capsys, "run", "--sudo", "new-01", "--", "id")
+    assert rc == 1 and f"new-01: {told}" in err
+    assert no_secret(out, err)
+
+
+def test_setup_says_the_vault_was_locked_part_way_and_asks_nothing_more(capsys, box, scans, write_config, monkeypatch):
+    """The roster app locked the vault between two lookups: setup says so, stops asking, and its ssh config is whole."""
+    write_config(MAP.replace("      new-01:", "  more:\n    hosts:\n      new-01:"))
+    from roster import boxsetup, providers
+    asked = []
+
+    def get_secret(ref, group):
+        asked.append(ref)
+        if len(asked) > 1:
+            raise providers.VaultLocked("Bitwarden vault is locked and there's no terminal to unlock it")
+        return "pw-web-SECRET"
+    monkeypatch.setattr(boxsetup, "get_secret", get_secret)
+    monkeypatch.setattr(boxsetup, "enroll", lambda *a, **k: None)
+    rc, out, err = run(capsys, "setup")
+    assert rc == 1 and len(asked) == 2
+    assert "[216] the vault was locked during this run" in out
+    assert "Host new-01" in current().ssh_config.read_text() and "Host web-01" in current().ssh_config.read_text()
+    assert no_secret(out, err)
+
+
+# ---------------------------------------------------------------- this Box's key deleted
+
+def test_a_deleted_box_key_is_made_again_and_said(capsys, box, scans, monkeypatch):
+    from roster import boxsetup
+    monkeypatch.setattr(boxsetup, "ssh_ok", lambda name, timeout=10: True)
+    run(capsys, "setup")
+    cfg = load_config(box["path"])
+    from pathlib import Path
+    key = Path(cfg["key"])
+    rc, out, _ = run(capsys, "check", "--box")
+    assert "key" in out
+    key.unlink()
+    Path(str(key) + ".pub").unlink()
+    rc, out, _ = run(capsys, "check", "--box")
+    assert rc == 1 and str(key) in out                     # check --box flags it before setup runs
+    rc, out, _ = run(capsys, "setup")
+    assert f"warning: [218] {key} was gone, so this is a new key: every Host the old one was on needs this one" in out
 def test_check_host_on_a_group_points_at_only(capsys, box):
     said = run_dies("check", "--host", "lab")
     assert "lab is a group (--only lab takes its Hosts)" in said
+
+
+def test_sync_says_a_host_s_address_changed_and_how_to_check_its_key(capsys, box, write_config):
+    answered("10.0.0.5", "10.0.0.6")
+    run(capsys, "sync", "--no-vault")
+    write_config(MAP.replace("10.0.0.6", "10.0.0.9"))
+    rc, out, _ = run(capsys, "sync", "--no-vault")
+    assert rc == 0
+    assert "map: 1 Host with a new address (new-01)" in out
+    assert "note: new-01's address changed (10.0.0.6 to 10.0.0.9): `roster setup --host new-01` records its host key" \
+        in out
+    assert "next: roster setup --host new-01" in out          # never reached at its new address
+
+
+def test_a_reinstalled_host_says_so_and_how_to_set_it_up_again(box):
+    from roster import errors
+    answered("10.0.0.6")
+    p = explained(box, "new-01", "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.")
+    assert p.code == errors.HOST_KEY_CHANGED
+    assert "reinstalled" in p.message and "roster setup --host new-01" in p.fix
+
+
+def test_a_lookup_with_the_vault_server_offline_says_how_old_its_copy_is(capsys, box, write_config, monkeypatch):
+    from roster.providers import get_secret
+    monkeypatch.setenv("FAKE_BW_LAST_SYNC", "2026-11-05T07:00:00.000Z")
+    monkeypatch.setenv("FAKE_BW_SYNC_FAIL", "Sync failed: server unreachable")
+    assert get_secret("bw:web-01 ssh", "lab") == "pw-web-SECRET"          # the Login still works
+    out = capsys.readouterr().out
+    assert "`bw sync` failed - using the vault as last synced " in out and " ago" in out
+
+
+def test_two_providers_one_locked_are_each_reported_and_the_open_one_still_works(capsys, box, write_config,
+                                                                                 monkeypatch):
+    from roster.providers import get_secret
+    write_config(MAP + '      orion-01: {ip: 10.0.0.7, user: deploy, auth: "op:Infra/Orion servers"}\n')
+    monkeypatch.delenv("BW_SESSION")
+    monkeypatch.setenv("OP_SESSION_test", "tok")
+    rc, out, _ = run(capsys, "vault", "sync")
+    assert rc == 1
+    assert "FAIL  bw: " in out and "fix: run in a terminal: roster vault unlock" in out
+    assert "ok    op: keeps no local copy" in out
+    assert get_secret("op:Infra/Orion servers", "lab") == "pw-deploy"
+
+
+def test_sync_says_a_host_waiting_for_review_and_setup_skips_it(capsys, box, scans, write_config, monkeypatch):
+    write_config(MAP.replace('auth: "bw:new-01 ssh"}', 'auth: "bw:new-01 ssh", reviewed: false}'))
+    answered("10.0.0.5")
+    rc, out, _ = run(capsys, "sync", "--no-vault")
+    assert "next: review them in roster.yml, then set reviewed: true (new-01 waiting for review (reviewed: false))" in out
+    from roster import boxsetup
+    monkeypatch.setattr(boxsetup, "ssh_ok", lambda name, timeout=10: True)
+    rc, out, _ = run(capsys, "setup")
+    assert rc == 0 and "skipping     1 hosts with reviewed: false" in out and "new-01:" not in out
+
+
+def test_sync_with_a_roster_yml_that_doesnt_load_names_the_line_and_does_nothing(capsys, box, write_config):
+    write_config(MAP + "  broken: [\n")
+    with pytest.raises(SystemExit) as e:
+        main(["sync"])
+    assert "line" in str(e.value)
+    assert not current().ssh_config.exists()
+
+
+def test_a_password_only_host_is_never_a_setup_failure(capsys, box, scans, write_config, monkeypatch):
+    write_config(PW_MAP)
+    from roster import boxsetup
+    monkeypatch.setattr(boxsetup, "ssh_ok", lambda name, timeout=10: True)
+    rc, out, _ = run(capsys, "setup")
+    assert rc == 0 and "1 key hosts ready, 1 password-only hosts, 0 failed" in out
+
+
+def test_sync_with_bw_not_logged_in_names_the_login_command(capsys, box, monkeypatch):
+    monkeypatch.delenv("BW_SESSION")
+    monkeypatch.setenv("FAKE_BW_LOGGED_OUT", "1")
+    rc, out, _ = run(capsys, "sync")
+    assert rc == 0 and "vault: bw not synced (not logged in: roster vault bw --write -- login)" in out
+
+
+def test_a_new_vault_item_stays_named_until_the_map_names_it(capsys, box, write_config):
+    """#503's review LOW-4: not only by the sync that first saw it."""
+    run(capsys, "vault", "sync")
+    items = json.loads(box["items"].read_text()) + [
+        {"id": "cccc-3", "name": "nas-01 ssh", "type": 1, "revisionDate": "2026-11-05T09:00:00.000Z",
+         "login": {"username": "admin", "password": "pw-other-SECRET", "uris": [{"uri": "10.0.0.50"}]}}]
+    box["items"].write_text(json.dumps(items))
+    run(capsys, "vault", "sync")
+    rc, out, _ = run(capsys, "vault", "sync")                 # nothing changed since: still named
+    assert "up to date" in out and "next: roster add --from-vault (1 new vault item not in roster.yml)" in out
+    rc, out, _ = run(capsys, "sync", "--no-vault")
+    write_config(MAP + '      nas-01: {ip: 10.0.0.50, user: admin, auth: "bw:nas-01 ssh"}\n')
+    rc, out, _ = run(capsys, "vault", "sync")
+    assert "roster add --from-vault" not in out
+
+
+def test_a_sync_costs_one_bw_status(capsys, box, tmp_path, monkeypatch):
+    """#503's review NIT: the vault step's `bw status` is shared between the unlock check and the sync's last-sync."""
+    monkeypatch.setenv("FAKE_ARGV_LOG", str(tmp_path / "argv.log"))
+    run(capsys, "sync")
+    assert sum(c[:1] == ["status"] for c in bw_calls(tmp_path)) == 1
+
+
+# ---------------------------------------------------------------- #510's review
+
+def accept_new(monkeypatch):
+    """The stand-in ssh records the Host's key first, as real ssh does under roster's accept-new, then is refused."""
+    f = current().known_hosts
+    f.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("FAKE_SSH_ACCEPT_NEW", str(f))
+
+
+def test_check_before_setup_with_accept_new_is_still_a_to_do(capsys, box, ssh_says, monkeypatch):
+    """HIGH-1: the probe's own connection records the host key; what this Box knew before it decides."""
+    run(capsys, "sync", "--no-vault")
+    accept_new(monkeypatch)
+    ssh_says(DENIED)
+    rc, out, _ = run(capsys, "check", "--host", "new-01")
+    assert "new-01  ssh:todo" in out and "[211] no key on new-01 yet" in out
+    rc, out, _ = run(capsys, "check", "--host", "new-01")      # again: its host key is known now, still no record
+    assert "isn't on new-01 by roster's record (never set up from this Box, or taken off)" in out
+    assert "roster setup --host new-01" in out and "taken off there?" not in out
+
+
+def test_run_before_setup_with_accept_new_says_no_key_yet(capsys, box, ssh_says, monkeypatch):
+    run(capsys, "sync", "--no-vault")
+    accept_new(monkeypatch)
+    ssh_says(DENIED)
+    rc, out, err = run(capsys, "run", "new-01", "--", "uptime")
+    assert "roster: [211] no key on new-01 yet: roster setup --host new-01" in err
+
+
+def test_a_refused_keyboard_interactive_password_is_the_vault_item_s_not_no_password_login(box, write_config):
+    """MED-1: a Host taking keyboard-interactive (PAM), not "password": paramiko answers it with the password and,
+    when that's refused, re-raises BadAuthenticationType. It's the password, never "turn password login on"."""
+    import socket
+    import threading
+
+    import paramiko
+
+    from roster import errors
+    from roster.sshops import password_exec
+
+    class KbdOnly(paramiko.ServerInterface):
+        def get_allowed_auths(self, username):
+            return "publickey,keyboard-interactive"
+
+        def check_auth_interactive(self, username, submethods):
+            return paramiko.InteractiveQuery("", "", ("Password: ", False))
+
+        def check_auth_interactive_response(self, responses):
+            return paramiko.AUTH_FAILED
+
+    key = paramiko.ECDSAKey.generate()
+    lsock = socket.create_server(("127.0.0.1", 0))
+    port = lsock.getsockname()[1]
+
+    def serve():
+        conn, _ = lsock.accept()
+        t = paramiko.Transport(conn)
+        t.add_server_key(key)
+        try:
+            t.start_server(server=KbdOnly())
+            t.join(5)
+        except Exception:  # noqa: S110 - the client's refusal ends it
+            pass
+    threading.Thread(target=serve, daemon=True).start()
+    write_config(MAP.replace("{ip: 10.0.0.6,", f"{{ip: 127.0.0.1, port: {port},"))
+    f = current().known_hosts
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(f"[127.0.0.1]:{port} {key.get_name()} {key.get_base64()}\n")
+    cfg = load_config(box["path"])
+    with pytest.raises(RuntimeError) as e:
+        password_exec(cfg["hosts"]["new-01"], "true", "a-wrong-password", timeout=5)
+    line = catchup.setup_failure(cfg, cfg["hosts"]["new-01"], str(e.value))
+    assert line.startswith(f"[{errors.PASSWORD_REFUSED}] the password in vault item 'new-01 ssh'"), line
+    assert "by hand" not in line and "faillock" in line
+
+
+def test_a_vault_locked_from_the_start_isnt_locked_during_the_run(capsys, box, scans, write_config, monkeypatch):
+    """LOW-1."""
+    write_config(MAP.replace("      new-01:", "  more:\n    hosts:\n      new-01:"))
+    from roster import boxsetup, providers
+
+    def get_secret(ref, group):
+        raise providers.VaultLocked("Bitwarden vault is locked and there's no terminal to unlock it")
+    monkeypatch.setattr(boxsetup, "get_secret", get_secret)
+    monkeypatch.setattr(boxsetup, "enroll", lambda *a, **k: None)
+    rc, out, _ = run(capsys, "setup")
+    assert rc == 1 and "during this run" not in out and "not asked: the vault is locked" in out
+
+
+def test_check_stops_probing_hosts_behind_a_rate_limiter_that_dropped_one(capsys, box, ssh_says, write_config,
+                                                                         tmp_path, monkeypatch):
+    """LOW-2: after one login's 215, the Hosts in the same network aren't tried; check says it stopped."""
+    write_config(MAP.replace("      new-01:", "      web-02: {ip: 10.0.0.7, user: admin}\n      new-01:")
+                 + "workers: 1\n")
+    run(capsys, "sync", "--no-vault")
+    ssh_says("kex_exchange_identification: read: Connection reset by peer")
+    rc, out, _ = run(capsys, "check")
+    assert connections(tmp_path) == 1
+    assert out.count("[215]") == 3 and out.count("not checked: a Host in 10.0.0.0/24 dropped the connection") == 2
+
+
+def test_a_fips_host_refusing_the_ed25519_key_says_key_type_not_setup(capsys, box, ssh_says):
+    """LOW-4: check's one login runs ssh -v, whose kex lines tell a FIPS Host apart (199)."""
+    run(capsys, "sync", "--no-vault")
+    keyed_by_setup("new-01")
+    ssh_says("debug1: kex: algorithm: ecdh-sha2-nistp256\ndebug1: kex: host key algorithm: ecdsa-sha2-nistp256\n"
+             + DENIED)
+    rc, out, _ = run(capsys, "check", "--host", "new-01")
+    assert "[199]" in out and "key_type: ecdsa" in out and "[212]" not in out
+
+
+def test_a_remote_command_s_own_exit_255_gets_no_cause_line(capsys, box, ssh_says):
+    """NIT-3: only ssh's own words for a failed login get a roster line."""
+    run(capsys, "sync", "--no-vault")
+    ssh_says("ls: cannot open directory '/root': Permission denied")
+    rc, out, err = run(capsys, "run", "new-01", "--", "ls /root")
+    assert rc == 255 and "roster:" not in err
+
+
+def test_sudo_s_per_command_refusal_isnt_not_in_sudoers(box):
+    """NIT-2."""
+    from roster.run import sudo_failure
+    said = sudo_failure(load_config(box["path"])["hosts"]["new-01"],
+                        "Sorry, user admin is not allowed to execute '/usr/bin/id' as root on new-01.")
+    assert "not in sudoers" not in said and "not for that command" in said
+
+
+
+# ---------------------------------------------------------------- #510's second review
+
+def test_a_pre_banner_debug_line_isnt_the_rate_limiter(box):
+    """LOW-6: ssh -v logs a line a server sends before its version as `debug1: kex_exchange_identification: banner
+    line N`; only ssh's own non-debug words count."""
+    from roster import errors
+    cfg = load_config(box["path"])
+    stderr = ("OpenSSH_9.6p1, OpenSSL 3.0.13\n"
+              "debug1: kex_exchange_identification: banner line 0: Welcome to the lab switch\n"
+              "debug1: kex: algorithm: curve25519-sha256\n"
+              "debug1: kex: host key algorithm: ssh-ed25519\n"
+              "admin@10.0.0.6: Permission denied (publickey,password).")
+    p = catchup.explain(cfg, cfg["hosts"]["new-01"], stderr, answered=False)
+    assert p.code == errors.NO_KEY_YET
+
+
+def test_a_host_set_up_before_the_record_whose_key_went_is_not_a_to_do(capsys, box, ssh_says):
+    """LOW-5 (a): it answered before, setup finished there, but no key-types row (a roster before T245): not on it
+    by roster's record, never a plain "no key yet"."""
+    run(capsys, "sync", "--no-vault")
+    answered("10.0.0.6")
+    ssh_says(DENIED)
+    rc, out, _ = run(capsys, "check", "--host", "new-01")
+    assert rc == 1 and "new-01  ssh:FAIL" in out and "[212]" in out
+    assert "isn't on new-01 by roster's record (never set up from this Box, or taken off)" in out
+    assert "roster setup --host new-01" in out
+
+
+def test_run_on_a_host_reached_before_hands_over_to_ssh_without_a_record(capsys, box, monkeypatch):
+    """LOW-5 (b): a Host whose login worked before (a pre-T245 setup: no record) keeps run's exec, no ssh -v child."""
+    from roster import run as run_module
+    run(capsys, "sync", "--no-vault")
+    answered("10.0.0.6")
+    handed = []
+    monkeypatch.setattr(run_module, "run_instead", lambda argv: handed.append(argv) or 0)
+    assert main(["run", "new-01", "--", "uptime"]) == 0
+    assert handed == [["ssh", "-o", "BatchMode=yes", "new-01", "uptime"]]
+
+
+def test_run_s_watched_login_passes_a_remote_command_s_own_debug_lines_through(capsys, box, ssh_says):
+    """NIT-8: ssh -v's lines are dropped only up to the login; the command's own stderr is passed on as it is."""
+    run(capsys, "sync", "--no-vault")
+    ssh_says("debug1: Authenticated to new-01 ([10.0.0.6]:22) using \"publickey\".\ndebug1: the command's own line")
+    rc, out, err = run(capsys, "run", "new-01", "--", "true")
+    assert "debug1: the command's own line" in err and "Authenticated to" not in err

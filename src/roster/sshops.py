@@ -289,16 +289,24 @@ LOGIN_PROBE = "exit 0"
 
 
 def ssh_ok(name: str, timeout: int = 10) -> bool:
-    if not_reached(name):               # `ssh NAME` would reach another named Inventory's Host, or nothing of ours
-        return False
+    return login_probe(name, timeout)[0]
+
+
+def login_probe(name: str, timeout: int = 10) -> tuple[bool, str]:
+    """One key login to NAME (`ssh NAME exit 0`, BatchMode): (worked, ssh's stderr), the stderr for the cause of a
+    failure (catchup.explain, T243). One connection, never a retry."""
+    if why := not_reached(name):        # `ssh NAME` would reach another named Inventory's Host, or nothing of ours
+        return False, why
     # ControlPath=none: never trust a cached connection, really log in with the key
     try:
-        r = subprocess.run(program_argv(["ssh", "-o", "BatchMode=yes", "-o", "ControlPath=none",
+        # -v: its kex lines tell a FIPS Host apart (catchup.nist_offered); the stderr is read, never shown
+        r = subprocess.run(program_argv(["ssh", "-v", "-o", "BatchMode=yes", "-o", "ControlPath=none",
                                          "-o", f"ConnectTimeout={timeout}", name, LOGIN_PROBE]),
                            stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout + 20)
-        return r.returncode == 0
+        return r.returncode == 0, r.stderr.decode(errors="replace").strip()
     except subprocess.TimeoutExpired:
-        return False
+        return False, f"ssh to {name} timed out"
+
 
 def sudo_wrap(command):
     """Run COMMAND as root via `sudo -S`, which reads the login password from stdin. The command
@@ -332,8 +340,15 @@ def password_exec(h: dict[str, Any], command: str, password: str | None, timeout
         out = stdout.read().decode(errors="replace")
         err = stderr.read().decode(errors="replace")
         return stdout.channel.recv_exit_status(), out, err
-    except paramiko.AuthenticationException:
-        raise RuntimeError("login refused (wrong user or password?)")
+    except paramiko.BadAuthenticationType as e:     # T243: what the Host takes, by name
+        if not {"password", "keyboard-interactive"} & set(e.allowed_types):
+            raise RuntimeError("login refused: the Host takes no password login (allowed: "
+                               f"{', '.join(e.allowed_types)})") from None
+        # paramiko answered keyboard-interactive with the password and re-raised this when that was refused too: a
+        # refused password (#510's review MED-1), never "no password login"
+        raise RuntimeError("login refused (wrong user or password?)") from None
+    except paramiko.AuthenticationException as e:
+        raise RuntimeError(f"login refused (wrong user or password?): {e}") from None
     except paramiko.SSHException as e:
         if "known_hosts" in str(e):
             raise RuntimeError("host key not recorded - is the host reachable on its SSH port?")

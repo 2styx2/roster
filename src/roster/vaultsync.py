@@ -10,11 +10,9 @@ come from providers.vault_items, the listing that never reads a password (Bitwar
 
 import json
 import os
-import sys
-from datetime import datetime, timezone
 
 from . import fromvault, providers
-from .common import UTC_TIME, NotPrivate, find_program, plain, read_private, say, utc_now, write_private
+from .common import NotPrivate, find_program, plain, read_private, say, utc_now, write_private
 from .context import box_file
 
 
@@ -57,12 +55,13 @@ def diff(before, items):
     return added, changed, len(set(before) - now)
 
 
-def sync(provider, interactive=False, mapped=None):
+def sync(provider, interactive=False, mapped=None, seen=()):
     """Sync PROVIDER and compare its items with the last snapshot: {provider, first, count, added: [name],
     changed: [name], removed: n, unmapped: [{name, missing}]}, or None for a provider with nothing to sync. UNMAPPED
-    (T243): the items added since the last sync that no Login in roster.yml names (MAPPED(item) is False), each with
-    what `roster add --from-vault` would miss to make a Host of it (address, user), never their values. The snapshot
-    is replaced only after a sync and a listing that worked. Raises SecretError."""
+    (T243): the items added since a sync that no Login in roster.yml names yet (MAPPED(item) is False), each with
+    what `roster add --from-vault` would miss to make a Host of it (address, user), never their values; they stay
+    named at each sync until roster.yml names them or `roster add --from-vault` has listed them (SEEN: its ids, #503's
+    review LOW-4). The snapshot is replaced only after a sync and a listing that worked. Raises SecretError."""
     if providers.sync_vault(provider, interactive) is None:
         return None
     if not providers.can_list(provider):
@@ -73,8 +72,10 @@ def sync(provider, interactive=False, mapped=None):
     items = providers.vault_items(provider, mapped, interactive=interactive)
     before = load(provider)
     added, changed, removed = diff((before or {}).get("items") or {}, items)
-    save(provider, {i["id"]: i.get("revised") for i in items})
-    unmapped = [{"name": shown(i), "missing": missing(i)} for i in added if not mapped(i)] if before is not None else []
+    waiting = set((before or {}).get("unmapped") or ()) | ({i["id"] for i in added} if before is not None else set())
+    left = [i for i in items if i["id"] in waiting and i["id"] not in set(seen) and not mapped(i)]
+    save(provider, {i["id"]: i.get("revised") for i in items}, [i["id"] for i in left])
+    unmapped = [{"name": shown(i), "missing": missing(i)} for i in left]
     return {"provider": provider, "first": before is None, "count": len(items),
             "added": [shown(i) for i in added], "changed": [shown(i) for i in changed], "removed": removed,
             "unmapped": unmapped}
@@ -91,25 +92,10 @@ def shown(item):
     return item["name"] if plain(item["name"]) else item["id"]
 
 
-def save(provider, items):
-    data = {"synced": utc_now(), "items": items}
+def save(provider, items, unmapped=()):
+    """The snapshot: each item's id and revision date, and the ids of the new items roster.yml doesn't name yet."""
+    data = {"synced": utc_now(), "items": items, "unmapped": sorted(unmapped)}
     write_private(snapshot_path(provider), json.dumps(data, indent=1, sort_keys=True) + "\n")
-
-
-def ago(when: object, now: datetime | None = None) -> str:
-    """'just now', '5 min ago', '3 h ago', '2 days ago' for an ISO time."""
-    try:
-        then = datetime.strptime(str(when)[:19] + "Z", UTC_TIME).replace(tzinfo=timezone.utc)
-    except ValueError:
-        return str(when)
-    s = ((now or datetime.now(timezone.utc)) - then).total_seconds()
-    if s < 60:
-        return "just now"
-    if s < 3600:
-        return f"{int(s // 60)} min ago"
-    if s < 2 * 86400:
-        return f"{int(s // 3600)} h ago"
-    return f"{int(s // 86400)} days ago"
 
 
 # ---------------------------------------------------------------- every vault roster.yml uses (roster sync, vault sync)
@@ -130,10 +116,13 @@ def sync_vaults(cfg, interactive=False):
     out = []
     for p in sorted(p for p in refs if p in providers.PROVIDERS and providers.holds_items(p)):
         if interactive and p == "bw" and bw_would_ask():    # #503's review MED-1: say what an unlock here costs
-            print(f"note: the vault is locked, so roster asks for its master password once to sync it (Ctrl-D "
-                  f"skips the vault). As with roster vault unlock, {UNLOCK_COST}", file=sys.stderr, flush=True)
+            # on the terminal, as the prompt is (its second review, LOW-5): `sync 2>file` can't hide it
+            providers.tell("note: this terminal has no Bitwarden session (no working saved session or BW_SESSION), "
+                           "so roster asks for the master password once to sync the vault (Ctrl-D skips it). As with "
+                           f"roster vault unlock, {UNLOCK_COST}")
         try:
-            out.append((p, sync(p, interactive=interactive, mapped=fromvault.named(p, refs[p])), None))
+            seen = fromvault.load_seen(cfg["path"])["items"].get(p) or {}     # add --from-vault listed them
+            out.append((p, sync(p, interactive=interactive, mapped=fromvault.named(p, refs[p]), seen=seen), None))
         except EOFError:                   # Ctrl-D at the prompt: the vault is left as last synced
             out.append((p, None, NotAsked("no master password given")))
         except RuntimeError as e:          # a SecretError, or a provider's own failure: its words, never a value

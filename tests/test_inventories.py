@@ -1144,7 +1144,7 @@ def test_check_with_every_host_skipped_fails(a_synced_b_not, capsys, ssh_log):
 def test_check_with_a_left_out_host_skipped_fails(two, capsys, ssh_log, monkeypatch):
     monkeypatch.setenv("HOMEPW", "hunter2")
     clashing(two, capsys)
-    monkeypatch.setattr("roster.cli.ssh_ok", lambda name, timeout=10: True)
+    monkeypatch.setattr("roster.sshops.login_probe", lambda name, timeout=10: (True, ""))
     monkeypatch.setattr("roster.cli.tcp_ok", lambda host, port, timeout=3: True)
     code, out, _ = run(capsys, "--inv", "home", "check")
     assert "pi: left out of this Box's ssh config" in out and code == 1

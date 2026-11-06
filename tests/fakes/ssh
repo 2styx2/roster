@@ -2,6 +2,9 @@
 # Stand-in ssh for tests: nothing here connects. By default it fails as an unreachable host would.
 # FAKE_LOG=FILE                 append "ssh ARGS" per run (a test counts connection attempts with it)
 # FAKE_SSH_STDERR / _EXIT       what to print on stderr and the exit code (a key login's outcome)
+# FAKE_SSH_ACCEPT_NEW=FILE      before that outcome, append "IP ssh-ed25519 KEY" to FILE (roster's known_hosts), as real
+#                               ssh does for a new Host under roster's StrictHostKeyChecking accept-new (T243); IP is
+#                               FAKE_SSH_ACCEPT_NEW_IP (default 10.0.0.6)
 # FAKE_SSH_PROMPT + _PASSWORD   act as a password login: run $SSH_ASKPASS PROMPT, as ssh does, and succeed
 #                               only if it prints FAKE_SSH_PASSWORD (its stderr goes to ours, as with ssh); once
 #                               logged in, it runs -o LocalCommand with sh -c (cmd.exe on Windows) when -o PermitLocalCommand=yes, as ssh does
@@ -335,5 +338,9 @@ if prompt is not None and os.environ.get("SSH_ASKPASS"):
         sys.exit(0)
     print("root@127.0.0.1: Permission denied (publickey,password).", file=sys.stderr)
     sys.exit(255)
+if os.environ.get("FAKE_SSH_ACCEPT_NEW"):
+    with open(os.environ["FAKE_SSH_ACCEPT_NEW"], "a") as kh:
+        kh.write(os.environ.get("FAKE_SSH_ACCEPT_NEW_IP", "10.0.0.6")
+                 + " ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAcceptNewRecordedTheHostKeyHere\n")
 print(os.environ.get("FAKE_SSH_STDERR", "fake ssh: not connecting to " + " ".join(args)), file=sys.stderr)
 sys.exit(int(os.environ.get("FAKE_SSH_EXIT", "255")))

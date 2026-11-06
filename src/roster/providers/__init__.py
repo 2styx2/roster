@@ -210,6 +210,19 @@ def open_tty():
         os.close(fd)
 
 
+def tell(text):
+    """TEXT on the controlling terminal (open_tty), as a question is asked there, so a redirected stderr never hides
+    what a prompt right after it is about (#503's second review, LOW-5); on stderr when there's no terminal."""
+    with open_tty() as tty:
+        if tty is not None:
+            try:
+                tty.write(text + "\n")
+                return
+            except OSError:
+                pass
+    print(text, file=sys.stderr, flush=True)
+
+
 class Ctx:
     """What a provider gets besides its SPEC."""
 

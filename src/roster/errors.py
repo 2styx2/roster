@@ -222,6 +222,19 @@ ROTATION_PENDING = 206      # a warning: the old Box key is still on some Hosts 
 KEY_TOO_OLD = 207           # a warning (check --box, box.check): this Box's key is older than key_max_age
 NEW_KEY_REFUSED = 208       # setup --rotate: a Host it reached refused the new key, so no old key line went anywhere
 
+# When the vault or the map changes (T243, #476, decision Q210; catalog rows 271-280): what a failed login was, from ssh's
+# words and this Box's own record of the Host (catchup.explain), each with its one fix
+NEVER_ANSWERED = 209        # no answer from a Host this Box has never reached: is it on, is that its address?
+STOPPED_ANSWERING = 210     # no answer from a Host that answered before (down, moved, the network)
+NO_KEY_YET = 211            # a to-do, not a failure: the key login was refused where setup never finished
+KEY_GONE = 212              # this Box's key no longer logs in where setup put it (taken off there?)
+ACCOUNT_LOCKED = 213        # the Host's account is locked or its password expired (not a wrong password)
+NO_PASSWORD_LOGIN = 214     # the Host takes no password login, so setup can't put the key on with one
+SSH_RATE_LIMITED = 215      # the connection was dropped before ssh spoke: a rate limiter after quick connections
+VAULT_LOCKED_DURING_RUN = 216  # setup: the vault was open for one lookup and locked for the next; nothing more asked
+BRANCH_GONE = 217           # the Inventory's branch was merged and deleted upstream: pull from main instead
+BOX_KEY_REMADE = 218        # a warning: this Box's key was gone, so setup made a new one every Host needs again
+
 # key_type follow-ups (decision Q212; catalog rows 281-283)
 KEY_TYPE_DRIFT = 219        # a warning: a Host holds this Box's key lines of other types than roster.yml's
 MESH_KEY_PEER = 220         # a warning: a source's Ed25519 Mesh key goes to a peer whose key_type isn't ed25519
@@ -366,8 +379,10 @@ def login_problem(e, h, what="ssh"):
     code = getattr(e, "code", None)
     if code == ITEM_NOT_FOUND:
         near = f" - did you mean: {', '.join(repr(n) for n in e.near)}" if e.near else ""
-        return Problem(ITEM_NOT_FOUND, f"no vault item named '{e.item}' ({where}){near}", {"near": e.near},
-                       fix=f"fix the name in {h['name']}'s auth: in roster.yml, or rename the item in the vault")
+        return Problem(ITEM_NOT_FOUND, f"no vault item named '{e.item}' ({where}): renamed, deleted, or moved where "
+                       f"this account can't read it?{near}", {"near": e.near},
+                       fix=f"fix the name in {h['name']}'s auth: in roster.yml (roster add --from-vault lists the "
+                           "items roster.yml doesn't name), or rename the item back in the vault")
     if code == SEVERAL_ITEMS:
         how = "are named" if e.exact else "match"
         listed = "; ".join(f"'{m['name']}'" + (f" ({about})" if (about := ", ".join(

@@ -431,6 +431,16 @@ One person may have several Inventories, the team's for work and their own for h
 | `206` | A warning, not an error: a Box key rotation is pending on some Hosts (`roster check`, `setup`; in `box.check` as topic `E268`) (T240) |
 | `207` | A warning, not an error: this Box's key is older than `key_max_age:` (`check --box`; in `box.check` as topic `E269`) (T240) |
 | `208` | `roster setup --rotate`: a Host refused the new key, so no old key line was removed anywhere. A CLI error (T240) |
+| `209` | A Host this Box has never reached didn't answer: is it on, is that its address? `roster check`'s `problem` and setup's failed lines. A CLI code (T243) |
+| `210` | A Host that answered before didn't answer. A CLI code (T243) |
+| `211` | A to-do, not a failure: no key on the Host yet (`roster setup --host NAME`). A CLI code (T243) |
+| `212` | This Box's key no longer logs in where setup put it. A CLI code (T243) |
+| `213` | The Host's account is locked or its password expired. A CLI code (T243) |
+| `214` | The Host takes no password login, so setup can't put the key on with one. A CLI code (T243) |
+| `215` | The connection was dropped before ssh spoke: a rate limiter. A CLI code (T243) |
+| `216` | `roster setup`: the vault was locked part way through the run. A CLI code (T243) |
+| `217` | `inventory.pull`: the infra repo's branch is gone from the server (merged and deleted); `data.upstream`, the fix names the branch to switch to. Nothing was switched (T243) |
+| `218` | This Box's key file is gone though roster made it (`check --box`, as topic `E280`; setup makes a new one). A CLI code (T243) |
 | `219` | A warning, not an error: by roster's record, a Host holds this Box's key line of another type than its `key_type:`, or none of it (`roster check`, `check --json`'s `key_type_drift`, `roster sync`) (T245) |
 | `220` | A warning, not an error: a Mesh source whose key is Ed25519 has a key Link to a peer (or through a `via:` hop) whose `key_type:` isn't `ed25519`, which a FIPS-mode one refuses. In a Mesh result's `warnings` (`mesh.plan`, `mesh.apply`) (T245) |
 | `221` | A note, not an error: `roster revoke` keeps a key file another Inventory on this Box uses too off its list of files to delete. CLI only (T245) |

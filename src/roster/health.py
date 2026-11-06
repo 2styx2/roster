@@ -13,6 +13,7 @@ from .common import find_program
 from .config import load_config
 from .context import Context, current, ssh_index_file
 from .errors import (
+    BOX_KEY_REMADE,
     INDEX_NOT_WRITTEN,
     KEY_TOO_OLD,
     OTHER_DOESNT_LOAD,
@@ -45,7 +46,7 @@ SHOWN = 5                   # names listed before "and N more"
 # The error catalog's row (docs/app/errors.md) of each code a check is about: its `:help` topic is E<row>
 # (tests/test_health.py checks them against the catalog).
 ROWS = {OTHER_DOESNT_LOAD: 192, SAME_MACHINE: 193, SAME_HOST_NAME: 194, SAME_ADDRESS: 195, INDEX_NOT_WRITTEN: 206,
-        SHARED_BOX_NAME: 222, ROTATION_PENDING: 268, KEY_TOO_OLD: 269}
+        SHARED_BOX_NAME: 222, ROTATION_PENDING: 268, KEY_TOO_OLD: 269, BOX_KEY_REMADE: 280}
 
 
 def topic_of(code):
@@ -196,6 +197,10 @@ def ssh(cfg):
         if key.key.exists():
             out.append(check("ssh", "ok", f"{what}: {key.key}"))
             out += key_age(cfg, key, what)
+        elif boxkeys.was_made(key.key):             # T243: roster made it, and it's gone since
+            out.append(coded("ssh", "error", Problem(
+                BOX_KEY_REMADE, f"{what} is gone ({key.key}, deleted?): every Host it was on lost this Box's key login",
+                fix="run `roster setup`: it makes a new key and puts it on every Host it can log in to with a password")))
         else:
             kind = "" if key.type.name == boxkeys.DEFAULT else f"{key.type.name} "
             out.append(check("ssh", "warn", f"this Box has no {kind}key yet ({key.key}), so key Logins "

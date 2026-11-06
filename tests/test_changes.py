@@ -487,6 +487,17 @@ def test_pull_when_the_remote_is_gone(app, box):
     assert err["code"] == 73 and "couldn't fetch origin/main" in err["message"] and err["data"]["fix"]
 
 
+def test_pull_when_the_branch_was_merged_and_deleted_upstream_says_switch_to_main(app, box):
+    """T243 (#476, the owner's 2026-11-05 case): the infra repo's branch was merged and deleted on the server."""
+    git(box, "switch", "-q", "-c", "add-hosts")
+    git(box, "push", "-q", "-u", "origin", "add-hosts")
+    git(box.parent / "origin.git", "branch", "-D", "add-hosts")
+    err = app.call("inventory.pull")["error"]
+    assert err["code"] == 217 and "add-hosts" in err["message"] and "merged" in err["message"]
+    assert "git -C" in err["data"]["fix"] and "switch main" in err["data"]["fix"]
+    assert git(box, "branch", "--show-current") == "add-hosts"         # nothing switched or reset by roster
+
+
 # ---------------------------------------------------------------- changes.publish (ticket 12)
 
 def origin_log(box, fmt="%s"):

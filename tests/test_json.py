@@ -219,7 +219,7 @@ def test_check_json_is_each_hosts_results(local, capsys):
     rc, doc, err = run(capsys, "check")
     assert rc == 1 and err == ""
     by_name = {h["name"]: h for h in doc["hosts"]}
-    assert by_name["open"] == {"name": "open", "ok": True, "ssh": "port", "checks": {"ssh": True}}
+    assert by_name["open"] == {"name": "open", "ok": True, "ssh": "port", "checks": {"ssh": True}, "problem": None}
     assert by_name["closed"]["ok"] is False and by_name["closed"]["checks"] == {"ssh": False}
     assert by_name["keyed"]["ssh"] == "login" and by_name["keyed"]["ok"] is True
     assert doc["ok"] is False and doc["mesh"] is None
