@@ -105,7 +105,7 @@ export function useCheck(opts: {
       const hctx: HealthContext = {
         box,
         boxProblem,
-        backend: info ? { name: info.backend, rosterVersion: info.inventory.roster_version, caps } : null,
+        backend: info ? { name: info.backend, distro: info.distro, rosterVersion: info.inventory.roster_version, caps } : null,
         config: { path: opts.report?.path ?? null, error: opts.report?.error ?? null, warnings: opts.warnings },
         font: { families: opts.terminalOptions.fonts, inUse: fontFound(opts.terminalOptions.fonts, opts.fontInstalled ?? (() => null)) },
       };

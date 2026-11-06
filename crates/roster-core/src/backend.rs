@@ -302,13 +302,26 @@ impl Drop for OwnCheck<'_> {
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct BackendInfo {
-    /// "Local" or "WSL: <distro>".
+    /// "Local" or "WSL: <distro>": the label the UI shows.
     pub backend: String,
+    /// Where serve runs: on this machine, or in a WSL distro.
+    pub kind: BackendKind,
+    /// The WSL distro serve runs in (`kind: "wsl"`); null on this machine. Empty: WSL's default.
+    pub distro: Option<String>,
     /// The command line that runs serve.
     pub command: Vec<String>,
     /// The `inventory.info` result as roster sent it (its shape is serve's, not the core's).
     #[cfg_attr(feature = "ts", ts(type = "unknown"))]
     pub inventory: Value,
+}
+
+/// Where serve runs ([`Target`]), as the frontend tells them apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum BackendKind {
+    Local,
+    Wsl,
 }
 
 /// A check the core has under way (`host.check {background: true}`), as it starts: serve's job id,
@@ -374,6 +387,14 @@ impl Backend {
             target: c.target.clone(),
             info: BackendInfo {
                 backend: c.target.label(),
+                kind: match c.target {
+                    Target::Local => BackendKind::Local,
+                    Target::Wsl { .. } => BackendKind::Wsl,
+                },
+                distro: match &c.target {
+                    Target::Local => None,
+                    Target::Wsl { distro } => Some(distro.clone()),
+                },
                 command: c.serve_argv.clone(),
                 inventory,
             },

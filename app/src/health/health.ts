@@ -18,7 +18,7 @@ export interface HealthContext {
   box: BoxCheck | null;
   boxProblem: string | null;
   /** How the app reaches roster: "Local" or "WSL: <distro>", and what `inventory.info` said. */
-  backend: { name: string; rosterVersion: string; caps: Capabilities } | null;
+  backend: { name: string; distro: string | null; rosterVersion: string; caps: Capabilities } | null;
   config: { path: string | null; error: ConfigError | null; warnings: readonly ConfigWarning[] };
   /** terminal.font's families, and the one the terminal draws with (null: none of them is there). */
   font: { families: readonly string[]; inUse: string | null };
@@ -77,9 +77,9 @@ const appSection: HealthSection = {
   order: 10,
   checks: (ctx) => {
     if (!ctx.backend) return [{ section: "app", level: "error", message: "roster serve isn't running", fix: "restart the app; its start screen says why serve didn't start", topic: "E21" }];
-    const { name, rosterVersion, caps } = ctx.backend;
+    const { name, distro, rosterVersion, caps } = ctx.backend;
     const out = [ok("app", `roster serve answers through ${name}: roster ${rosterVersion}, API ${caps.api}`)];
-    if (name.startsWith("WSL")) out.push(ok("app", `the WSL distro answers (${name.slice(4).trim() || "the default one"})`));
+    if (distro !== null) out.push(ok("app", `the WSL distro answers (${distro || "the default one"})`));
     if (!caps.has("boxCheck")) {
       out.push(
         warn(

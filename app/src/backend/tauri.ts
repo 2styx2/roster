@@ -196,6 +196,8 @@ export function tauriBackend(): Backend {
     signIn: (start) => serve<SignInStep>("vault.login", { action: "start", ...start }),
     signInAnswer: (login, answer) => serve<SignInStep>("vault.login", { action: "answer", login, ...answer }),
     signInCancel: async () => {
+      // Cancelling is best effort on the way out of the sign-in: serve also ends a sign-in left
+      // unanswered for 10 minutes by itself (security.md), so a failed cancel leaves nothing held.
       await serve("vault.login", { action: "cancel" }).catch(() => {});
     },
     openSession,

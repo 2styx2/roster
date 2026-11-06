@@ -2,8 +2,9 @@
 // tested on one table (crates/roster-core/tests/fixtures/plugin-permissions.json, which
 // crates/roster-core/src/plugin/permission.rs checks its own tables and cases against).
 import { describe, expect, it } from "vitest";
+import addresses from "../../../crates/roster-core/tests/fixtures/addresses.json";
 import table from "../../../crates/roster-core/tests/fixtures/plugin-permissions.json";
-import { described, fakePluginHost, manifestProblem, type FakePlugin } from "./fakePlugins";
+import { described, fakePluginHost, manifestProblem, publicAddress, type FakePlugin } from "./fakePlugins";
 import { BackendCallError, type Host, type PluginReply } from "./types";
 
 const manifest = (permissions: string[]): FakePlugin["manifest"] => ({
@@ -324,5 +325,12 @@ describe("a fake Plugin's collections on api 5, as the core's (decision Q134, #2
     const handler = (name: string) => (reply.ops.find((o) => (o as { name?: string }).name === name) as { run: { handler: number } }).run.handler;
     expect((await host.pluginCall("t", handler("boom"), {})).error).not.toBeNull();
     expect((await host.pluginCall("t", handler("check"), {})).result).toBe("false true");
+  });
+});
+
+describe("which addresses are public, as the core's network.rs says (tests/fixtures/addresses.json)", () => {
+  const cases = [...addresses.not_public.map((a) => [a, false] as const), ...addresses.public.map((a) => [a, true] as const)];
+  it.each(cases)("%s: public %s", (address, isPublic) => {
+    expect(publicAddress(address)).toBe(isPublic);
   });
 });

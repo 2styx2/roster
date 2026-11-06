@@ -3,7 +3,7 @@
 //! app/src/config/core.gen.ts. The test fails while the file is stale; to write it again:
 //! `ROSTER_WRITE_TS=1 cargo test --test ts_types`.
 
-use roster_core::backend::{BackendInfo, CheckStarted, CreateError, OpenedSession};
+use roster_core::backend::{BackendInfo, BackendKind, CheckStarted, CreateError, OpenedSession};
 use roster_core::config::{self, *};
 use roster_core::error::{BackendError, ErrorKind};
 use roster_core::rpc::CallError;
@@ -132,6 +132,7 @@ fn generated() -> String {
         decl::<Previewed>(&cfg),
         // The Backend and Sessions (backend.rs, error.rs, rpc.rs).
         decl::<BackendInfo>(&cfg),
+        decl::<BackendKind>(&cfg),
         decl::<BackendError>(&cfg),
         decl::<ErrorKind>(&cfg),
         decl::<CallError>(&cfg),

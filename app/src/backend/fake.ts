@@ -77,6 +77,7 @@ import type { KeymapOverrides } from "../keymap";
 import { fakeCommit, fakePackageHost, type FakePackages } from "./fakePackages";
 import { discoverPlugin, fakeDiscoverServe, hugeNet, smallNet, type FakeNet } from "./fakeDiscover";
 import { recentAlerts } from "./fakeRecentAlerts";
+import { FAKE_PASSWORD } from "./fakeVault";
 import DEMO_MESH from "../../../crates/roster-core/tests/fixtures/demo-mesh.json";
 import { MESH_OTHERS, MESH_PERMISSIONS, meshLab, meshPlugin, meshServe, type MeshWorld } from "./fakeMesh";
 import { TOPOLOGY_PERMISSIONS, topologyPlugin, topologyServe, type TopologyWorld } from "./fakeTopology";
@@ -230,7 +231,7 @@ export interface FakeScenario {
    * `save_to` (default: none, so the personal vault). init.lua's, sent with vault.configure, wins. */
   saveTo?: { targets: SaveTarget[]; setting?: SaveTo };
   /** `connect()`'s answer, where it differs from the default (a long Box name, path, distro). */
-  info?: { backend?: string; box?: string; path?: string; command?: string[] };
+  info?: { backend?: string; distro?: string; box?: string; path?: string; command?: string[] };
   /** The not-logged-in or missing-cli message, where it differs from roster's usual one. */
   vaultMessage?: string;
   /** Every Session's shell prints a busy log at this many lines a second once it has logged in, like
@@ -368,8 +369,7 @@ function failingSession(id: number, auth: SessionAuth, output: string, events: S
   return { id, auth, write: done, resize: done, close: done };
 }
 
-/** The fake vault's master password (type it on the lock screen in a plain browser). */
-export const FAKE_PASSWORD = "correct horse";
+export { FAKE_PASSWORD };
 
 // roster's own wording (roster/src/roster/providers).
 const NOT_LOGGED_IN = "Bitwarden CLI isn't logged in on this box - run `bw login` once";
@@ -868,6 +868,7 @@ function worstCase(): FakeScenario {
     hosts,
     info: {
       backend: "WSL: FedoraLinux-44",
+      distro: "FedoraLinux-44",
       box: LONG_BOX,
       path: LONG_PATH,
       command: ["wsl.exe", "-d", "FedoraLinux-44", "--exec", "/home/aleksandra.wisniewska-kowalczyk/.local/bin/roster", "-c", LONG_PATH, "serve"],
@@ -1741,6 +1742,8 @@ export function fakeBackend(scenario: FakeScenario): FakeBackend {
       const info = scenario.info ?? {};
       return {
         backend: info.backend ?? "Fake",
+        kind: info.distro === undefined ? "local" : "wsl",
+        distro: info.distro ?? null,
         command: info.command ?? ["roster", "serve"],
         inventory: {
           path: serveOn?.path ?? info.path ?? "~/team-inventory/roster.yml",

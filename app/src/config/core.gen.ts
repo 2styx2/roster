@@ -718,9 +718,17 @@ export type Previewed = {
  */
 export type BackendInfo = {
   /**
-   * "Local" or "WSL: <distro>".
+   * "Local" or "WSL: <distro>": the label the UI shows.
    */
   backend: string,
+  /**
+   * Where serve runs: on this machine, or in a WSL distro.
+   */
+  kind: BackendKind,
+  /**
+   * The WSL distro serve runs in (`kind: "wsl"`); null on this machine. Empty: WSL's default.
+   */
+  distro: string | null,
   /**
    * The command line that runs serve.
    */
@@ -730,6 +738,11 @@ export type BackendInfo = {
    */
   inventory: unknown,
 };
+
+/**
+ * Where serve runs ([`Target`]), as the frontend tells them apart.
+ */
+export type BackendKind = "local" | "wsl";
 
 export type BackendProblem = {
   kind: BackendProblemKind,

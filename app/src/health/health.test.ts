@@ -15,7 +15,7 @@ const ctx = (more: Partial<HealthContext> = {}): HealthContext => ({
     api_version: 16,
   },
   boxProblem: null,
-  backend: { name: "WSL: FedoraLinux-44", rosterVersion: "0.1.0", caps: capabilities({ api_version: 16 }) },
+  backend: { name: "WSL: FedoraLinux-44", distro: "FedoraLinux-44", rosterVersion: "0.1.0", caps: capabilities({ api_version: 16 }) },
   config: { path: null, error: null, warnings: [] },
   font: { families: ["Iosevka"], inUse: "Iosevka" },
   ...more,
@@ -33,7 +33,7 @@ describe("runHealth", () => {
   });
 
   it("says what an older roster leaves off against the API the app was built for", async () => {
-    const backend = { name: "Local", rosterVersion: "0.1.0", caps: capabilities({ api_version: 15 }) };
+    const backend = { name: "Local", distro: null, rosterVersion: "0.1.0", caps: capabilities({ api_version: 15 }) };
     const app = (await runHealth(builtinHealthSections, ctx({ backend })))[0]!;
     expect(app.checks.map((c) => c.message)).toContain(
       `this roster speaks API 15; the app has features up to API ${SERVE_API_VERSION}, so some are off (roster's own checks below among them)`,
