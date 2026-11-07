@@ -83,6 +83,18 @@ _Avoid_: task, background run
 Background work roster serve owns: a Mesh run, a Discover scan or a Host's check. It has a kind and an id, a state, progress, a result and a stop, pushes its progress (`job.progress`, the Plugins' `job_progress`), and is stopped and recorded when serve exits. One of each kind at a time (a check: one per Host).
 _Avoid_: task, worker (serve's workers answer requests; a Job runs beside them)
 
+**Agent**:
+A coding agent (Claude Code, Codex, …) running in a herdr terminal on a Host or Box. It has an address (`box-b/t2`), a status (working, blocked, idle, done) and a short label for what it's on. A person's terminal to a Host is a Session, never an Agent.
+_Avoid_: Claude session, session, bot, worker
+
+**Hub**:
+The Box whose herdr the person works in. It starts Agents on Hosts, sees all of them, and keeps the Agent directory up to date. One per person.
+_Avoid_: controller, master, server
+
+**Agent directory**:
+The list of live Agents across the Hub and its Hosts: each one's address, Host, folder, status and label. Every Agent can read it on its own machine, so each knows the others are there and how to reach them.
+_Avoid_: registry, roster (the tool), presence list
+
 ## The app
 
 The desktop app's own words, on top of the ones above (which mean the same thing in the app).
