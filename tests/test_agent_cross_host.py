@@ -11,6 +11,7 @@ from conftest import POSIX_SH, WINDOWS, FakeHc
 
 from roster.cli import main
 from roster.mesh import MARK
+from roster.sshconfig import include_line
 
 # The other Host runs the stand-in hc (a Python script) from its sh by the script's #! line, which Windows' sh can't; a
 # remote Host that runs herdr-core is Unix anyway (herdr-core's --via and the Mesh's scripts are sh).
@@ -44,7 +45,8 @@ class World:
         (d / "config").write_text(f"# Written by roster mesh for box-a (owner box-1): the Hosts box-a reaches.\n\n"
                                   f"Host {peer}\n    HostName 10.0.0.6\n    User dev\n    Port 22\n"
                                   f"    UserKnownHostsFile {d}/known_hosts\n    StrictHostKeyChecking yes\n{auth}\n")
-        (self.home / ".ssh" / "config").write_text(f"{MARK}\nInclude {d}/config\n")
+        # include_line quotes the path as roster mesh does, so a Windows path's backslashes survive
+        (self.home / ".ssh" / "config").write_text(f"{MARK}\n{include_line(d / 'config')}\n")
 
     def connections(self) -> list[str]:
         f = self.hosts / "connections"

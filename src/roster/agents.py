@@ -13,7 +13,7 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
-from .common import UTC_TIME, ago, die, find_user_program, utc_now
+from .common import UTC_TIME, ago, die, find_user_program, kill_tree, utc_now
 from .errors import Exit
 
 LABEL = "roster.label"      # the Agent's label, a herdr terminal label (the spec's Agent label)
@@ -39,11 +39,18 @@ def _run(args: list[str], what: str, timeout: float | None,
         die("herdr-core isn't installed here: no `hc` on PATH or in ~/.local/bin",
             fix="install herdr-core on this machine (`hc --version` then works), or run roster where it is")
     try:
-        return subprocess.run([exe, *args], input=stdin, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        die(f"herdr-core didn't answer `hc {what}` in {timeout} s", fix="check it with `hc server status`")
+        p = subprocess.Popen([exe, *args], stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     except OSError as e:
         die(f"couldn't run hc: {e.strerror or type(e).__name__}", fix="check herdr-core's install: `hc --version`")
+    try:
+        out, err = p.communicate(stdin, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # its whole tree: on Windows an hc.cmd's real program is its child, which a plain kill leaves holding the pipes
+        kill_tree(p)
+        p.communicate()
+        die(f"herdr-core didn't answer `hc {what}` in {timeout} s", fix="check it with `hc server status`")
+    return subprocess.CompletedProcess(p.args, p.returncode, out, err)
 
 
 def run_hc(*args: str, timeout: float | None = TIMEOUT) -> subprocess.CompletedProcess[str]:
