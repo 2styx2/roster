@@ -315,6 +315,42 @@ class WhichDoc(Part, frozen=True):
     exists: bool
 
 
+# ---------------------------------------------------------------- Agents (herdr, ADR 0011)
+
+class AgentMachine(Part, frozen=True):
+    """A machine added on the Hub, as herdr-core says: connected, connecting or unavailable."""
+
+    name: str
+    state: str
+
+
+class Agent(Part, frozen=True):
+    """A terminal that reports an agent status to herdr (OSC 7501). `address` is HOST/TERMINAL, the Hub's too, so
+    one address means one terminal wherever the directory is read. Never its screen text."""
+
+    address: str
+    host: str
+    terminal: str
+    app: str
+    status: str                         # herdr's word: working, blocked, idle or done
+    label: str                          # the terminal's `roster.label`, "" without one
+    folder: str
+    parent: str | None
+    started: str                        # ISO-8601, UTC
+
+
+class AgentDirectoryDoc(Part, frozen=True):
+    """`roster agents --json`: the Agent directory (version 1, the herdr-roster spec), built on the Hub from
+    `hc ls --json` and each Agent's `hc get`. `you` is the machine this copy was written to, null on the Hub. No
+    secret, no screen text."""
+
+    hub: str
+    you: str | None
+    updated: str                        # ISO-8601, UTC
+    machines: list[AgentMachine]
+    agents: list[Agent]
+
+
 # ---------------------------------------------------------------- errors
 
 class Error(Part, frozen=True):

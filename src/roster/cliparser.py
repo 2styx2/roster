@@ -258,6 +258,9 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
     s.add_argument("-k", "--insecure", action="store_true", help="don't verify the TLS certificate")
     s.add_argument("--timeout", type=float, default=30, metavar="SECONDS",
                    help="how long to wait for the answer (default: 30)")
+    s = sub.add_parser("agents", help="list every Agent (Claude and other agents in herdr terminals) on this Hub "
+                       "and its herdr machines: address, Host, folder, status, label and how long it has run")
+    s.add_argument("--json", **as_json)
     s = sub.add_parser("mesh", help="set up Host-to-Host access (mesh: and links: in roster.yml), one Host at a time")
     s.add_argument("action", nargs="?", choices=["cut", "status", "leftovers"],
                    help="cut HOST: take it out of the Mesh now, everywhere; status: who reaches whom (no connections); "

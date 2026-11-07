@@ -12,6 +12,7 @@ roster run [\-\-sudo] host ...
 roster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-save\-to\-vault] [\-\-save\-to TARGET] [\-\-provider PROVIDER] [\-\-json] [\-\-all] [\-\-mark\-seen] [\-\-no\-sync] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]
 roster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]
 roster web [\-d BODY] [\-H HEADER] [\-k] [\-\-timeout SECONDS] HOST [SERVICE] METHOD PATH [HOST [SERVICE] METHOD PATH ...]
+roster agents [\-\-json]
 roster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-all] [\-\-remove] [\-\-json] [{cut,status,leftovers}] [HOST]
 roster revoke [\-\-only LIST] [\-\-all] [\-y]
 roster inv [\-\-json] {list,add,use,remove,which} [NAME] [PATH]
@@ -286,6 +287,14 @@ don't verify the TLS certificate
 .TP
 \fB\-\-timeout SECONDS\fR
 how long to wait for the answer (default: 30)
+.SS agents
+.PP
+\fBroster agents [\-\-json]\fR
+.PP
+Every Agent (a terminal that reports an agent status to herdr: Claude Code does so itself) on this Hub and its herdr machines, built live from herdr\-core (\fBhc ls\fR, and \fBhc get\fR for each Agent): one block per Host (the Hub first, then each machine with its state: \fBconnected\fR, \fBconnecting\fR, \fBunavailable\fR), a row per Agent with its address (\fBHOST/tN\fR), status (\fBworking\fR, \fBblocked\fR, \fBidle\fR, \fBdone\fR), label (its \fBroster.label\fR), folder and how long it has run. A machine that isn't connected is listed with its state and no Agents. Needs no \fBroster.yml\fR; with no \fBhc\fR on PATH, or a core that doesn't answer, it says so and exits 1. See Agents
+.TP
+\fB\-\-json\fR
+print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
 .SS mesh
 .PP
 \fBroster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-all] [\-\-remove] [\-\-json] [{cut,status,leftovers}] [HOST]\fR
@@ -448,7 +457,7 @@ Internal, run by ssh: the \fBSSH_ASKPASS\fR helper for a \fBserve\fR password Se
 the prompt ssh shows
 .SH JSON OUTPUT
 .PP
-The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBhosts\fR (with \fB\-\-only\fR, \fB\-\-find\fR, \fB\-\-all\fR), \fBadd \-\-from\-vault\fR (no NAME: the list), \fBhosts NAME\fR, \fBhosts \-\-resources\fR, \fBcheck\fR, \fBcheck HOST\fR, \fBcheck \-\-box\fR, \fBcheck \-\-auth\fR, \fBdiscover\fR (its preview, without \fB\-\-write\fR), \fBmesh status\fR, \fBmesh \-\-dry\-run\fR (the plan) and \fBvault status\fR\&. The CLI is roster's interface for other apps; \fBroster serve\fR is the desktop app's own backend, not a public API. With \fB\-\-json\fR, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
+The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBhosts\fR (with \fB\-\-only\fR, \fB\-\-find\fR, \fB\-\-all\fR), \fBadd \-\-from\-vault\fR (no NAME: the list), \fBhosts NAME\fR, \fBhosts \-\-resources\fR, \fBcheck\fR, \fBcheck HOST\fR, \fBcheck \-\-box\fR, \fBcheck \-\-auth\fR, \fBdiscover\fR (its preview, without \fB\-\-write\fR), \fBmesh status\fR, \fBmesh \-\-dry\-run\fR (the plan), \fBvault status\fR and \fBagents\fR\&. The CLI is roster's interface for other apps; \fBroster serve\fR is the desktop app's own backend, not a public API. With \fB\-\-json\fR, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
 .IP \(bu 2
 \fBNever a secret.\fR Logins are references: the provider and the item (\fBbw:esx\-02 ssh\fR, \fBop:Lab/esx\-02\fR, \fBprompt\fR, \fBagent\fR). A \fBcmd:\fR or \fBenv:\fR reference says how a secret is fetched, and a password pasted into a \fBcmd:\fR line would show, so each one is cut to its kind (\fBcmd:\fR, \fBenv:\fR) everywhere in the output, error messages and check messages included, the way Plugins get them: a \fBcmd:\fR one to the end of its line, an \fBenv:\fR one its variable's name, wherever one starts a text or follows a space, a quote or one of \fB=:,({[\fR\&. An error message keeps a trailing \fB(code N)\fR\&. The cases both implementations are tested against are in \fBtests/vectors/redaction.json\fR\&. \fBcheck \-\-auth \-\-json\fR fetches every secret it tests and says only whether it was found. \fBvault reveal\fR has no \fB\-\-json\fR: it's for a person.
 .IP \(bu 2
@@ -501,6 +510,9 @@ The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBh
 .TP
 \fBcheck \-\-auth \-\-json\fR
 \fB{version, logins: [{group, auth, users, used_for: [{service, hosts}], status, error?}], ok}\fR: one row per Login reference and group; \fBstatus\fR is \fBok\fR (a value was found; it isn't tested against a Host), \fBfail\fR (with \fBerror\fR) or \fBask\fR (\fBprompt\fR). Exit 1 if one failed
+.TP
+\fBagents \-\-json\fR
+The Agent directory, version 1: \fB{version, hub, you, updated, machines: [{name, state}], agents: [{address, host, terminal, app, status, label, folder, parent, started}]}\fR\&. \fBhub\fR is the Hub's herdr\-core name, \fByou\fR the machine this copy was written to (\fBnull\fR on the Hub, where it's built live), \fBupdated\fR and \fBstarted\fR ISO\-8601 times in UTC. \fBmachines\fR are the machines added on the Hub with herdr's state (\fBconnected\fR, \fBconnecting\fR, \fBunavailable\fR). An Agent's \fBaddress\fR is \fBHOST/TERMINAL\fR (\fBweb\-01/t2\fR; the Hub's own are \fBHUB/t1\fR), \fBapp\fR what reports the status (\fBclaude\-code\fR), \fBstatus\fR herdr's word (\fBworking\fR, \fBblocked\fR, \fBidle\fR, \fBdone\fR), \fBlabel\fR its \fBroster.label\fR (\fB""\fR without one), \fBfolder\fR where it started, \fBparent\fR the terminal that started it (\fBnull\fR: none). No secret and no screen text. Errors: \fB3\fR no \fBhc\fR, or herdr\-core didn't answer
 .PP
 Wrapped and cut short here (\fB\&...\fR); roster prints each document on one line:
 .PP

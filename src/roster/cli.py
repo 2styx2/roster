@@ -1430,6 +1430,18 @@ def cmd_inv(args):
     return 0
 
 
+def cmd_agents(args):
+    """`roster agents`: every Agent on this Hub and its herdr machines (agents.py), grouped by Host."""
+    from . import agents
+    doc = agents.directory()
+    if args.json:
+        from . import jsondocs
+        jsonout.emit(jsondocs.AgentDirectoryDoc.model_validate(doc))
+        return 0
+    say(agents.table(doc))
+    return 0
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     never_look_in_the_current_folder()      # Windows: nothing roster starts looks for its program in the cwd
@@ -1494,6 +1506,8 @@ def _main(argv=None):
         return cmd_bw(args) if args.vault_cmd == "bw" else cmd_op(args)
     if args.cmd == "inv":
         return cmd_inv(args)
+    if args.cmd == "agents":                  # herdr's, not roster.yml's
+        return cmd_agents(args)
     if args.cmd == "revoke" and args.all:
         return revoke.revoke_all(args.yes)
     if args.cmd == "check" and args.box:

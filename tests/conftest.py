@@ -160,11 +160,12 @@ def isolated(tmp_path, monkeypatch):
 
 
 VAULT_CLIS = ("bw", "op", "keepassxc-cli")
+REAL_CLIS = (*VAULT_CLIS, "hc")       # hc: herdr-core, whose real core holds the developer's live terminals
 
 
 @pytest.fixture(autouse=True)
 def no_real_vault_cli(request, tmp_path, monkeypatch):
-    """A test never runs the developer's real bw, op or keepassxc-cli (T247: a flaky test was running the real 140 MB
+    """A test never runs the developer's real bw, op, keepassxc-cli or hc (T247: a flaky test was running the real 140 MB
     bw twice). Each name, first on PATH, is a tripwire that runs nothing: it says which test ran it, on stderr, and
     the test fails when it ends, even when it swallowed the tool's failure. The `fakes` fixture puts the stand-ins
     before it; a test's own stand-ins (or a PATH of its own) go before it too. Windows finds a tool by PATHEXT, so
@@ -172,7 +173,7 @@ def no_real_vault_cli(request, tmp_path, monkeypatch):
     guard = tmp_path / "no-real-vault-cli"
     guard.mkdir()
     ran = guard / "ran"
-    for tool in VAULT_CLIS:
+    for tool in REAL_CLIS:
         why = f"{request.node.nodeid} ran a real {tool} from PATH: use the stand-in in tests/fakes (the `fakes` fixture)"
         script = guard / tool
         script.write_text(f'#!/bin/sh\nprintf "%s\\n" {shlex.quote(why)} >&2\n'
@@ -325,3 +326,56 @@ def vault(fakes, isolated, monkeypatch):
     f.write_text(json.dumps(ITEMS))
     monkeypatch.setenv("FAKE_BW_ITEMS", str(f))
     return f
+
+
+class FakeHc:
+    """The stand-in hc's state folder (tests/fakes/hc, FAKE_HC_STATE): the Hub's core, its machines and their
+    terminals, as a test sets them up. A terminal is the record `hc get` prints, in a file of its own."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        root.mkdir(parents=True, exist_ok=True)
+
+    def name(self, name: str) -> None:
+        """The Hub's core's name (`hc server status`)."""
+        (self.root / "name").write_text(name)
+
+    def down(self) -> None:
+        """The core doesn't answer: every hc command fails."""
+        (self.root / "down").write_text("")
+
+    def machine(self, name: str, state: str = "connected") -> Path:
+        """A machine added on the Hub (`hc machine add`), in STATE: connected, connecting or unavailable."""
+        d = self.root / "machines" / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "state").write_text(state)
+        return d
+
+    def terminal(self, address: str, *, app: str | None = None, status: str | None = None, cwd: str = "/home/ops",
+                 labels: dict[str, str] | None = None, parent: str | None = None, created_ms: int = 1_700_000_000_000,
+                 argv: list[str] | None = None, state: str = "live", name: str | None = None) -> None:
+        """A terminal at ADDRESS: tN on the Hub, M/tN on machine M (added, connected, if it isn't yet). APP and
+        STATUS: the agent status it reports to herdr (OSC 7501), or none (status=None)."""
+        machine, _, t = address.rpartition("/")
+        if machine and not (self.root / "machines" / machine).is_dir():
+            self.machine(machine)
+        folder = self.root / "machines" / machine if machine else self.root
+        (folder / "terminals").mkdir(parents=True, exist_ok=True)
+        record = {"argv": argv or [app or "bash"], "cwd": cwd, "labels": labels or {}, "name": name,
+                  "parent": parent, "status": {"app": app, "state": status} if status else None,
+                  "reported": bool(status), "turn": 0, "created_ms": created_ms, "finished_ms": None,
+                  "exit_code": None, "state": state, "title": ""}
+        (folder / "terminals" / f"{t}.json").write_text(json.dumps(record))
+
+    def calls(self) -> list[str]:
+        """Each hc run so far, as `hc ARGS`."""
+        f = self.root / "calls"
+        return f.read_text().splitlines() if f.exists() else []
+
+
+@pytest.fixture
+def hc(fakes, tmp_path, monkeypatch):
+    """The stand-in hc first on PATH, with an empty Hub (a FakeHc) for the test to fill."""
+    state = FakeHc(tmp_path / "hc")
+    monkeypatch.setenv("FAKE_HC_STATE", str(state.root))
+    return state

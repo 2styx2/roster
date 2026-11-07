@@ -18,7 +18,7 @@ USAGE = "roster [-c PATH | --inv NAME] COMMAND [ARGS]"
 # neither. tests/test_cli_help.py checks every command is in one of the two.
 GROUPS: list[tuple[str, list[str]]] = [
     ("Start here", ["init", "setup", "sync", "check"]),
-    ("Every day", ["hosts", "run", "web"]),
+    ("Every day", ["hosts", "run", "web", "agents"]),
     ("Inventory and access", ["add", "discover", "inv", "mesh", "revoke"]),
     ("Vault and help", ["vault", "help"]),
 ]
@@ -51,6 +51,8 @@ EXAMPLES: dict[str, list[tuple[str, str]]] = {
             ("roster run --sudo web-01 -- systemctl restart nginx", "as root; sudo gets the password")],
     "web": [("roster web esx-02 GET /folder", "logged in with the host's stored credentials"),
             ("roster web app-01 https POST /api/login -d @body.json", "a named service, a body from a file")],
+    "agents": [("roster agents", "every Agent on this Hub and its herdr machines, by Host"),
+               ("roster agents --json", "the Agent directory, for a script or another Agent")],
     "add": [("roster add nas-01 --ip 10.0.0.50 --group lab --auth bw:nas-01 --no-enroll", "one Host you know"),
             ("roster add nas-01 --auth bw:nas-01 --from-vault --setup", "address and user from the vault item, then "
              "setup and check for it"),

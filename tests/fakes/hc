@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+# Stand-in hc (herdr-core's CLI) for tests: no core, no terminal, nothing runs. It answers from a state folder, in
+# the shapes hc 0.1.18 prints (--json is the default, as when hc's output is piped).
+# FAKE_HC_STATE=DIR             the Hub's core (unset: every command fails as an hc whose core can't be reached):
+#   DIR/name                    the core's name (`hc server status`: core.name; default "hub")
+#   DIR/down                    the core doesn't answer: every command fails (exit 1, hc's words on stderr)
+#   DIR/calls                   each run appends "hc ARGS" (a test asserts on what roster asked hc to do)
+#   DIR/terminals/T.json        a terminal on the Hub at address T (t1, t2, ...): the record `hc get T` prints
+#                               (argv, cwd, labels, name, parent, status {app, state} or null, reported, turn,
+#                               created_ms, finished_ms, exit_code, state live|finished, title), its address left out
+#   DIR/machines/M/state        a machine added on the Hub (`hc machine add M`), and its state: connected,
+#                               connecting or unavailable
+#   DIR/machines/M/terminals/T.json   a terminal on machine M: address M/T, listed by `hc ls` only while M is
+#                               connected (hc merges every connected machine's terminals into the Hub's list)
+# Each machine's folder is shaped as DIR (its own terminals/, and later its own core's state), so a command run "on"
+# M reads DIR/machines/M.
+# Commands: ls [--all] [--json] (live terminals: the short rows hc prints, `status` only when one is reported;
+# --all: finished ones too), get ADDRESS [--json], server status [--json]. Anything else: exit 2, "unknown command".
+import json, os, sys
+from pathlib import Path
+
+args = sys.argv[1:]
+root = os.environ.get("FAKE_HC_STATE")
+
+
+def fail(message, code=1):
+    print(f"error: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+if not root:
+    fail("can't reach the core: FAKE_HC_STATE isn't set")
+state = Path(root)
+with open(state / "calls", "a") as log:
+    log.write(" ".join(["hc", *args]) + "\n")
+if (state / "down").exists():
+    fail("the core didn't answer (is it running? hc server start)")
+words = [a for a in args if not a.startswith("-")]
+
+
+def machines():
+    folder = state / "machines"
+    return sorted((m.name, (m / "state").read_text().strip()) for m in folder.iterdir()) if folder.is_dir() else []
+
+
+def terminals(folder, prefix=""):
+    """{address: record} of the terminals in FOLDER/terminals, addresses PREFIX + tN."""
+    found = folder / "terminals"
+    return {prefix + f.stem: json.loads(f.read_text()) for f in sorted(found.glob("*.json"))} if found.is_dir() else {}
+
+
+def everything():
+    out = terminals(state)
+    for name, word in machines():
+        if word == "connected":
+            out.update(terminals(state / "machines" / name, f"{name}/"))
+    return out
+
+
+def short(address, t):
+    """A row of `hc ls --json`, as hc's output.rs short() makes it."""
+    row = {"address": address}
+    row.update({k: t[k] for k in ("name", "template", "parent", "state", "turn", "exit_code", "cwd")
+                if t.get(k) is not None})
+    if (t.get("status") or {}).get("state"):
+        row["status"] = t["status"]["state"]
+    row["agent"] = os.path.basename((t.get("argv") or ["?"])[0])
+    return row
+
+
+def say(doc):
+    print(json.dumps(doc))
+    sys.exit(0)
+
+
+if words[:1] == ["ls"]:
+    every = "--all" in args
+    rows = [short(a, t) for a, t in everything().items() if every or t.get("state", "live") == "live"]
+    say({"terminals": rows, "hidden_finished": 0, "machines": [{"name": n, "state": w} for n, w in machines()]})
+if words[:1] == ["get"] and len(words) == 2:
+    t = everything().get(words[1])
+    if t is None:
+        fail(f"no terminal {words[1]}")
+    say({"address": words[1], **t})
+if words[:2] == ["server", "status"]:
+    name = (state / "name").read_text().strip() if (state / "name").exists() else "hub"
+    live = sum(1 for t in terminals(state).values() if t.get("state", "live") == "live")
+    say({"core": {"id": "0" * 32, "name": name}, "live": live, "version": "0.1.18"})
+fail(f"unknown command: {' '.join(words[:2])}", 2)

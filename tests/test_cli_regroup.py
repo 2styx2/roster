@@ -60,7 +60,7 @@ resources:
   lab-guest: {type: wifi, ssid: lab-guest, auth: "env:WIFI_PW"}
 """
 TOP = ["init", "add", "discover", "hosts", "check", "setup", "revoke", "sync", "run", "web", "mesh", "inv", "vault",
-       "help"]
+       "help", "agents"]       # Q194's 14, and agents (herdr, ADR 0011)
 
 
 @pytest.fixture
@@ -76,7 +76,7 @@ def run(capsys, *argv):
     return rc, out.out, out.err
 
 
-def test_the_overview_lists_the_fourteen_commands_and_hides_the_internal_ones(capsys):
+def test_the_overview_lists_the_commands_and_hides_the_internal_ones(capsys):
     assert main([]) == 0
     out = capsys.readouterr().out
     listed = [line.split()[0] for line in out.splitlines() if line.startswith("  ") and not line.startswith("   ")

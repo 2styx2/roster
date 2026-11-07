@@ -4,6 +4,14 @@ What changed in each Release of roster, the CLI and the app together, newest fir
 
 Each Release has the same sections, left out when empty: **Breaking** (something you have to change), **New**, **Changed**, **Security**, **Fixed**, **Removed** and **Deprecated**. Inside a section the bullets are grouped by area: the CLI, the app, and the `roster serve` API with the API version that brought the change.
 
+## Unreleased
+
+### New
+
+**CLI**
+
+- **`roster agents`: every Agent across the Hub's herdr machines** (#553): on the Hub, `roster agents` lists each terminal that reports an agent status to herdr (Claude Code does so itself), on the Hub and on every connected machine, grouped by Host: its address, status (`working`, `blocked`, `idle`, `done`), label, folder and how long it has run. A machine that isn't connected is listed with its state. It's built live from herdr-core (`hc`) and only reads. `--json` prints the Agent directory document (version 1: `hub`, `you`, `updated`, `machines`, `agents`), with no secret and no screen text. See [Agents](cli-reference.md#agents-roster-agents).
+
 ## v0.7.0
 
 ### Breaking
