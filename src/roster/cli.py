@@ -13,6 +13,7 @@ from . import (
     boxkeys,
     boxsync,
     catchup,
+    claude,
     edit,
     fromvault,
     jsonout,
@@ -148,7 +149,14 @@ def say_made(made, value):
         say(f"optional     {git} keeps its history; roster works the same without git")   # as `wrote` names it
 
 
+def opt_agents(args):
+    """--agents / --no-agents (R5): this Box's answer for the Agents' SessionStart hook, kept for later runs."""
+    if args.agents is not None and not getattr(args, "dry_run", False):
+        claude.no_agents(not args.agents)
+
+
 def cmd_setup(cfg, args):
+    opt_agents(args)
     if args.rotate:
         return cmd_rotate(cfg, args)
     return setup(cfg, only=args.only, host=args.host, dry_run=args.dry_run, key_type=args.key_type,
@@ -200,6 +208,7 @@ def cmd_sync(cfg, args):
     from .named import unnamed_from_elsewhere
     # an unnamed ssh config another roster.yml wrote isn't this map's past: no diff against it
     before = sshconfig.written_hosts(current().ssh_config) if unnamed_from_elsewhere() is None else None
+    opt_agents(args)
     write_ssh_config(cfg)
     write_claude_files(cfg)
     warn_overlaps(cfg)
@@ -1440,6 +1449,12 @@ def cmd_agents(args):
     from . import agents
     if args.action == "sync":
         return cmd_agents_sync(args)
+    if args.action == "hook":
+        if args.remove:
+            claude.agents_hook(False)
+        else:
+            sys.stdout.write("".join(f"{line}\n" for line in agents.hook_lines()))
+        return 0
     doc = agents.local_copy() or agents.directory()      # a remote Host's copy, else (the Hub) built live
     stale = agents.stale(doc)
     if stale:

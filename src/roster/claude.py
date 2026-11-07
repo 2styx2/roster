@@ -1,12 +1,13 @@
 """Instructions for Claude: ROSTER.md, the CLAUDE.md import, Claude Code settings."""
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
-from .common import replace_file, roster_command, say
+from .common import find_program, replace_file, roster_command, say
 from .config import access_label, load_config, shown_file
-from .context import Context, current
+from .context import Context, box_file, current
 from .errors import InventoryError
 from .hosts import vault_login
 from .resources import login, summary
@@ -57,6 +58,7 @@ def write_claude_files(cfg: dict[str, Any]) -> None:
         say(f"warning      {shown_file(cfg, md, 'ROSTER.md')} is the Mesh's (another Box's `roster mesh` lists this "
             "Host's peers in it), so roster left it alone: keep roster.yml in a folder of its own, not the home folder, for this Box's ROSTER.md")
     write_claude_settings(cfg)
+    agents_hook(wanted_agents_hook())
     if named.list_file().exists():
         refresh_roster_md(skip=current())
 
@@ -143,6 +145,19 @@ def roster_md(cfg: dict[str, Any], ctx: Context | None = None) -> str:
           "- Ask before changing state on a host: restarts, installs, deletes, config edits, writes to databases.",
           f"- If a host doesn't respond, run `{run} check <name> --json` to see which step fails and its fix, "
           "and report what you find.", "",
+          "## Agents",
+          "Only where this machine runs herdr-core (`hc` works). Each Claude (or other agent) in a herdr terminal is an "
+          "Agent, and the **Agent directory** lists every live one on the Hub and its herdr machines: address "
+          "(`HOST/tN`), Host, folder, status (working, blocked, idle, done) and label. It holds no secrets and no "
+          "screen text. A new session starts with a short list of the other Agents (a Claude Code SessionStart hook).",
+          f"- `{run} agents` lists them (`--json` to read it; on a Host it says how old its copy is and which machine "
+          "is you).",
+          f"- `{run} agent read ADDRESS` shows an Agent's screen: look before you interrupt.",
+          f"- `{run} agent send ADDRESS \"text\"` types a message into it and presses Enter.",
+          f"- `{run} agent wait ADDRESS` waits until it stops working (`--timeout S`).",
+          f"- `{run} agent label \"text\"` sets your own label (what you're on), so the others see it.",
+          "- Coordinating is optional: work on your own task, and reach another Agent only when your work needs "
+          "it (a hand-off, a question about its box). Never send one a secret.", "",
           "## Groups"]
     for g, hs in groups.items():
         meta = cfg["groups"].get(g, {})
@@ -201,3 +216,77 @@ def write_claude_settings(cfg):
         settings.parent.mkdir(exist_ok=True)
         shared(settings, json.dumps(data, indent=2) + "\n")
     say(f"claude       {shown_file(cfg, proj / 'ROSTER.md', 'ROSTER.md')} (imported from CLAUDE.md), .claude/settings.json")
+
+
+# ---------------------------------------------------------------- the Agents' SessionStart hook (R5)
+
+HOOK_ACTION = "agents hook"     # what the hook runs after roster's command: the short peer list (agents.hook_lines)
+HOOK_TIMEOUT = 10               # seconds Claude Code gives the hook before it stops waiting
+
+
+def claude_user_settings() -> Path:
+    """The user's own Claude Code settings: ~/.claude/settings.json (or $CLAUDE_CONFIG_DIR's)."""
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
+
+
+def no_agents(choice: bool | None) -> None:
+    """Record this Box's answer: `--no-agents` (True) or `--agents` (False); None leaves it as it was."""
+    mark = box_file("no_agents")
+    if choice:
+        replace_file(mark, "the Agents' SessionStart hook is off: `roster sync --agents` puts it back\n", 0o644)
+    elif choice is False:
+        mark.unlink(missing_ok=True)
+
+
+def wanted_agents_hook() -> bool:
+    """Should new Claude sessions on this Box start with the peer list: herdr-core is here (`hc`), and the Box didn't
+    opt out (`--no-agents`)."""
+    return find_program("hc") is not None and not box_file("no_agents").exists()
+
+
+def _ours(hook: Any) -> bool:
+    return (isinstance(hook, dict) and hook.get("type") == "command"
+            and str(hook.get("command", "")).rstrip().endswith(HOOK_ACTION))
+
+
+def agents_hook(on: bool) -> None:
+    """The SessionStart hook in the user's Claude settings that prints the other Agents (`roster agents hook`): there
+    once (ON), or gone. Every other key and hook stays as it is; a file that isn't JSON isn't touched, and one that's
+    as it should be already isn't written."""
+    path = claude_user_settings()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (ValueError, OSError):
+        data = None
+    if not isinstance(data, dict):
+        if on:
+            say(f"warning      {path} isn't valid JSON - left it alone (no SessionStart hook for the Agents)")
+        return
+    before = json.dumps(data, sort_keys=True)
+    hooks = data["hooks"] if isinstance(data.get("hooks"), dict) else {}
+    kept = []
+    for g in hooks.get("SessionStart") or []:
+        inner = g.get("hooks") if isinstance(g, dict) else None
+        if not isinstance(inner, list):
+            kept.append(g)
+            continue
+        rest = [h for h in inner if not _ours(h)]
+        if rest or not inner:
+            kept.append(g if rest == inner else {**g, "hooks": rest})
+    if on:
+        kept.append({"hooks": [{"type": "command", "command": f"{roster_command()} {HOOK_ACTION}",
+                                "timeout": HOOK_TIMEOUT}]})
+    if kept:
+        data["hooks"] = {**hooks, "SessionStart": kept}
+    elif "hooks" in data:
+        hooks = {k: v for k, v in hooks.items() if k != "SessionStart"}
+        if hooks:
+            data["hooks"] = hooks
+        else:
+            del data["hooks"]
+    if json.dumps(data, sort_keys=True) == before:
+        return
+    replace_file(path, json.dumps(data, indent=2) + "\n", 0o600, like=path if path.exists() else None)
+    shown = f"~/{path.relative_to(Path.home()).as_posix()}" if path.is_relative_to(Path.home()) else str(path)
+    say(f"claude       {shown}: " + ("a SessionStart hook shows each new Claude session the other Agents "
+                                    "(`roster agents hook`)" if on else "took out the Agents' SessionStart hook"))

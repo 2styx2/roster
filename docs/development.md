@@ -49,7 +49,8 @@ src/roster/
                     (grep, awk, .NET), and the one parser of what the key scripts print
   authorized.py     that line on a Host: setup's install, re-tag and revoke (the POSIX scripts; winhost's on Windows)
   resources.py      Wi-Fi networks, accounts and secrets with no address: the field schema per type
-  claude.py         ROSTER.md (the one writer, every Inventory's), CLAUDE.md import, .claude/settings.json
+  claude.py         ROSTER.md (the one writer, every Inventory's), CLAUDE.md import, .claude/settings.json, and the
+                    Agents' SessionStart hook in the user's ~/.claude/settings.json (R5)
   aliases.py        the CLI's old names (T222, Q194): one table, each old command line rewritten to its new form
                     before the parser sees it, with one stderr line naming it (none for `roster completion`)
   boxkeys.py        this Box's SSH keys, one per key type (key_type:): a Host's key file, ssh-keygen args, type word;
@@ -110,7 +111,8 @@ src/roster/
                     nothing else of roster's
   agents.py         `roster agents`: the Agent directory built live on the Hub from herdr-core (`hc ls`, `hc get`,
                     `hc server status`), and its table (ADR 0011); `agents sync` writing it into every machine's core
-                    (shared document `roster.agents`, JSON-RPC over `hc connect`) and a remote Host reading its copy
+                    (shared document `roster.agents`, JSON-RPC over `hc connect`) and a remote Host reading its copy;
+                    `agents hook`, the short peer list a new Claude session starts with
   agentops.py       `roster agent send|read|wait|label`: one Agent by its address, through this machine's herdr-core
                     (`hc send`, `read`, `wait`, `label`), a Hub Agent by herdr's call-back, or another remote Host's
                     over the Mesh (`ssh -F MESH-CONFIG HOST hc ...`), after checking it's a live terminal it can reach

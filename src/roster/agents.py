@@ -50,7 +50,7 @@ def refusal(r: subprocess.CompletedProcess[str]) -> str:
 
 def hc(*args: str) -> Any:
     """`hc ARGS --json`'s document, or a refusal saying herdr-core isn't installed or didn't answer."""
-    r = run_hc(*args)
+    r = run_hc(*args, timeout=TIMEOUT)
     why = refusal(r)
     if r.returncode != 0:
         die(f"herdr-core didn't answer `hc {' '.join(args)}`: {why}",
@@ -163,6 +163,55 @@ def stale(doc: dict[str, Any], now: datetime | None = None) -> str | None:
         return None
     return (f"this Agent directory is stale: the Hub {doc['hub']} wrote it {ago(doc['updated'], now)} and not since. "
             f"It's rewritten while herdr-app runs the roster mod on the Hub; `roster agents sync` there writes it now")
+
+
+HOOK_LINES = 20             # at most this many lines in a new Claude session's context
+HOOK_TIMEOUT = 3            # seconds each hc call may take for the hook: a session never waits long for it
+
+
+def hook_lines() -> list[str]:
+    """What Claude Code's SessionStart hook (`roster agents hook`, R5) adds to a new session: the other Agents in the
+    directory as `roster agents` reads it (this Host's copy, or on the Hub the live one), at most HOOK_LINES lines,
+    this session ($HC_TERMINAL_ID) left out. Nothing at all when there's no herdr-core, it doesn't answer, there's no
+    directory, or no other Agent: never an error, and never slower than HOOK_TIMEOUT a call."""
+    import os
+
+    global TIMEOUT
+    if shutil.which("hc") is None:
+        return []
+    saved, TIMEOUT = TIMEOUT, HOOK_TIMEOUT
+    try:
+        doc = local_copy() or directory()
+        old = stale(doc)
+    except Exit:
+        return []
+    except Exception:       # whatever went wrong, a new session starts without the list rather than with an error
+        return []
+    finally:
+        TIMEOUT = saved
+    here = doc.get("you") or doc["hub"]
+    me = f"{here}/{os.environ['HC_TERMINAL_ID']}" if os.environ.get("HC_TERMINAL_ID") else None
+    others = [a for a in doc["agents"] if a["address"] != me]
+    if not others:
+        return []
+    n = len(others)
+    where = (f"from the Hub {doc['hub']}, written {ago(doc['updated'])}; this machine is {here}" if doc.get("you")
+             else f"on the Hub {here}, live")
+    head = f"herdr Agent directory ({where}{'; this session is ' + me if me else ''}): " \
+           f"{n} other Agent{'' if n == 1 else 's'}."
+    if old:
+        head += " It's stale: the Hub hasn't rewritten it lately, so some of these may have finished."
+    rows = [[a["address"], a["status"], a["label"] or "-", a["folder"]] for a in others]
+    room = HOOK_LINES - 2
+    shown = rows if len(rows) <= room else rows[:room - 1]
+    widths = [max(len(r[i]) for r in shown) for i in range(3)]
+    lines = [head] + ["  " + "  ".join(c.ljust(w) for c, w in zip(r[:3], widths, strict=True)) + "  " + r[3]
+                      for r in shown]
+    if len(shown) < len(rows):
+        lines.append(f"  ... and {len(rows) - len(shown)} more: `roster agents` lists them all")
+    lines.append("Coordinating is optional. If your work needs another Agent: `roster agent read ADDRESS` (its "
+                 "screen), `roster agent send ADDRESS TEXT`, `roster agent wait ADDRESS`; ROSTER.md, Agents.")
+    return lines
 
 
 def rpc(calls: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
