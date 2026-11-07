@@ -3,7 +3,7 @@ name = "roster-app"
 version = "0.7.0"
 description = "Keyboard-first terminal for the hosts in a roster Inventory"
 edition = "2024"
-license = "GPL-3.0-or-later"
+license = "Apache-2.0"
 
 [lib]
 name = "roster_app_lib"

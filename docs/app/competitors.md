@@ -77,7 +77,7 @@ The values every "vs roster" cell below is compared against.
 | Extensibility | Lua Plugins on the app's own registries, and Packages from git pinned in `roster.lock`. Plugins never see secrets, and their writes become Pending changes only. No plugin HTML/JS in v1 (ADR 0006). |
 | Setup sync | Plain files synced through git dotfiles; no vendor cloud (Q42). |
 | Platforms | Windows (native, or with roster in WSL) and Linux (X11, Wayland, WSLg); a macOS build ships but isn't tested day to day. |
-| Licence and price | GPL-3.0-or-later, public on GitHub; a personal tool first. Might get a small subscription later. |
+| Licence and price | Apache-2.0, public on GitHub; a personal tool first. Might get a small subscription later. |
 | Not in scope yet | SFTP, split panes, port forwarding, broadcast input, RDP/VNC, mobile, macOS as a tested platform. |
 
 ## Overview matrix
@@ -86,7 +86,7 @@ The values every "vs roster" cell below is compared against.
 
 | | Team inventory in git | PM references (no own vault) | `pass` / KeePassXC | Per-service logins (SSH / web / API) | Discovery → review gate | Per-device keys + revoke | AI without secrets | Text config file | Plugin API | Open source | Cross-platform desktop |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| **roster** | ✓ (readable YAML) | ✓ | ✓ / ✓ | ✓ | ✓ / ✓ | ✓ | ✓ (CLI) | ✓ Lua | ✓ Lua | ✓ GPL-3.0 | Win, Linux (macOS untested) |
+| **roster** | ✓ (readable YAML) | ✓ | ✓ / ✓ | ✓ | ✓ / ✓ | ✓ | ✓ (CLI) | ✓ Lua | ✓ Lua | ✓ Apache-2.0 | Win, Linux (macOS untested) |
 | XPipe | ◐ encrypted vault in git; team = Pro | ◐ PM or own vault | ✗ / ✓ | ✗ | ◐ scan, no gate | ✗ | ◐ MCP, secrets not stated | ✗ | ✗ | ◐ open core | ✓ |
 | Termix | ✓ hosts file (server-side) | ◐ refs or server store | ✗ / ✗ | ✗ | ✗ import only | ✗ | ✓ | ◐ YAML hosts file | ✓ TS | ✓ | ✓ + web, mobile |
 | Termius | ✗ own cloud | ✗ own vault | ✗ / ✗ | ✗ | ✗ import only | ◐ SSH ID | ? | ✗ | ✗ | ✗ | ✓ + mobile |

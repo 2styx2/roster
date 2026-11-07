@@ -8,7 +8,7 @@ SecureCRT is the reference point for the skeleton: saved Hosts, tabs, and loggin
 
 ## Who
 
-It's a personal tool first, open source under GPL-3.0-or-later. Choose what feels best to use every day over what would sell.
+It's a personal tool first, open source under Apache-2.0. Choose what feels best to use every day over what would sell.
 
 ## What already exists (checked 2026-10-29)
 
