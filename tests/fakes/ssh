@@ -5,6 +5,8 @@
 # FAKE_SSH_ACCEPT_NEW=FILE      before that outcome, append "IP ssh-ed25519 KEY" to FILE (roster's known_hosts), as real
 #                               ssh does for a new Host under roster's StrictHostKeyChecking accept-new (T243); IP is
 #                               FAKE_SSH_ACCEPT_NEW_IP (default 10.0.0.6)
+# -G DEST (first)               print the config ssh would use for DEST (user, hostname, port, hostkeyalias,
+#                               proxyjump: from ~/.ssh/config and its Includes, or -F FILE), as ssh -G does; not logged
 # FAKE_SSH_PROMPT + _PASSWORD   act as a password login: run $SSH_ASKPASS PROMPT, as ssh does, and succeed
 #                               only if it prints FAKE_SSH_PASSWORD (its stderr goes to ours, as with ssh); once
 #                               logged in, it runs -o LocalCommand with sh -c (cmd.exe on Windows) when -o PermitLocalCommand=yes, as ssh does
@@ -18,7 +20,9 @@
 #                                 DIR/NAME/login    what `id -un` says there (fakes/host/id): the account logged in
 #                                 DIR/NAME/blocked  ip:port lines this Host can't reach (its `nc -z` fails)
 #                                 DIR/NAME/slow     seconds each connection to it takes before it runs anything
-#                                 DIR/NAME/hold     each connection to it waits while this file is there (the test
+#                                 DIR/NAME/hc       its herdr-core: the stand-in hc run there (`ssh NAME hc ...`)
+#                                                   takes this folder as its FAKE_HC_STATE (tests/fakes/hc)
+#                                 DIR/NAME/hold    each connection to it waits while this file is there (the test
 #                                                   deletes it to let them go: a signal, not a guess at how long)
 #                               FAKE_HOST_PATH=DIR goes first on every stand-in Host's PATH (a test's own tools)
 #                               Each run appends "start NAME" and "end NAME" to DIR/connections.
@@ -56,8 +60,51 @@
 #                                                   password login (no BatchMode) is never checked
 # FAKE_SH=PATH                  the sh a stand-in Host runs its side with (default /bin/sh; on native Windows, Git for
 #                               Windows' sh.exe, with the Host's paths written C:/... as that sh reads them)
-import base64, fnmatch, os, shutil, subprocess, sys, time
+import base64, fnmatch, glob, os, shutil, subprocess, sys, time
 args = sys.argv[1:]
+
+
+def config_lines(path, depth=0):
+    """(keyword, value) for each line of the ssh config file PATH, its Include lines read in place, as ssh does."""
+    if depth > 8 or not os.path.isfile(path):
+        return []
+    out = []
+    for line in open(path).read().splitlines():
+        words = line.strip().replace("=", " ", 1).split(None, 1)
+        if not words or words[0].startswith("#"):
+            continue
+        key, value = words[0].lower(), (words[1].strip() if len(words) > 1 else "")
+        if key == "include":
+            for pattern in value.split():
+                pattern = os.path.expanduser(pattern)
+                full = pattern if os.path.isabs(pattern) else os.path.join(os.environ.get("HOME", ""), ".ssh", pattern)
+                for f in sorted(glob.glob(full)):
+                    out += config_lines(f, depth + 1)
+        else:
+            out.append((key, value))
+    return out
+
+
+def resolved(dest):
+    """What `ssh -G DEST` prints that roster reads (user, hostname, port, hostkeyalias, proxyjump): -F FILE's config,
+    else ~/.ssh/config with its Includes; for each Host block whose patterns match DEST, the first value of each
+    keyword wins, as in ssh. A Match block matches nothing here."""
+    path = args[args.index("-F") + 1] if "-F" in args else os.path.join(os.environ.get("HOME", ""), ".ssh", "config")
+    got, on = {}, True
+    for key, value in config_lines(path):
+        if key in ("host", "match"):
+            pats = value.split() if key == "host" else []
+            on = any(fnmatch.fnmatch(dest, p) for p in pats if not p.startswith("!")) and not any(
+                fnmatch.fnmatch(dest, p[1:]) for p in pats if p.startswith("!"))
+        elif on:
+            got.setdefault(key, value)
+    return {"user": got.get("user", os.environ.get("USER") or "dev"), "hostname": got.get("hostname", dest),
+            "port": got.get("port", "22"), **{k: got[k] for k in ("hostkeyalias", "proxyjump") if k in got}}
+
+
+if args[:1] == ["-G"]:                           # ssh -G DEST: the config it would use, and nothing connects
+    print("\n".join(f"{k} {v}" for k, v in resolved(args[-1]).items()))
+    sys.exit(0)
 os.environ.get("FAKE_LOG") and open(os.environ["FAKE_LOG"], "a").write("ssh " + " ".join(args) + "\n")
 
 
@@ -305,6 +352,8 @@ if hosts:
 
         os.makedirs(os.path.join(root, "home"), exist_ok=True)
         env = {**os.environ, "HOME": os.path.join(root, "home"), "FAKE_HOST_ROOT": shroot,
+               # the Host's own herdr-core: the stand-in hc run there answers from DIR/NAME/hc (#556), not the Box's
+               **({"FAKE_HC_STATE": os.path.join(root, "hc")} if os.path.isdir(os.path.join(root, "hc")) else {}),
                "PATH": os.pathsep.join([*filter(None, [os.environ.get("FAKE_HOST_PATH")]), os.path.join(os.path.dirname(os.path.abspath(__file__)), "host"),
                                         # Windows: the sh's own commands (sort, find) before Windows' namesakes
                                         *([os.path.dirname(os.environ.get("FAKE_SH", "/bin/sh"))] if os.name == "nt" else []),

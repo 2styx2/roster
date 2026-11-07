@@ -13,12 +13,12 @@ import textwrap
 
 USAGE = "roster [-c PATH | --inv NAME] COMMAND [ARGS]"
 
-# Each command once, in the order a new user meets them: the 14 a person types (decision Q194). The ones the
-# app or ssh runs are INTERNAL: they work, but the overview leaves them out. The old names (roster.aliases) are in
-# neither. tests/test_cli_help.py checks every command is in one of the two.
+# Each command once, in the order a new user meets them: the 17 a person types (decision Q194's 14, then `ssh`,
+# `agents` and `agent`: ADR 0011). The ones the app or ssh runs are INTERNAL: they work, but the overview leaves them
+# out. The old names (roster.aliases) are in neither. tests/test_cli_help.py checks every command is in one of the two.
 GROUPS: list[tuple[str, list[str]]] = [
     ("Start here", ["init", "setup", "sync", "check"]),
-    ("Every day", ["hosts", "run", "web"]),
+    ("Every day", ["hosts", "ssh", "run", "web", "agents", "agent"]),
     ("Inventory and access", ["add", "discover", "inv", "mesh", "revoke"]),
     ("Vault and help", ["vault", "help"]),
 ]
@@ -47,10 +47,28 @@ EXAMPLES: dict[str, list[tuple[str, str]]] = {
               ("roster hosts --find postgres", "search names, titles, descriptions, addresses"),
               ("roster hosts --only prod --long", "one type, with web URL and description"),
               ("roster hosts --resources --find guest", "only the Wi-Fi networks, accounts and secrets")],
+    "ssh": [("roster ssh switch-01", "log in; a password-only host's password comes from the vault, never shown"),
+            ("roster ssh esx-02", "a key host: as `ssh esx-02` (a ProxyJump in ~/.ssh/config applies)")],
     "run": [("roster run switch-01 -- show version", "a password-only host; roster logs in"),
             ("roster run --sudo web-01 -- systemctl restart nginx", "as root; sudo gets the password")],
     "web": [("roster web esx-02 GET /folder", "logged in with the host's stored credentials"),
             ("roster web app-01 https POST /api/login -d @body.json", "a named service, a body from a file")],
+    "agents": [("roster agents", "every Agent on this Hub and its herdr machines, by Host"),
+               ("roster agents --json", "the Agent directory, for a script or another Agent"),
+               ("roster agents sync", "on the Hub: write the directory into every connected herdr machine")],
+    "agent": [("roster agent send web-01/t2 \"the tests pass now\"", "a message to another Agent"),
+              ("roster agent read web-01/t2 --lines 40", "what it's doing, before you interrupt it"),
+              ("roster agent wait web-01/t2", "until it stops working"),
+              ("roster agent label \"migrate the database\"", "your own label, as the others see it")],
+    "agent send": [("roster agent send web-01/t2 \"the tests pass now\"", "typed in, then Enter"),
+                   ("roster agent send hub-01/t1 \"done: see the PR\"", "the Hub Agent that started your work"),
+                   ("roster agent send db-01/t3 \"schema is in\"", "another Host's Agent, over the Mesh")],
+    "agent read": [("roster agent read web-01/t2", "its screen"),
+                   ("roster agent read web-01/t2 --lines 200", "and 200 lines of history above it")],
+    "agent wait": [("roster agent wait web-01/t2", "until it's idle, blocked or done, or it ends"),
+                   ("roster agent wait web-01/t2 --timeout 600", "give up after 10 minutes (exit 124)")],
+    "agent label": [("roster agent label \"migrate the database\"", "the Agent this runs in (HC_TERMINAL_ID)"),
+                    ("roster agent label web-01/t2 \"review the PR\"", "another Agent's")],
     "add": [("roster add nas-01 --ip 10.0.0.50 --group lab --auth bw:nas-01 --no-enroll", "one Host you know"),
             ("roster add nas-01 --auth bw:nas-01 --from-vault --setup", "address and user from the vault item, then "
              "setup and check for it"),

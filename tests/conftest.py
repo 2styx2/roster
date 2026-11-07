@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -160,11 +161,12 @@ def isolated(tmp_path, monkeypatch):
 
 
 VAULT_CLIS = ("bw", "op", "keepassxc-cli")
+REAL_CLIS = (*VAULT_CLIS, "hc")       # hc: herdr-core, whose real core holds the developer's live terminals
 
 
 @pytest.fixture(autouse=True)
 def no_real_vault_cli(request, tmp_path, monkeypatch):
-    """A test never runs the developer's real bw, op or keepassxc-cli (T247: a flaky test was running the real 140 MB
+    """A test never runs the developer's real bw, op, keepassxc-cli or hc (T247: a flaky test was running the real 140 MB
     bw twice). Each name, first on PATH, is a tripwire that runs nothing: it says which test ran it, on stderr, and
     the test fails when it ends, even when it swallowed the tool's failure. The `fakes` fixture puts the stand-ins
     before it; a test's own stand-ins (or a PATH of its own) go before it too. Windows finds a tool by PATHEXT, so
@@ -172,7 +174,7 @@ def no_real_vault_cli(request, tmp_path, monkeypatch):
     guard = tmp_path / "no-real-vault-cli"
     guard.mkdir()
     ran = guard / "ran"
-    for tool in VAULT_CLIS:
+    for tool in REAL_CLIS:
         why = f"{request.node.nodeid} ran a real {tool} from PATH: use the stand-in in tests/fakes (the `fakes` fixture)"
         script = guard / tool
         script.write_text(f'#!/bin/sh\nprintf "%s\\n" {shlex.quote(why)} >&2\n'
@@ -325,3 +327,131 @@ def vault(fakes, isolated, monkeypatch):
     f.write_text(json.dumps(ITEMS))
     monkeypatch.setenv("FAKE_BW_ITEMS", str(f))
     return f
+
+
+class FakeHc:
+    """The stand-in hc's state folder (tests/fakes/hc, FAKE_HC_STATE): the Hub's core, its machines and their
+    terminals, as a test sets them up. A terminal is the record `hc get` prints, in a file of its own."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        root.mkdir(parents=True, exist_ok=True)
+
+    def name(self, name: str) -> None:
+        """The Hub's core's name (`hc server status`)."""
+        (self.root / "name").write_text(name)
+
+    def down(self) -> None:
+        """The core doesn't answer: every hc command fails."""
+        (self.root / "down").write_text("")
+
+    def machine(self, name: str, state: str = "connected") -> Path:
+        """A machine added on the Hub (`hc machine add`), in STATE: connected, connecting or unavailable."""
+        d = self.root / "machines" / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "state").write_text(state)
+        return d
+
+    def terminal(self, address: str, *, app: str | None = None, status: str | None = None, cwd: str = "/home/ops",
+                 labels: dict[str, str] | None = None, parent: str | None = None, created_ms: int = 1_700_000_000_000,
+                 argv: list[str] | None = None, state: str = "live", name: str | None = None) -> None:
+        """A terminal at ADDRESS: tN on the Hub, M/tN on machine M (added, connected, if it isn't yet). APP and
+        STATUS: the agent status it reports to herdr (OSC 7501), or none (status=None)."""
+        machine, _, t = address.rpartition("/")
+        if machine and not (self.root / "machines" / machine).is_dir():
+            self.machine(machine)
+        folder = self.root / "machines" / machine if machine else self.root
+        (folder / "terminals").mkdir(parents=True, exist_ok=True)
+        record = {"argv": argv or [app or "bash"], "cwd": cwd, "labels": labels or {}, "name": name,
+                  "parent": parent, "status": {"app": app, "state": status} if status else None,
+                  "reported": bool(status), "turn": 0, "created_ms": created_ms, "finished_ms": None,
+                  "exit_code": None, "state": state, "title": ""}
+        (folder / "terminals" / f"{t}.json").write_text(json.dumps(record))
+
+    def doc(self, name: str, machine: str | None = None) -> dict[str, Any] | None:
+        """The shared document NAME on the Hub's core, or on MACHINE's: {value, version}, None if never written."""
+        f = (self.root / "machines" / machine if machine else self.root) / "docs" / f"{name}.json"
+        return json.loads(f.read_text()) if f.exists() else None
+
+    def set_doc(self, name: str, value: Any, version: int = 1, machine: str | None = None) -> None:
+        """Shared document NAME as a core holds it, at VERSION: on the Hub's core, or on MACHINE's."""
+        if machine and not (self.root / "machines" / machine).is_dir():
+            self.machine(machine)
+        d = (self.root / "machines" / machine if machine else self.root) / "docs"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{name}.json").write_text(json.dumps({"value": value, "version": version}))
+
+    def machine_down(self, name: str) -> None:
+        """MACHINE's core stops answering the Hub (listed connected, but a call `on` it fails)."""
+        d = self.root / "machines" / name
+        if not d.is_dir():
+            self.machine(name)
+        (d / "down").write_text("")
+
+    def rpc(self) -> list[dict[str, Any]]:
+        """Each JSON-RPC request `hc connect` read so far."""
+        f = self.root / "rpc"
+        return [json.loads(line) for line in f.read_text().splitlines()] if f.exists() else []
+
+    def calls(self) -> list[str]:
+        """Each hc run so far, as `hc ARGS`."""
+        f = self.root / "calls"
+        return f.read_text().splitlines() if f.exists() else []
+
+    # ---- send, read, wait and label (#555): a terminal's own files beside its record
+
+    def _beside(self, address: str, suffix: str) -> Path:
+        machine, _, t = address.rpartition("/")
+        return (self.root / "machines" / machine if machine else self.root) / "terminals" / f"{t}{suffix}"
+
+    def gone(self, address: str) -> None:
+        """ADDRESS ends and is removed just after a listing: `hc ls` still shows it, `hc get` refuses it (not_found)."""
+        self._beside(address, ".gone").write_text("")
+
+    def screen(self, address: str, text: str) -> None:
+        """What `hc read ADDRESS` prints."""
+        self._beside(address, ".screen").write_text(text)
+
+    def sent(self, address: str) -> list[str]:
+        """Each text `hc send` typed into ADDRESS so far."""
+        f = self._beside(address, ".sent")
+        return f.read_text().splitlines() if f.exists() else []
+
+    def waits(self, address: str, result: dict) -> None:
+        """The WaitResult `hc wait ADDRESS` prints (default: it stopped, with its status)."""
+        self._beside(address, ".wait").write_text(json.dumps(result))
+
+    def labels(self, address: str) -> dict[str, str]:
+        """ADDRESS's herdr labels now."""
+        return json.loads(self._beside(address, ".json").read_text())["labels"]
+
+    # ---- a core that dialed in (#556): the Hub, as a remote machine's core sees it
+
+    def peer(self, name: str, *, calls_me: str = "this machine", down: bool = False) -> None:
+        """NAME dialed in to this core (the Hub, after `hc machine add` there), calling this machine CALLS_ME; DOWN:
+        it isn't connected now."""
+        d = self.root / "peers" / name
+        (d / "terminals").mkdir(parents=True, exist_ok=True)
+        (d / "calls_me").write_text(calls_me)
+        if down:
+            (d / "down").write_text("")
+
+    def peer_terminal(self, peer: str, terminal: str, *, app: str = "claude-code", status: str = "idle") -> None:
+        """PEER's terminal that started work on this machine: the only kind herdr's call-back reaches."""
+        record = {"argv": [app], "cwd": "/home/ops", "labels": {}, "name": None, "parent": None,
+                  "status": {"app": app, "state": status}, "reported": True, "turn": 0,
+                  "created_ms": 1_700_000_000_000, "finished_ms": None, "exit_code": None, "state": "live", "title": ""}
+        (self.root / "peers" / peer / "terminals" / f"{terminal}.json").write_text(json.dumps(record))
+
+    def peer_sent(self, peer: str, terminal: str) -> list[str]:
+        """Each text `hc send PEER/TERMINAL` typed so far."""
+        f = self.root / "peers" / peer / "terminals" / f"{terminal}.sent"
+        return f.read_text().splitlines() if f.exists() else []
+
+
+@pytest.fixture
+def hc(fakes, tmp_path, monkeypatch):
+    """The stand-in hc first on PATH, with an empty Hub (a FakeHc) for the test to fill."""
+    state = FakeHc(tmp_path / "hc")
+    monkeypatch.setenv("FAKE_HC_STATE", str(state.root))
+    return state

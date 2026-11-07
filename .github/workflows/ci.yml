@@ -13,7 +13,9 @@
 #        Tests need no network, SSH server or password manager (stand-in bw/op/pass/ssh in tests/fakes).
 #        The end-to-end suite (tests/e2e: the real CLI and serve against sshd in containers) runs nightly and by
 #        hand only, and the CI job doesn't wait for it.
-#   App  (app/, crates/roster-core, app/src-tauri): tsc + ESLint + Vitest, copy and paste and the Host menu end to end in
+#   App  FROZEN since 2026-11-06 (ADR 0011): every App job below is `if: false`, so CI no longer builds or tests
+#        app/ or crates/ (they stay in the repo). The `CI` job counts a skipped job as passed. What they ran:
+#        (app/, crates/roster-core, app/src-tauri): tsc + ESLint + Vitest, copy and paste and the Host menu end to end in
 #        headless Chromium (app/e2e); rustfmt, clippy and
 #        cargo test on Linux (with the WebKitGTK/D-Bus dev packages, so clippy covers the Tauri
 #        crate too); roster-core's cargo test on Windows; the JS and CSS size budget; release
@@ -253,7 +255,9 @@ jobs:
     name: App frontend (tsc, ESLint, Vitest)
     runs-on: ubuntu-26.04
     needs: changes
-    if: needs.changes.outputs.frontend == 'true'
+    # Frozen (ADR 0011, docs/adr/0011-herdr-is-the-session-runtime.md): the app gets no new work, so CI no longer
+    # builds or tests it; skipped counts as passed in `CI` below. To un-freeze, put back: if: needs.changes.outputs.frontend == 'true'
+    if: false
     defaults:
       run:
         working-directory: app
@@ -291,7 +295,9 @@ jobs:
     name: App full stack (bridge, serve, stand-in Hosts)
     runs-on: ubuntu-26.04
     needs: changes
-    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.cli == 'true'
+    # Frozen (ADR 0011, docs/adr/0011-herdr-is-the-session-runtime.md): the app gets no new work, so CI no longer
+    # builds or tests it; skipped counts as passed in `CI` below. To un-freeze, put back: if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.cli == 'true'
+    if: false
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7
@@ -334,7 +340,9 @@ jobs:
     name: App Rust (fmt, clippy, cargo test)
     runs-on: ubuntu-26.04
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    # Frozen (ADR 0011, docs/adr/0011-herdr-is-the-session-runtime.md): the app gets no new work, so CI no longer
+    # builds or tests it; skipped counts as passed in `CI` below. To un-freeze, put back: if: needs.changes.outputs.rust == 'true'
+    if: false
     steps:
       - uses: actions/checkout@v7
       # What Tauri needs to build on Linux (app/src-tauri): WebKitGTK 4.1, GTK, D-Bus, appindicator, rsvg.
@@ -378,7 +386,9 @@ jobs:
     name: Core tests (Windows)
     runs-on: windows-2025
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    # Frozen (ADR 0011, docs/adr/0011-herdr-is-the-session-runtime.md): the app gets no new work, so CI no longer
+    # builds or tests it; skipped counts as passed in `CI` below. To un-freeze, put back: if: needs.changes.outputs.rust == 'true'
+    if: false
     steps:
       - uses: actions/checkout@v7
       # tests/fake_serve.py stands in for roster serve; the tests run it as python3, which Windows lacks.
@@ -419,7 +429,9 @@ jobs:
     needs: changes
     # On a pull request only when it touches what the build builds (ci_changes.py "release"); release.yml's dry run
     # covers its own files (docs/releasing.md).
-    if: needs.changes.outputs.release == 'true'
+    # Frozen (ADR 0011, docs/adr/0011-herdr-is-the-session-runtime.md): the app gets no new work, so CI no longer
+    # builds or tests it; skipped counts as passed in `CI` below. To un-freeze, put back: if: needs.changes.outputs.release == 'true'
+    if: false
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -448,7 +460,9 @@ jobs:
     name: App Linux release build
     runs-on: ubuntu-22.04
     needs: changes
-    if: needs.changes.outputs.release == 'true'
+    # Frozen (ADR 0011, docs/adr/0011-herdr-is-the-session-runtime.md): the app gets no new work, so CI no longer
+    # builds or tests it; skipped counts as passed in `CI` below. To un-freeze, put back: if: needs.changes.outputs.release == 'true'
+    if: false
     steps:
       - uses: actions/checkout@v7
       - name: Install the Tauri system packages

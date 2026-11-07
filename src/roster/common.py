@@ -174,6 +174,19 @@ def find_program(name: str) -> str | None:
     return None
 
 
+def find_user_program(name: str) -> str | None:
+    """find_program(NAME), else NAME in ~/.local/bin (NAME.exe on Windows), where a per-user installer puts it and
+    a hook's, a cron job's or a non-login shell's PATH may not reach."""
+    found = find_program(name)
+    if found:
+        return found
+    for n in (f"{name}.exe", name) if context.WINDOWS else (name,):
+        path = Path.home() / ".local" / "bin" / n
+        if path.is_file():
+            return str(path)
+    return None
+
+
 def git_program() -> str:
     """The git to run: on Windows git.exe wherever it is on PATH, ahead of a git.cmd or git.bat shim earlier on it
     (which can't be handed a quote, a % or a ! in a commit message or URL; #424 L5)."""

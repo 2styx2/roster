@@ -106,6 +106,16 @@ class Parser(argparse.ArgumentParser):
         return f"{head}\n{self.commands_text}\n{sep}{tail}" if sep else f"{text}\n{self.commands_text}\n"
 
 
+def agents_hook_options(s: argparse.ArgumentParser) -> None:
+    """setup's and sync's --agents / --no-agents: the Agents' SessionStart hook in Claude's settings (R5)."""
+    hook = s.add_mutually_exclusive_group()
+    hook.add_argument("--no-agents", dest="agents", action="store_false", default=None,
+                      help="take the SessionStart hook that shows new Claude sessions the other herdr Agents out of "
+                           "your Claude settings, and leave it out on this Box from now on")
+    hook.add_argument("--agents", dest="agents", action="store_true", default=None,
+                      help="put that hook back after --no-agents (it's there by default where herdr-core is)")
+
+
 def build_parser(argv: "Sequence[str]" = ()) -> Parser:
     """Every command and option, for the command line ARGV (its usage errors). The man page (roster.manpage) is
     generated from this too."""
@@ -153,10 +163,12 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
                    "`roster mesh --rotate HOST` does those) on every Host: a new key, proven on each Host before the "
                    "old key's line goes, then the old key deleted. --host NAME (a Host or a group) narrows it; a Host "
                    "not reached stays pending until setup --rotate runs again")
+    agents_hook_options(s)
     s = sub.add_parser("sync", help="rewrite this Box's ssh config and Claude files from roster.yml, and sync the "
                        "vault (as roster vault sync); it touches no Host. Ends with what changed and the next command, "
                        "if any")
     s.add_argument("--no-vault", action="store_true", help="the map only: leave the vault as last synced")
+    agents_hook_options(s)
     s = sub.add_parser("check", help="check: can this Box reach every Host? check HOST: why a Session to it would "
                        "fail, step by step. check --box: this Box's own health. check --auth: every Login's password "
                        "source answers")
@@ -188,6 +200,9 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
                    help="run it as root with sudo; roster gives sudo the login's password (never shown)")
     values(s.add_argument("host", help="the host to run it on"), HOSTS)
     s.add_argument("command", nargs=argparse.REMAINDER, help="the command, after --")
+    s = sub.add_parser("ssh", help="an interactive ssh session to a Host; a password-only Host's password comes "
+                       "from the vault (never shown)")
+    values(s.add_argument("host", help="the Host to log in to"), HOSTS)
     s = sub.add_parser("add", help="add one Host you already know to roster.yml (reviewed), the app's add-Host "
                        "way")
     s.add_argument("name", metavar="NAME", nargs="?", help="the new Host's name: letters, digits, . _ - (needed "
@@ -258,6 +273,34 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
     s.add_argument("-k", "--insecure", action="store_true", help="don't verify the TLS certificate")
     s.add_argument("--timeout", type=float, default=30, metavar="SECONDS",
                    help="how long to wait for the answer (default: 30)")
+    s = sub.add_parser("agents", help="list every Agent (Claude and other agents in herdr terminals) on this Hub "
+                       "and its herdr machines: address, Host, folder, status, label and how long it has run")
+    s.add_argument("action", nargs="?", choices=["sync", "hook"],
+                   help="sync: write the Agent directory into every connected machine's herdr-core (and the Hub's) "
+                        "as the shared document roster.agents, and say which failed. hook: the short list of the "
+                        "other Agents that Claude Code's SessionStart hook shows a new session (nothing when there's "
+                        "no herdr or no other Agent; never an error)")
+    s.add_argument("--remove", action="store_true", help="with hook: take the SessionStart hook out of your Claude "
+                   "settings (uninstall.sh runs it)")
+    s.add_argument("--json", **as_json)
+    s = sub.add_parser("agent", help="reach one Agent by its address (HOST/tN, as roster agents shows it): send it "
+                       "a message, read its screen, wait until it stops working, or label it")
+    agent = s.add_subparsers(dest="agent_cmd", metavar="ACTION", title="actions", prog="roster agent",
+                             help="what to do with the Agent (plain `roster agent` lists them)")
+    s = agent.add_parser("send", help="type TEXT into the Agent and press Enter, as if a person had")
+    s.add_argument("address", metavar="ADDRESS", help="the Agent: HOST/tN, as roster agents shows it")
+    s.add_argument("text", metavar="TEXT", help="the message")
+    s = agent.add_parser("read", help="print the Agent's screen (and with --lines, the history above it)")
+    s.add_argument("address", metavar="ADDRESS", help="the Agent: HOST/tN, as roster agents shows it")
+    s.add_argument("--lines", type=int, default=0, metavar="N", help="lines of history above the screen (default: 0)")
+    s = agent.add_parser("wait", help="wait until the Agent stops working (idle, blocked, done, or it ends)")
+    s.add_argument("address", metavar="ADDRESS", help="the Agent: HOST/tN, as roster agents shows it")
+    s.add_argument("--timeout", type=float, metavar="SECONDS",
+                   help="give up after this long, exit 124 (default: herdr-core's, 180 unless set)")
+    s = agent.add_parser("label", help="set an Agent's label (its roster.label), the calling Agent's without ADDRESS")
+    s.add_argument("address", nargs="?", metavar="ADDRESS",
+                   help="the Agent: HOST/tN (default: the herdr terminal this runs in, HC_TERMINAL_ID)")
+    s.add_argument("text", metavar="TEXT", help="the label: what the Agent is on (\"\" removes it)")
     s = sub.add_parser("mesh", help="set up Host-to-Host access (mesh: and links: in roster.yml), one Host at a time")
     s.add_argument("action", nargs="?", choices=["cut", "status", "leftovers"],
                    help="cut HOST: take it out of the Mesh now, everywhere; status: who reaches whom (no connections); "
@@ -401,6 +444,8 @@ def check(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
         parser.error("--save-to and --provider go with --save-to-vault")
     if args.cmd == "revoke" and args.all and (args.only or args.inv or args.config):
         parser.error("revoke --all revokes every Inventory's Hosts: drop --only, --inv and -c")
+    if args.cmd == "agents" and args.remove and args.action != "hook":
+        parser.error("--remove goes with hook: roster agents hook --remove")
 
 
 def command_parser(parser: argparse.ArgumentParser, words: Sequence[str]) -> argparse.ArgumentParser:

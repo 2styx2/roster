@@ -69,7 +69,7 @@ ignore = ["E501", "B904", "UP031", "S603", "S607"]
 include = ["src/roster"]
 pythonVersion = "3.10"
 typeCheckingMode = "basic"
-strict = ["src/roster/models.py", "src/roster/completion.py", "src/roster/inventories.py", "src/roster/servemodels.py", "src/roster/jsondocs.py",
+strict = ["src/roster/models.py", "src/roster/sshsession.py", "src/roster/completion.py", "src/roster/inventories.py", "src/roster/servemodels.py", "src/roster/jsondocs.py",
           "src/roster/jsonout.py",
           "src/roster/authorized.py",
           "src/roster/boxsetup.py",

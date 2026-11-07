@@ -313,7 +313,7 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 
 ## Commands
 
-`roster -v` (or `--version`) prints roster's version. `roster` on its own (or `roster help`, or `roster --help`) exits 0 and lists the 14 commands you type, in groups (Start here, Every day, Inventory and access, Vault and help), with the command lines you'll type most. Everything else is an action or a flag of one of them. `roster help COMMAND` (or `roster COMMAND --help`) shows a command's options and examples, each one checked against the parser by a test. A mistyped command or option gets the nearest real one (`roster hots`: did you mean `hosts`?), and a usage error names the `--help` to read. A usage error never repeats a value you typed (a session token in the wrong place, a word in an unknown option, a clone URL given to `init --inventory`): it names the place (`argument COMMAND`, `argument --port`) and what goes there, and exits 2. `serve` and `askpass` are run by the app and by ssh, not by hand: they work, but the overview and Tab completion leave them out. Older names still work for now; see [Old command names](#old-command-names).
+`roster -v` (or `--version`) prints roster's version. `roster` on its own (or `roster help`, or `roster --help`) exits 0 and lists the 15 commands you type, in groups (Start here, Every day, Inventory and access, Vault and help), with the command lines you'll type most. Everything else is an action or a flag of one of them. `roster help COMMAND` (or `roster COMMAND --help`) shows a command's options and examples, each one checked against the parser by a test. A mistyped command or option gets the nearest real one (`roster hots`: did you mean `hosts`?), and a usage error names the `--help` to read. A usage error never repeats a value you typed (a session token in the wrong place, a word in an unknown option, a clone URL given to `init --inventory`): it names the place (`argument COMMAND`, `argument --port`) and what goes there, and exits 2. `serve` and `askpass` are run by the app and by ssh, not by hand: they work, but the overview and Tab completion leave them out. Older names still work for now; see [Old command names](#old-command-names).
 
 | Command | What it does |
 |---|---|
@@ -321,12 +321,19 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | `add NAME --ip ADDR […]` | Add one Host you already know to `roster.yml`, reviewed, and syncs this Box, the way the app's add-Host form does (the same code): under `--group` (new or existing; default the first), with `--user`, `--auth`, `--enroll`/`--no-enroll`, `--os`, `--title`, `--type`, `--port`. Asks in a terminal for what's missing; `-y` never asks. `--from-vault` fills the address and user from the `--auth` item, never its password; `--save-to-vault` saves its password (asked twice on the terminal) as a new vault item `NAME ssh` first and points `auth:` at it (`--save-to`, `--provider`); `--setup` then runs setup and check for it; `--dry-run` writes nothing. See [Adding one Host](#adding-one-host-roster-add) |
 | `add --from-vault […]` | The vault items no Login in `roster.yml` names, the new ones since the last run marked (synced first; `--no-sync`), and in a terminal a walk adding each [Y/n/edit/skip] the `roster add NAME` way; `--all` every one, `--json` the list, `--mark-seen`. Never reads a password. See [Vault items not in roster.yml](#vault-items-not-in-rosteryml-roster-add---from-vault) |
 | `discover CIDR…` | Scan networks; `--write` adds the results to `roster.yml`, then syncs this Box as `roster sync` does |
-| `setup` | One-time per box: key, fingerprints, key install, SSH config, Claude files (`--only`, `--host NAME`, `--dry-run`, `--key-type TYPE`, `--rotate`). `--rotate` replaces the Box key on every Host, the new one proven on each before the old one's line goes ([Rotating the Box key](#rotating-the-box-key-roster-setup---rotate)); plain `setup` exits 1 while a rotation is pending. Each Host gets the key of its own `key_type:` (one key per type on this Box, made on first need); a Host whose key type changed gets the new key, and loses the old one only once the new one logs in. `--host NAME --key-type TYPE` tries TYPE on that Host for this run, over `roster.yml` (it needs `--host`): its line goes in beside this Box's line of `roster.yml`'s type, which stays, so the next `roster sync` (which writes `roster.yml`'s type back) still logs in; another try takes the one before off; set `key_type:` to keep it ([FIPS Hosts](adding-hosts.md#fips-hosts)). Where the key already works, a line of this Box's of another type that `~/.config/roster/key-types` records there (a `--key-type` try's, a cleanup that failed) is taken off over the key login (T245). A type change puts the new key's line in, tests it, and only then takes the old type's line off; a Host that refuses the new type keeps the old line. `--host NAME` is exactly the Host by that name, never a group, type or product NAME that `--only NAME` would take too; like `--only` it leaves the Mesh to `roster mesh`. After a rename, it re-tags this Box's key where it works; a Host where another key's line already has the new name fails with 190 and is left as it is, unless `--force` |
-| `sync` | Rewrite the SSH config and Claude files after editing `roster.yml`, and sync the vault too, as `vault sync` does (`--no-vault`: the map only). It touches no Host, and ends with what changed and, when something is left, `next:` and the command for it ([When your vault changes](#when-your-vault-changes)). A vault it couldn't sync (locked, offline) is said, never a failure. A Host taken out of `roster.yml` gets a note that this Box's key may still be on it |
+| `setup` | One-time per box: key, fingerprints, key install, SSH config, Claude files (`--only`, `--host NAME`, `--dry-run`, `--key-type TYPE`, `--rotate`, `--no-agents`, `--agents`). `--rotate` replaces the Box key on every Host, the new one proven on each before the old one's line goes ([Rotating the Box key](#rotating-the-box-key-roster-setup---rotate)); plain `setup` exits 1 while a rotation is pending. Each Host gets the key of its own `key_type:` (one key per type on this Box, made on first need); a Host whose key type changed gets the new key, and loses the old one only once the new one logs in. `--host NAME --key-type TYPE` tries TYPE on that Host for this run, over `roster.yml` (it needs `--host`): its line goes in beside this Box's line of `roster.yml`'s type, which stays, so the next `roster sync` (which writes `roster.yml`'s type back) still logs in; another try takes the one before off; set `key_type:` to keep it ([FIPS Hosts](adding-hosts.md#fips-hosts)). Where the key already works, a line of this Box's of another type that `~/.config/roster/key-types` records there (a `--key-type` try's, a cleanup that failed) is taken off over the key login (T245). A type change puts the new key's line in, tests it, and only then takes the old type's line off; a Host that refuses the new type keeps the old line. `--host NAME` is exactly the Host by that name, never a group, type or product NAME that `--only NAME` would take too; like `--only` it leaves the Mesh to `roster mesh`. After a rename, it re-tags this Box's key where it works; a Host where another key's line already has the new name fails with 190 and is left as it is, unless `--force` |
+| `sync` | Rewrite the SSH config and Claude files after editing `roster.yml`, and sync the vault too, as `vault sync` does (`--no-vault`: the map only). Where herdr-core is, setup and sync also put the Agents' SessionStart hook in your Claude settings; `--no-agents` takes it out and keeps it out on this Box, `--agents` puts it back ([the SessionStart hook](#agents-know-the-others-are-there-the-sessionstart-hook)). It touches no Host, and ends with what changed and, when something is left, `next:` and the command for it ([When your vault changes](#when-your-vault-changes)). A vault it couldn't sync (locked, offline) is said, never a failure. A Host taken out of `roster.yml` gets a note that this Box's key may still be on it |
 | `check [HOST \| --box \| --auth]` | `check`: can this Box reach every Host? `check HOST`: why a Session to one would fail, step by step. `check --box`: this Box's own health, connecting nowhere. `check --auth`: every Login's password source answers. In detail: reachability of SSH (a login running `exit 0`, the same in sh, cmd.exe and PowerShell), web UIs and services, and the Mesh's drift (without `--only`); on an `os: windows` Host whose key works, warnings (157) about its key file. With one HOST: why a Session to it would or wouldn't open, step by step (see [`roster check HOST`](#roster-check-host)). With `--box`: this Box's health, without connecting anywhere (see [`roster check --box`](#roster-check---box)). With `--auth` (was `auth-check`): test every password source in use (SSH, services and resources), connecting to no Host and printing nothing secret; `--only` narrows it, and it takes no HOST or `--box`. `--host NAME` (again for more) checks exactly those Hosts, never a group or type by the name: the line `roster setup` ends with names them. A failed key login gets a line of its own under the table: its cause and its one fix (`new-01: [211] no key on new-01 yet: roster setup --host new-01`, a Host that never answered at its address (209) or stopped answering (210), a key taken off there (212), an account locked or expired (213), a rate limiter or sshd's `PerSourcePenalties` (215)); a Host setup never finished shows `ssh:todo`, not FAIL. One login per Host, never a retry; once a rate limiter drops one (215), the Hosts behind the same one (`rate_limited:` network, else the /24) aren't tried, and each says so. A to-do still makes `check` exit 1 |
 | `hosts [NAME…] [--resources] [--find TEXT] [--all] [--long]` | The Hosts and resources in `roster.yml` that you can use: name, IP, user, logins (`ssh (key), web (admin), api`, `wifi`) and title. Unreviewed scanned hosts are hidden unless you pass `--all`, `--find` or `--only`. `--long` shows the full table (type, product, web URL, scan description). `hosts NAME` (was `info`): everything about one Host or resource (for a key Host, `key`: its key type and this Box's key file for it); fuzzy names work (`roster hosts core switch`), and it takes none of the list's flags. `hosts --resources` (was `resources`): only the Wi-Fi networks, accounts and secrets that aren't Hosts, with `--only` taking resource names, types or groups and `--find` searching every field |
 | `run [--sudo] HOST -- CMD` | Run a command; password-only hosts get their password from the provider. A Host not in this Box's ssh config yet names `roster sync`; on a Host setup hasn't put this Box's key on (by its record), a failed login in ssh's own words is followed by its cause and fix (`roster: [211] no key on new-01 yet: roster setup --host new-01`); a Login whose vault item is gone, doubled or locked says so with its code and fix. `--sudo` tells sudo's refusals apart: not in sudoers, sudo wanting a terminal (requiretty), or the Login's password refused (a sudo password that differs). `--sudo` runs it as root, handing sudo the login's password (never shown). On an `os: windows` Host CMD always runs under PowerShell, whatever its DefaultShell, with its exit code passed on; `--sudo` there is refused (159). See [Windows Hosts](adding-hosts.md#windows-hosts) |
+| `ssh HOST` | An interactive ssh session to a Host, as the roster app's Host terminals open it (ADR 0011). A key Host runs the system `ssh HOST` with roster's ssh config and known hosts, so a `ProxyJump` your `~/.ssh/config` gives the Host applies. A password-only Host gets its Login's password from the vault through roster's askpass channel: a one-time token in ssh's environment, the password handed only to ssh's own login prompt, never on a command line, stdout, stderr or the scrollback; a jump Host that asks for a password of its own is refused (36: give it this Box's key). No password is typed into the session after the login (no Prompt fill). Refused before connecting, exit 1, with the code and fix: an unknown Host (2), one not in this Box's ssh config yet (21: `roster sync`), a locked vault (14), a vault item missing or doubled (32, 33). ssh's own messages pass through; a failed connection or login (exit 255) is followed by its cause and fix, as `roster run`'s (`roster: [209] esx-02 has never answered at 10.0.0.6: ...`). Otherwise it exits with ssh's code (the remote shell's). See [`roster ssh HOST`](#roster-ssh-host) |
 | `web HOST [SERVICE] METHOD PATH` | HTTP request to a host's web service, logged in with its stored credentials (`-d BODY`, `-H 'Name: value'`, `-k`) |
+| `agents [--json]` | Every Agent (a terminal that reports an agent status to herdr: Claude Code does so itself) on this Hub and its herdr machines, built live from herdr-core (one `hc connect` round: `terminal.list` and `server.status`): one block per Host (the Hub first, then each machine with its state: `connected`, `connecting`, `unavailable`), a row per Agent with its address (`HOST/tN`), status (`working`, `blocked`, `idle`, `done`), label (its `roster.label`), folder and how long it has run. A machine that isn't connected is listed with its state and no Agents. On a remote Host it reads the copy the Hub last wrote there instead, says how old it is and which machine you are, and warns when it's stale. `agents sync` writes the directory into the Hub's herdr-core and each connected machine's, as the shared document `roster.agents`, and says which failed (exit 1). `agents hook` is what Claude Code's SessionStart hook runs: a short list of the other Agents, or nothing, never an error; `agents hook --remove` takes that hook out of your Claude settings ([the SessionStart hook](#agents-know-the-others-are-there-the-sessionstart-hook)). Needs no `roster.yml`; with no `hc` on PATH or in `~/.local/bin`, or a core that doesn't answer, it says so and exits 1. See [Agents](#agents-roster-agents) |
+| `agent` | Reach one Agent by its address (`HOST/tN`, as `roster agents` shows it), through this machine's herdr-core: one action each (below); plain `roster agent` lists them. From the Hub every Agent on it and its connected machines; on another machine, the Agents on that same machine. An unknown address, an Agent that has ended, a machine this herdr-core hasn't added or one that isn't connected is refused before anything is sent, exit 1, with what to do. Needs no `roster.yml`. See [Reaching an Agent](#reaching-an-agent-roster-agent) |
+| `agent send ADDRESS TEXT` | Type TEXT into the Agent and press Enter, as a person would (`hc send`); says whether it was idle or working then. A blocked Agent (waiting on its own question) is refused by herdr-core, not answered |
+| `agent read ADDRESS [--lines N]` | Print the Agent's screen (`hc read`), with N lines of history above it |
+| `agent wait ADDRESS [--timeout SECONDS]` | Wait until the Agent stops working (`hc wait`), then say how it is (`idle`, `blocked`, `done`, or that it ended). `--timeout`: give up after that long and exit 124 (default: herdr-core's own, 180 s unless its config says otherwise) |
+| `agent label [ADDRESS] TEXT` | Set the Agent's label, its herdr label `roster.label`, which `roster agents` shows; `""` removes it. Without ADDRESS, the Agent this runs in (the herdr terminal in `HC_TERMINAL_ID`); outside herdr that's refused |
 | `revoke [--all]` | Remove this box's key from every host (its line under any name it had, found by its public key: the key is one per Box, so revoking one Inventory also takes it off a machine another Inventory lists, under any `box_name:`, and says so: `roster setup` for that Inventory puts it back, or use `--all`); it names this box's files to delete (with `~/.config/roster/key-name*`, the name setup recorded for its key's lines) only once every Host of this `roster.yml` has lost the key (never with `--only`, never another `roster.yml`'s `config.d/roster`, and never a key file another Inventory on this Box uses too: that one is kept, with a note naming the Inventory, 221), and exits 1 when a Host was skipped or none was reached. `--all`: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host `ssh NAME` doesn't reach (left out, or its Inventory not synced here) is skipped and said. See [Named Inventories](#named-inventories). An unnamed `roster.yml` in a folder that looks like a token, which the ssh config names only by the sha256 of its path, is revoked with the others when it's `$ROSTER_CONFIG`, `./roster.yml` or a named Inventory's file; otherwise it's skipped, never named, and `roster -c PATH revoke --yes` revokes it without renaming its folder. On an `os: windows` Host it cleans both files an administrator's key could be in. A Host it couldn't revoke is listed with why |
 | `mesh [--dry-run] [--rotate HOST]` | Set up Host-to-Host access as `mesh:` and `links:` say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's `via: HOST` goes through a jump Host (`ProxyJump`), tested through it. `--dry-run` shows the plan, `--rotate` replaces a Host's Mesh key. `mesh status` shows who reaches whom without connecting; `mesh cut HOST [-y]` takes a Host out everywhere at once and writes `mesh: false` for it as a Pending change, then syncs this Box as `roster sync` does; `mesh cut --all [-y]` takes this Box's Mesh entries (and an older roster's untagged ones) off every Host and leaves `roster.yml` as it is (before removing roster: [Uninstalling roster](mesh.md#uninstalling-roster)); `mesh leftovers` (was `--find-leftovers`) lists the Mesh entries on every Host that this `roster.yml` doesn't ask for (and files by a Mesh key's name in the Mesh's folders that aren't a key roster made, which it never removes), changing nothing, and `mesh leftovers --remove [-y]` (was `--remove-leftovers`) removes them after a question (an older roster's may be another Box's: [Whose Mesh it is](mesh.md#whose-mesh-it-is)); `--json` with `status` or `--dry-run`. See [The Mesh](mesh.md) |
 | `inv list\|add NAME PATH\|use NAME\|remove NAME\|which` | Named Inventories, one of them active: list them (`*` marks the active one), name one, make one the active one, forget one (its file stays), or print the `roster.yml` roster uses. See [Named Inventories](#named-inventories) |
@@ -338,13 +345,13 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | `vault reveal NAME [--wifi]` | (Was `reveal`.) Print a resource's secret for a person to type in, not for Claude (`--wifi`: a QR-ready `WIFI:` string) |
 | `vault bw [--write] -- BW_ARGS…` | (Was `bw`.) The Bitwarden CLI itself with this box's vault session from `~/.config/roster/bw-session` (never prompts, except `login` and `unlock`), e.g. `roster vault bw -- list items --search web-01`. Read-only unless `--write`: commands that change the vault, write a file on this Box or act on the account need it, and commands roster doesn't know are refused. roster never reads what bw prints. See [`roster vault bw`](#roster-vault-bw) |
 | `vault op [--write] -- OP_ARGS…` | The 1Password CLI itself with your op sign-in (the 1Password app's CLI integration, or an `OP_SESSION_*` or `OP_SERVICE_ACCOUNT_TOKEN` in your shell), e.g. `roster vault op -- item list --vault Infra`. Read-only unless `--write`: commands that change the vault or the account, or write a file on this Box, need it; `op run`, `--session` and `--config` are refused; commands roster doesn't know are refused. roster never reads what op prints. See [`roster vault op`](#roster-vault-op) |
-| `help [COMMAND…] [--man [--install [--prefix DIR]]] [--completion SHELL]` | `roster help`: the overview. `roster help COMMAND` (`help vault bw`): that command's options and examples, as `--help`. `--man` (was `man`): show the `roster(1)` man page; with `--install` it copies it to `PREFIX/share/man/man1/roster.1`, next to `PREFIX/bin/roster` (`~/.local` after `uv tool install`), where `man roster` finds it; into a prefix you can't write to, it says so and exits 1 (pick `--prefix ~/.local`, or use sudo). `install.sh` does this for you. `--completion bash\|zsh\|fish\|powershell` (was `completion`): print Tab completion for that shell: commands (`roster ho<Tab>` is `roster hosts`), their actions and options, and the names roster knows here: Host names (`roster run <Tab>`, `check`, `hosts`, `web`, `mesh cut`), groups (`--only`, `discover --group`, `add --group`), resources (`vault reveal`, `hosts`) and named Inventories (`--inv`, `inv use`). `install.sh` turns it on for bash, zsh and fish by itself. See [Tab completion](#tab-completion) |
+| `help [COMMAND…] [--man [--install [--prefix DIR]]] [--completion SHELL]` | `roster help`: the overview. `roster help COMMAND` (`help vault bw`): that command's options and examples, as `--help`. `--man` (was `man`): show the `roster(1)` man page; with `--install` it copies it to `PREFIX/share/man/man1/roster.1`, next to `PREFIX/bin/roster` (`~/.local` after `uv tool install`), where `man roster` finds it; into a prefix you can't write to, it says so and exits 1 (pick `--prefix ~/.local`, or use sudo). `install.sh` does this for you. `--completion bash\|zsh\|fish\|powershell` (was `completion`): print Tab completion for that shell: commands (`roster ho<Tab>` is `roster hosts`), their actions and options, and the names roster knows here: Host names (`roster run <Tab>`, `ssh`, `check`, `hosts`, `web`, `mesh cut`), groups (`--only`, `discover --group`, `add --group`), resources (`vault reveal`, `hosts`) and named Inventories (`--inv`, `inv use`). `install.sh` turns it on for bash, zsh and fish by itself. See [Tab completion](#tab-completion) |
 | `serve` | Internal, run by the app: the JSON-RPC API the desktop app talks to, on stdin/stdout (see [`roster serve` API](serve-api.md)) |
 | `askpass PROMPT` | Internal, run by ssh: the `SSH_ASKPASS` helper for a `serve` password Session |
 
 `--only` accepts host names, groups, types and products: `roster check --only orion`, `roster setup --only switch,router`. To set up one Host whose name is also a group, type or product, `roster setup --host NAME` takes that Host alone.
 
-`--json` on `hosts` (and `hosts NAME`, `hosts --resources`), `add --from-vault`, `check` (and `check HOST`, `check --box`, `check --auth`), `discover` (its preview), `mesh status`, `mesh --dry-run` and `vault status` prints the same data as JSON for scripts and tools, never a secret: see [Machine-readable output](#machine-readable-output).
+`--json` on `hosts` (and `hosts NAME`, `hosts --resources`), `add --from-vault`, `check` (and `check HOST`, `check --box`, `check --auth`), `discover` (its preview), `mesh status`, `mesh --dry-run`, `vault status` and `agents` prints the same data as JSON for scripts and tools, never a secret: see [Machine-readable output](#machine-readable-output).
 
 Config lookup order: `-c PATH`, then `--inv NAME`, then `$ROSTER_CONFIG`, then `./roster.yml`, then the active named Inventory, then `~/.config/roster/roster.yml`. `--inv NAME` (before the command: `roster --inv home sync`) runs one command against the named Inventory NAME.
 
@@ -376,6 +383,15 @@ FAIL vault-item  [33] 2 vault items are named 'esx ssh' (ssh Login of esx): 'esx
 skip dns         an earlier step failed
 ...
 ```
+
+### `roster ssh HOST`
+
+`roster ssh HOST` opens an interactive session on the Host with the system ssh (ADR 0002), on the terminal it runs in. It's what the roster app opens for a Host that can't run herdr (switches, ESXi, password-only gear; ADR 0011).
+
+- **Key Hosts:** the same as `ssh HOST`: roster's ssh config gives the key, user, port and known hosts, and anything else your `~/.ssh/config` says for the Host (a `ProxyJump` through a jump Host) applies.
+- **Password-only Hosts:** roster looks up the Login's password first (a locked vault or a missing item stops it there, before anything connects), then runs ssh with `NumberOfPasswordPrompts=1` and an askpass helper that gets the password from this `roster ssh` process over a channel only you can open, with a one-time token. The helper never answers a prompt that names a jump Host's login: for each `ProxyJump` the ssh config gives the Host (`ssh -G`), its user at the name given, its HostName and HostKeyAlias. Such a prompt gets `roster askpass: [36] ssh asked for ops@10.0.0.99's password, a jump Host's login, ...` and nothing else, so let jump Hosts take this Box's key. The Host's own prompt is answered however ssh names it: by its name, `ip:`, HostName (as resolved, a canonical name too) or HostKeyAlias. A jump through a `ProxyCommand` isn't known to roster, so its prompt can't be told from the Host's: give such a jump Host the key. The password never reaches the command line, stdout, stderr or the scrollback. An `auth: prompt` Host is plain ssh: it asks you.
+- **Without a terminal** (stdin not a TTY), ssh runs as it would there: no remote terminal is allocated.
+- **Exit status:** ssh's, which is the remote shell's once logged in, or 255 when ssh couldn't connect or log in (followed by roster's line with the cause and fix); 1 when roster refused before starting ssh (`error: [CODE] MESSAGE - FIX`).
 
 ### `roster check --box`
 
@@ -545,6 +561,149 @@ The 14 commands came from regrouping older ones (decision Q194). Each old name s
 | `roster mesh --find-leftovers` | `roster mesh leftovers` |
 | `roster mesh --remove-leftovers` | `roster mesh leftovers --remove` |
 
+## Agents: `roster agents`
+
+An **Agent** is a terminal that reports an agent status to herdr (Claude Code does so itself); herdr is the session
+and Agent runtime (ADR 0011). On the Hub, the machine whose herdr-core has the others added (`hc machine add`),
+`roster agents` lists every Agent across it and its connected machines, built live from herdr-core in one JSON-RPC
+round over `hc connect`: `terminal.list` (what `hc ls` lists, every connected machine's terminals merged in, with each
+one's app, labels and start) and `server.status` (the Hub's name). One listing, never a call per Agent, so an Agent
+that ends meanwhile doesn't break it. It only reads: it never starts, sends to or labels a terminal.
+
+```text
+$ roster agents
+hub-01 (this Hub)
+  hub-01/t1  working  fix the login  /srv/app  2 h
+web-01 (connected)
+  web-01/t2  blocked  -              /srv/web  5 min
+db-01 (unavailable): no Agents
+```
+
+A terminal that reports no agent status (a shell, an editor) isn't an Agent and is left out. An Agent's label is its
+herdr terminal label `roster.label` (`-` without one). `--json` prints the Agent directory document ([Machine-readable
+output](#machine-readable-output)), which holds no secret and no screen text. With no `hc` on PATH roster says
+herdr-core isn't installed; a core that doesn't answer is named with `hc server start` as the fix. Both exit 1.
+
+### The directory on every machine: `roster agents sync`
+
+A remote Host's herdr-core can't list the Hub's terminals, so the Hub writes the directory into every machine for the
+Agents there to read. `roster agents sync` builds it live and writes it into the Hub's own core and into each
+connected machine's as the shared document `roster.agents` (herdr-core's JSON-RPC `doc.set`, over `hc connect`:
+`hc` has no `doc` command). Each copy names the machine it was written to in `you` (`null` in the Hub's own). A
+machine that isn't connected is skipped; one whose core refuses the write is named with herdr's words, and the sync
+exits 1. A write that loses a race with another writer (the roster mod in herdr-app) reads the new version and tries
+again. `--json` prints `{version, hub, updated, agents, machines: [{name, state, written, error}]}`, the Hub first
+with state `hub`.
+
+```text
+$ roster agents sync
+hub-01 (this Hub): written
+web-01: written
+web-02: failed: machine "web-02" is unavailable
+db-01: skipped (unavailable)
+Agent directory (2 Agents) written to 2 of 3 herdr-cores
+```
+
+The roster mod rewrites the directory within about two seconds of a change while herdr-app runs on the Hub; `roster
+agents sync` is for when it doesn't (by hand, or from a timer).
+
+On a remote Host, `roster agents` reads that local copy (`doc.get`) and never reaches the Hub. It starts with where
+the copy came from and how old it is, and marks this machine `you`:
+
+```text
+$ roster agents
+Agent directory from the Hub hub-01, written 2 min ago; this is web-01
+hub-01 (the Hub)
+  hub-01/t1  working  fix the login  /srv/app  2 h
+web-01 (connected, you)
+  web-01/t2  blocked  -              /srv/web  5 min
+```
+
+A copy more than 5 minutes old is stale: roster says so on stderr (with `--json` too, whose stdout stays the copy as
+written), naming `roster agents sync` on the Hub as the fix. On the Hub, and on a machine no sync has reached yet,
+`roster agents` builds the directory live as above.
+
+### Reaching an Agent: `roster agent`
+
+`roster agent send|read|wait|label` act on one Agent by its address, as the directory shows it: `HOST/tN`, the Hub's
+own Agents `HUB/tN`; a bare `tN` is a terminal on this machine. roster runs `hc send`, `hc read`, `hc wait` or
+`hc label` where the Agent can be reached:
+
+- **On the Hub**, every Agent, through the Hub's herdr-core: the Hub's own, and those on each connected machine (herdr
+  routes `web-01/t2` there).
+- **On a remote Host**, which Host it is comes from the directory copy the Hub wrote there (its `you`), so run
+  `roster agents sync` on the Hub first. Then:
+  - its own Agents go to its own herdr-core;
+  - **a Hub Agent** (`hub-01/t1`) goes through herdr's call-back: this machine's herdr-core forwards it to the Hub,
+    which lets a machine `send`, `read` and `wait` (not `label`) only on a Hub terminal that started work on that
+    machine. So an Agent the Hub started can answer the Agent that started it (`hc get $HC_TERMINAL_ID` shows it as
+    `parent`), and no other Hub terminal;
+  - **an Agent on another remote Host** (`db-01/t3` from `web-01`) goes over the [Mesh](mesh.md): roster runs
+    `ssh -F MESH-CONFIG db-01 hc ...` with the Mesh's own ssh config and key on this Host (the file its `~/.ssh/config`
+    includes, by default `~/.ssh/roster-mesh/config`), and `hc` there finds the user's running herdr-core (in
+    `~/.local/bin` if it isn't on PATH). That needs a key Link from this Host to that one (`links:` or a meshed group in
+    `roster.yml`, then `roster mesh` on the Box). herdr itself doesn't route between machines.
+
+```text
+$ roster agent send web-01/t2 "the tests pass now, rebase on dev"
+sent to web-01/t2 (it was idle)
+$ roster agent wait web-01/t2 --timeout 600
+web-01/t2 is idle
+$ roster agent read web-01/t2 --lines 40
+...
+$ roster agent label "migrate the database"
+t4 is labelled: migrate the database
+```
+
+Before acting, roster checks that the address is a live terminal it can reach, so nothing is typed anywhere else. An
+unknown address (`no Agent at web-01/t9`), an Agent that has ended, a machine this herdr-core hasn't added, or one that
+isn't connected (`herdr says db-01 is unavailable`, with `hc machine login db-01` as the fix) is refused with what to do,
+and exits 1. From a remote Host, so is a peer it can't reach, with the reason and the alternative:
+
+| Refused | What to do |
+|---|---|
+| `there's no Mesh Link from web-01 to db-01` | add `- { from: web-01, to: db-01 }` under `links:` in `roster.yml`, then `roster mesh`; or send it from the Hub |
+| `the Mesh reaches db-01 with a password only` | let the Mesh enroll a key on db-01 (no `enroll: false`), then `roster mesh` |
+| `db-01 didn't answer over the Mesh: ...` (ssh's words) | check it's up and `ssh db-01` works from this Host |
+| `herdr-core isn't installed on db-01` | make it a herdr machine from the Hub (`hc machine add db-01 --install`) |
+| `herdr lets a machine reach only the Hub terminals that started work on it` | send it from the Hub, or answer your own parent |
+| `hub-01 isn't connected to web-01 now` | try again once the Hub is back |
+| `herdr lets this machine only send, read and wait on the Hub's Agents` (`label`) | label it on the Hub |
+| no Agent directory here yet | `roster agents sync` on the Hub |
+ `wait` exits 124 when `--timeout` ran out with the Agent still working, and says how to look at it.
+`label` with no address labels the Agent it runs in (`HC_TERMINAL_ID`, which herdr sets in its terminals); the label is
+the herdr terminal label `roster.label`, which `roster agents` and the herdr-roster Agents panel show.
+
+### Agents know the others are there: the SessionStart hook
+
+On a Box where herdr-core is installed (`hc` on PATH or in `~/.local/bin`), `roster setup` and `roster sync` put a Claude Code
+[SessionStart hook](https://code.claude.com/docs/en/hooks) in your own Claude settings (`~/.claude/settings.json`, or
+`$CLAUDE_CONFIG_DIR`'s): a command hook that runs `roster agents hook`, with a 10-second timeout. Claude Code adds
+what a SessionStart hook prints to the new session's context, so every Claude started there knows the other Agents
+without being told to look:
+
+```text
+$ roster agents hook
+herdr Agent directory (from the Hub hub-01, written 1 min ago; this machine is web-01; this session is web-01/t4): 2 other Agents.
+  hub-01/t1  working  fix the login  /srv/app
+  web-01/t2  blocked  -              /srv/web
+Coordinating is optional. If your work needs another Agent: `roster agent read ADDRESS` (its screen), `roster agent send ADDRESS TEXT`, `roster agent wait ADDRESS`; ROSTER.md, Agents.
+```
+
+It reads the directory as `roster agents` does (this Host's copy, or on the Hub the live one), leaves out the session
+itself (`HC_TERMINAL_ID`), and stops at 20 lines (`... and N more: roster agents lists them all`). A copy more than 5
+minutes old says it's stale. It prints nothing, and exits 0, when there's no `hc`, herdr-core doesn't answer within 4
+seconds (the hook runs hc once, however many Agents there are), or there's no other Agent: a session never starts with an error from it.
+
+The hook joins the hooks you have: your own SessionStart hooks and every other setting stay as they are, and a sync
+that finds it in place writes nothing. A settings file that isn't valid JSON is left alone, with a warning. A sync
+that doesn't find `hc` (herdr-core removed, or a PATH without it, as a cron job's) leaves the hook as it is: only
+`--no-agents` takes it out, and without herdr-core the hook prints nothing.
+
+- `roster sync --no-agents` (or `setup --no-agents`) takes the hook out and keeps it out on this Box (it's recorded in
+  `~/.config/roster/no-agents`); `roster sync --agents` puts it back.
+- `roster agents hook --remove` takes it out without a `roster.yml`; `uninstall.sh` runs it before it removes roster.
+
 ## A plain file or a team repo
 
 An Inventory is one `roster.yml`, and roster works the same whether it's a plain file or a file in your team's git repo. Which one is decided per file, each time roster writes it:
@@ -589,7 +748,7 @@ roster inv use home                          # home is the active one now
 
 ## Machine-readable output
 
-The read commands take `--json`, for scripts, other tools and Claude: `hosts` (with `--only`, `--find`, `--all`), `add --from-vault` (no NAME: the list), `hosts NAME`, `hosts --resources`, `check`, `check HOST`, `check --box`, `check --auth`, `discover` (its preview, without `--write`), `mesh status`, `mesh --dry-run` (the plan) and `vault status`. The CLI is roster's interface for other apps; `roster serve` is the desktop app's own backend, not a public API. With `--json`, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
+The read commands take `--json`, for scripts, other tools and Claude: `hosts` (with `--only`, `--find`, `--all`), `add --from-vault` (no NAME: the list), `hosts NAME`, `hosts --resources`, `check`, `check HOST`, `check --box`, `check --auth`, `discover` (its preview, without `--write`), `mesh status`, `mesh --dry-run` (the plan), `vault status` and `agents`. The CLI is roster's interface for other apps; `roster serve` is the desktop app's own backend, not a public API. With `--json`, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
 
 - **Never a secret.** Logins are references: the provider and the item (`bw:esx-02 ssh`, `op:Lab/esx-02`, `prompt`, `agent`). A `cmd:` or `env:` reference says how a secret is fetched, and a password pasted into a `cmd:` line would show, so each one is cut to its kind (`cmd:`, `env:`) everywhere in the output, error messages and check messages included, the way Plugins get them: a `cmd:` one to the end of its line, an `env:` one its variable's name, wherever one starts a text or follows a space, a quote or one of `=:,({[`. An error message keeps a trailing `(code N)`. The cases both implementations are tested against are in `tests/vectors/redaction.json`. `check --auth --json` fetches every secret it tests and says only whether it was found. `vault reveal` has no `--json`: it's for a person.
 - **One shape.** A Host, a group and a resource are the objects `roster serve` answers with (`hosts.list`, `host.get`; [the serve API](serve-api.md) lists their fields): every field `roster.yml` resolves to, with `ssh: {user, port, auth}`, `login: {user, auth}`, `services` by name, and `problems`, the service entries left out (the warnings the table prints on stderr).
@@ -613,6 +772,8 @@ The read commands take `--json`, for scripts, other tools and Claude: `hosts` (w
 | `mesh --dry-run --json` | `{version, applied: false, links, hosts: [{host, changes, status, error?}], excluded, reach, pending, already, warnings}`, as `mesh.plan`: it connects to the Hosts, one at a time, and changes nothing. Exit 1 if a Host is `pending` (didn't answer). `--json` goes with `status` and `--dry-run` only, never with an apply or `cut` |
 | `vault status --json` | `{version, providers: [{name, kind, help, tool, installed, used_by}], unknown, ok, vault: [{section, level, message, fix?, topic?, saved_session?}], last_sync: {provider: time}}`: `vault` is the Vault section of `check --box --json`, `last_sync` when `roster vault sync` last synced each provider that syncs (`null`: never); `tool` is the CLI it runs (`null` for none, and `installed` `null` with it), `used_by` the groups whose Logins use it, `unknown` the providers `roster.yml` names that aren't set up. Exit 1 if there's one |
 | `check --auth --json` | `{version, logins: [{group, auth, users, used_for: [{service, hosts}], status, error?}], ok}`: one row per Login reference and group; `status` is `ok` (a value was found; it isn't tested against a Host), `fail` (with `error`) or `ask` (`prompt`). Exit 1 if one failed |
+| `agents --json` | The Agent directory, version 1: `{version, hub, you, updated, machines: [{name, state}], agents: [{address, host, terminal, app, status, label, folder, parent, started}]}`. `hub` is the Hub's herdr-core name, `you` the machine this copy was written to (`null` on the Hub, where it's built live), `updated` and `started` ISO-8601 times in UTC. `machines` are the machines added on the Hub with herdr's state (`connected`, `connecting`, `unavailable`). An Agent's `address` is `HOST/TERMINAL` (`web-01/t2`; the Hub's own are `HUB/t1`), `app` what reports the status (`claude-code`), `status` herdr's word (`working`, `blocked`, `idle`, `done`), `label` its `roster.label` (`""` without one), `folder` where it started, `parent` the terminal that started it (`null`: none). No secret and no screen text. On a remote Host it's the copy the Hub wrote there (`you` this machine's name), as written. Errors: `3` no `hc`, or herdr-core didn't answer |
+| `agents sync --json` | `{version, hub, updated, agents, machines: [{name, state, written, error}]}`: where the directory of `updated` (with `agents` Agents in it) was written. The Hub comes first with `state` `hub`, then each machine with herdr's state; `written` false with `error` herdr's words when its core refused, with `error` `null` when it was skipped (not connected). Exit 1 if a write failed |
 
 Wrapped and cut short here (`...`); roster prints each document on one line:
 
@@ -678,6 +839,7 @@ Each script is short: on every Tab it asks roster (`roster __complete`, hidden) 
 | `BW_CLIENTID`, `BW_CLIENTSECRET` | A Bitwarden API key, for headless boxes |
 | `OP_SERVICE_ACCOUNT_TOKEN` | A 1Password service account, for headless boxes |
 | `XDG_RUNTIME_DIR` | Where roster keeps its short-lived private state |
+| `HC_TERMINAL_ID` | Set by herdr in its terminals (`t4`): the Agent `roster agent label TEXT` labels when no address is given |
 
 ## On Windows
 
@@ -703,7 +865,7 @@ roster also runs on Windows itself, without WSL, so the roster app works for tea
 | `2` | Wrong arguments |
 | `130` | Interrupted with Ctrl+C |
 
-With `--json`, the status is the same, and an error is JSON on stderr ([Machine-readable output](#machine-readable-output)). `roster run` exits with the remote command's status, `roster vault bw` with `bw`'s, and `roster vault op` with `op`'s. `roster mesh` and `roster mesh cut` (`--all` too) exit 1 while a Host is pending, and `mesh leftovers [--remove]` when a Host didn't answer. `roster check` and `roster revoke` exit 1 when a Host was skipped (`ssh NAME` doesn't reach it from this Box) or none was checked or revoked. A `roster discover --write` or `roster mesh cut` whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: ``warning: this Box's ssh config didn't follow roster.yml (why): run `roster sync` on this box``.
+With `--json`, the status is the same, and an error is JSON on stderr ([Machine-readable output](#machine-readable-output)). `roster run` exits with the remote command's status, `roster ssh` with ssh's (the remote shell's, or 255 when ssh couldn't connect or log in), `roster vault bw` with `bw`'s, and `roster vault op` with `op`'s, and `roster agent wait` with 124 when its `--timeout` ran out. `roster mesh` and `roster mesh cut` (`--all` too) exit 1 while a Host is pending, and `mesh leftovers [--remove]` when a Host didn't answer. `roster check` and `roster revoke` exit 1 when a Host was skipped (`ssh NAME` doesn't reach it from this Box) or none was checked or revoked. A `roster discover --write` or `roster mesh cut` whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: ``warning: this Box's ssh config didn't follow roster.yml (why): run `roster sync` on this box``.
 
 ## Examples
 
@@ -715,6 +877,7 @@ roster hosts --find esx                  # search names, titles, types, addresse
 roster hosts esx-02                      # everything about one host
 roster check esx-02                      # why a Session to esx-02 would or wouldn't open
 roster check --box                       # this Box's health: roster.yml, ssh, vault, infra repo
+roster ssh switch-01                     # log in; a password-only host's password comes from the vault
 roster run esx-02 -- uptime              # run a command with the stored login
 roster web esx-02 GET /api/status        # an HTTP request, logged in
 roster add nas-01 --ip 10.0.5.50 --auth bw:nas-01 --setup   # one Host you know, then set it up
@@ -733,9 +896,11 @@ roster vault reveal lab-guest --wifi | qrencode -t ansiutf8
   - leave unreviewed hosts alone,
   - run `roster check NAME --json` when a host doesn't respond, and report which step fails.
 
-  It also tells Claude to use `--json` (`roster hosts --json`, `roster hosts NAME --json`, `roster check HOST --json`) when it needs to read roster's data rather than show it.
+  It also tells Claude to use `--json` (`roster hosts --json`, `roster hosts NAME --json`, `roster check HOST --json`) when it needs to read roster's data rather than show it. Its **Agents** section says what the Agent directory is (where the machine runs herdr-core), and how to use `roster agents` and `roster agent read|send|wait|label` to look at or reach another Agent; coordinating is optional.
 - **`CLAUDE.md`** gets an `@ROSTER.md` line added, and its existing content is kept.
 - **`.claude/settings.json`** gets deny rules for reading and editing `~/.ssh`. These are a guardrail, not a wall.
+
+On a Box with herdr-core, they also put a SessionStart hook in your own `~/.claude/settings.json` that starts each new Claude session with a short list of the other Agents (`--no-agents` leaves it out): see [the SessionStart hook](#agents-know-the-others-are-there-the-sessionstart-hook).
 
 For Bitwarden, `(umask 077; bw unlock --raw > ~/.config/roster/bw-session)` lets every roster run on this box use the unlocked vault, including Claude sessions that don't inherit your shell's environment, and `roster vault bw …` runs other `bw` commands with it, read-only unless `--write` ([`roster vault bw`](#roster-vault-bw)). roster ignores the file, with a warning, unless it's yours alone: a plain file, not a symlink, owned by you, that only you can read. `bw lock` ends the session, and the file goes stale with it.
 

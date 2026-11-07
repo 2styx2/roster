@@ -13,6 +13,7 @@ from . import (
     boxkeys,
     boxsync,
     catchup,
+    claude,
     edit,
     fromvault,
     jsonout,
@@ -148,7 +149,14 @@ def say_made(made, value):
         say(f"optional     {git} keeps its history; roster works the same without git")   # as `wrote` names it
 
 
+def opt_agents(args):
+    """--agents / --no-agents (R5): this Box's answer for the Agents' SessionStart hook, kept for later runs."""
+    if args.agents is not None and not getattr(args, "dry_run", False):
+        claude.no_agents(not args.agents)
+
+
 def cmd_setup(cfg, args):
+    opt_agents(args)
     if args.rotate:
         return cmd_rotate(cfg, args)
     return setup(cfg, only=args.only, host=args.host, dry_run=args.dry_run, key_type=args.key_type,
@@ -200,6 +208,7 @@ def cmd_sync(cfg, args):
     from .named import unnamed_from_elsewhere
     # an unnamed ssh config another roster.yml wrote isn't this map's past: no diff against it
     before = sshconfig.written_hosts(current().ssh_config) if unnamed_from_elsewhere() is None else None
+    opt_agents(args)
     write_ssh_config(cfg)
     write_claude_files(cfg)
     warn_overlaps(cfg)
@@ -758,6 +767,11 @@ def login_label(s):
 
 def cmd_run(cfg, args):
     return run.run(cfg, args.host, args.command[1:] if args.command[:1] == ["--"] else args.command, args.sudo)
+
+
+def cmd_ssh(cfg, args):
+    from . import sshsession
+    return sshsession.session(cfg, args.host)
 
 
 def cmd_revoke(cfg, args):
@@ -1430,6 +1444,58 @@ def cmd_inv(args):
     return 0
 
 
+def cmd_agents(args):
+    """`roster agents`: every Agent on this Hub and its herdr machines (agents.py), grouped by Host."""
+    from . import agents
+    if args.action == "sync":
+        return cmd_agents_sync(args)
+    if args.action == "hook":
+        if args.remove:
+            claude.agents_hook(False)
+        else:
+            sys.stdout.write("".join(f"{line}\n" for line in agents.hook_lines()))
+        return 0
+    doc = agents.current()      # a remote Host's copy, else (the Hub) built live
+    stale = agents.stale(doc)
+    if stale:
+        print(f"warning: {stale}", file=sys.stderr, flush=True)
+    if args.json:
+        from . import jsondocs
+        jsonout.emit(jsondocs.AgentDirectoryDoc.model_validate(doc))
+        return 0
+    say(agents.table(doc))
+    return 0
+
+
+def cmd_agents_sync(args):
+    """`roster agents sync`: the Agent directory written into the Hub's and each connected machine's herdr-core."""
+    from . import agents
+    report = agents.sync()
+    if args.json:
+        from . import jsondocs
+        jsonout.emit(jsondocs.AgentSyncDoc.model_validate(report))
+    else:
+        say(agents.sync_table(report))
+    return 0 if all(m["written"] for m in report["machines"] if m["state"] in ("hub", "connected")) else 1
+
+
+def cmd_agent(args):
+    """`roster agent send|read|wait|label`: one Agent, through this machine's herdr-core (agentops.py)."""
+    from . import agentops
+    if args.agent_cmd == "send":
+        say(agentops.send(args.address, args.text))
+        return 0
+    if args.agent_cmd == "read":
+        sys.stdout.write(agentops.read(args.address, args.lines))
+        return 0
+    if args.agent_cmd == "wait":
+        words, code = agentops.wait(args.address, args.timeout)
+        say(words)
+        return code
+    say(agentops.label(args.address, args.text))
+    return 0
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     never_look_in_the_current_folder()      # Windows: nothing roster starts looks for its program in the cwd
@@ -1494,6 +1560,13 @@ def _main(argv=None):
         return cmd_bw(args) if args.vault_cmd == "bw" else cmd_op(args)
     if args.cmd == "inv":
         return cmd_inv(args)
+    if args.cmd == "agents":                  # herdr's, not roster.yml's
+        return cmd_agents(args)
+    if args.cmd == "agent" and args.agent_cmd is None:     # plain `roster agent`: its actions
+        sys.stdout.write(command_parser(parser, ["agent"]).format_help())
+        return 0
+    if args.cmd == "agent":
+        return cmd_agent(args)
     if args.cmd == "revoke" and args.all:
         return revoke.revoke_all(args.yes)
     if args.cmd == "check" and args.box:
@@ -1521,4 +1594,4 @@ def _main(argv=None):
     if args.cmd == "hosts" and args.resources:
         return cmd_resources(cfg, args)
     return {"setup": cmd_setup, "sync": cmd_sync, "check": cmd_check, "hosts": cmd_hosts, "run": cmd_run,
-            "revoke": cmd_revoke, "web": cmd_web, "mesh": cmd_mesh, "add": cmd_add}[args.cmd](cfg, args)
+            "ssh": cmd_ssh, "revoke": cmd_revoke, "web": cmd_web, "mesh": cmd_mesh, "add": cmd_add}[args.cmd](cfg, args)

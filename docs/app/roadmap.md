@@ -1,5 +1,7 @@
 # Roadmap
 
+> **The app is frozen as of 2026-11-06** ([ADR 0011](../adr/0011-herdr-is-the-session-runtime.md)): nothing below is planned any more, and no new work goes into `app/` or `crates/`. Its replacement is [herdr](https://herdr.dev) with the roster mod, [herdr-roster](https://github.com/2styx2/herdr-roster). This page stays as the record of what was built.
+
 We work in iterations. Each one ends with a hands-on check on the Windows machine, against real Hosts (one key-enrolled, one password-only, one unreviewed), before the next one starts. Tickets and their blockers are GitHub issues, one milestone per iteration: https://github.com/2styx2/roster/milestones.
 
 | # | Iteration | Tickets | Done when |

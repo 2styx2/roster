@@ -49,7 +49,8 @@ src/roster/
                     (grep, awk, .NET), and the one parser of what the key scripts print
   authorized.py     that line on a Host: setup's install, re-tag and revoke (the POSIX scripts; winhost's on Windows)
   resources.py      Wi-Fi networks, accounts and secrets with no address: the field schema per type
-  claude.py         ROSTER.md (the one writer, every Inventory's), CLAUDE.md import, .claude/settings.json
+  claude.py         ROSTER.md (the one writer, every Inventory's), CLAUDE.md import, .claude/settings.json, and the
+                    Agents' SessionStart hook in the user's ~/.claude/settings.json (R5)
   aliases.py        the CLI's old names (T222, Q194): one table, each old command line rewritten to its new form
                     before the parser sees it, with one stderr line naming it (none for `roster completion`)
   boxkeys.py        this Box's SSH keys, one per key type (key_type:): a Host's key file, ssh-keygen args, type word;
@@ -63,6 +64,8 @@ src/roster/
   revoke.py         `roster revoke` and `revoke --all`: this Box's key off the Hosts, and which key files to delete after
   run.py            `roster run HOST -- COMMAND`: over the key or the Login's password, --sudo with the password on
                     stdin, a Windows Host's under PowerShell; never by a name that reaches another Inventory's Host
+  sshsession.py     `roster ssh HOST`: an interactive session with the system ssh; a password-only Host's password
+                    through an askpass channel of its own (askpass.py), and a failed login's cause and fix
   boxlock.py        the Box-wide lock (run.lock): one run at a time changes an Inventory's Hosts (setup, revoke, Mesh writes);
                     serve's first-run lock (inventory.create one at a time on this Box)
   boxsync.py        `roster sync` for this Box after roster changed roster.yml: run by store.py's write, serve's and the CLI's
@@ -106,6 +109,14 @@ src/roster/
   errors.py         the stable error codes (JSON-RPC's too) and Problem (code, message, fix): what serve, askpass, check
                     and a die() report (errors.Exit: die(msg, code=) keeps its code for serve and --json); imports
                     nothing else of roster's
+  agents.py         `roster agents`: the Agent directory built live on the Hub from herdr-core (one `hc connect`
+                    round: terminal.list, server.status), and its table (ADR 0011); `agents sync` writing it into
+                    every machine's core (shared document `roster.agents`, JSON-RPC over `hc connect`) and a remote
+                    Host reading its copy;
+                    `agents hook`, the short peer list a new Claude session starts with
+  agentops.py       `roster agent send|read|wait|label`: one Agent by its address, through this machine's herdr-core
+                    (`hc send`, `read`, `wait`, `label`), a Hub Agent by herdr's call-back, or another remote Host's
+                    over the Mesh (`ssh -F MESH-CONFIG HOST hc ...`), after checking it's a live terminal it can reach
   mesh.py           the Mesh: who reaches whom (mesh:, links:), plan/apply over ssh one Host at a time, cut, status,
                     drift for `roster check`; the sh it runs on Hosts (docs/mesh.md)
   meshview.py       the Mesh as text: a plan, an apply, `roster check`'s drift and whether it fails, a cut not finished;
@@ -158,6 +169,8 @@ Tests never leave folders in the temp dir (ticket 109: once 37k of them filled /
 The app's checks are in [app/README.md](../app/README.md#development) (`npm run check` in `app/`, `cargo test` at the root). CI (`.github/workflows/ci.yml`) runs both halves; [CONTRIBUTING.md](../CONTRIBUTING.md) has the branch model. pytest runs on every core (pytest-xdist, `-n auto`), so a test must pass beside others: its own HOME and temp folder (`conftest.py`'s `isolated`), no fixed port, and no tight time limit on how soon something happens that a busy machine misses. Besides Linux, it runs pytest on Windows, in three shards side by side (`--shard K/3`, each on 4 workers): there each stand-in Host command starts Python and Git for Windows' slow-forking `sh`, so the suite takes 47 to 58 minutes of test time. The shards are balanced by time, not count (T233): `conftest.py` deals the tests out longest first, each to the shard with the least so far, by the seconds each took in `tests/durations-windows.json` plus a second each (what a test costs there beyond its own time: without it, the shard of quick tests ran longest); a test the file doesn't know (a new one) counts as the file's average, so adding a test needs no entry, and a name the file has that's gone is ignored. Each Windows shard writes its tests' times (`--store-durations durations.json`, beside its `report.xml` in the `pytest-report-windows-K` artifact), and the nightly run's `Windows shard times` job merges the three into a fresh file (the `windows-durations` artifact, `scripts/shard_durations.py`) and puts each shard's test time in its summary. When the shards drift apart (more than a minute or so of wall time: about 4 minutes of test time on 4 workers), refresh the committed file in a pull request: `gh run download RUN -R 2styx2/roster -n windows-durations -D tests`. A test that hangs fails after 120 s anywhere (pytest-timeout, `pyproject.toml`). It also runs roster-core's `cargo test` on Windows (`Core tests (Windows)`): the core's `cfg(windows)` code, such as the junctions in a Plugin's "stays inside its folder" rule, only runs there. That job tests the core only (the Tauri crate is built by the Windows release build), keeps its own Rust cache, and runs `tests/fake_serve.py` with the Python it installs. It also builds the frontend and checks its JS and CSS against their budget (`scripts/check-bundle-size.py`, [performance.md](app/performance.md#bundle-size)).
 
 ### What CI runs when
+
+**The app is frozen as of 2026-11-06** ([ADR 0011](adr/0011-herdr-is-the-session-runtime.md)): its jobs (App frontend, App full stack, App Rust, Core tests (Windows), the App Windows and Linux release builds, the performance budgets and release.yml's app builds) are kept in the workflows as `if: false`, so they're skipped whatever a pull request touches, and `CI` counts a skipped job as passed. The table below still says what each would run; to un-freeze, put back each job's `if:` from the comment above it.
 
 A push to `main` or `dev`, a tag, the nightly schedule (03:23 UTC, on `main`) and a run by hand run every job, with pytest on Python 3.10, 3.12 and 3.13. A pull request runs a PR-sized set (decision Q196): Python 3.12 only, and only the jobs its changed files need. The `Changes` job works that out (`scripts/ci_changes.py`, tested in `tests/test_ci_changes.py`); the halves read each other's files, so a path runs every job that reads it:
 

@@ -2,7 +2,9 @@
 
 A fast, keyboard-first desktop app that gets you onto any Host in your team's roster Inventory in a few keystrokes, with a shell over your own ssh. [roster](../README.md) (the CLI at the root of this repo) is the only backend: it knows the Hosts and the Logins, and the app reaches it through `roster serve`. The app is the nicest way to reach them.
 
-> Status: **v0.2.0** released; iterations 8 and 9 on `dev` (first-party Plugins, panels docked or full window, a concurrent `roster serve`). See [roadmap.md](../docs/app/roadmap.md) and [news.md](../docs/news.md). The app was a separate repo called roster-desk until it joined this one (decision Q56, ADR 0007); an old roster-desk Config and State are copied over the first time it starts ([config.md](../docs/app/config.md)).
+> **Frozen as of 2026-11-06** ([ADR 0011](../docs/adr/0011-herdr-is-the-session-runtime.md)): no new work goes into the app or `crates/`, CI no longer builds or tests them, and Releases no longer ship it. They stay here, unchanged. Its replacement is [herdr](https://herdr.dev) with the roster mod: [herdr-roster](https://github.com/2styx2/herdr-roster).
+
+> Status (before the freeze): **v0.2.0** released; iterations 8 and 9 on `dev` (first-party Plugins, panels docked or full window, a concurrent `roster serve`). See [roadmap.md](../docs/app/roadmap.md) and [news.md](../docs/news.md). The app was a separate repo called roster-desk until it joined this one (decision Q56, ADR 0007); an old roster-desk Config and State are copied over the first time it starts ([config.md](../docs/app/config.md)).
 
 ## Where to look
 

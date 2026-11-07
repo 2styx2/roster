@@ -391,6 +391,8 @@ if (( keep_roster )); then
 elif have roster; then
     rbin=$(command -v roster)
     page="$(dirname "$(dirname "$rbin")")/share/man/man1/roster.1"
+    # the SessionStart hook `roster setup` put in Claude's settings where herdr-core is (it runs roster)
+    step "Claude's SessionStart hook for the Agents" roster agents hook --remove || true
     if have uv && uv tool list 2>/dev/null | grep -q '^roster '; then
         step "uv tool uninstall roster" uv tool uninstall roster || fail_stage
     else
@@ -424,7 +426,7 @@ for p in "$CONF_DIR"/mesh*.json* "$CONF_DIR"/mesh*.new "$CONF_DIR"/inventories.j
          "$CONF_DIR"/inventory.create.lock "$CONF_DIR"/run.lock "$CONF_DIR"/run-*.lock "$CONF_DIR"/key-created \
          "$CONF_DIR"/key-name "$CONF_DIR"/key-name-* "$CONF_DIR"/key-types "$CONF_DIR"/key-types-* \
          "$CONF_DIR"/setup-left "$CONF_DIR"/setup-left-* "$CONF_DIR"/vault-sync "$CONF_DIR"/vault-seen \
-         "$CONF_DIR"/.*.new "$CONF_DIR"/key-rotation "$CONF_DIR"/key-rotation-*; do
+         "$CONF_DIR"/no-agents "$CONF_DIR"/.*.new "$CONF_DIR"/key-rotation "$CONF_DIR"/key-rotation-*; do
     [[ -e $p ]] || continue
     if (( rotating )) && [[ ${p##*/} == key-rotation* && ${p##*/} != *.new ]]; then kept_rotation+=("$p"); else mine+=("$p"); fi
 done

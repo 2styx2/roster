@@ -145,6 +145,8 @@ cd ~/infra && claude
 
 `CLAUDE.md` imports `ROSTER.md`, so Claude knows the hosts and reaches them through `ssh`, `roster run` and `roster web` without seeing passwords, and reads roster's data with `--json` ([Machine-readable output](cli-reference.md#machine-readable-output)). After editing `roster.yml`, run `roster sync` to refresh `ROSTER.md` and the SSH config.
 
+On a box that runs herdr-core (`hc`), setup and sync also add a SessionStart hook to your `~/.claude/settings.json`, so each new Claude session starts with a short list of the other Agents in the Agent directory, and `ROSTER.md`'s Agents section tells Claude how to reach one (`roster agent read|send|wait`) when its work needs it. `roster sync --no-agents` turns that off on this box. See [the SessionStart hook](cli-reference.md#agents-know-the-others-are-there-the-sessionstart-hook).
+
 ## 9. Optional: add your own Inventory
 
 Keep your own machines (a Raspberry Pi at home, the router) in an Inventory of your own, in its own private repo or folder, rather than in the team's: teammates would see them, and every teammate's `roster setup` would try to reach them. Name both on this Box; one is active:

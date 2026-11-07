@@ -4,14 +4,21 @@ roster \- give this box (and Claude) access to the hosts in roster.yml
 .SH SYNOPSIS
 .nf
 roster init [\-\-blank | \-\-inventory HOW] [\-\-name NAME]
-roster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force] [\-\-key\-type TYPE] [\-\-rotate]
-roster sync [\-\-no\-vault]
+roster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force] [\-\-key\-type TYPE] [\-\-rotate] [\-\-no\-agents | \-\-agents]
+roster sync [\-\-no\-vault] [\-\-no\-agents | \-\-agents]
 roster check [\-\-box] [\-\-auth] [\-\-only LIST | \-\-host NAME] [\-\-json] [host]
 roster hosts [\-\-resources] [\-\-only LIST] [\-\-find TEXT] [\-\-all] [\-\-long] [\-\-json] [NAME ...]
 roster run [\-\-sudo] host ...
+roster ssh host
 roster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-save\-to\-vault] [\-\-save\-to TARGET] [\-\-provider PROVIDER] [\-\-json] [\-\-all] [\-\-mark\-seen] [\-\-no\-sync] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]
 roster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]
 roster web [\-d BODY] [\-H HEADER] [\-k] [\-\-timeout SECONDS] HOST [SERVICE] METHOD PATH [HOST [SERVICE] METHOD PATH ...]
+roster agents [\-\-remove] [\-\-json] [{sync,hook}]
+roster agent ACTION ...
+roster agent send ADDRESS TEXT
+roster agent read [\-\-lines N] ADDRESS
+roster agent wait [\-\-timeout SECONDS] ADDRESS
+roster agent label [ADDRESS] TEXT
 roster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-all] [\-\-remove] [\-\-json] [{cut,status,leftovers}] [HOST]
 roster revoke [\-\-only LIST] [\-\-all] [\-y]
 roster inv [\-\-json] {list,add,use,remove,which} [NAME] [PATH]
@@ -65,9 +72,9 @@ blank, file:PATH (a copy of that roster.yml, once it loads), repo:URL (a git clo
 name the new Inventory too (`roster inv add NAME PATH`), e.g. beside one you keep
 .SS setup
 .PP
-\fBroster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force] [\-\-key\-type TYPE] [\-\-rotate]\fR
+\fBroster setup [\-\-only LIST | \-\-host NAME] [\-\-dry\-run] [\-\-force] [\-\-key\-type TYPE] [\-\-rotate] [\-\-no\-agents | \-\-agents]\fR
 .PP
-One\-time per box: key, fingerprints, key install, SSH config, Claude files (\fB\-\-only\fR, \fB\-\-host NAME\fR, \fB\-\-dry\-run\fR, \fB\-\-key\-type TYPE\fR, \fB\-\-rotate\fR). \fB\-\-rotate\fR replaces the Box key on every Host, the new one proven on each before the old one's line goes (Rotating the Box key); plain \fBsetup\fR exits 1 while a rotation is pending. Each Host gets the key of its own \fBkey_type:\fR (one key per type on this Box, made on first need); a Host whose key type changed gets the new key, and loses the old one only once the new one logs in. \fB\-\-host NAME \-\-key\-type TYPE\fR tries TYPE on that Host for this run, over \fBroster.yml\fR (it needs \fB\-\-host\fR): its line goes in beside this Box's line of \fBroster.yml\fR\&'s type, which stays, so the next \fBroster sync\fR (which writes \fBroster.yml\fR\&'s type back) still logs in; another try takes the one before off; set \fBkey_type:\fR to keep it (FIPS Hosts). Where the key already works, a line of this Box's of another type that \fB~/.config/roster/key\-types\fR records there (a \fB\-\-key\-type\fR try's, a cleanup that failed) is taken off over the key login (T245). A type change puts the new key's line in, tests it, and only then takes the old type's line off; a Host that refuses the new type keeps the old line. \fB\-\-host NAME\fR is exactly the Host by that name, never a group, type or product NAME that \fB\-\-only NAME\fR would take too; like \fB\-\-only\fR it leaves the Mesh to \fBroster mesh\fR\&. After a rename, it re\-tags this Box's key where it works; a Host where another key's line already has the new name fails with 190 and is left as it is, unless \fB\-\-force\fR
+One\-time per box: key, fingerprints, key install, SSH config, Claude files (\fB\-\-only\fR, \fB\-\-host NAME\fR, \fB\-\-dry\-run\fR, \fB\-\-key\-type TYPE\fR, \fB\-\-rotate\fR, \fB\-\-no\-agents\fR, \fB\-\-agents\fR). \fB\-\-rotate\fR replaces the Box key on every Host, the new one proven on each before the old one's line goes (Rotating the Box key); plain \fBsetup\fR exits 1 while a rotation is pending. Each Host gets the key of its own \fBkey_type:\fR (one key per type on this Box, made on first need); a Host whose key type changed gets the new key, and loses the old one only once the new one logs in. \fB\-\-host NAME \-\-key\-type TYPE\fR tries TYPE on that Host for this run, over \fBroster.yml\fR (it needs \fB\-\-host\fR): its line goes in beside this Box's line of \fBroster.yml\fR\&'s type, which stays, so the next \fBroster sync\fR (which writes \fBroster.yml\fR\&'s type back) still logs in; another try takes the one before off; set \fBkey_type:\fR to keep it (FIPS Hosts). Where the key already works, a line of this Box's of another type that \fB~/.config/roster/key\-types\fR records there (a \fB\-\-key\-type\fR try's, a cleanup that failed) is taken off over the key login (T245). A type change puts the new key's line in, tests it, and only then takes the old type's line off; a Host that refuses the new type keeps the old line. \fB\-\-host NAME\fR is exactly the Host by that name, never a group, type or product NAME that \fB\-\-only NAME\fR would take too; like \fB\-\-only\fR it leaves the Mesh to \fBroster mesh\fR\&. After a rename, it re\-tags this Box's key where it works; a Host where another key's line already has the new name fails with 190 and is left as it is, unless \fB\-\-force\fR
 .TP
 \fB\-\-only LIST\fR
 only these hosts, groups, types or products (comma\-separated)
@@ -86,14 +93,26 @@ with \-\-host: try this SSH key type there, over roster.yml's key_type: (ed25519
 .TP
 \fB\-\-rotate\fR
 replace the Box key (this Box's own key, not a Mesh key: `roster mesh \-\-rotate HOST` does those) on every Host: a new key, proven on each Host before the old key's line goes, then the old key deleted. \-\-host NAME (a Host or a group) narrows it; a Host not reached stays pending until setup \-\-rotate runs again
+.TP
+\fB\-\-no\-agents\fR
+take the SessionStart hook that shows new Claude sessions the other herdr Agents out of your Claude settings, and leave it out on this Box from now on
+.TP
+\fB\-\-agents\fR
+put that hook back after \-\-no\-agents (it's there by default where herdr\-core is)
 .SS sync
 .PP
-\fBroster sync [\-\-no\-vault]\fR
+\fBroster sync [\-\-no\-vault] [\-\-no\-agents | \-\-agents]\fR
 .PP
-Rewrite the SSH config and Claude files after editing \fBroster.yml\fR, and sync the vault too, as \fBvault sync\fR does (\fB\-\-no\-vault\fR: the map only). It touches no Host, and ends with what changed and, when something is left, \fBnext:\fR and the command for it (When your vault changes). A vault it couldn't sync (locked, offline) is said, never a failure. A Host taken out of \fBroster.yml\fR gets a note that this Box's key may still be on it
+Rewrite the SSH config and Claude files after editing \fBroster.yml\fR, and sync the vault too, as \fBvault sync\fR does (\fB\-\-no\-vault\fR: the map only). Where herdr\-core is, setup and sync also put the Agents' SessionStart hook in your Claude settings; \fB\-\-no\-agents\fR takes it out and keeps it out on this Box, \fB\-\-agents\fR puts it back (the SessionStart hook). It touches no Host, and ends with what changed and, when something is left, \fBnext:\fR and the command for it (When your vault changes). A vault it couldn't sync (locked, offline) is said, never a failure. A Host taken out of \fBroster.yml\fR gets a note that this Box's key may still be on it
 .TP
 \fB\-\-no\-vault\fR
 the map only: leave the vault as last synced
+.TP
+\fB\-\-no\-agents\fR
+take the SessionStart hook that shows new Claude sessions the other herdr Agents out of your Claude settings, and leave it out on this Box from now on
+.TP
+\fB\-\-agents\fR
+put that hook back after \-\-no\-agents (it's there by default where herdr\-core is)
 .SS check
 .PP
 \fBroster check [\-\-box] [\-\-auth] [\-\-only LIST | \-\-host NAME] [\-\-json] [host]\fR
@@ -157,6 +176,14 @@ the host to run it on
 .TP
 \fBCOMMAND\fR
 the command, after \-\-
+.SS ssh
+.PP
+\fBroster ssh host\fR
+.PP
+An interactive ssh session to a Host, as the roster app's Host terminals open it (ADR 0011). A key Host runs the system \fBssh HOST\fR with roster's ssh config and known hosts, so a \fBProxyJump\fR your \fB~/.ssh/config\fR gives the Host applies. A password\-only Host gets its Login's password from the vault through roster's askpass channel: a one\-time token in ssh's environment, the password handed only to ssh's own login prompt, never on a command line, stdout, stderr or the scrollback; a jump Host that asks for a password of its own is refused (36: give it this Box's key). No password is typed into the session after the login (no Prompt fill). Refused before connecting, exit 1, with the code and fix: an unknown Host (2), one not in this Box's ssh config yet (21: \fBroster sync\fR), a locked vault (14), a vault item missing or doubled (32, 33). ssh's own messages pass through; a failed connection or login (exit 255) is followed by its cause and fix, as \fBroster run\fR\&'s (\fBroster: [209] esx\-02 has never answered at 10.0.0.6: ...\fR). Otherwise it exits with ssh's code (the remote shell's). See \fBroster ssh HOST\fR
+.TP
+\fBHOST\fR
+the Host to log in to
 .SS add
 .PP
 \fBroster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-save\-to\-vault] [\-\-save\-to TARGET] [\-\-provider PROVIDER] [\-\-json] [\-\-all] [\-\-mark\-seen] [\-\-no\-sync] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]\fR
@@ -286,6 +313,69 @@ don't verify the TLS certificate
 .TP
 \fB\-\-timeout SECONDS\fR
 how long to wait for the answer (default: 30)
+.SS agents
+.PP
+\fBroster agents [\-\-remove] [\-\-json] [{sync,hook}]\fR
+.PP
+Every Agent (a terminal that reports an agent status to herdr: Claude Code does so itself) on this Hub and its herdr machines, built live from herdr\-core (one \fBhc connect\fR round: \fBterminal.list\fR and \fBserver.status\fR): one block per Host (the Hub first, then each machine with its state: \fBconnected\fR, \fBconnecting\fR, \fBunavailable\fR), a row per Agent with its address (\fBHOST/tN\fR), status (\fBworking\fR, \fBblocked\fR, \fBidle\fR, \fBdone\fR), label (its \fBroster.label\fR), folder and how long it has run. A machine that isn't connected is listed with its state and no Agents. On a remote Host it reads the copy the Hub last wrote there instead, says how old it is and which machine you are, and warns when it's stale. \fBagents sync\fR writes the directory into the Hub's herdr\-core and each connected machine's, as the shared document \fBroster.agents\fR, and says which failed (exit 1). \fBagents hook\fR is what Claude Code's SessionStart hook runs: a short list of the other Agents, or nothing, never an error; \fBagents hook \-\-remove\fR takes that hook out of your Claude settings (the SessionStart hook). Needs no \fBroster.yml\fR; with no \fBhc\fR on PATH or in \fB~/.local/bin\fR, or a core that doesn't answer, it says so and exits 1. See Agents
+.TP
+\fBACTION\fR
+sync: write the Agent directory into every connected machine's herdr\-core (and the Hub's) as the shared document roster.agents, and say which failed. hook: the short list of the other Agents that Claude Code's SessionStart hook shows a new session (nothing when there's no herdr or no other Agent; never an error)
+.TP
+\fB\-\-remove\fR
+with hook: take the SessionStart hook out of your Claude settings (uninstall.sh runs it)
+.TP
+\fB\-\-json\fR
+print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
+.SS agent
+.PP
+\fBroster agent ACTION ...\fR
+.PP
+Reach one Agent by its address (\fBHOST/tN\fR, as \fBroster agents\fR shows it), through this machine's herdr\-core: one action each (below); plain \fBroster agent\fR lists them. From the Hub every Agent on it and its connected machines; on another machine, the Agents on that same machine. An unknown address, an Agent that has ended, a machine this herdr\-core hasn't added or one that isn't connected is refused before anything is sent, exit 1, with what to do. Needs no \fBroster.yml\fR\&. See Reaching an Agent
+.SS agent send
+.PP
+\fBroster agent send ADDRESS TEXT\fR
+.PP
+Type TEXT into the Agent and press Enter, as a person would (\fBhc send\fR); says whether it was idle or working then. A blocked Agent (waiting on its own question) is refused by herdr\-core, not answered
+.TP
+\fBADDRESS\fR
+the Agent: HOST/tN, as roster agents shows it
+.TP
+\fBTEXT\fR
+the message
+.SS agent read
+.PP
+\fBroster agent read [\-\-lines N] ADDRESS\fR
+.PP
+Print the Agent's screen (\fBhc read\fR), with N lines of history above it
+.TP
+\fBADDRESS\fR
+the Agent: HOST/tN, as roster agents shows it
+.TP
+\fB\-\-lines N\fR
+lines of history above the screen (default: 0)
+.SS agent wait
+.PP
+\fBroster agent wait [\-\-timeout SECONDS] ADDRESS\fR
+.PP
+Wait until the Agent stops working (\fBhc wait\fR), then say how it is (\fBidle\fR, \fBblocked\fR, \fBdone\fR, or that it ended). \fB\-\-timeout\fR: give up after that long and exit 124 (default: herdr\-core's own, 180 s unless its config says otherwise)
+.TP
+\fBADDRESS\fR
+the Agent: HOST/tN, as roster agents shows it
+.TP
+\fB\-\-timeout SECONDS\fR
+give up after this long, exit 124 (default: herdr\-core's, 180 unless set)
+.SS agent label
+.PP
+\fBroster agent label [ADDRESS] TEXT\fR
+.PP
+Set the Agent's label, its herdr label \fBroster.label\fR, which \fBroster agents\fR shows; \fB""\fR removes it. Without ADDRESS, the Agent this runs in (the herdr terminal in \fBHC_TERMINAL_ID\fR); outside herdr that's refused
+.TP
+\fBADDRESS\fR
+the Agent: HOST/tN (default: the herdr terminal this runs in, HC_TERMINAL_ID)
+.TP
+\fBTEXT\fR
+the label: what the Agent is on ("" removes it)
 .SS mesh
 .PP
 \fBroster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-all] [\-\-remove] [\-\-json] [{cut,status,leftovers}] [HOST]\fR
@@ -448,7 +538,7 @@ Internal, run by ssh: the \fBSSH_ASKPASS\fR helper for a \fBserve\fR password Se
 the prompt ssh shows
 .SH JSON OUTPUT
 .PP
-The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBhosts\fR (with \fB\-\-only\fR, \fB\-\-find\fR, \fB\-\-all\fR), \fBadd \-\-from\-vault\fR (no NAME: the list), \fBhosts NAME\fR, \fBhosts \-\-resources\fR, \fBcheck\fR, \fBcheck HOST\fR, \fBcheck \-\-box\fR, \fBcheck \-\-auth\fR, \fBdiscover\fR (its preview, without \fB\-\-write\fR), \fBmesh status\fR, \fBmesh \-\-dry\-run\fR (the plan) and \fBvault status\fR\&. The CLI is roster's interface for other apps; \fBroster serve\fR is the desktop app's own backend, not a public API. With \fB\-\-json\fR, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
+The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBhosts\fR (with \fB\-\-only\fR, \fB\-\-find\fR, \fB\-\-all\fR), \fBadd \-\-from\-vault\fR (no NAME: the list), \fBhosts NAME\fR, \fBhosts \-\-resources\fR, \fBcheck\fR, \fBcheck HOST\fR, \fBcheck \-\-box\fR, \fBcheck \-\-auth\fR, \fBdiscover\fR (its preview, without \fB\-\-write\fR), \fBmesh status\fR, \fBmesh \-\-dry\-run\fR (the plan), \fBvault status\fR and \fBagents\fR\&. The CLI is roster's interface for other apps; \fBroster serve\fR is the desktop app's own backend, not a public API. With \fB\-\-json\fR, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
 .IP \(bu 2
 \fBNever a secret.\fR Logins are references: the provider and the item (\fBbw:esx\-02 ssh\fR, \fBop:Lab/esx\-02\fR, \fBprompt\fR, \fBagent\fR). A \fBcmd:\fR or \fBenv:\fR reference says how a secret is fetched, and a password pasted into a \fBcmd:\fR line would show, so each one is cut to its kind (\fBcmd:\fR, \fBenv:\fR) everywhere in the output, error messages and check messages included, the way Plugins get them: a \fBcmd:\fR one to the end of its line, an \fBenv:\fR one its variable's name, wherever one starts a text or follows a space, a quote or one of \fB=:,({[\fR\&. An error message keeps a trailing \fB(code N)\fR\&. The cases both implementations are tested against are in \fBtests/vectors/redaction.json\fR\&. \fBcheck \-\-auth \-\-json\fR fetches every secret it tests and says only whether it was found. \fBvault reveal\fR has no \fB\-\-json\fR: it's for a person.
 .IP \(bu 2
@@ -501,6 +591,12 @@ The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBh
 .TP
 \fBcheck \-\-auth \-\-json\fR
 \fB{version, logins: [{group, auth, users, used_for: [{service, hosts}], status, error?}], ok}\fR: one row per Login reference and group; \fBstatus\fR is \fBok\fR (a value was found; it isn't tested against a Host), \fBfail\fR (with \fBerror\fR) or \fBask\fR (\fBprompt\fR). Exit 1 if one failed
+.TP
+\fBagents \-\-json\fR
+The Agent directory, version 1: \fB{version, hub, you, updated, machines: [{name, state}], agents: [{address, host, terminal, app, status, label, folder, parent, started}]}\fR\&. \fBhub\fR is the Hub's herdr\-core name, \fByou\fR the machine this copy was written to (\fBnull\fR on the Hub, where it's built live), \fBupdated\fR and \fBstarted\fR ISO\-8601 times in UTC. \fBmachines\fR are the machines added on the Hub with herdr's state (\fBconnected\fR, \fBconnecting\fR, \fBunavailable\fR). An Agent's \fBaddress\fR is \fBHOST/TERMINAL\fR (\fBweb\-01/t2\fR; the Hub's own are \fBHUB/t1\fR), \fBapp\fR what reports the status (\fBclaude\-code\fR), \fBstatus\fR herdr's word (\fBworking\fR, \fBblocked\fR, \fBidle\fR, \fBdone\fR), \fBlabel\fR its \fBroster.label\fR (\fB""\fR without one), \fBfolder\fR where it started, \fBparent\fR the terminal that started it (\fBnull\fR: none). No secret and no screen text. On a remote Host it's the copy the Hub wrote there (\fByou\fR this machine's name), as written. Errors: \fB3\fR no \fBhc\fR, or herdr\-core didn't answer
+.TP
+\fBagents sync \-\-json\fR
+\fB{version, hub, updated, agents, machines: [{name, state, written, error}]}\fR: where the directory of \fBupdated\fR (with \fBagents\fR Agents in it) was written. The Hub comes first with \fBstate\fR \fBhub\fR, then each machine with herdr's state; \fBwritten\fR false with \fBerror\fR herdr's words when its core refused, with \fBerror\fR \fBnull\fR when it was skipped (not connected). Exit 1 if a write failed
 .PP
 Wrapped and cut short here (\fB\&...\fR); roster prints each document on one line:
 .PP
@@ -601,6 +697,9 @@ A 1Password service account, for headless boxes
 .TP
 \fBXDG_RUNTIME_DIR\fR
 Where roster keeps its short\-lived private state
+.TP
+\fBHC_TERMINAL_ID\fR
+Set by herdr in its terminals (\fBt4\fR): the Agent \fBroster agent label TEXT\fR labels when no address is given
 .SH EXIT STATUS
 .TP
 \fB0\fR
@@ -615,7 +714,7 @@ Wrong arguments
 \fB130\fR
 Interrupted with Ctrl+C
 .PP
-With \fB\-\-json\fR, the status is the same, and an error is JSON on stderr (Machine\-readable output). \fBroster run\fR exits with the remote command's status, \fBroster vault bw\fR with \fBbw\fR\&'s, and \fBroster vault op\fR with \fBop\fR\&'s. \fBroster mesh\fR and \fBroster mesh cut\fR (\fB\-\-all\fR too) exit 1 while a Host is pending, and \fBmesh leftovers [\-\-remove]\fR when a Host didn't answer. \fBroster check\fR and \fBroster revoke\fR exit 1 when a Host was skipped (\fBssh NAME\fR doesn't reach it from this Box) or none was checked or revoked. A \fBroster discover \-\-write\fR or \fBroster mesh cut\fR whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: `\fBwarning: this Box's ssh config didn't follow roster.yml (why): run \fRroster sync\fB on this box\fR`.
+With \fB\-\-json\fR, the status is the same, and an error is JSON on stderr (Machine\-readable output). \fBroster run\fR exits with the remote command's status, \fBroster ssh\fR with ssh's (the remote shell's, or 255 when ssh couldn't connect or log in), \fBroster vault bw\fR with \fBbw\fR\&'s, and \fBroster vault op\fR with \fBop\fR\&'s, and \fBroster agent wait\fR with 124 when its \fB\-\-timeout\fR ran out. \fBroster mesh\fR and \fBroster mesh cut\fR (\fB\-\-all\fR too) exit 1 while a Host is pending, and \fBmesh leftovers [\-\-remove]\fR when a Host didn't answer. \fBroster check\fR and \fBroster revoke\fR exit 1 when a Host was skipped (\fBssh NAME\fR doesn't reach it from this Box) or none was checked or revoked. A \fBroster discover \-\-write\fR or \fBroster mesh cut\fR whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: `\fBwarning: this Box's ssh config didn't follow roster.yml (why): run \fRroster sync\fB on this box\fR`.
 .SH EXAMPLES
 .PP
 .nf
@@ -627,6 +726,7 @@ roster hosts \-\-find esx                  # search names, titles, types, addres
 roster hosts esx\-02                      # everything about one host
 roster check esx\-02                      # why a Session to esx\-02 would or wouldn't open
 roster check \-\-box                       # this Box's health: roster.yml, ssh, vault, infra repo
+roster ssh switch\-01                     # log in; a password\-only host's password comes from the vault
 roster run esx\-02 \-\- uptime              # run a command with the stored login
 roster web esx\-02 GET /api/status        # an HTTP request, logged in
 roster add nas\-01 \-\-ip 10.0.5.50 \-\-auth bw:nas\-01 \-\-setup   # one Host you know, then set it up

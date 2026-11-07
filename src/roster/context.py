@@ -135,6 +135,8 @@ BOX_FILES = {
     "vault_seen": "vault-seen",
     # a folder: per provider, `roster vault sync`'s snapshot of item ids and revision dates
     "vault_sync": "vault-sync",
+    # there when this Box opted out of the Agents' SessionStart hook (`roster sync --no-agents`, R5)
+    "no_agents": "no-agents",
 }
 
 

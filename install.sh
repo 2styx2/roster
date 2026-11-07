@@ -441,6 +441,17 @@ esac
 
 # 4. Bitwarden CLI
 stage 4
+
+fetch_bw() {                    # fetch_bw ZIP: the Linux x86_64 bw zip from Bitwarden's download link or, when that
+    # link fails (it answers 404 at times), from the newest cli-v* Release on GitHub, found in the releases feed
+    local zip=$1 tag
+    curl -fsSL -o "$zip" "https://vault.bitwarden.com/download/?app=cli&platform=linux" && return
+    echo "Bitwarden's download link failed: trying the GitHub Release"
+    tag=$(curl -fsSL https://github.com/bitwarden/clients/releases.atom | grep -oE 'releases/tag/cli-v[0-9.]+' | head -n 1)
+    tag=${tag##*/}
+    [[ -n $tag ]] || { echo "no cli-v* Release in the feed"; return 1; }
+    curl -fsSL -o "$zip" "https://github.com/bitwarden/clients/releases/download/$tag/bw-linux-${tag#cli-v}.zip"
+}
 if have bw; then ok "bw $(bw --version 2>/dev/null) already installed"; done_stage
 elif ask "Install the Bitwarden CLI (bw)? roster fetches passwords with it" Y; then
     # On Linux x86_64 the standalone binary, into ~/.local/bin (no root; a system npm's -g needs it). It's a zip:
@@ -453,7 +464,7 @@ elif ask "Install the Bitwarden CLI (bw)? roster fetches passwords with it" Y; t
         step "npm install -g @bitwarden/cli" npm install -g @bitwarden/cli && done_stage || fail_stage
     elif (( standalone )); then
         tmp=$(mktemp -d)
-        if step "download bw" curl -fsSL -o "$tmp/bw.zip" "https://vault.bitwarden.com/download/?app=cli&platform=linux" \
+        if step "download bw" fetch_bw "$tmp/bw.zip" \
            && step "unpack bw into ~/.local/bin" sh -c "mkdir -p '$HOME/.local/bin' && unzip -oq '$tmp/bw.zip' -d '$HOME/.local/bin' && chmod +x '$HOME/.local/bin/bw'"
         then done_stage; else fail_stage; fi
         rm -rf "$tmp"
