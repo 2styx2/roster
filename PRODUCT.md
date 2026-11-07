@@ -64,7 +64,7 @@ The reference points are SecureCRT for the skeleton (saved Hosts, tabs, logging 
 - Name: **roster**, lowercase in running text.
 - Mark: the **Gap orbit** logo (Q57), with assets in `app/assets/`.
 - Identity, voice and taste: `docs/app/design/taste.md` is binding and wins over outside references, except on accessibility. The voice is honest and plain: say what happened, where it lives and the one thing to do next. No exclamation marks, no "Oops", no blame, no emoji in our own copy.
-- Licence: GPL-3.0-or-later. A personal-first open-source tool: choose what feels best to use every day over what would sell.
+- Licence: Apache-2.0 (GPL-3.0-or-later up to v0.7.0). A personal-first open-source tool: choose what feels best to use every day over what would sell.
 
 ## Evidence on Hand
 

@@ -63,9 +63,8 @@ The sources: `crates/roster-core/src/config/shape` for `init.lua`'s `roster` tab
 
 ## License of contributions
 
-roster is licensed under the GNU General Public License, version 3 or (at your option) any later version (`GPL-3.0-or-later`, see [LICENSE](LICENSE)).
+roster is licensed under the Apache License, version 2.0 (`Apache-2.0`, see [LICENSE](LICENSE)).
 
 By opening a pull request you agree that:
 
-- your contribution is your own work (or you have the right to submit it), and it's licensed to everyone under `GPL-3.0-or-later`, like the rest of roster;
-- the maintainer may also license your contribution under other terms, including a commercial license, so roster can be offered under a separate license to anyone who can't use the GPL. You keep the copyright in your contribution.
+- your contribution is your own work (or you have the right to submit it), and it's licensed to everyone under `Apache-2.0`, like the rest of roster (section 5 of the licence). You keep the copyright in your contribution.

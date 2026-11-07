@@ -397,7 +397,7 @@ describe(":version (T180)", () => {
     await user.keyboard(`${LEADER}:version{Enter}`);
     expect(heading()).toHaveTextContent(/^roster \d+\.\d+\.\d+$/);
     const text = help().textContent ?? "";
-    expect(text).toMatch(/GNU General Public License, version 3 or later/);
+    expect(text).toMatch(/Apache License, version 2\.0 \(Apache-2\.0\)/);
     expect(text).toMatch(/Roster\.app\/Contents\/Resources/);
     expect(text).toMatch(/\/usr\/lib\/Roster/);
     // The notices themselves, from THIRD-PARTY-NOTICES as the build had it.

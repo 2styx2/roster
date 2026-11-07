@@ -39,7 +39,7 @@ ${luaStubs(pluginApiData)}
 // `:version` (T180): the licences every copy of the app must carry, and where the installers put them.
 const version = `# roster ${APP_VERSION}
 
-roster is free software under the GNU General Public License, version 3 or later (GPL-3.0-or-later): \`LICENSE\` has its text. Some of the app's code comes from other projects, under their own licences: \`THIRD-PARTY-NOTICES\`, below, lists each part with its copyright and licence. What changed in this version: [What's new](docs/news.md).
+roster is open source under the Apache License, version 2.0 (Apache-2.0): \`LICENSE\` has its text. Some of the app's code comes from other projects, under their own licences: \`THIRD-PARTY-NOTICES\`, below, lists each part with its copyright and licence. What changed in this version: [What's new](docs/news.md).
 
 ## Where they're installed
 

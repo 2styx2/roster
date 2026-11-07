@@ -2,7 +2,7 @@
 name = "roster-core"
 version = "0.7.0"
 edition = "2024"
-license = "GPL-3.0-or-later"
+license = "Apache-2.0"
 description = "The roster app's Tauri-free core: backend detection, the roster serve JSON-RPC client, the session manager"
 
 [dependencies]
