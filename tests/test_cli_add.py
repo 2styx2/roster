@@ -464,3 +464,107 @@ def test_vault_item_fields_refuses_a_field_or_an_option(serve, yml, bw_items, it
     s = serve()
     s.call("vault.unlock", {"provider": "bw", "password": "hunter2"})
     assert s.call("vault.item_fields", {"provider": "bw", "item": item})["error"]["code"] == -32602
+
+
+
+# ---------------------------------------------------------------- every field a Host can have (#563)
+
+def host_json(capsys, name):
+    """`roster hosts NAME --json`'s host, as the file loads now."""
+    capsys.readouterr()
+    assert main(["hosts", name, "--json"]) == 0
+    return json.loads(capsys.readouterr().out)["host"]
+
+
+def test_every_text_field_and_the_mac_go_in_and_load(capsys, yml):
+    rc, _, _ = run(capsys, "nas", "--ip", "10.0.0.50", "--group", "lab", "--title", "The NAS", "--description",
+                   "backups, nightly", "--type", "nas", "--product", "Appliance 4", "--mac", "02:00:00:00:00:01",
+                   "--yes")
+    assert rc == 0
+    h = host_json(capsys, "nas")
+    assert (h["title"], h["description"], h["type"], h["product"], h["mac"]) == (
+        "The NAS", "backups, nightly", "nas", "Appliance 4", "02:00:00:00:00:01")
+
+
+def test_services_and_the_web_ui_go_in_with_their_own_login(capsys, yml):
+    rc, _, _ = run(capsys, "nas", "--ip", "10.0.0.50", "--group", "lab", "--web", "https://10.0.0.50:5001/",
+                   "--service", "api,port=8443,scheme=https,login=bearer,auth=bw:nas api,verify=false",
+                   "--service", "postgres:5432", "--yes")
+    assert rc == 0
+    s = host_json(capsys, "nas")["services"]
+    assert s["web"]["url"] == "https://10.0.0.50:5001/" and s["web"]["port"] == 5001
+    assert (s["api"]["port"], s["api"]["scheme"], s["api"]["login"], s["api"]["auth"], s["api"]["verify"]) == (
+        8443, "https", "bearer", "bw:nas api", False)
+    assert s["postgres"]["port"] == 5432
+
+
+def test_the_mesh_key_type_sudo_shell_hooks_and_seen_as_go_in_a_new_group(capsys, yml):
+    rc, _, _ = run(capsys, "web-01", "--ip", "10.0.0.20", "--group", "web", "--mesh", "--mesh-dir", "/srv/mesh",
+                   "--key-type", "rsa", "--sudo-auth", "bw:web-01 sudo", "--no-shell-hooks", "--seen-as",
+                   "10.0.9.1", "--seen-as", "10.0.8.0/24", "--yes")
+    assert rc == 0
+    assert yml.read_text() == YML + (
+        "  web:\n    hosts:\n      web-01:\n        ip: 10.0.0.20\n        mesh: true\n        mesh_dir: /srv/mesh\n"
+        "        key_type: rsa\n        sudo: {auth: bw:web-01 sudo}\n        shell_hooks: false\n"
+        "        seen_as: [10.0.9.1, 10.0.8.0/24]\n")
+    h = host_json(capsys, "web-01")
+    assert h["mesh"] is True and h["key_type"] == "rsa" and h["shell_hooks"] is False
+
+
+@pytest.mark.parametrize("flags, what", [
+    (["--service", "api,port=http"], "port must be a number"),
+    (["--service", "api,colour=red"], "unknown setting 'colour'"),
+    (["--service", "api,url=ftp://x"], "url must be http(s)"),
+    (["--service", "api,port=443,url=https://10.0.0.50:8443/"], "doesn't match url"),
+    (["--key-type", "dsa"], "key_type"),
+    (["--mesh-dir", "relative/dir"], "mesh_dir"),
+    (["--sudo-auth", "prompt"], "sudo"),
+    (["--seen-as", "not-an-address"], "seen_as")])
+def test_a_bad_field_is_refused_and_nothing_is_written(capsys, yml, flags, what):
+    message = fails(capsys, "nas", "--ip", "10.0.0.50", *flags, "--yes")
+    assert "[80]" in message and what in message
+    assert yml.read_text() == YML
+
+
+def test_json_prints_the_added_host_as_hosts_name_json_does(capsys, yml):
+    rc, out, err = run(capsys, "nas", "--ip", "10.0.0.50", "--group", "lab", "--product", "Appliance 4", "--json")
+    assert rc == 0
+    doc = json.loads(out)
+    assert doc["version"] == 1 and doc["host"]["name"] == "nas" and doc["host"]["product"] == "Appliance 4"
+    assert "wrote" in err                                       # its lines go to stderr
+    assert main(["hosts", "nas", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == doc
+
+
+def test_json_dry_run_says_what_it_would_write_and_writes_nothing(capsys, yml):
+    rc, out, _ = run(capsys, "nas", "--ip", "10.0.0.50", "--group", "new", "--description", "a, b", "--dry-run",
+                     "--json")
+    assert rc == 0
+    doc = json.loads(out)
+    assert doc["dry_run"] is True and doc["new_group"] is True and doc["kind"] == "file"
+    assert doc["group"] == {"name": "new", "title": "", "description": ""}
+    assert doc["host"]["description"] == "a, b"
+    assert "+       nas:" in doc["lines"] and "+         description: a, b" in doc["lines"]
+    assert yml.read_text() == YML
+
+
+def test_dry_run_shows_the_lines_of_every_field(capsys, yml):
+    rc, out, _ = run(capsys, "nas", "--ip", "10.0.0.50", "--group", "lab", "--service", "web,port=8443",
+                     "--product", "Appliance 4", "--dry-run", "--yes")
+    assert rc == 0 and yml.read_text() == YML
+    assert "+       nas: {ip: 10.0.0.50, product: Appliance 4, services: {web: {port: 8443}}}" in out
+
+
+def test_json_with_setup_is_a_usage_error(capsys, yml):
+    with pytest.raises(SystemExit) as e:
+        main(["add", "nas", "--ip", "10.0.0.50", "--json", "--setup"])
+    assert e.value.code == 2
+
+
+def test_from_vault_json_never_prints_or_reads_the_password(capsys, yml, bw_items):
+    rc, out, err = run(capsys, "nas", "--auth", "bw:nas ssh", "--from-vault", "--product", "Appliance 4", "--json")
+    assert rc == 0
+    h = json.loads(out)["host"]
+    assert (h["ip"], h["ssh"]["user"], h["ssh"]["port"], h["product"]) == ("10.0.0.60", "admin", 2200, "Appliance 4")
+    assert "pw-nas-secret" not in out + err + yml.read_text()
+    assert not any(c[:2] in (["get", "password"], ["get", "notes"], ["get", "totp"]) for c in bw_calls(bw_items))

@@ -780,7 +780,7 @@ def cmd_revoke(cfg, args):
 
 # ---------------------------------------------------------------- `roster add` (addhost.py does the add)
 
-def cmd_add(cfg, args):
+def cmd_add(cfg, args, planned=None):
     """`roster add NAME --ip ADDR ...`: one reviewed Host into roster.yml (addhost.add), its next steps said or, with
     --setup, run (setup for it alone, then check it)."""
     if args.name is None:                       # --from-vault with no NAME: the vault's items no Host uses
@@ -803,17 +803,95 @@ def cmd_add(cfg, args):
                 got[k] = v
                 say(f"from vault   {k} {v} ({args.auth})")
     saving = vault_to_save(cfg, args) if args.save_to_vault else None
-    if not add_host(cfg, args.name, got, args.auth, args.group, args.enroll, asking, os=args.os, title=args.title,
-                    type=args.type, dry_run=args.dry_run, saving=saving):
+    more = {"os": args.os, "title": args.title, "type": args.type, **more_fields(args)}
+    if not add_host(cfg, args.name, got, args.auth, args.group, args.enroll, asking, dry_run=args.dry_run,
+                    saving=saving, more=more, planned=planned):
         return 0
     return set_up(args.name, cfg["path"]) if args.setup else next_steps(args.name)
 
 
-def add_host(cfg, name, got, auth, group, enroll, asking, os=None, title=None, type=None, dry_run=False, saving=None):
+def cmd_add_json(cfg, args):
+    """`roster add NAME ... --json` (#563): the same add, never asking, its lines on stderr; stdout is one document:
+    the added Host as `roster hosts NAME --json` prints it, or with --dry-run what it would write (AddPlanDoc)."""
+    import contextlib
+
+    from . import jsondocs
+    args.yes = True
+    with contextlib.redirect_stdout(sys.stderr):
+        planned = []
+        rc = cmd_add(cfg, args, planned.append)
+    if args.dry_run:
+        r = planned[0]
+        jsonout.emit(jsondocs.AddPlanDoc.model_validate({
+            "dry_run": True, "host": r["host"], "group": group_ref(load_config(cfg["path"]), r["host"]["group"],
+                                                                   r["new_group"]),
+            "new_group": r["new_group"], "lines": r["lines"], "kind": r["kind"]}))
+        return rc
+    after = load_config(cfg["path"])
+    h = after["hosts"][args.name]
+    jsonout.emit(jsondocs.HostInfoDoc.model_validate({"host": h, "group": group_ref(after, h["group"])}))
+    return rc
+
+
+def group_ref(cfg, name, new=False):
+    """`{name, title, description}` of group NAME in CFG (`hosts NAME --json`'s `group`); a NEW one has neither yet."""
+    g = {} if new else cfg["groups"].get(name, {})
+    return {"name": name, "title": g.get("title", ""), "description": g.get("description", "")}
+
+
+def more_fields(args):
+    """`roster add`'s flags for the rest of a Host's keys (#563), as {field: value} for edit.check_new; None: not
+    given. --service NAME,KEY=VALUE,... (or NAME:PORT) and --web URL are `services:`."""
+    services = {}
+    for spec in args.service or []:
+        name, settings = service_spec(spec)
+        services.setdefault(name, {}).update(settings)
+    if args.web:
+        services.setdefault("web", {})["url"] = args.web
+    return {"description": args.description, "product": args.product, "mac": args.mac, "mesh": args.mesh,
+            "mesh_dir": args.mesh_dir, "key_type": args.key_type, "sudo": args.sudo_auth,
+            "shell_hooks": args.shell_hooks, "seen_as": args.seen_as or None, "services": services or None}
+
+
+def service_spec(spec):
+    """--service's NAME,KEY=VALUE,... (port=8443,scheme=https,login=bearer,auth=bw:ITEM,verify=false) or NAME:PORT,
+    as (name, {key: value}): a port a number, verify true or false; edit.check_new checks the rest."""
+    from .errors import INVALID_HOST
+    name, sep, port = spec.partition(":")
+    if sep and port.isdigit() and "," not in spec:
+        return name.strip(), {"port": int(port)}
+    name, *pairs = spec.split(",")
+    settings = {}
+    for pair in pairs:
+        k, eq, v = pair.partition("=")
+        k, v = k.strip(), v.strip()
+        if not eq:
+            die(f"--service {name}: {pair!r} isn't KEY=VALUE (port=8443, scheme=https, url=URL, user=U, auth=REF, "
+                "login=TYPE, verify=false)", code=INVALID_HOST)
+        if k == "port":
+            if not v.isdigit():
+                die(f"--service {name}: port must be a number from 1 to 65535", code=INVALID_HOST)
+            settings[k] = int(v)
+        elif k == "verify":
+            if v.lower() not in ("true", "false"):
+                die(f"--service {name}: verify must be true or false", code=INVALID_HOST)
+            settings[k] = v.lower() == "true"
+        else:
+            settings[k] = v
+    if not settings:
+        die(f"--service {name}: give its settings, e.g. --service {name or 'web'},port=8443,scheme=https (or "
+            f"{name or 'web'}:8443)", code=INVALID_HOST)
+    return name.strip(), settings
+
+
+def add_host(cfg, name, got, auth, group, enroll, asking, os=None, title=None, type=None, dry_run=False, saving=None,
+             more=None, planned=None):
     """Host NAME into roster.yml (addhost.add), asking for what's missing when ASKING: GOT is {ip, user, port} as given,
-    AUTH its Login, GROUP and ENROLL as given (None: asked, or the group's). SAVING ({provider, save_to}, from
+    AUTH its Login, GROUP and ENROLL as given (None: asked, or the group's). MORE: the other fields given
+    ({field: value}, None for one not given: edit.ADD_FIELDS). SAVING ({provider, save_to}, from
     vault_to_save): its password saved as a new vault item first, and AUTH that item (addhost.add_saving). True once
-    it's written; with DRY_RUN what it would write is said instead (False). Dies on anything wrong."""
+    it's written; with DRY_RUN what it would write is said instead (False), and PLANNED(result) gets it. Dies on
+    anything wrong."""
     path = cfg["path"]
     groups = list(cfg["groups"])
     if group is None:
@@ -834,7 +912,7 @@ def add_host(cfg, name, got, auth, group, enroll, asking, os=None, title=None, t
     if not (auth or base["auth"] or saving):
         needs("--auth", f"no Login for {name}: its group and defaults don't set auth:")
     wanted = {"ip": got["ip"], "user": got["user"], "port": got["port"], "auth": auth, "enroll": enroll,
-              "os": os, "title": title, "type": type, "reviewed": True}
+              "os": os, "title": title, "type": type, "reviewed": True, **(more or {})}
     try:
         fields = {k: edit.check_new(k, v) for k, v in wanted.items() if v is not None}
     except ValueError as e:
@@ -852,6 +930,8 @@ def add_host(cfg, name, got, auth, group, enroll, asking, os=None, title=None, t
     except Problem as e:
         refuse(e)
     if dry_run:
+        if planned is not None:
+            planned(r)
         new = " (a new group)" if r["new_group"] else ""
         say(f"would add    {name} to {where}{new} in {shown_file(cfg)} (--dry-run: nothing written):")
         for line in r["lines"]:
@@ -1496,6 +1576,136 @@ def cmd_agent(args):
     return 0
 
 
+# ---------------------------------------------------------------- Pending changes: changes, publish, pull (#563)
+# serve's changes.diff/discard/publish and inventory.pull on the command line: the same store.py (changes.py in a
+# team repo), then this Box's sync as serve's sync_box does it. roster.yml needn't load: a pull or a discard may be
+# what fixes it.
+
+def kept_inventory(args):
+    """How the roster.yml this run uses is kept (store.at), found but not loaded; the loader's error when there's
+    none."""
+    path = find_config(args.config, args.inv)
+    if not Path(path).expanduser().is_file():
+        open_inventory(args.config, args.inv)               # its "not found" error, the path named as it may be
+    return store.at(path, hidden=shown_path(path) is None)
+
+
+def synced_after(kept, as_json):
+    """This Box's `roster sync` from roster.yml as it is now, a failure said on stderr (the change stays). AS_JSON:
+    what it writes is said on stderr too, so stdout stays the one document."""
+    import contextlib
+    with contextlib.redirect_stdout(sys.stderr) if as_json else contextlib.nullcontext():
+        return boxsync.warn(boxsync.guarded(lambda: boxsync.sync_file(kept.path)))
+
+
+def change_lines(r):
+    """Each Host and group the Pending changes R touch, as the commit message says them."""
+    from .changes import describe
+    return [f"  {describe(c)}" for c in r["groups"] + r["hosts"]]
+
+
+def cmd_changes(args):
+    """`roster changes [discard] [--json]`."""
+    from . import jsondocs
+    kept = kept_inventory(args)
+    if args.action == "discard":
+        r = kept.discard()
+        if r["discarded"]:
+            r["sync"] = synced_after(kept, args.json)
+        if args.json:
+            jsonout.emit(jsondocs.DiscardDoc.model_validate(r))
+        elif r["discarded"]:
+            say(f"discarded    the Pending changes: {kept.path.name} is back as its last commit has it")
+            say(f"backup       {shown_path(r['backup']) or HIDDEN_PATH}")
+        else:
+            say(f"nothing to discard: {kept.note}" if kept.kind == store.FILE else
+                f"nothing to discard: {kept.path.name} has no Pending changes")
+        return 0
+    r = kept.diff()
+    if args.json:
+        jsonout.emit(jsondocs.ChangesDoc.model_validate(r))
+        return 0
+    if kept.kind == store.FILE:
+        say(f"{kept.note}; there's nothing to publish")
+        return 0
+    if not r["count"] or not r["diff"]:
+        last = r["last_commit"]
+        say(f"no Pending changes: {kept.path.name} is as its last commit has it"
+            + ("" if last is None else f" ({last['subject']}, {'published' if last['pushed'] else 'not pushed yet'})"))
+        return 0
+    say(f"Pending changes in {r['repo']}:")
+    for line in change_lines(r):
+        say(line)
+    say()
+    sys.stdout.write(r["diff"] if r["diff"].endswith("\n") else r["diff"] + "\n")
+    say()
+    say(f"message      {r['message'].splitlines()[0]}")
+    say("next         roster publish   (roster changes discard drops them)")
+    return 0
+
+
+def cmd_publish(args):
+    """`roster publish [--dry-run] [-m MSG] [--json]`."""
+    from . import changes, jsondocs
+    from .errors import NOTHING_TO_PUBLISH
+    kept = kept_inventory(args)
+    if kept.kind == store.FILE:
+        raise Problem(NOTHING_TO_PUBLISH, f"{kept.note}; there's nothing to publish",
+                      fix="nothing to do; to publish, keep roster.yml in a git repo with a remote")
+    if args.dry_run:
+        r = kept.diff()
+        if not r["diff"]:
+            raise Problem(NOTHING_TO_PUBLISH, f"{kept.path.name} has no Pending changes, so there's nothing to "
+                                              "publish", fix="edit a Host first (roster add, or the app)")
+        top = kept.top
+        message = args.message.strip() if args.message and args.message.strip() else r["message"]
+        plan = {"dry_run": True, "upstream": changes.out(top, "rev-parse", "--abbrev-ref", "--symbolic-full-name",
+                                                         "@{u}"),
+                "message": message, "diff": r["diff"], "hosts": r["hosts"], "groups": r["groups"],
+                "count": r["count"]}
+        if args.json:
+            jsonout.emit(jsondocs.PublishPlanDoc.model_validate(plan))
+            return 0
+        say(f"would publish to {plan['upstream'] or '(no upstream yet)'} (--dry-run: nothing committed or pushed):")
+        for line in change_lines(r):
+            say(line)
+        say()
+        sys.stdout.write(r["diff"] if r["diff"].endswith("\n") else r["diff"] + "\n")
+        say()
+        say(f"message      {message}")
+        return 0
+    r = kept.publish(args.message)
+    r["sync"] = synced_after(kept, args.json)
+    if args.json:
+        jsonout.emit(jsondocs.PublishDoc.model_validate(r))
+        return 0
+    if r["pulled"]:
+        say(f"pulled       {plural(r['pulled'], 'commit')} from {r['upstream']} first (none touched roster.yml)")
+    say(f"published    {r['commit'][:12]} to {r['upstream']}: {r['message'].splitlines()[0]}")
+    for line in change_lines(r):
+        say(line)
+    return 0
+
+
+def cmd_pull(args):
+    """`roster pull [--json]`."""
+    from . import jsondocs
+    kept = kept_inventory(args)
+    r = kept.pull()
+    if r["updated"]:
+        r["sync"] = synced_after(kept, args.json)
+    if args.json:
+        jsonout.emit(jsondocs.PullDoc.model_validate(r))
+    elif r.get("message"):
+        say(r["message"])
+    elif r["updated"]:
+        say(f"pulled       {plural(r['commits'], 'commit')} from {r['upstream']} ({r['from'][:12]}..{r['to'][:12]})")
+    else:
+        say(f"up to date   with {r['upstream']}" + (f" ({plural(r['ahead'], 'commit')} here not on it)"
+                                                      if r["ahead"] else ""))
+    return 0
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     never_look_in_the_current_folder()      # Windows: nothing roster starts looks for its program in the cwd
@@ -1560,6 +1770,8 @@ def _main(argv=None):
         return cmd_bw(args) if args.vault_cmd == "bw" else cmd_op(args)
     if args.cmd == "inv":
         return cmd_inv(args)
+    if args.cmd in ("changes", "publish", "pull"):        # roster.yml needn't load: a pull may be what fixes it
+        return {"changes": cmd_changes, "publish": cmd_publish, "pull": cmd_pull}[args.cmd](args)
     if args.cmd == "agents":                  # herdr's, not roster.yml's
         return cmd_agents(args)
     if args.cmd == "agent" and args.agent_cmd is None:     # plain `roster agent`: its actions
@@ -1593,5 +1805,7 @@ def _main(argv=None):
         return cmd_info(cfg, args)
     if args.cmd == "hosts" and args.resources:
         return cmd_resources(cfg, args)
+    if args.cmd == "add" and args.json and args.name is not None:
+        return cmd_add_json(cfg, args)
     return {"setup": cmd_setup, "sync": cmd_sync, "check": cmd_check, "hosts": cmd_hosts, "run": cmd_run,
             "ssh": cmd_ssh, "revoke": cmd_revoke, "web": cmd_web, "mesh": cmd_mesh, "add": cmd_add}[args.cmd](cfg, args)

@@ -13,13 +13,14 @@ import textwrap
 
 USAGE = "roster [-c PATH | --inv NAME] COMMAND [ARGS]"
 
-# Each command once, in the order a new user meets them: the 17 a person types (decision Q194's 14, then `ssh`,
-# `agents` and `agent`: ADR 0011). The ones the app or ssh runs are INTERNAL: they work, but the overview leaves them
-# out. The old names (roster.aliases) are in neither. tests/test_cli_help.py checks every command is in one of the two.
+# Each command once, in the order a new user meets them: the 20 a person types (decision Q194's 14, then `ssh`,
+# `agents` and `agent`: ADR 0011, then a team repo's `changes`, `publish` and `pull`: #563). The ones the app or ssh
+# runs are INTERNAL: they work, but the overview leaves them out. The old names (roster.aliases) are in neither.
+# tests/test_cli_help.py checks every command is in one of the two.
 GROUPS: list[tuple[str, list[str]]] = [
     ("Start here", ["init", "setup", "sync", "check"]),
     ("Every day", ["hosts", "ssh", "run", "web", "agents", "agent"]),
-    ("Inventory and access", ["add", "discover", "inv", "mesh", "revoke"]),
+    ("Inventory and access", ["add", "changes", "publish", "pull", "discover", "inv", "mesh", "revoke"]),
     ("Vault and help", ["vault", "help"]),
 ]
 INTERNAL = ["serve", "askpass"]
@@ -74,7 +75,20 @@ EXAMPLES: dict[str, list[tuple[str, str]]] = {
              "setup and check for it"),
             ("roster add new-01 --ip 10.0.0.21 --user ops --save-to-vault", "save its password (asked twice) as the "
              "vault item 'new-01 ssh', then add it pointing at it"),
-            ("roster add web-01 --ip 10.0.0.20 --dry-run", "the lines it would add; nothing written")],
+            ("roster add web-01 --ip 10.0.0.20 --dry-run", "the lines it would add; nothing written"),
+            ("roster add nas-01 --ip 10.0.0.50 --product \"Appliance 4\" --web https://10.0.0.50:5001/ --service "
+             "api,port=8443,scheme=https,login=bearer,auth=\"bw:nas-01 api\"", "its product, web UI and a service "
+             "with its own Login"),
+            ("roster add nas-01 --auth bw:nas-01 --from-vault --json", "for a script: the Host as `hosts nas-01 "
+             "--json` prints it")],
+    "changes": [("roster changes", "what you've changed in the team repo's roster.yml, by Host, and the diff"),
+                ("roster changes --json", "the same, for a script"),
+                ("roster changes discard", "drop them: roster.yml back as its last commit has it")],
+    "publish": [("roster publish --dry-run", "the diff and the commit message; nothing committed or pushed"),
+                ("roster publish", "commit roster.yml and push it to the team's repo"),
+                ("roster publish -m \"add nas-01\"", "with your own commit message")],
+    "pull": [("roster pull", "the team's changes in (a fast-forward), then this Box synced"),
+             ("roster pull --json", "for a script")],
     "discover": [("roster discover 10.0.1.0/24", "preview what answers; nothing written"),
                  ("roster discover 10.0.1.0/24 --write --group lab", "add them, unreviewed, to roster.yml")],
     "inv": [("roster inv add work ~/infra/roster.yml", "name an Inventory"),
