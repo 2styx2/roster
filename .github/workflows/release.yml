@@ -1,4 +1,5 @@
-# roster Release: build the app and the CLI for every platform, then put them on a draft GitHub Release.
+# roster Release: build the CLI and the docs PDF, then put them on a draft GitHub Release. (The app's builds
+# are off since 2026-11-06: the app is frozen, ADR 0011; its job is kept below as `if: false`.)
 #
 #   push a tag vX.Y.Z (on main)  build everything, write SHA256SUMS, and create a DRAFT Release with all of it;
 #                                the maintainer checks it and publishes it (docs/releasing.md)
@@ -99,8 +100,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # FROZEN since 2026-11-06 (ADR 0011, docs/adr/0011-herdr-is-the-session-runtime.md): a Release no longer builds
+  # the app. To un-freeze, remove `if: false` and put `app` back in the checksums job's needs.
   app:
     name: App (${{ matrix.name }})
+    if: false
     needs: version
     runs-on: ${{ matrix.os }}
     strategy:
@@ -261,7 +265,7 @@ jobs:
 
   checksums:
     name: SHA256SUMS
-    needs: [version, cli, app, docs]
+    needs: [version, cli, docs]   # not app: frozen (ADR 0011), and a skipped need would skip this job too
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/download-artifact@v8
@@ -312,9 +316,8 @@ jobs:
 
           ## Install
 
-          **The app:** Windows \`roster-app-$VERSION-windows-x64-setup.exe\` (or the \`.msi\`, or the portable \`.zip\`);
-          Linux \`.AppImage\` or \`.deb\` (or the \`.tar.gz\` with the bare binary); macOS \`roster-app-$VERSION-macos-universal.dmg\`.
-          The app needs the roster CLI (\`roster serve\`) on the same machine, or in WSL on Windows.
+          **The app** is frozen (ADR 0011) and no longer ships with a Release; its replacement is herdr with the
+          roster mod, https://github.com/2styx2/herdr-roster.
 
           **The CLI:** unpack \`roster-cli-$VERSION.tar.gz\` and run \`./install.sh\`, or \`uv tool install roster-$VERSION-py3-none-any.whl\`
           then \`roster help --man --install\`. Either way \`man roster\` works afterwards; \`roster.1\` is the page on its own, for packagers.

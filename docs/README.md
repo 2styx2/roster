@@ -1,6 +1,6 @@
 # roster's docs
 
-Everything about roster, the CLI and the app, in one place. The pages marked **:help** are also inside the app, as the same Markdown: `:help TOPIC` opens one, and `:help start` is where to begin. They're grouped the way `:help`'s index groups them. The same pages are also a website, [2styx2.github.io/roster/](https://2styx2.github.io/roster/), and one [PDF](https://2styx2.github.io/roster/roster-docs.pdf) ([how](app/help.md#on-the-web-and-on-paper)).
+Everything about roster, the CLI and the app, in one place. **The app is frozen as of 2026-11-06** ([ADR 0011](adr/0011-herdr-is-the-session-runtime.md)): its pages stay as they were, and its replacement is [herdr-roster](https://github.com/2styx2/herdr-roster). The pages marked **:help** are also inside the app, as the same Markdown: `:help TOPIC` opens one, and `:help start` is where to begin. They're grouped the way `:help`'s index groups them. The same pages are also a website, [2styx2.github.io/roster/](https://2styx2.github.io/roster/), and one [PDF](https://2styx2.github.io/roster/roster-docs.pdf) ([how](app/help.md#on-the-web-and-on-paper)).
 
 ## Getting started
 

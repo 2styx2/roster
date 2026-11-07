@@ -12,6 +12,12 @@ Each Release has the same sections, left out when empty: **Breaking** (something
 
 - **`roster agents`: every Agent across the Hub's herdr machines** (#553): on the Hub, `roster agents` lists each terminal that reports an agent status to herdr (Claude Code does so itself), on the Hub and on every connected machine, grouped by Host: its address, status (`working`, `blocked`, `idle`, `done`), label, folder and how long it has run. A machine that isn't connected is listed with its state. It's built live from herdr-core (`hc`) and only reads. `--json` prints the Agent directory document (version 1: `hub`, `you`, `updated`, `machines`, `agents`), with no secret and no screen text. See [Agents](cli-reference.md#agents-roster-agents).
 
+### Removed
+
+**App**
+
+- **The roster app is frozen** (as of 2026-11-06, [ADR 0011](adr/0011-herdr-is-the-session-runtime.md)): it gets no new work, CI no longer builds or tests `app/` and `crates/`, and Releases no longer ship the app. `app/` and `crates/` stay in the repo. Its replacement is [herdr](https://herdr.dev) with the roster mod, [herdr-roster](https://github.com/2styx2/herdr-roster). The CLI is unchanged.
+
 ## v0.7.0
 
 ### Breaking

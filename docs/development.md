@@ -161,6 +161,8 @@ The app's checks are in [app/README.md](../app/README.md#development) (`npm run 
 
 ### What CI runs when
 
+**The app is frozen as of 2026-11-06** ([ADR 0011](adr/0011-herdr-is-the-session-runtime.md)): its jobs (App frontend, App full stack, App Rust, Core tests (Windows), the App Windows and Linux release builds, the performance budgets and release.yml's app builds) are kept in the workflows as `if: false`, so they're skipped whatever a pull request touches, and `CI` counts a skipped job as passed. The table below still says what each would run; to un-freeze, put back each job's `if:` from the comment above it.
+
 A push to `main` or `dev`, a tag, the nightly schedule (03:23 UTC, on `main`) and a run by hand run every job, with pytest on Python 3.10, 3.12 and 3.13. A pull request runs a PR-sized set (decision Q196): Python 3.12 only, and only the jobs its changed files need. The `Changes` job works that out (`scripts/ci_changes.py`, tested in `tests/test_ci_changes.py`); the halves read each other's files, so a path runs every job that reads it:
 
 | A pull request that touches | runs |
