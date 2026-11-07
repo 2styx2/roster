@@ -111,6 +111,8 @@ src/roster/
   agents.py         `roster agents`: the Agent directory built live on the Hub from herdr-core (`hc ls`, `hc get`,
                     `hc server status`), and its table (ADR 0011); `agents sync` writing it into every machine's core
                     (shared document `roster.agents`, JSON-RPC over `hc connect`) and a remote Host reading its copy
+  agentops.py       `roster agent send|read|wait|label`: one Agent by its address, through this machine's herdr-core
+                    (`hc send`, `read`, `wait`, `label`), after checking the address is a live terminal it can reach
   mesh.py           the Mesh: who reaches whom (mesh:, links:), plan/apply over ssh one Host at a time, cut, status,
                     drift for `roster check`; the sh it runs on Hosts (docs/mesh.md)
   meshview.py       the Mesh as text: a plan, an apply, `roster check`'s drift and whether it fails, a cut not finished;

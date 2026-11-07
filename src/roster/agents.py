@@ -23,19 +23,35 @@ STALE = 5 * 60              # seconds after which a remote Host's copy is called
 TIMEOUT = 15                # seconds an hc call may take
 
 
-def hc(*args: str) -> Any:
-    """`hc ARGS --json`'s document, or a refusal saying herdr-core isn't installed or didn't answer."""
+def run_hc(*args: str, timeout: float | None = TIMEOUT) -> subprocess.CompletedProcess[str]:
+    """`hc ARGS --json` run, whatever its exit (its document on stdout, a refusal on stderr), or a refusal saying
+    herdr-core isn't installed or didn't answer in TIMEOUT seconds (None: hc's own timeout ends it)."""
     exe = shutil.which("hc")
     if exe is None:
         die("herdr-core isn't installed here: no `hc` on PATH",
-            fix="install herdr-core on this Hub (`hc --version` then works), or run roster agents where it is")
+            fix="install herdr-core on this machine (`hc --version` then works), or run roster where it is")
     try:
-        r = subprocess.run([exe, *args, "--json"], capture_output=True, text=True, timeout=TIMEOUT)
+        return subprocess.run([exe, *args, "--json"], capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
-        die(f"herdr-core didn't answer `hc {' '.join(args)}` in {TIMEOUT} s", fix="check it with `hc server status`")
+        die(f"herdr-core didn't answer `hc {' '.join(args)}` in {timeout} s", fix="check it with `hc server status`")
     except OSError as e:
         die(f"couldn't run hc: {e.strerror or type(e).__name__}", fix="check herdr-core's install: `hc --version`")
-    why = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
+
+
+def refusal(r: subprocess.CompletedProcess[str]) -> str:
+    """What a failed hc run said: the message of its JSON refusal (`{"error": {message, ...}}`), else its last line."""
+    last = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
+    try:
+        error = json.loads(last)["error"]
+        return str(error.get("message") or error.get("kind") or last)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return last.removeprefix("error: ")
+
+
+def hc(*args: str) -> Any:
+    """`hc ARGS --json`'s document, or a refusal saying herdr-core isn't installed or didn't answer."""
+    r = run_hc(*args)
+    why = refusal(r)
     if r.returncode != 0:
         die(f"herdr-core didn't answer `hc {' '.join(args)}`: {why}",
             fix="start it with `hc server start`, then `hc server status` should answer")

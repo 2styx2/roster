@@ -14,6 +14,11 @@ roster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-e
 roster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]
 roster web [\-d BODY] [\-H HEADER] [\-k] [\-\-timeout SECONDS] HOST [SERVICE] METHOD PATH [HOST [SERVICE] METHOD PATH ...]
 roster agents [\-\-json] [{sync}]
+roster agent ACTION ...
+roster agent send ADDRESS TEXT
+roster agent read [\-\-lines N] ADDRESS
+roster agent wait [\-\-timeout SECONDS] ADDRESS
+roster agent label [ADDRESS] TEXT
 roster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-all] [\-\-remove] [\-\-json] [{cut,status,leftovers}] [HOST]
 roster revoke [\-\-only LIST] [\-\-all] [\-y]
 roster inv [\-\-json] {list,add,use,remove,which} [NAME] [PATH]
@@ -307,6 +312,55 @@ sync: write the Agent directory into every connected machine's herdr\-core (and 
 .TP
 \fB\-\-json\fR
 print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
+.SS agent
+.PP
+\fBroster agent ACTION ...\fR
+.PP
+Reach one Agent by its address (\fBHOST/tN\fR, as \fBroster agents\fR shows it), through this machine's herdr\-core: one action each (below); plain \fBroster agent\fR lists them. From the Hub every Agent on it and its connected machines; on another machine, the Agents on that same machine. An unknown address, an Agent that has ended, a machine this herdr\-core hasn't added or one that isn't connected is refused before anything is sent, exit 1, with what to do. Needs no \fBroster.yml\fR\&. See Reaching an Agent
+.SS agent send
+.PP
+\fBroster agent send ADDRESS TEXT\fR
+.PP
+Type TEXT into the Agent and press Enter, as a person would (\fBhc send\fR); says whether it was idle or working then. A blocked Agent (waiting on its own question) is refused by herdr\-core, not answered
+.TP
+\fBADDRESS\fR
+the Agent: HOST/tN, as roster agents shows it
+.TP
+\fBTEXT\fR
+the message
+.SS agent read
+.PP
+\fBroster agent read [\-\-lines N] ADDRESS\fR
+.PP
+Print the Agent's screen (\fBhc read\fR), with N lines of history above it
+.TP
+\fBADDRESS\fR
+the Agent: HOST/tN, as roster agents shows it
+.TP
+\fB\-\-lines N\fR
+lines of history above the screen (default: 0)
+.SS agent wait
+.PP
+\fBroster agent wait [\-\-timeout SECONDS] ADDRESS\fR
+.PP
+Wait until the Agent stops working (\fBhc wait\fR), then say how it is (\fBidle\fR, \fBblocked\fR, \fBdone\fR, or that it ended). \fB\-\-timeout\fR: give up after that long and exit 124 (default: herdr\-core's own, 180 s unless its config says otherwise)
+.TP
+\fBADDRESS\fR
+the Agent: HOST/tN, as roster agents shows it
+.TP
+\fB\-\-timeout SECONDS\fR
+give up after this long, exit 124 (default: herdr\-core's, 180 unless set)
+.SS agent label
+.PP
+\fBroster agent label [ADDRESS] TEXT\fR
+.PP
+Set the Agent's label, its herdr label \fBroster.label\fR, which \fBroster agents\fR shows; \fB""\fR removes it. Without ADDRESS, the Agent this runs in (the herdr terminal in \fBHC_TERMINAL_ID\fR); outside herdr that's refused
+.TP
+\fBADDRESS\fR
+the Agent: HOST/tN (default: the herdr terminal this runs in, HC_TERMINAL_ID)
+.TP
+\fBTEXT\fR
+the label: what the Agent is on ("" removes it)
 .SS mesh
 .PP
 \fBroster mesh [\-\-dry\-run] [\-\-rotate HOST] [\-y] [\-\-all] [\-\-remove] [\-\-json] [{cut,status,leftovers}] [HOST]\fR
@@ -628,6 +682,9 @@ A 1Password service account, for headless boxes
 .TP
 \fBXDG_RUNTIME_DIR\fR
 Where roster keeps its short\-lived private state
+.TP
+\fBHC_TERMINAL_ID\fR
+Set by herdr in its terminals (\fBt4\fR): the Agent \fBroster agent label TEXT\fR labels when no address is given
 .SH EXIT STATUS
 .TP
 \fB0\fR
@@ -642,7 +699,7 @@ Wrong arguments
 \fB130\fR
 Interrupted with Ctrl+C
 .PP
-With \fB\-\-json\fR, the status is the same, and an error is JSON on stderr (Machine\-readable output). \fBroster run\fR exits with the remote command's status, \fBroster ssh\fR with ssh's (the remote shell's, or 255 when ssh couldn't connect or log in), \fBroster vault bw\fR with \fBbw\fR\&'s, and \fBroster vault op\fR with \fBop\fR\&'s. \fBroster mesh\fR and \fBroster mesh cut\fR (\fB\-\-all\fR too) exit 1 while a Host is pending, and \fBmesh leftovers [\-\-remove]\fR when a Host didn't answer. \fBroster check\fR and \fBroster revoke\fR exit 1 when a Host was skipped (\fBssh NAME\fR doesn't reach it from this Box) or none was checked or revoked. A \fBroster discover \-\-write\fR or \fBroster mesh cut\fR whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: `\fBwarning: this Box's ssh config didn't follow roster.yml (why): run \fRroster sync\fB on this box\fR`.
+With \fB\-\-json\fR, the status is the same, and an error is JSON on stderr (Machine\-readable output). \fBroster run\fR exits with the remote command's status, \fBroster ssh\fR with ssh's (the remote shell's, or 255 when ssh couldn't connect or log in), \fBroster vault bw\fR with \fBbw\fR\&'s, and \fBroster vault op\fR with \fBop\fR\&'s, and \fBroster agent wait\fR with 124 when its \fB\-\-timeout\fR ran out. \fBroster mesh\fR and \fBroster mesh cut\fR (\fB\-\-all\fR too) exit 1 while a Host is pending, and \fBmesh leftovers [\-\-remove]\fR when a Host didn't answer. \fBroster check\fR and \fBroster revoke\fR exit 1 when a Host was skipped (\fBssh NAME\fR doesn't reach it from this Box) or none was checked or revoked. A \fBroster discover \-\-write\fR or \fBroster mesh cut\fR whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: `\fBwarning: this Box's ssh config didn't follow roster.yml (why): run \fRroster sync\fB on this box\fR`.
 .SH EXAMPLES
 .PP
 .nf

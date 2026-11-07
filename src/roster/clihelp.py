@@ -18,7 +18,7 @@ USAGE = "roster [-c PATH | --inv NAME] COMMAND [ARGS]"
 # neither. tests/test_cli_help.py checks every command is in one of the two.
 GROUPS: list[tuple[str, list[str]]] = [
     ("Start here", ["init", "setup", "sync", "check"]),
-    ("Every day", ["hosts", "ssh", "run", "web", "agents"]),
+    ("Every day", ["hosts", "ssh", "run", "web", "agents", "agent"]),
     ("Inventory and access", ["add", "discover", "inv", "mesh", "revoke"]),
     ("Vault and help", ["vault", "help"]),
 ]
@@ -56,6 +56,18 @@ EXAMPLES: dict[str, list[tuple[str, str]]] = {
     "agents": [("roster agents", "every Agent on this Hub and its herdr machines, by Host"),
                ("roster agents --json", "the Agent directory, for a script or another Agent"),
                ("roster agents sync", "on the Hub: write the directory into every connected herdr machine")],
+    "agent": [("roster agent send web-01/t2 \"the tests pass now\"", "a message to another Agent"),
+              ("roster agent read web-01/t2 --lines 40", "what it's doing, before you interrupt it"),
+              ("roster agent wait web-01/t2", "until it stops working"),
+              ("roster agent label \"migrate the database\"", "your own label, as the others see it")],
+    "agent send": [("roster agent send web-01/t2 \"the tests pass now\"", "typed in, then Enter"),
+                   ("roster agent send hub-01/t1 \"done: see the PR\"", "an Agent on the Hub, from the Hub")],
+    "agent read": [("roster agent read web-01/t2", "its screen"),
+                   ("roster agent read web-01/t2 --lines 200", "and 200 lines of history above it")],
+    "agent wait": [("roster agent wait web-01/t2", "until it's idle, blocked or done, or it ends"),
+                   ("roster agent wait web-01/t2 --timeout 600", "give up after 10 minutes (exit 124)")],
+    "agent label": [("roster agent label \"migrate the database\"", "the Agent this runs in (HC_TERMINAL_ID)"),
+                    ("roster agent label web-01/t2 \"review the PR\"", "another Agent's")],
     "add": [("roster add nas-01 --ip 10.0.0.50 --group lab --auth bw:nas-01 --no-enroll", "one Host you know"),
             ("roster add nas-01 --auth bw:nas-01 --from-vault --setup", "address and user from the vault item, then "
              "setup and check for it"),

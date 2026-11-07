@@ -15,12 +15,18 @@
 #   DIR/docs/NAME.json          a shared document on this core: {"value": ..., "version": N} (never written: absent)
 #   DIR/rpc                     `hc connect`: each JSON-RPC request it read, one JSON line each
 #   DIR/machines/M/down         M's core doesn't answer the Hub: a document call `on` M fails (unavailable)
+#   DIR/.../terminals/T.screen  what `hc read T` prints (its screen and history)
+#   DIR/.../terminals/T.sent    each `hc send T TEXT` appends TEXT and a newline (what the program was typed)
+#   DIR/.../terminals/T.wait    the WaitResult `hc wait T` prints (JSON; default: it stopped, reason status)
 # Each machine's folder is shaped as DIR (its own terminals/, docs/ and name), so a command run "on" M reads
 # DIR/machines/M, and a test that runs roster on M points FAKE_HC_STATE there.
 # Commands: ls [--all] [--json] (live terminals: the short rows hc prints, `status` only when one is reported;
 # --all: finished ones too), get ADDRESS [--json], server status [--json], connect (herdr-core's JSON-RPC over
 # stdin/stdout, one message per line: doc.get {name, on?} and doc.set {name, value, version, on?}, with hc's error
-# kinds: machine_unknown, unavailable, conflict). Anything else: exit 2, "unknown command".
+# kinds: machine_unknown, unavailable, conflict), and on a live terminal (tN, or M/tN on a connected M) send T TEXT,
+# read T [--lines N], wait T [--timeout S], label T K=V... (`K=` removes one); an unknown or finished terminal is
+# refused as `hc --json` refuses: {"error": {kind, message, hint}} on stderr, exit 1.
+# Anything else: exit 2, "unknown command".
 import json, os, sys
 from pathlib import Path
 
@@ -160,4 +166,64 @@ def connect():
 
 if words[:1] == ["connect"]:
     connect()
+
+
+def refuse(kind, message, hint):
+    """A refusal as `hc --json` prints one."""
+    print(json.dumps({"error": {"kind": kind, "message": message, "hint": hint}}), file=sys.stderr)
+    sys.exit(1)
+
+
+def live_terminal(address):
+    """(record file, record) of the live terminal at ADDRESS, or hc's refusal."""
+    machine, _, t = address.rpartition("/")
+    if address not in everything():
+        refuse("not_found", f"no terminal {t!r}", "see `hc ls --all`")
+    f = (state / "machines" / machine if machine else state) / "terminals" / f"{t}.json"
+    record = json.loads(f.read_text())
+    if record.get("state", "live") != "live":
+        refuse("finished", f"{address} has finished", f"hc rm {address}")
+    return f, record
+
+
+def agent_commands():
+    """send, read, wait and label: what `roster agent` asks hc to do (#555)."""
+    plain, skip = [], False                     # the positionals, without the values of --lines and --timeout
+    for a in args:
+        if skip:
+            skip = False
+        elif a in ("--lines", "--timeout"):
+            skip = True
+        elif not a.startswith("--"):
+            plain.append(a)
+    if plain[:1] == ["send"] and len(plain) == 3:
+        f, t = live_terminal(plain[1])
+        with open(f.with_suffix(".sent"), "a") as out:
+            out.write(plain[2] + "\n")
+        say({"turn": t.get("turn", 0), "status": (t.get("status") or {}).get("state"), "started": None})
+    if plain[:1] == ["read"] and len(plain) == 2:
+        f, _ = live_terminal(plain[1])
+        screen = f.with_suffix(".screen")
+        say({"text": screen.read_text() if screen.exists() else "", "complete": True,
+             "how": "history" if "--lines" in args else "screen", "why": None})
+    if plain[:1] == ["wait"] and len(plain) == 2:
+        f, t = live_terminal(plain[1])
+        result = f.with_suffix(".wait")
+        if result.exists():
+            say(json.loads(result.read_text()))
+        say({"terminal": plain[1], "ended": True, "reason": "status", "status": (t.get("status") or {}).get("state"),
+             "turn": t.get("turn", 0), "children": []})
+    if plain[:1] == ["label"] and len(plain) >= 3:
+        f, t = live_terminal(plain[1])
+        for kv in plain[2:]:
+            k, _, v = kv.partition("=")
+            if v:
+                t.setdefault("labels", {})[k] = v
+            else:
+                (t.get("labels") or {}).pop(k, None)
+        f.write_text(json.dumps(t))
+        say({"address": plain[1], **t})
+
+
+agent_commands()
 fail(f"unknown command: {' '.join(words[:2])}", 2)

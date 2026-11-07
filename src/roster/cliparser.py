@@ -267,6 +267,24 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
                    help="sync: write the Agent directory into every connected machine's herdr-core (and the Hub's) "
                         "as the shared document roster.agents, and say which failed")
     s.add_argument("--json", **as_json)
+    s = sub.add_parser("agent", help="reach one Agent by its address (HOST/tN, as roster agents shows it): send it "
+                       "a message, read its screen, wait until it stops working, or label it")
+    agent = s.add_subparsers(dest="agent_cmd", metavar="ACTION", title="actions", prog="roster agent",
+                             help="what to do with the Agent (plain `roster agent` lists them)")
+    s = agent.add_parser("send", help="type TEXT into the Agent and press Enter, as if a person had")
+    s.add_argument("address", metavar="ADDRESS", help="the Agent: HOST/tN, as roster agents shows it")
+    s.add_argument("text", metavar="TEXT", help="the message")
+    s = agent.add_parser("read", help="print the Agent's screen (and with --lines, the history above it)")
+    s.add_argument("address", metavar="ADDRESS", help="the Agent: HOST/tN, as roster agents shows it")
+    s.add_argument("--lines", type=int, default=0, metavar="N", help="lines of history above the screen (default: 0)")
+    s = agent.add_parser("wait", help="wait until the Agent stops working (idle, blocked, done, or it ends)")
+    s.add_argument("address", metavar="ADDRESS", help="the Agent: HOST/tN, as roster agents shows it")
+    s.add_argument("--timeout", type=float, metavar="SECONDS",
+                   help="give up after this long, exit 124 (default: herdr-core's, 180 unless set)")
+    s = agent.add_parser("label", help="set an Agent's label (its roster.label), the calling Agent's without ADDRESS")
+    s.add_argument("address", nargs="?", metavar="ADDRESS",
+                   help="the Agent: HOST/tN (default: the herdr terminal this runs in, HC_TERMINAL_ID)")
+    s.add_argument("text", metavar="TEXT", help="the label: what the Agent is on (\"\" removes it)")
     s = sub.add_parser("mesh", help="set up Host-to-Host access (mesh: and links: in roster.yml), one Host at a time")
     s.add_argument("action", nargs="?", choices=["cut", "status", "leftovers"],
                    help="cut HOST: take it out of the Mesh now, everywhere; status: who reaches whom (no connections); "

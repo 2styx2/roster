@@ -398,6 +398,29 @@ class FakeHc:
         f = self.root / "calls"
         return f.read_text().splitlines() if f.exists() else []
 
+    # ---- send, read, wait and label (#555): a terminal's own files beside its record
+
+    def _beside(self, address: str, suffix: str) -> Path:
+        machine, _, t = address.rpartition("/")
+        return (self.root / "machines" / machine if machine else self.root) / "terminals" / f"{t}{suffix}"
+
+    def screen(self, address: str, text: str) -> None:
+        """What `hc read ADDRESS` prints."""
+        self._beside(address, ".screen").write_text(text)
+
+    def sent(self, address: str) -> list[str]:
+        """Each text `hc send` typed into ADDRESS so far."""
+        f = self._beside(address, ".sent")
+        return f.read_text().splitlines() if f.exists() else []
+
+    def waits(self, address: str, result: dict) -> None:
+        """The WaitResult `hc wait ADDRESS` prints (default: it stopped, with its status)."""
+        self._beside(address, ".wait").write_text(json.dumps(result))
+
+    def labels(self, address: str) -> dict[str, str]:
+        """ADDRESS's herdr labels now."""
+        return json.loads(self._beside(address, ".json").read_text())["labels"]
+
 
 @pytest.fixture
 def hc(fakes, tmp_path, monkeypatch):

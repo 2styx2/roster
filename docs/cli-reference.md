@@ -329,6 +329,11 @@ From the app, the first-party [discover](../plugins/discover/README.md) Plugin d
 | `ssh HOST` | An interactive ssh session to a Host, as the roster app's Host terminals open it (ADR 0011). A key Host runs the system `ssh HOST` with roster's ssh config and known hosts, so a `ProxyJump` your `~/.ssh/config` gives the Host applies. A password-only Host gets its Login's password from the vault through roster's askpass channel: a one-time token in ssh's environment, the password handed only to ssh's own login prompt, never on a command line, stdout, stderr or the scrollback; a jump Host that asks for a password of its own is refused (36: give it this Box's key). No password is typed into the session after the login (no Prompt fill). Refused before connecting, exit 1, with the code and fix: an unknown Host (2), one not in this Box's ssh config yet (21: `roster sync`), a locked vault (14), a vault item missing or doubled (32, 33). ssh's own messages pass through; a failed connection or login (exit 255) is followed by its cause and fix, as `roster run`'s (`roster: [209] esx-02 has never answered at 10.0.0.6: ...`). Otherwise it exits with ssh's code (the remote shell's). See [`roster ssh HOST`](#roster-ssh-host) |
 | `web HOST [SERVICE] METHOD PATH` | HTTP request to a host's web service, logged in with its stored credentials (`-d BODY`, `-H 'Name: value'`, `-k`) |
 | `agents [--json]` | Every Agent (a terminal that reports an agent status to herdr: Claude Code does so itself) on this Hub and its herdr machines, built live from herdr-core (`hc ls`, and `hc get` for each Agent): one block per Host (the Hub first, then each machine with its state: `connected`, `connecting`, `unavailable`), a row per Agent with its address (`HOST/tN`), status (`working`, `blocked`, `idle`, `done`), label (its `roster.label`), folder and how long it has run. A machine that isn't connected is listed with its state and no Agents. On a remote Host it reads the copy the Hub last wrote there instead, says how old it is and which machine you are, and warns when it's stale. `agents sync` writes the directory into the Hub's herdr-core and each connected machine's, as the shared document `roster.agents`, and says which failed (exit 1). Needs no `roster.yml`; with no `hc` on PATH, or a core that doesn't answer, it says so and exits 1. See [Agents](#agents-roster-agents) |
+| `agent` | Reach one Agent by its address (`HOST/tN`, as `roster agents` shows it), through this machine's herdr-core: one action each (below); plain `roster agent` lists them. From the Hub every Agent on it and its connected machines; on another machine, the Agents on that same machine. An unknown address, an Agent that has ended, a machine this herdr-core hasn't added or one that isn't connected is refused before anything is sent, exit 1, with what to do. Needs no `roster.yml`. See [Reaching an Agent](#reaching-an-agent-roster-agent) |
+| `agent send ADDRESS TEXT` | Type TEXT into the Agent and press Enter, as a person would (`hc send`); says whether it was idle or working then. A blocked Agent (waiting on its own question) is refused by herdr-core, not answered |
+| `agent read ADDRESS [--lines N]` | Print the Agent's screen (`hc read`), with N lines of history above it |
+| `agent wait ADDRESS [--timeout SECONDS]` | Wait until the Agent stops working (`hc wait`), then say how it is (`idle`, `blocked`, `done`, or that it ended). `--timeout`: give up after that long and exit 124 (default: herdr-core's own, 180 s unless its config says otherwise) |
+| `agent label [ADDRESS] TEXT` | Set the Agent's label, its herdr label `roster.label`, which `roster agents` shows; `""` removes it. Without ADDRESS, the Agent this runs in (the herdr terminal in `HC_TERMINAL_ID`); outside herdr that's refused |
 | `revoke [--all]` | Remove this box's key from every host (its line under any name it had, found by its public key: the key is one per Box, so revoking one Inventory also takes it off a machine another Inventory lists, under any `box_name:`, and says so: `roster setup` for that Inventory puts it back, or use `--all`); it names this box's files to delete (with `~/.config/roster/key-name*`, the name setup recorded for its key's lines) only once every Host of this `roster.yml` has lost the key (never with `--only`, never another `roster.yml`'s `config.d/roster`, and never a key file another Inventory on this Box uses too: that one is kept, with a note naming the Inventory, 221), and exits 1 when a Host was skipped or none was reached. `--all`: from every Inventory's Hosts on this box (each named one and the unnamed one) at once, with one question and one summary; a Host `ssh NAME` doesn't reach (left out, or its Inventory not synced here) is skipped and said. See [Named Inventories](#named-inventories). An unnamed `roster.yml` in a folder that looks like a token, which the ssh config names only by the sha256 of its path, is revoked with the others when it's `$ROSTER_CONFIG`, `./roster.yml` or a named Inventory's file; otherwise it's skipped, never named, and `roster -c PATH revoke --yes` revokes it without renaming its folder. On an `os: windows` Host it cleans both files an administrator's key could be in. A Host it couldn't revoke is listed with why |
 | `mesh [--dry-run] [--rotate HOST]` | Set up Host-to-Host access as `mesh:` and `links:` say, one Host at a time: a key made on each source, tagged entries on its peers. A Link's `via: HOST` goes through a jump Host (`ProxyJump`), tested through it. `--dry-run` shows the plan, `--rotate` replaces a Host's Mesh key. `mesh status` shows who reaches whom without connecting; `mesh cut HOST [-y]` takes a Host out everywhere at once and writes `mesh: false` for it as a Pending change, then syncs this Box as `roster sync` does; `mesh cut --all [-y]` takes this Box's Mesh entries (and an older roster's untagged ones) off every Host and leaves `roster.yml` as it is (before removing roster: [Uninstalling roster](mesh.md#uninstalling-roster)); `mesh leftovers` (was `--find-leftovers`) lists the Mesh entries on every Host that this `roster.yml` doesn't ask for (and files by a Mesh key's name in the Mesh's folders that aren't a key roster made, which it never removes), changing nothing, and `mesh leftovers --remove [-y]` (was `--remove-leftovers`) removes them after a question (an older roster's may be another Box's: [Whose Mesh it is](mesh.md#whose-mesh-it-is)); `--json` with `status` or `--dry-run`. See [The Mesh](mesh.md) |
 | `inv list\|add NAME PATH\|use NAME\|remove NAME\|which` | Named Inventories, one of them active: list them (`*` marks the active one), name one, make one the active one, forget one (its file stays), or print the `roster.yml` roster uses. See [Named Inventories](#named-inventories) |
@@ -617,6 +622,34 @@ A copy more than 5 minutes old is stale: roster says so on stderr (with `--json`
 written), naming `roster agents sync` on the Hub as the fix. On the Hub, and on a machine no sync has reached yet,
 `roster agents` builds the directory live as above.
 
+### Reaching an Agent: `roster agent`
+
+`roster agent send|read|wait|label` act on one Agent by its address, as the directory shows it: `HOST/tN`, the Hub's
+own Agents `HUB/tN`; a bare `tN` is a terminal on this machine. roster asks this machine's herdr-core (`hc send`,
+`hc read`, `hc wait`, `hc label`), so what it reaches is what that core reaches:
+
+- **On the Hub**, every Agent: the Hub's own, and those on each connected machine (herdr routes `web-01/t2` there).
+- **On another machine**, the Agents on that same machine. An address on another machine is refused for now, with the
+  Hub as the place to send it from.
+
+```text
+$ roster agent send web-01/t2 "the tests pass now, rebase on dev"
+sent to web-01/t2 (it was idle)
+$ roster agent wait web-01/t2 --timeout 600
+web-01/t2 is idle
+$ roster agent read web-01/t2 --lines 40
+...
+$ roster agent label "migrate the database"
+t4 is labelled: migrate the database
+```
+
+Before acting, roster checks that the address is a live terminal it can reach, so nothing is typed anywhere else. An
+unknown address (`no Agent at web-01/t9`), an Agent that has ended, a machine this herdr-core hasn't added, or one that
+isn't connected (`herdr says db-01 is unavailable`, with `hc machine login db-01` as the fix) is refused with what to do,
+and exits 1. `wait` exits 124 when `--timeout` ran out with the Agent still working, and says how to look at it.
+`label` with no address labels the Agent it runs in (`HC_TERMINAL_ID`, which herdr sets in its terminals); the label is
+the herdr terminal label `roster.label`, which `roster agents` and the herdr-roster Agents panel show.
+
 ## A plain file or a team repo
 
 An Inventory is one `roster.yml`, and roster works the same whether it's a plain file or a file in your team's git repo. Which one is decided per file, each time roster writes it:
@@ -752,6 +785,7 @@ Each script is short: on every Tab it asks roster (`roster __complete`, hidden) 
 | `BW_CLIENTID`, `BW_CLIENTSECRET` | A Bitwarden API key, for headless boxes |
 | `OP_SERVICE_ACCOUNT_TOKEN` | A 1Password service account, for headless boxes |
 | `XDG_RUNTIME_DIR` | Where roster keeps its short-lived private state |
+| `HC_TERMINAL_ID` | Set by herdr in its terminals (`t4`): the Agent `roster agent label TEXT` labels when no address is given |
 
 ## On Windows
 
@@ -777,7 +811,7 @@ roster also runs on Windows itself, without WSL, so the roster app works for tea
 | `2` | Wrong arguments |
 | `130` | Interrupted with Ctrl+C |
 
-With `--json`, the status is the same, and an error is JSON on stderr ([Machine-readable output](#machine-readable-output)). `roster run` exits with the remote command's status, `roster ssh` with ssh's (the remote shell's, or 255 when ssh couldn't connect or log in), `roster vault bw` with `bw`'s, and `roster vault op` with `op`'s. `roster mesh` and `roster mesh cut` (`--all` too) exit 1 while a Host is pending, and `mesh leftovers [--remove]` when a Host didn't answer. `roster check` and `roster revoke` exit 1 when a Host was skipped (`ssh NAME` doesn't reach it from this Box) or none was checked or revoked. A `roster discover --write` or `roster mesh cut` whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: ``warning: this Box's ssh config didn't follow roster.yml (why): run `roster sync` on this box``.
+With `--json`, the status is the same, and an error is JSON on stderr ([Machine-readable output](#machine-readable-output)). `roster run` exits with the remote command's status, `roster ssh` with ssh's (the remote shell's, or 255 when ssh couldn't connect or log in), `roster vault bw` with `bw`'s, and `roster vault op` with `op`'s, and `roster agent wait` with 124 when its `--timeout` ran out. `roster mesh` and `roster mesh cut` (`--all` too) exit 1 while a Host is pending, and `mesh leftovers [--remove]` when a Host didn't answer. `roster check` and `roster revoke` exit 1 when a Host was skipped (`ssh NAME` doesn't reach it from this Box) or none was checked or revoked. A `roster discover --write` or `roster mesh cut` whose sync of this Box failed afterwards keeps its edit and its exit status, and says so on stderr: ``warning: this Box's ssh config didn't follow roster.yml (why): run `roster sync` on this box``.
 
 ## Examples
 

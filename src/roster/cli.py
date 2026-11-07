@@ -1464,6 +1464,23 @@ def cmd_agents_sync(args):
     return 0 if all(m["written"] for m in report["machines"] if m["state"] in ("hub", "connected")) else 1
 
 
+def cmd_agent(args):
+    """`roster agent send|read|wait|label`: one Agent, through this machine's herdr-core (agentops.py)."""
+    from . import agentops
+    if args.agent_cmd == "send":
+        say(agentops.send(args.address, args.text))
+        return 0
+    if args.agent_cmd == "read":
+        sys.stdout.write(agentops.read(args.address, args.lines))
+        return 0
+    if args.agent_cmd == "wait":
+        words, code = agentops.wait(args.address, args.timeout)
+        say(words)
+        return code
+    say(agentops.label(args.address, args.text))
+    return 0
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     never_look_in_the_current_folder()      # Windows: nothing roster starts looks for its program in the cwd
@@ -1530,6 +1547,11 @@ def _main(argv=None):
         return cmd_inv(args)
     if args.cmd == "agents":                  # herdr's, not roster.yml's
         return cmd_agents(args)
+    if args.cmd == "agent" and args.agent_cmd is None:     # plain `roster agent`: its actions
+        sys.stdout.write(command_parser(parser, ["agent"]).format_help())
+        return 0
+    if args.cmd == "agent":
+        return cmd_agent(args)
     if args.cmd == "revoke" and args.all:
         return revoke.revoke_all(args.yes)
     if args.cmd == "check" and args.box:

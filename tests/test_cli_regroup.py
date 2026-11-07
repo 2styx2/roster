@@ -60,7 +60,7 @@ resources:
   lab-guest: {type: wifi, ssid: lab-guest, auth: "env:WIFI_PW"}
 """
 TOP = ["init", "add", "discover", "hosts", "check", "setup", "revoke", "sync", "ssh", "run", "web", "mesh", "inv", "vault",
-       "help", "agents"]       # Q194's 14, ssh (#558) and agents (herdr, ADR 0011)
+       "help", "agents", "agent"]       # Q194's 14, ssh (#558), agents and agent (herdr, ADR 0011)
 
 
 @pytest.fixture
