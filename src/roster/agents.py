@@ -13,9 +13,13 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
-from .common import UTC_TIME, die, utc_now
+from .common import UTC_TIME, ago, die, utc_now
+from .errors import Exit
 
 LABEL = "roster.label"      # the Agent's label, a herdr terminal label (the spec's Agent label)
+DOC = "roster.agents"       # the shared document each core holds its copy of the directory in
+VERSION = 1                 # the directory document's own version (the spec's shape)
+STALE = 5 * 60              # seconds after which a remote Host's copy is called stale
 TIMEOUT = 15                # seconds an hc call may take
 
 
@@ -66,12 +70,16 @@ def running(started: str, now: datetime | None = None) -> str:
 
 def table(doc: dict[str, Any]) -> str:
     """DOC (the directory) for a person: one block per Host, the Hub first, then each machine by name; a row per
-    Agent (address, status, label, folder, how long it has run), the columns lined up across the blocks."""
-    hub = doc["hub"]
-    hosts = [(hub, "this Hub")] + [(m["name"], m["state"]) for m in doc["machines"]]
+    Agent (address, status, label, folder, how long it has run), the columns lined up across the blocks. A copy read
+    on a remote Host (`you` set) starts with where it came from and how old it is, and marks that Host `you`."""
+    hub, you = doc["hub"], doc.get("you")
+    hosts = [(hub, "the Hub" if you else "this Hub")]
+    hosts += [(m["name"], f"{m['state']}, you" if m["name"] == you else m["state"]) for m in doc["machines"]]
     rows = [[a["address"], a["status"], a["label"] or "-", a["folder"], running(a["started"])] for a in doc["agents"]]
     widths = [max((len(r[i]) for r in rows), default=0) for i in range(4)]
     lines: list[str] = []
+    if you:
+        lines.append(f"Agent directory from the Hub {hub}, written {ago(doc['updated'])}; this is {you}")
     for host, word in hosts:
         mine = [r for a, r in zip(doc["agents"], rows, strict=True) if a["host"] == host]
         if not mine:
@@ -103,3 +111,140 @@ def directory() -> dict[str, Any]:
                        "parent": None if parent is None else str(parent), "started": _iso(t.get("created_ms"))})
     machines = [{"name": str(m["name"]), "state": str(m["state"])} for m in listed.get("machines", [])]
     return {"hub": hub, "you": None, "updated": utc_now(), "machines": machines, "agents": agents}
+
+
+def local_copy() -> dict[str, Any] | None:
+    """The directory the Hub last wrote into this machine's core (doc.get DOC), when this is a remote Host: a copy
+    naming this machine in `you`. None on the Hub (its own copy has `you` null), before the first sync, or when this
+    core can't be read (the live directory then says why)."""
+    try:
+        got = rpc([("doc.get", {"name": DOC})])[0]
+    except Exit:
+        return None
+    value = (got.get("result") or {}).get("value")
+    if not (isinstance(value, dict) and value.get("version") == VERSION and value.get("you")):
+        return None
+    from pydantic import ValidationError
+
+    from .jsondocs import AgentDirectoryDoc, plain
+    doc = {k: v for k, v in value.items() if k != "version"}
+    try:
+        return plain(AgentDirectoryDoc.model_validate(doc))
+    except ValidationError:
+        return None                         # not a directory this roster reads: build what it can see instead
+
+
+def stale(doc: dict[str, Any], now: datetime | None = None) -> str | None:
+    """Why a copy read on a remote Host (DOC, `you` set) can't be trusted as current, when it's older than STALE;
+    else None. The Hub's directory is built live and never stale."""
+    if not doc.get("you"):
+        return None
+    try:
+        then = datetime.strptime(str(doc["updated"]), UTC_TIME).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    if ((now or datetime.now(timezone.utc)) - then).total_seconds() <= STALE:
+        return None
+    return (f"this Agent directory is stale: the Hub {doc['hub']} wrote it {ago(doc['updated'], now)} and not since. "
+            f"It's rewritten while herdr-app runs the roster mod on the Hub; `roster agents sync` there writes it now")
+
+
+def rpc(calls: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Each (METHOD, PARAMS) sent to this machine's herdr-core JSON-RPC over `hc connect` (one message a line; hc
+    has no `doc` subcommand), and its reply in the same order: {"result": ...} or {"error": {message, data}}."""
+    exe = shutil.which("hc")
+    if exe is None:
+        die("herdr-core isn't installed here: no `hc` on PATH",
+            fix="install herdr-core on this machine (`hc --version` then works)")
+    lines = "".join(json.dumps({"jsonrpc": "2.0", "id": i, "method": m, "params": p}) + "\n"
+                    for i, (m, p) in enumerate(calls, 1))
+    try:
+        r = subprocess.run([exe, "connect"], input=lines, capture_output=True, text=True, timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        die(f"herdr-core didn't answer `hc connect` in {TIMEOUT} s", fix="check it with `hc server status`")
+    except OSError as e:
+        die(f"couldn't run hc: {e.strerror or type(e).__name__}", fix="check herdr-core's install: `hc --version`")
+    replies: dict[Any, dict[str, Any]] = {}
+    for line in r.stdout.splitlines():
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(msg, dict) and "id" in msg:
+            replies[msg["id"]] = msg
+    if calls and not replies:
+        why = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
+        die(f"herdr-core didn't answer `hc connect`: {why}",
+            fix="start it with `hc server start`, then `hc server status` should answer")
+    lost = {"error": {"message": "no answer from herdr-core", "data": {"kind": "unavailable"}}}
+    return [replies.get(i, lost) for i in range(1, len(calls) + 1)]
+
+
+def _kind(reply: dict[str, Any]) -> str:
+    return str(((reply.get("error") or {}).get("data") or {}).get("kind") or "")
+
+
+def _why(reply: dict[str, Any]) -> str:
+    e = reply.get("error") or {}
+    return str(e.get("message") or _kind(reply) or "failed")
+
+
+def write(copies: dict[str | None, dict[str, Any]], tries: int = 3) -> dict[str | None, str | None]:
+    """Each copy written as the shared document DOC into its core (key None: this one; else the machine reached
+    `on` it), at the version doc.get just gave. A write that lost a race (conflict) reads and tries again, up to
+    TRIES rounds. Each core's result: None (written) or herdr's words for why not."""
+    pending = list(copies)
+    result: dict[str | None, str | None] = {}
+    for _ in range(tries):
+        if not pending:
+            break
+        on = [{} if m is None else {"on": m} for m in pending]
+        got = rpc([("doc.get", {"name": DOC, **o}) for o in on])
+        ready = []
+        for m, o, g in zip(pending, on, got, strict=True):
+            if "result" in g:
+                ready.append((m, o, int((g["result"] or {}).get("version") or 0)))
+            else:
+                result[m] = _why(g)
+        put = rpc([("doc.set", {"name": DOC, "value": copies[m], "version": v, **o}) for m, o, v in ready])
+        pending = []
+        for (m, _, _), p in zip(ready, put, strict=True):
+            result[m] = None if "result" in p else _why(p)
+            if _kind(p) == "conflict":
+                pending.append(m)
+    return result
+
+
+def sync() -> dict[str, Any]:
+    """`roster agents sync`: the directory built live on the Hub, written into the Hub's own core (`you` null) and
+    into each connected machine's (`you` its name); a machine that isn't connected is skipped. The report: {hub,
+    updated, agents (how many), machines: [{name, state, written, error}]}, the Hub first (state `hub`)."""
+    doc = {"version": VERSION, **directory()}
+    connected = [m["name"] for m in doc["machines"] if m["state"] == "connected"]
+    copies: dict[str | None, dict[str, Any]] = {None: doc, **{m: {**doc, "you": m} for m in connected}}
+    result = write(copies)
+    rows = [{"name": doc["hub"], "state": "hub", "written": result[None] is None, "error": result[None]}]
+    for m in doc["machines"]:
+        tried = m["name"] in result
+        rows.append({"name": m["name"], "state": m["state"], "written": tried and result[m["name"]] is None,
+                     "error": result[m["name"]] if tried else None})
+    return {"hub": doc["hub"], "updated": doc["updated"], "agents": len(doc["agents"]), "machines": rows}
+
+
+def sync_table(report: dict[str, Any]) -> str:
+    """A sync's REPORT for a person: a line per core (written, failed with herdr's words, or skipped), then a
+    count."""
+    lines = []
+    for m in report["machines"]:
+        name = f"{m['name']} (this Hub)" if m["state"] == "hub" else m["name"]
+        if m["written"]:
+            lines.append(f"{name}: written")
+        elif m["error"]:
+            lines.append(f"{name}: failed: {m['error']}")
+        else:
+            lines.append(f"{name}: skipped ({m['state']})")
+    tried = [m for m in report["machines"] if m["state"] in ("hub", "connected")]
+    n = report["agents"]
+    lines.append(f"Agent directory ({n} Agent{'' if n == 1 else 's'}) written to "
+                 f"{sum(m['written'] for m in tried)} of {len(tried)} herdr-cores")
+    return "\n".join(lines)

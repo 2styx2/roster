@@ -1438,13 +1438,30 @@ def cmd_inv(args):
 def cmd_agents(args):
     """`roster agents`: every Agent on this Hub and its herdr machines (agents.py), grouped by Host."""
     from . import agents
-    doc = agents.directory()
+    if args.action == "sync":
+        return cmd_agents_sync(args)
+    doc = agents.local_copy() or agents.directory()      # a remote Host's copy, else (the Hub) built live
+    stale = agents.stale(doc)
+    if stale:
+        print(f"warning: {stale}", file=sys.stderr, flush=True)
     if args.json:
         from . import jsondocs
         jsonout.emit(jsondocs.AgentDirectoryDoc.model_validate(doc))
         return 0
     say(agents.table(doc))
     return 0
+
+
+def cmd_agents_sync(args):
+    """`roster agents sync`: the Agent directory written into the Hub's and each connected machine's herdr-core."""
+    from . import agents
+    report = agents.sync()
+    if args.json:
+        from . import jsondocs
+        jsonout.emit(jsondocs.AgentSyncDoc.model_validate(report))
+    else:
+        say(agents.sync_table(report))
+    return 0 if all(m["written"] for m in report["machines"] if m["state"] in ("hub", "connected")) else 1
 
 
 def main(argv=None):

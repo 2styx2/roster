@@ -263,6 +263,9 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
                    help="how long to wait for the answer (default: 30)")
     s = sub.add_parser("agents", help="list every Agent (Claude and other agents in herdr terminals) on this Hub "
                        "and its herdr machines: address, Host, folder, status, label and how long it has run")
+    s.add_argument("action", nargs="?", choices=["sync"],
+                   help="sync: write the Agent directory into every connected machine's herdr-core (and the Hub's) "
+                        "as the shared document roster.agents, and say which failed")
     s.add_argument("--json", **as_json)
     s = sub.add_parser("mesh", help="set up Host-to-Host access (mesh: and links: in roster.yml), one Host at a time")
     s.add_argument("action", nargs="?", choices=["cut", "status", "leftovers"],

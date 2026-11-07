@@ -351,6 +351,25 @@ class AgentDirectoryDoc(Part, frozen=True):
     agents: list[Agent]
 
 
+class AgentSyncMachine(Part, frozen=True):
+    """A core `roster agents sync` wrote the directory to, or tried: the Hub (state `hub`) or a machine with herdr's
+    state. A machine that isn't connected is skipped: `written` false, `error` null."""
+
+    name: str
+    state: str
+    written: bool
+    error: str | None
+
+
+class AgentSyncDoc(Part, frozen=True):
+    """`roster agents sync --json`: where the Agent directory of `updated` went, the Hub first."""
+
+    hub: str
+    updated: str                        # ISO-8601, UTC: the directory's own `updated`
+    agents: int
+    machines: list[AgentSyncMachine]
+
+
 # ---------------------------------------------------------------- errors
 
 class Error(Part, frozen=True):

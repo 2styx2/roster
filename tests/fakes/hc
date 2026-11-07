@@ -12,10 +12,15 @@
 #                               connecting or unavailable
 #   DIR/machines/M/terminals/T.json   a terminal on machine M: address M/T, listed by `hc ls` only while M is
 #                               connected (hc merges every connected machine's terminals into the Hub's list)
-# Each machine's folder is shaped as DIR (its own terminals/, and later its own core's state), so a command run "on"
-# M reads DIR/machines/M.
+#   DIR/docs/NAME.json          a shared document on this core: {"value": ..., "version": N} (never written: absent)
+#   DIR/rpc                     `hc connect`: each JSON-RPC request it read, one JSON line each
+#   DIR/machines/M/down         M's core doesn't answer the Hub: a document call `on` M fails (unavailable)
+# Each machine's folder is shaped as DIR (its own terminals/, docs/ and name), so a command run "on" M reads
+# DIR/machines/M, and a test that runs roster on M points FAKE_HC_STATE there.
 # Commands: ls [--all] [--json] (live terminals: the short rows hc prints, `status` only when one is reported;
-# --all: finished ones too), get ADDRESS [--json], server status [--json]. Anything else: exit 2, "unknown command".
+# --all: finished ones too), get ADDRESS [--json], server status [--json], connect (herdr-core's JSON-RPC over
+# stdin/stdout, one message per line: doc.get {name, on?} and doc.set {name, value, version, on?}, with hc's error
+# kinds: machine_unknown, unavailable, conflict). Anything else: exit 2, "unknown command".
 import json, os, sys
 from pathlib import Path
 
@@ -86,4 +91,73 @@ if words[:2] == ["server", "status"]:
     name = (state / "name").read_text().strip() if (state / "name").exists() else "hub"
     live = sum(1 for t in terminals(state).values() if t.get("state", "live") == "live")
     say({"core": {"id": "0" * 32, "name": name}, "live": live, "version": "0.1.18"})
+
+
+# ---------------------------------------------------------------- connect: JSON-RPC (shared documents)
+
+class RpcError(Exception):
+    def __init__(self, kind, message, code=-32000):
+        super().__init__(message)
+        self.kind, self.message, self.code = kind, message, code
+
+
+def doc_core(on):
+    """The state folder of the core a document call reaches: this one, or machine ON (added and connected)."""
+    if on is None:
+        return state
+    names = dict(machines())
+    if on not in names:
+        raise RpcError("machine_unknown", f"unknown machine {on!r}")
+    if names[on] != "connected" or (state / "machines" / on / "down").exists():
+        raise RpcError("unavailable", f"machine {on!r} is {names[on]}")
+    return state / "machines" / on
+
+
+def doc_file(params):
+    name = params.get("name")
+    if not isinstance(name, str) or not name or "/" in name:
+        raise RpcError("invalid_params", f"bad name {name!r}", -32602)
+    return doc_core(params.get("on")) / "docs" / f"{name}.json"
+
+
+def rpc_doc_get(params):
+    f = doc_file(params)
+    return json.loads(f.read_text()) if f.exists() else {"value": None, "version": 0}
+
+
+def rpc_doc_set(params):
+    f = doc_file(params)
+    current = json.loads(f.read_text())["version"] if f.exists() else 0
+    if params.get("version") != current:
+        raise RpcError("conflict", f"version is {current}, not {params.get('version')}")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"value": params.get("value"), "version": current + 1}))
+    return {"version": current + 1}
+
+
+RPC = {"doc.get": rpc_doc_get, "doc.set": rpc_doc_set}
+
+
+def connect():
+    """Answer each JSON-RPC request line on stdin, in order, until stdin ends."""
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        req = json.loads(line)
+        with open(state / "rpc", "a") as log:
+            log.write(json.dumps(req) + "\n")
+        reply = {"jsonrpc": "2.0", "id": req.get("id")}
+        method = RPC.get(req.get("method"))
+        try:
+            if method is None:
+                raise RpcError("method_not_found", f"no method {req.get('method')!r}", -32601)
+            reply["result"] = method(req.get("params") or {})
+        except RpcError as e:
+            reply["error"] = {"code": e.code, "message": e.message, "data": {"kind": e.kind}}
+        print(json.dumps(reply), flush=True)
+    sys.exit(0)
+
+
+if words[:1] == ["connect"]:
+    connect()
 fail(f"unknown command: {' '.join(words[:2])}", 2)

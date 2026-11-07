@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -366,6 +367,31 @@ class FakeHc:
                   "reported": bool(status), "turn": 0, "created_ms": created_ms, "finished_ms": None,
                   "exit_code": None, "state": state, "title": ""}
         (folder / "terminals" / f"{t}.json").write_text(json.dumps(record))
+
+    def doc(self, name: str, machine: str | None = None) -> dict[str, Any] | None:
+        """The shared document NAME on the Hub's core, or on MACHINE's: {value, version}, None if never written."""
+        f = (self.root / "machines" / machine if machine else self.root) / "docs" / f"{name}.json"
+        return json.loads(f.read_text()) if f.exists() else None
+
+    def set_doc(self, name: str, value: Any, version: int = 1, machine: str | None = None) -> None:
+        """Shared document NAME as a core holds it, at VERSION: on the Hub's core, or on MACHINE's."""
+        if machine and not (self.root / "machines" / machine).is_dir():
+            self.machine(machine)
+        d = (self.root / "machines" / machine if machine else self.root) / "docs"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{name}.json").write_text(json.dumps({"value": value, "version": version}))
+
+    def machine_down(self, name: str) -> None:
+        """MACHINE's core stops answering the Hub (listed connected, but a call `on` it fails)."""
+        d = self.root / "machines" / name
+        if not d.is_dir():
+            self.machine(name)
+        (d / "down").write_text("")
+
+    def rpc(self) -> list[dict[str, Any]]:
+        """Each JSON-RPC request `hc connect` read so far."""
+        f = self.root / "rpc"
+        return [json.loads(line) for line in f.read_text().splitlines()] if f.exists() else []
 
     def calls(self) -> list[str]:
         """Each hc run so far, as `hc ARGS`."""
