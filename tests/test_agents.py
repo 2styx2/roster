@@ -95,20 +95,34 @@ def test_a_core_that_doesnt_answer_says_how_to_start_it(hc, capsys):
     hc.down()
     with pytest.raises(SystemExit) as e:
         main(["agents"])
-    assert "herdr-core didn't answer `hc server status`" in str(e.value)
+    assert "herdr-core didn't answer `hc connect`: the core didn't answer" in str(e.value)
     rc, _, err = agents(capsys, "--json")
     assert rc == 1
     assert "hc server start" in json.loads(err)["error"]["fix"]
 
 
+def test_an_agent_that_ends_while_the_directory_is_built_doesnt_break_it(hc, capsys):
+    """A terminal can end between herdr listing it and roster reading it: `roster agents`, `agents sync` and the
+    hook still answer, with the Agents that are there."""
+    hc.name("hub-01")
+    hc.terminal("t1", app="claude-code", status="working")
+    hc.terminal("box-a/t2", app="claude-code", status="idle")
+    hc.gone("t1")
+    assert "box-a/t2" in [a["address"] for a in directory(capsys)["agents"]]
+    rc, _, err = agents(capsys, "sync")
+    assert rc == 0, err
+    rc, out, err = agents(capsys, "hook")
+    assert rc == 0 and err == "" and "box-a/t2" in out
+
+
 def test_the_directory_only_reads_from_herdr(hc, capsys):
-    """hc ls, server status and a get per Agent, and the local copy read (doc.get, which on the Hub has no `you`):
-    nothing that starts, sends to or labels a terminal, or writes a document."""
+    """One hc run (`hc connect`): the local copy read (doc.get, which on the Hub has no `you`), server.status and
+    terminal.list; nothing that starts, sends to or labels a terminal, or writes a document, and no call per Agent."""
     hc.terminal("t1", app="claude-code", status="done")
     hc.terminal("t2", status=None)
     directory(capsys)
-    assert sorted(hc.calls()) == ["hc connect", "hc get t1 --json", "hc ls --json", "hc server status --json"]
-    assert [r["method"] for r in hc.rpc()] == ["doc.get"]
+    assert hc.calls() == ["hc connect"]
+    assert [r["method"] for r in hc.rpc()] == ["doc.get", "server.status", "terminal.list"]
 
 
 def test_on_the_hub_its_own_copy_is_ignored_and_the_directory_built_live(hc, capsys):

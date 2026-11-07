@@ -3,7 +3,13 @@ Claude Code SessionStart hook in the user's Claude settings, whose command (`ros
 list from the Agent directory; ROSTER.md gains an Agents section."""
 
 import json
+import shutil
+import sys
 import time
+from pathlib import Path
+
+import pytest
+from conftest import FAKES, WINDOWS
 
 from roster.cli import main
 from roster.example import EXAMPLE_CONFIG
@@ -63,6 +69,25 @@ def test_without_herdr_no_hook_is_installed(isolated, write_config, capsys, monk
     write_config(EXAMPLE_CONFIG)
     sync(capsys)
     assert not settings(isolated).exists() or not ours(isolated)
+
+
+def test_a_sync_where_hc_isnt_on_path_keeps_the_hook(isolated, write_config, hc, capsys, monkeypatch):
+    """Whether the hook is wanted is this Box's answer (--no-agents), not what PATH this one run has."""
+    write_config(EXAMPLE_CONFIG)
+    sync(capsys)
+    monkeypatch.setenv("PATH", str(isolated["home"]))              # a cron job's or a non-login shell's PATH
+    sync(capsys)
+    assert len(ours(isolated)) == 1
+
+
+def test_sync_installs_the_hook_when_hc_is_only_in_local_bin(isolated, write_config, capsys, monkeypatch):
+    local = isolated["home"] / ".local" / "bin"
+    local.mkdir(parents=True)
+    (local / ("hc.exe" if WINDOWS else "hc")).write_text("")
+    monkeypatch.setenv("PATH", str(isolated["home"]))
+    write_config(EXAMPLE_CONFIG)
+    sync(capsys)
+    assert len(ours(isolated)) == 1
 
 
 def test_no_agents_removes_the_hook_and_later_syncs_leave_it_out(isolated, write_config, hc, capsys):
@@ -180,6 +205,38 @@ def test_on_the_hub_the_hook_lists_the_live_directory(hc, capsys):
     hc.terminal("box-a/t2", app="claude-code", status="working")
     rows = [line.split()[:2] for line in hook(capsys) if line.startswith("  ")]
     assert rows == [["hub-01/t1", "idle"], ["box-a/t2", "working"]]
+
+
+def test_the_hook_runs_hc_once_however_many_agents(hc, capsys):
+    """Claude Code waits at most 10 s for the hook: one hc run, never one per Agent."""
+    hc.name("hub-01")
+    for i in range(1, 6):
+        hc.terminal(f"box-a/t{i}", app="claude-code", status="working")
+    assert len([line for line in hook(capsys) if line.startswith("  ")]) == 5
+    assert hc.calls() == ["hc connect"]
+
+
+def test_the_hook_gives_up_on_a_core_that_hangs_well_before_claude_does(hc, capsys, monkeypatch):
+    from roster import agents
+    assert agents.HOOK_TIMEOUT <= 10 / 2                # the real budget: well inside Claude Code's 10 s
+    monkeypatch.setattr(agents, "HOOK_TIMEOUT", 1)      # this test's, so it doesn't wait that long
+    hc.terminal("t1", app="claude-code", status="working")
+    (hc.root / "slow").write_text("30")
+    start = time.monotonic()
+    assert hook(capsys) == []
+    assert time.monotonic() - start < 5
+
+
+@pytest.mark.skipif(WINDOWS, reason="the stand-in hc runs by its #! line")
+def test_the_hook_finds_hc_in_local_bin_when_path_lacks_it(hc, capsys, monkeypatch, isolated):
+    """Claude Code may start the hook with a PATH that hasn't ~/.local/bin, where herdr-core installs hc."""
+    hc.name("hub-01")
+    hc.terminal("t1", app="claude-code", status="idle")
+    local = isolated["home"] / ".local" / "bin"
+    local.mkdir(parents=True)
+    shutil.copy(FAKES / "hc", local / "hc")
+    monkeypatch.setenv("PATH", str(Path(sys.executable).parent))     # python3 for its #! line, and no hc
+    assert [line.split()[0] for line in hook(capsys) if line.startswith("  ")] == ["hub-01/t1"]
 
 
 # ---------------------------------------------------------------- ROSTER.md

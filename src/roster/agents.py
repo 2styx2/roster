@@ -1,19 +1,19 @@
 """`roster agents`: every Agent across the Hub's herdr machines (ADR 0011). An Agent is a terminal that reports an
 agent status to herdr (OSC 7501; Claude Code does so itself). On the Hub the Agent directory is built live from
-herdr-core: `hc ls --json` (which merges every connected machine's terminals, `status` only on those that report
-one), `hc get` for each Agent (its app, labels and start), and `hc server status` for the Hub's own name.
+herdr-core in one JSON-RPC round (`hc connect`): `terminal.list` (what `hc ls` shows, every connected machine's
+terminals merged in, but each one's whole record: status, labels, start) and `server.status` for the Hub's own name.
+One listing and never a call per Agent, so an Agent that ends meanwhile can't break it.
 
 The directory holds no secret and no screen text: addresses, Hosts, folders, status words and labels."""
 
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
-from .common import UTC_TIME, ago, die, utc_now
+from .common import UTC_TIME, ago, die, find_user_program, utc_now
 from .errors import Exit
 
 LABEL = "roster.label"      # the Agent's label, a herdr terminal label (the spec's Agent label)
@@ -23,19 +23,33 @@ STALE = 5 * 60              # seconds after which a remote Host's copy is called
 TIMEOUT = 15                # seconds an hc call may take
 
 
+def hc_program() -> str | None:
+    """The hc roster runs: on PATH (common.find_program: never one in the current folder on Windows, #411), else in
+    ~/.local/bin, where herdr-core's installer and `hc machine add --install` put it (a hook's or a non-login shell's
+    PATH may not have that folder). None: herdr-core isn't installed here."""
+    return find_user_program("hc")
+
+
+def _run(args: list[str], what: str, timeout: float | None,
+         stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+    """`hc ARGS` run (STDIN its input), whatever its exit; or a refusal saying herdr-core isn't installed, can't be
+    run, or didn't answer `hc WHAT` in TIMEOUT seconds (None: hc's own timeout ends it)."""
+    exe = hc_program()
+    if exe is None:
+        die("herdr-core isn't installed here: no `hc` on PATH or in ~/.local/bin",
+            fix="install herdr-core on this machine (`hc --version` then works), or run roster where it is")
+    try:
+        return subprocess.run([exe, *args], input=stdin, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        die(f"herdr-core didn't answer `hc {what}` in {timeout} s", fix="check it with `hc server status`")
+    except OSError as e:
+        die(f"couldn't run hc: {e.strerror or type(e).__name__}", fix="check herdr-core's install: `hc --version`")
+
+
 def run_hc(*args: str, timeout: float | None = TIMEOUT) -> subprocess.CompletedProcess[str]:
     """`hc ARGS --json` run, whatever its exit (its document on stdout, a refusal on stderr), or a refusal saying
     herdr-core isn't installed or didn't answer in TIMEOUT seconds (None: hc's own timeout ends it)."""
-    exe = shutil.which("hc")
-    if exe is None:
-        die("herdr-core isn't installed here: no `hc` on PATH",
-            fix="install herdr-core on this machine (`hc --version` then works), or run roster where it is")
-    try:
-        return subprocess.run([exe, *args, "--json"], capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        die(f"herdr-core didn't answer `hc {' '.join(args)}` in {timeout} s", fix="check it with `hc server status`")
-    except OSError as e:
-        die(f"couldn't run hc: {e.strerror or type(e).__name__}", fix="check herdr-core's install: `hc --version`")
+    return _run([*args, "--json"], " ".join(args), timeout)
 
 
 def refusal(r: subprocess.CompletedProcess[str]) -> str:
@@ -106,18 +120,30 @@ def table(doc: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def directory() -> dict[str, Any]:
+LIVE = [("server.status", {}), ("terminal.list", {})]      # what the live directory is built from, in one round
+
+
+def directory(timeout: float | None = TIMEOUT) -> dict[str, Any]:
     """The Agent directory document (version 1, without `version`), built live on the Hub."""
-    hub = str(hc("server", "status")["core"]["name"])
-    listed = hc("ls")
+    return _live(*rpc(LIVE, timeout))
+
+
+def _answer(method: str, reply: dict[str, Any]) -> Any:
+    if "error" in reply:
+        die(f"herdr-core didn't answer {method}: {_why(reply)}",
+            fix="start it with `hc server start`, then `hc server status` should answer")
+    return reply.get("result") or {}
+
+
+def _live(status_reply: dict[str, Any], list_reply: dict[str, Any]) -> dict[str, Any]:
+    """The directory from herdr's server.status and terminal.list replies."""
+    hub = str(_answer("server.status", status_reply)["core"]["name"])
+    listed = _answer("terminal.list", list_reply)
     agents: list[dict[str, Any]] = []
-    for row in listed.get("terminals", []):
-        if not row.get("status"):
-            continue                                    # not an Agent: it reports no agent status
-        t = hc("get", str(row["address"]))
+    for t in listed.get("terminals", []):
         status = t.get("status") or {}
         if not status.get("state"):
-            continue
+            continue                                    # not an Agent: it reports no agent status
         machine, _, terminal = str(t["address"]).rpartition("/")
         host = machine or hub
         parent = t.get("parent")
@@ -129,14 +155,24 @@ def directory() -> dict[str, Any]:
     return {"hub": hub, "you": None, "updated": utc_now(), "machines": machines, "agents": agents}
 
 
+def current(timeout: float | None = TIMEOUT) -> dict[str, Any]:
+    """The directory as `roster agents` reads it: on a remote Host the copy the Hub wrote here (local_copy), else
+    (the Hub) built live; one round of calls to herdr-core either way."""
+    got, status_reply, list_reply = rpc([("doc.get", {"name": DOC}), *LIVE], timeout)
+    return _copy(got) or _live(status_reply, list_reply)
+
+
 def local_copy() -> dict[str, Any] | None:
     """The directory the Hub last wrote into this machine's core (doc.get DOC), when this is a remote Host: a copy
     naming this machine in `you`. None on the Hub (its own copy has `you` null), before the first sync, or when this
     core can't be read (the live directory then says why)."""
     try:
-        got = rpc([("doc.get", {"name": DOC})])[0]
+        return _copy(rpc([("doc.get", {"name": DOC})])[0])
     except Exit:
         return None
+
+
+def _copy(got: dict[str, Any]) -> dict[str, Any] | None:
     value = (got.get("result") or {}).get("value")
     if not (isinstance(value, dict) and value.get("version") == VERSION and value.get("you")):
         return None
@@ -166,29 +202,26 @@ def stale(doc: dict[str, Any], now: datetime | None = None) -> str | None:
 
 
 HOOK_LINES = 20             # at most this many lines in a new Claude session's context
-HOOK_TIMEOUT = 3            # seconds each hc call may take for the hook: a session never waits long for it
+HOOK_TIMEOUT = 4            # seconds the hook's one hc run may take: well inside the 10 s Claude Code gives the hook
 
 
-def hook_lines() -> list[str]:
+def hook_lines(timeout: float | None = None) -> list[str]:
     """What Claude Code's SessionStart hook (`roster agents hook`, R5) adds to a new session: the other Agents in the
     directory as `roster agents` reads it (this Host's copy, or on the Hub the live one), at most HOOK_LINES lines,
     this session ($HC_TERMINAL_ID) left out. Nothing at all when there's no herdr-core, it doesn't answer, there's no
-    directory, or no other Agent: never an error, and never slower than HOOK_TIMEOUT a call."""
+    directory, or no other Agent: never an error. It's one hc run (current), given TIMEOUT seconds (None:
+    HOOK_TIMEOUT)."""
     import os
 
-    global TIMEOUT
-    if shutil.which("hc") is None:
+    if hc_program() is None:
         return []
-    saved, TIMEOUT = TIMEOUT, HOOK_TIMEOUT
     try:
-        doc = local_copy() or directory()
+        doc = current(HOOK_TIMEOUT if timeout is None else timeout)
         old = stale(doc)
     except Exit:
         return []
     except Exception:       # whatever went wrong, a new session starts without the list rather than with an error
         return []
-    finally:
-        TIMEOUT = saved
     here = doc.get("you") or doc["hub"]
     me = f"{here}/{os.environ['HC_TERMINAL_ID']}" if os.environ.get("HC_TERMINAL_ID") else None
     others = [a for a in doc["agents"] if a["address"] != me]
@@ -214,21 +247,12 @@ def hook_lines() -> list[str]:
     return lines
 
 
-def rpc(calls: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
-    """Each (METHOD, PARAMS) sent to this machine's herdr-core JSON-RPC over `hc connect` (one message a line; hc
+def rpc(calls: list[tuple[str, dict[str, Any]]], timeout: float | None = TIMEOUT) -> list[dict[str, Any]]:
+    """Each (METHOD, PARAMS) sent to this machine's herdr-core JSON-RPC over one `hc connect` (one message a line; hc
     has no `doc` subcommand), and its reply in the same order: {"result": ...} or {"error": {message, data}}."""
-    exe = shutil.which("hc")
-    if exe is None:
-        die("herdr-core isn't installed here: no `hc` on PATH",
-            fix="install herdr-core on this machine (`hc --version` then works)")
     lines = "".join(json.dumps({"jsonrpc": "2.0", "id": i, "method": m, "params": p}) + "\n"
                     for i, (m, p) in enumerate(calls, 1))
-    try:
-        r = subprocess.run([exe, "connect"], input=lines, capture_output=True, text=True, timeout=TIMEOUT)
-    except subprocess.TimeoutExpired:
-        die(f"herdr-core didn't answer `hc connect` in {TIMEOUT} s", fix="check it with `hc server status`")
-    except OSError as e:
-        die(f"couldn't run hc: {e.strerror or type(e).__name__}", fix="check herdr-core's install: `hc --version`")
+    r = _run(["connect"], "connect", timeout, stdin=lines)
     replies: dict[Any, dict[str, Any]] = {}
     for line in r.stdout.splitlines():
         try:
@@ -238,7 +262,7 @@ def rpc(calls: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
         if isinstance(msg, dict) and "id" in msg:
             replies[msg["id"]] = msg
     if calls and not replies:
-        why = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
+        why = refusal(r)
         die(f"herdr-core didn't answer `hc connect`: {why}",
             fix="start it with `hc server start`, then `hc server status` should answer")
     lost = {"error": {"message": "no answer from herdr-core", "data": {"kind": "unavailable"}}}
@@ -271,6 +295,8 @@ def write(copies: dict[str | None, dict[str, Any]], tries: int = 3) -> dict[str 
                 ready.append((m, o, int((g["result"] or {}).get("version") or 0)))
             else:
                 result[m] = _why(g)
+        if not ready:
+            break
         put = rpc([("doc.set", {"name": DOC, "value": copies[m], "version": v, **o}) for m, o, v in ready])
         pending = []
         for (m, _, _), p in zip(ready, put, strict=True):

@@ -70,8 +70,60 @@ def password_session(cfg: dict[str, Any], h: dict[str, Any]) -> int:
     with channel:
         if channel.problem:
             die(channel.problem, code=errors.NO_ASKPASS)
-        env = channel.env(channel.mint(h, h["name"]), login_for=f"{h['ssh']['user']}@{h['ip']}")
+        mine, jumps = logins(h)
+        env = channel.env(channel.mint(h, h["name"]), logins=mine, others=jumps)
         return explained(cfg, h, ["ssh", *PASSWORD_OPTIONS, h["name"]], env, password=True)
+
+
+SSH_G_TIMEOUT = 5      # seconds `ssh -G` (which only reads the ssh config) may take
+
+
+def ssh_g(name: str) -> dict[str, str]:
+    """What `ssh -G NAME` says the ssh config gives NAME ({keyword: value}, keywords lowercase); {} when it can't
+    say. It reads the config and connects nowhere."""
+    try:
+        r = subprocess.run(program_argv(["ssh", "-G", name]), capture_output=True, text=True, timeout=SSH_G_TIMEOUT)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return {}
+    if r.returncode != 0:
+        return {}
+    out: dict[str, str] = {}
+    for line in r.stdout.splitlines():
+        key, _, value = line.strip().partition(" ")
+        out.setdefault(key.lower(), value.strip())
+    return out
+
+
+def _jump_hosts(spec: str) -> list[tuple[str, str]]:
+    """(user or "", host) of each jump in a ProxyJump value: `[user@]host[:port]` or `ssh://[user@]host[:port]`,
+    comma-separated; `none`: none."""
+    out: list[tuple[str, str]] = []
+    for part in spec.split(","):
+        part = part.strip().removeprefix("ssh://")
+        if not part or part.lower() == "none":
+            continue
+        user, _, host = part.rpartition("@")
+        host = host[1:host.index("]")] if host.startswith("[") and "]" in host else host.split(":")[0]
+        out.append((user, host))
+    return out
+
+
+def logins(h: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """(the logins H's own password prompt may name, the jump Hosts' logins), each `user@address` lowercase, for the
+    askpass helper (askpass.other_login). ssh names a login by its HostKeyAlias, else its HostName as resolved, so
+    H's are its user at its name, `ip:`, HostName and HostKeyAlias. A jump's are what `ssh -G` says for each
+    ProxyJump: its user at the name given, its HostName and HostKeyAlias. A jump through ProxyCommand isn't known: its
+    prompt can't be told from H's (let jump Hosts take this Box's key)."""
+    g = ssh_g(h["name"])
+    users = dict.fromkeys([h["ssh"]["user"], g.get("user") or h["ssh"]["user"]])
+    names = [h["ip"], h["name"], g.get("hostname"), g.get("hostkeyalias")]
+    mine = [f"{u}@{n}".lower() for u in users for n in names if n]
+    jumps: list[str] = []
+    for user, host in _jump_hosts(g.get("proxyjump", "")):
+        j = ssh_g(host)
+        u = user or j.get("user") or ""
+        jumps += [f"{u}@{n}".lower() for n in (host, j.get("hostname"), j.get("hostkeyalias")) if u and n]
+    return list(dict.fromkeys(mine)), [j for j in dict.fromkeys(jumps) if j not in mine]
 
 
 def explained(cfg: dict[str, Any], h: dict[str, Any], argv: list[str], env: dict[str, str], password: bool) -> int:

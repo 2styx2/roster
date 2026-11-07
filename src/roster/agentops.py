@@ -29,14 +29,13 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
 from .agents import LABEL, TIMEOUT, hc, local_copy, refusal, run_hc
-from .common import refuse
+from .common import find_program, refuse
 from .errors import ROSTER_ERROR, Problem
 
 LIST_THEM = "`roster agents` lists the live ones and their addresses"
@@ -73,7 +72,7 @@ def run(reach: Reach, *args: str, timeout: float | None = TIMEOUT) -> subprocess
     there). hc there is found on PATH, then in ~/.local/bin (a non-login shell may not have it on PATH)."""
     if reach.over is None:
         return run_hc(*args, timeout=timeout)
-    ssh = shutil.which("ssh")
+    ssh = find_program("ssh")
     if ssh is None:
         die("ssh isn't installed here, and the Mesh reaches other Hosts with it", fix="install the OpenSSH client")
     line = shlex.join(["sh", "-c", 'PATH="$PATH:$HOME/.local/bin"; exec hc "$@"', "hc", *args, "--json"])
@@ -83,6 +82,8 @@ def run(reach: Reach, *args: str, timeout: float | None = TIMEOUT) -> subprocess
     except subprocess.TimeoutExpired:
         die(f"{reach.over} didn't answer `hc {args[0]}` over the Mesh in {timeout} s",
             fix=f"check its herdr-core: `ssh {reach.over} hc server status`")
+    except OSError as e:
+        die(f"couldn't run ssh: {e.strerror or type(e).__name__}", fix="check the OpenSSH client's install")
 
 
 # ---------------------------------------------------------------- the Mesh on this Host
@@ -170,7 +171,7 @@ def checked(address: str, reach: Reach, you: str = "") -> Reach:
             die(f"{reach.over} didn't answer over the Mesh: {why}",
                 fix=f"check that it's up and that `ssh {reach.over}` works from {you}; `roster agents` shows each "
                     "machine's state as the Hub last saw it")
-        if reach.over and (r.returncode == 127 or "not found" in why):
+        if reach.over and r.returncode == 127 and not kind(r):     # sh there found no hc to run
             die(f"herdr-core isn't installed on {reach.over}: no `hc` there",
                 fix=f"make {reach.over} a herdr machine from the Hub (`hc machine add {reach.over} --install`)")
         if reach.hub and kind(r) == "denied":
@@ -212,8 +213,9 @@ def send(address: str, text: str) -> str:
 
 
 def read(address: str, lines: int = 0) -> str:
-    """ADDRESS's screen, with LINES of history above it."""
-    return str(act(address, "read", "--lines", str(lines)).get("text") or "")
+    """ADDRESS's screen, with LINES of history above it (0: the screen alone, as hc reads it without --lines)."""
+    more = ("--lines", str(lines)) if lines > 0 else ()
+    return str(act(address, "read", *more).get("text") or "")
 
 
 TIMED_OUT = 124             # wait's exit when it gave up, as hc's and timeout(1)'s

@@ -100,22 +100,41 @@ def test_a_password_the_host_refuses_names_the_vault_item_never_the_value(lab, c
     assert no_secret_in(out, err)
 
 
-@pytest.mark.parametrize("prompt", ["ops@10.0.0.99's password: ", "(ops@10.0.0.99) Password: ",
-                                    "root@10.0.0.6's password: "])
-def test_a_jump_host_asking_for_a_password_never_gets_this_hosts(lab, capfd, monkeypatch, prompt):
-    """ssh runs a ProxyJump's ssh with its own environment, askpass and all: a jump Host that asks for a password
-    (another user@address than the Host's) is refused, and its token isn't spent on it."""
+def ssh_config(isolated, text):
+    """TEXT added to the user's own ~/.ssh/config (after roster's Include)."""
+    config = isolated["home"] / ".ssh" / "config"
+    config.write_text((config.read_text() if config.exists() else "") + "\n" + text)
+
+
+@pytest.mark.parametrize(("jump", "prompt", "who"), [
+    ("jump-01", "ops@10.0.0.99's password: ", "ops@10.0.0.99"),
+    ("jump-01", "(ops@10.0.0.99) Password: ", "ops@10.0.0.99"),
+    ("jump-01", "ops@jump-01's password: ", "ops@jump-01"),
+    ("ops@10.0.0.99", "ops@10.0.0.99's password: ", "ops@10.0.0.99")])
+def test_a_jump_host_asking_for_a_password_never_gets_this_hosts(lab, capfd, monkeypatch, isolated, jump, prompt, who):
+    """ssh runs a ProxyJump's ssh with its own environment, askpass and all: a prompt that names the jump Host's
+    login (by its address or its name) is refused, and its token isn't spent on it."""
+    ssh_config(isolated, f"Host esx\n    ProxyJump {jump}\nHost jump-01\n    HostName 10.0.0.99\n    User ops\n")
     monkeypatch.setenv("BW_PASSWORD", "hunter2")
     monkeypatch.setenv("FAKE_SSH_PROMPT", prompt)
     monkeypatch.setenv("FAKE_SSH_PASSWORD", "")         # what the jump would get: nothing, if roster refuses it
-    rc = main(["ssh", "esx"])
+    assert main(["ssh", "esx"]) == 255
     err = capfd.readouterr().err
-    if prompt.startswith("root@10.0.0.6"):              # the Host's own prompt: answered (with its password)
-        assert rc == 255 and "roster askpass:" not in err
-        return
-    assert rc == 255
-    assert "roster askpass: [36]" in err and "10.0.0.99" in err
+    assert "roster askpass: [36]" in err and f"ssh asked for {who}'s password" in err
     assert no_secret_in(err)
+
+
+@pytest.mark.parametrize("prompt", ["root@10.0.0.6's password: ", "root@esx's password: ",
+                                    "root@esx-hostkey's password: ", "(root@esx.lab.example) Password: "])
+def test_the_hosts_own_prompt_is_answered_under_its_address_name_or_alias(lab, capfd, monkeypatch, isolated, prompt):
+    """ssh names the login in its prompt by the HostKeyAlias, or the HostName as it resolved it (an address, or a
+    canonical name): whichever it is, the Host's own prompt gets its password, even behind a jump Host."""
+    ssh_config(isolated, "Host esx\n    HostKeyAlias esx-hostkey\n    ProxyJump ops@10.0.0.99\n")
+    monkeypatch.setenv("BW_PASSWORD", "hunter2")
+    monkeypatch.setenv("FAKE_SSH_PROMPT", prompt)
+    assert main(["ssh", "esx"]) == 0
+    out, err = capfd.readouterr()
+    assert "roster askpass:" not in err and no_secret_in(out, err)
 
 
 def test_a_host_behind_a_jump_host_keeps_the_proxyjump_its_ssh_config_gives(lab, capfd, monkeypatch, isolated):

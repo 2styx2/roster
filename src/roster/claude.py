@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .common import find_program, replace_file, roster_command, say
+from .common import find_user_program, replace_file, roster_command, say
 from .config import access_label, load_config, shown_file
 from .context import Context, box_file, current
 from .errors import InventoryError
@@ -58,7 +58,9 @@ def write_claude_files(cfg: dict[str, Any]) -> None:
         say(f"warning      {shown_file(cfg, md, 'ROSTER.md')} is the Mesh's (another Box's `roster mesh` lists this "
             "Host's peers in it), so roster left it alone: keep roster.yml in a folder of its own, not the home folder, for this Box's ROSTER.md")
     write_claude_settings(cfg)
-    agents_hook(wanted_agents_hook())
+    wanted = wanted_agents_hook()
+    if wanted is not None:
+        agents_hook(wanted)
     if named.list_file().exists():
         refresh_roster_md(skip=current())
 
@@ -238,10 +240,14 @@ def no_agents(choice: bool | None) -> None:
         mark.unlink(missing_ok=True)
 
 
-def wanted_agents_hook() -> bool:
-    """Should new Claude sessions on this Box start with the peer list: herdr-core is here (`hc`), and the Box didn't
-    opt out (`--no-agents`)."""
-    return find_program("hc") is not None and not box_file("no_agents").exists()
+def wanted_agents_hook() -> bool | None:
+    """Should new Claude sessions on this Box start with the peer list. False: the Box opted out (`--no-agents`, a
+    file roster keeps), the only thing that takes the hook out. True: herdr-core is here (`hc` on PATH or in
+    ~/.local/bin). None: leave the hook as it is. hc not found by this run (a PATH without it) never removes a hook
+    an earlier sync put in: the hook in Claude's settings is itself the record that it was wanted."""
+    if box_file("no_agents").exists():
+        return False
+    return True if find_user_program("hc") else None
 
 
 def _ours(hook: Any) -> bool:

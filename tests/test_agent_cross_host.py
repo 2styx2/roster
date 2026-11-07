@@ -166,6 +166,16 @@ def test_a_host_without_herdr_core_says_so(world, capsys, monkeypatch, tmp_path)
     assert "herdr-core isn't installed on box-b" in text
 
 
+@over_the_mesh
+def test_an_unknown_agent_whose_name_says_not_found_is_still_an_unknown_agent(world, capsys):
+    """Only hc missing there (exit 127) means herdr-core isn't installed: hc's own refusal (its `kind`) never does,
+    whatever its words."""
+    world.link()
+    world.b.terminal("t2", app="claude-code", status="idle")
+    text = refused(capsys, "send", "box-b/not found", "hi")
+    assert "no Agent at box-b/not found" in text and "isn't installed" not in text
+
+
 def test_this_hosts_own_name_in_the_directory_is_this_machine(world, capsys):
     world.here.name("box-a.lab")                    # the core's own name isn't the one the Hub gave the machine
     world.here.terminal("t5", app="claude-code", status="idle")

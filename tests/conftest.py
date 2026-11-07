@@ -404,6 +404,10 @@ class FakeHc:
         machine, _, t = address.rpartition("/")
         return (self.root / "machines" / machine if machine else self.root) / "terminals" / f"{t}{suffix}"
 
+    def gone(self, address: str) -> None:
+        """ADDRESS ends and is removed just after a listing: `hc ls` still shows it, `hc get` refuses it (not_found)."""
+        self._beside(address, ".gone").write_text("")
+
     def screen(self, address: str, text: str) -> None:
         """What `hc read ADDRESS` prints."""
         self._beside(address, ".screen").write_text(text)

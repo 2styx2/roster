@@ -1455,7 +1455,7 @@ def cmd_agents(args):
         else:
             sys.stdout.write("".join(f"{line}\n" for line in agents.hook_lines()))
         return 0
-    doc = agents.local_copy() or agents.directory()      # a remote Host's copy, else (the Hub) built live
+    doc = agents.current()      # a remote Host's copy, else (the Hub) built live
     stale = agents.stale(doc)
     if stale:
         print(f"warning: {stale}", file=sys.stderr, flush=True)

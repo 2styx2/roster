@@ -4,6 +4,7 @@
 # FAKE_HC_STATE=DIR             the Hub's core (unset: every command fails as an hc whose core can't be reached):
 #   DIR/name                    the core's name (`hc server status`: core.name; default "hub")
 #   DIR/down                    the core doesn't answer: every command fails (exit 1, hc's words on stderr)
+#   DIR/slow                    seconds the core takes before it answers each command (a core that hangs)
 #   DIR/calls                   each run appends "hc ARGS" (a test asserts on what roster asked hc to do)
 #   DIR/terminals/T.json        a terminal on the Hub at address T (t1, t2, ...): the record `hc get T` prints
 #                               (argv, cwd, labels, name, parent, status {app, state} or null, reported, turn,
@@ -18,6 +19,8 @@
 #   DIR/.../terminals/T.screen  what `hc read T` prints (its screen and history)
 #   DIR/.../terminals/T.sent    each `hc send T TEXT` appends TEXT and a newline (what the program was typed)
 #   DIR/.../terminals/T.wait    the WaitResult `hc wait T` prints (JSON; default: it stopped, reason status)
+#   DIR/.../terminals/T.gone    T ended and was removed just after a listing: `ls` (and terminal.list) still show it,
+#                               but `get` refuses it (not_found), as when it goes between the two calls
 #   DIR/peers/P/                a core that dialed in to this one (the Hub, as a remote machine's core sees it):
 #                               this core calls it P and reaches it only by herdr's call-back (remote.rs CALLS_BACK):
 #                               get, send, read and wait, on P's terminals that started work here
@@ -29,8 +32,9 @@
 # DIR/machines/M, and a test that runs roster on M points FAKE_HC_STATE there.
 # Commands: ls [--all] [--json] (live terminals: the short rows hc prints, `status` only when one is reported;
 # --all: finished ones too), get ADDRESS [--json], server status [--json], connect (herdr-core's JSON-RPC over
-# stdin/stdout, one message per line: doc.get {name, on?} and doc.set {name, value, version, on?}, with hc's error
-# kinds: machine_unknown, unavailable, conflict), and on a live terminal (tN, or M/tN on a connected M) send T TEXT,
+# stdin/stdout, one message per line: doc.get {name, on?}, doc.set {name, value, version, on?}, server.status and
+# terminal.list {all?} (every terminal's whole record, as get prints it), with hc's error kinds: machine_unknown,
+# unavailable, conflict), and on a live terminal (tN, or M/tN on a connected M) send T TEXT,
 # read T [--lines N], wait T [--timeout S], label T K=V... (`K=` removes one); an unknown or finished terminal is
 # refused as `hc --json` refuses: {"error": {kind, message, hint}} on stderr, exit 1.
 # Anything else: exit 2, "unknown command".
@@ -51,6 +55,9 @@ if not root:
 state = Path(root)
 with open(state / "calls", "a") as log:
     log.write(" ".join(["hc", *args]) + "\n")
+if (state / "slow").exists():
+    import time
+    time.sleep(float((state / "slow").read_text()))
 if (state / "down").exists():
     fail("the core didn't answer (is it running? hc server start)")
 words = [a for a in args if not a.startswith("-")]
@@ -143,7 +150,21 @@ def rpc_doc_set(params):
     return {"version": current + 1}
 
 
-RPC = {"doc.get": rpc_doc_get, "doc.set": rpc_doc_set}
+def rpc_server_status(params):
+    name = (state / "name").read_text().strip() if (state / "name").exists() else "hub"
+    live = sum(1 for t in terminals(state).values() if t.get("state", "live") == "live")
+    return {"core": {"id": "0" * 32, "name": name}, "live": live, "finished": 0, "version": "0.1.18"}
+
+
+def rpc_terminal_list(params):
+    """As `hc ls` (which calls it), but each terminal's whole record, as `hc get` prints it."""
+    every = bool(params.get("all"))
+    rows = [{"address": a, **t} for a, t in everything().items() if every or t.get("state", "live") == "live"]
+    return {"terminals": rows, "hidden_finished": 0, "machines": [{"name": n, "state": w} for n, w in machines()]}
+
+
+RPC = {"doc.get": rpc_doc_get, "doc.set": rpc_doc_set, "server.status": rpc_server_status,
+       "terminal.list": rpc_terminal_list}
 
 
 def connect():
@@ -226,8 +247,10 @@ if words[:1] == ["get"] and len(words) == 2:
         say({"address": words[1], **json.loads(f.read_text())})
     unknown_prefix(words[1])
     t = everything().get(words[1])
-    if t is None:
-        fail(f"no terminal {words[1]}")
+    machine, _, local = words[1].rpartition("/")
+    gone = (state / "machines" / machine if machine else state) / "terminals" / f"{local}.gone"
+    if t is None or gone.exists():
+        refuse("not_found", f"{words[1]} was removed" if t else f"no terminal {local!r}", "see `hc ls --all`")
     say({"address": words[1], **t})
 
 

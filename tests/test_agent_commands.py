@@ -101,6 +101,13 @@ def test_read_prints_the_agents_screen_with_history_on_request(hc, capsys):
     assert "hc read web-01/t2 --lines 40 --json" in hc.calls()
 
 
+def test_read_without_lines_asks_herdr_for_the_screen_alone(hc, capsys):
+    hc.name("hub-01")
+    hc.terminal("web-01/t2", app="claude-code", status="working")
+    assert agent(capsys, "read", "web-01/t2")[0] == 0
+    assert "hc read web-01/t2 --json" in hc.calls()
+
+
 def test_wait_returns_when_the_agent_stops_working_and_says_how_it_is(hc, capsys):
     hc.name("hub-01")
     hc.terminal("t1", app="claude-code", status="idle")

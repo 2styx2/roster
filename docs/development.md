@@ -109,9 +109,10 @@ src/roster/
   errors.py         the stable error codes (JSON-RPC's too) and Problem (code, message, fix): what serve, askpass, check
                     and a die() report (errors.Exit: die(msg, code=) keeps its code for serve and --json); imports
                     nothing else of roster's
-  agents.py         `roster agents`: the Agent directory built live on the Hub from herdr-core (`hc ls`, `hc get`,
-                    `hc server status`), and its table (ADR 0011); `agents sync` writing it into every machine's core
-                    (shared document `roster.agents`, JSON-RPC over `hc connect`) and a remote Host reading its copy;
+  agents.py         `roster agents`: the Agent directory built live on the Hub from herdr-core (one `hc connect`
+                    round: terminal.list, server.status), and its table (ADR 0011); `agents sync` writing it into
+                    every machine's core (shared document `roster.agents`, JSON-RPC over `hc connect`) and a remote
+                    Host reading its copy;
                     `agents hook`, the short peer list a new Claude session starts with
   agentops.py       `roster agent send|read|wait|label`: one Agent by its address, through this machine's herdr-core
                     (`hc send`, `read`, `wait`, `label`), a Hub Agent by herdr's call-back, or another remote Host's

@@ -13,9 +13,9 @@ import textwrap
 
 USAGE = "roster [-c PATH | --inv NAME] COMMAND [ARGS]"
 
-# Each command once, in the order a new user meets them: the 15 a person types (decision Q194, and `ssh`: ADR 0011). The ones the
-# app or ssh runs are INTERNAL: they work, but the overview leaves them out. The old names (roster.aliases) are in
-# neither. tests/test_cli_help.py checks every command is in one of the two.
+# Each command once, in the order a new user meets them: the 17 a person types (decision Q194's 14, then `ssh`,
+# `agents` and `agent`: ADR 0011). The ones the app or ssh runs are INTERNAL: they work, but the overview leaves them
+# out. The old names (roster.aliases) are in neither. tests/test_cli_help.py checks every command is in one of the two.
 GROUPS: list[tuple[str, list[str]]] = [
     ("Start here", ["init", "setup", "sync", "check"]),
     ("Every day", ["hosts", "ssh", "run", "web", "agents", "agent"]),
