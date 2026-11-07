@@ -13,12 +13,12 @@ import textwrap
 
 USAGE = "roster [-c PATH | --inv NAME] COMMAND [ARGS]"
 
-# Each command once, in the order a new user meets them: the 14 a person types (decision Q194). The ones the
+# Each command once, in the order a new user meets them: the 15 a person types (decision Q194, and `ssh`: ADR 0011). The ones the
 # app or ssh runs are INTERNAL: they work, but the overview leaves them out. The old names (roster.aliases) are in
 # neither. tests/test_cli_help.py checks every command is in one of the two.
 GROUPS: list[tuple[str, list[str]]] = [
     ("Start here", ["init", "setup", "sync", "check"]),
-    ("Every day", ["hosts", "run", "web", "agents"]),
+    ("Every day", ["hosts", "ssh", "run", "web", "agents"]),
     ("Inventory and access", ["add", "discover", "inv", "mesh", "revoke"]),
     ("Vault and help", ["vault", "help"]),
 ]
@@ -47,6 +47,8 @@ EXAMPLES: dict[str, list[tuple[str, str]]] = {
               ("roster hosts --find postgres", "search names, titles, descriptions, addresses"),
               ("roster hosts --only prod --long", "one type, with web URL and description"),
               ("roster hosts --resources --find guest", "only the Wi-Fi networks, accounts and secrets")],
+    "ssh": [("roster ssh switch-01", "log in; a password-only host's password comes from the vault, never shown"),
+            ("roster ssh esx-02", "a key host: as `ssh esx-02` (a ProxyJump in ~/.ssh/config applies)")],
     "run": [("roster run switch-01 -- show version", "a password-only host; roster logs in"),
             ("roster run --sudo web-01 -- systemctl restart nginx", "as root; sudo gets the password")],
     "web": [("roster web esx-02 GET /folder", "logged in with the host's stored credentials"),

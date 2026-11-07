@@ -45,6 +45,7 @@ from typing import Any
 from .errors import LOOKUP_FAILED, NO_SERVE, TOKEN_SPENT, UNEXPECTED_PROMPT
 
 SOCKET_ENV, TOKEN_ENV = "ROSTER_ASKPASS_SOCKET", "ROSTER_ASKPASS_TOKEN"
+FOR_ENV = "ROSTER_ASKPASS_FOR"         # `user@address`: the one login whose prompt gets the password (roster ssh)
 LOGIN_ENV = "ROSTER_ASKPASS_LOGGED_IN"     # set only by the logged-in script, never by ssh or the app
 WINDOWS = os.name == "nt"
 TTL = 60.0                  # seconds a token lives; ROSTER_ASKPASS_TTL may shorten it (tests), never lengthen
@@ -65,6 +66,25 @@ PASSWORD_PROMPTS = re.compile(r"(?:\S+@\S+'s password|(?:\(\S+@\S+\) )?password|
 
 def is_password_prompt(prompt):
     return bool(PASSWORD_PROMPTS.fullmatch(" ".join(prompt.lower().split())))
+
+
+# The login a password prompt names, `user@address`, as ssh writes it: "user@address's password:" and
+# "(user@address) password:" (the address is the HostName ssh connects to). None for one that names none.
+PROMPT_LOGIN = re.compile(r"\(?(\S+@\S+?)(?:'s password|\) password):|password for (\S+@\S+):")
+
+
+def prompt_login(prompt):
+    m = PROMPT_LOGIN.fullmatch(" ".join(prompt.lower().split()))
+    return (m[1] or m[2]) if m else None
+
+
+def other_login(prompt):
+    """`roster ssh` (R6): the login a password PROMPT names when it isn't the one the token is for (FOR_ENV,
+    `user@address`), else None. ssh runs a ProxyJump's ssh with its own environment, askpass and token too, so a jump
+    Host that asks for a password would otherwise get this Host's. A prompt that names no login can't be told apart:
+    it's answered."""
+    want, who = os.environ.get(FOR_ENV), prompt_login(prompt)
+    return who if want and who and who != want.lower() else None
 
 
 class Refused(Exception):
@@ -98,6 +118,10 @@ def main(argv=None):
         return 1
     prompt, path, token = argv[0], os.environ.get(SOCKET_ENV), os.environ.get(TOKEN_ENV)
     expected = is_password_prompt(prompt)
+    if expected and (who := other_login(prompt)):
+        return complain(UNEXPECTED_PROMPT, f"ssh asked for {who}'s password, not {os.environ.get(FOR_ENV)}'s (a jump "
+                        "Host's?) - roster gives a Login's password only to its own Host: let the jump Host take "
+                        "this Box's key")
     if not path or not token:
         return 1 if expected else complain(UNEXPECTED_PROMPT, refused_prompt_reason(None, prompt))
     request = token if expected else f"prompt {token} {shown_prompt(prompt)}"
@@ -535,9 +559,11 @@ class Channel:
             self.labels.clear()
             self.handed.clear()
 
-    def env(self, token):
+    def env(self, token, login_for=None):
+        """ssh's environment for TOKEN. LOGIN_FOR (`user@address`, roster ssh): only a prompt for that login, or one
+        that names none, is answered (other_login)."""
         return {"SSH_ASKPASS": self.helper, "SSH_ASKPASS_REQUIRE": "force",
-                SOCKET_ENV: self.socket_path, TOKEN_ENV: token}
+                SOCKET_ENV: self.socket_path, TOKEN_ENV: token, **({FOR_ENV: login_for} if login_for else {})}
 
     def login_options(self):
         """ssh's options that run the logged-in script once it has logged in (ssh runs LocalCommand with the user's

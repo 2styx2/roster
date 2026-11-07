@@ -188,6 +188,9 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
                    help="run it as root with sudo; roster gives sudo the login's password (never shown)")
     values(s.add_argument("host", help="the host to run it on"), HOSTS)
     s.add_argument("command", nargs=argparse.REMAINDER, help="the command, after --")
+    s = sub.add_parser("ssh", help="an interactive ssh session to a Host; a password-only Host's password comes "
+                       "from the vault (never shown)")
+    values(s.add_argument("host", help="the Host to log in to"), HOSTS)
     s = sub.add_parser("add", help="add one Host you already know to roster.yml (reviewed), the app's add-Host "
                        "way")
     s.add_argument("name", metavar="NAME", nargs="?", help="the new Host's name: letters, digits, . _ - (needed "

@@ -760,6 +760,11 @@ def cmd_run(cfg, args):
     return run.run(cfg, args.host, args.command[1:] if args.command[:1] == ["--"] else args.command, args.sudo)
 
 
+def cmd_ssh(cfg, args):
+    from . import sshsession
+    return sshsession.session(cfg, args.host)
+
+
 def cmd_revoke(cfg, args):
     return revoke.revoke(cfg, args.only, args.yes)
 
@@ -1535,4 +1540,4 @@ def _main(argv=None):
     if args.cmd == "hosts" and args.resources:
         return cmd_resources(cfg, args)
     return {"setup": cmd_setup, "sync": cmd_sync, "check": cmd_check, "hosts": cmd_hosts, "run": cmd_run,
-            "revoke": cmd_revoke, "web": cmd_web, "mesh": cmd_mesh, "add": cmd_add}[args.cmd](cfg, args)
+            "ssh": cmd_ssh, "revoke": cmd_revoke, "web": cmd_web, "mesh": cmd_mesh, "add": cmd_add}[args.cmd](cfg, args)

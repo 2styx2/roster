@@ -59,8 +59,8 @@ groups:
 resources:
   lab-guest: {type: wifi, ssid: lab-guest, auth: "env:WIFI_PW"}
 """
-TOP = ["init", "add", "discover", "hosts", "check", "setup", "revoke", "sync", "run", "web", "mesh", "inv", "vault",
-       "help", "agents"]       # Q194's 14, and agents (herdr, ADR 0011)
+TOP = ["init", "add", "discover", "hosts", "check", "setup", "revoke", "sync", "ssh", "run", "web", "mesh", "inv", "vault",
+       "help", "agents"]       # Q194's 14, ssh (#558) and agents (herdr, ADR 0011)
 
 
 @pytest.fixture
@@ -80,7 +80,7 @@ def test_the_overview_lists_the_commands_and_hides_the_internal_ones(capsys):
     assert main([]) == 0
     out = capsys.readouterr().out
     listed = [line.split()[0] for line in out.splitlines() if line.startswith("  ") and not line.startswith("   ")
-              and not line.strip().startswith(("roster ", "ssh ", "#", "-"))]
+              and not line.strip().startswith(("roster ", "#", "-")) and " # " not in line]
     assert sorted(listed) == sorted(TOP)
     for hidden in ("serve", "askpass", "__complete", "info", "bw", "providers", "auth-check", "man", "completion"):
         assert f"\n  {hidden} " not in out
