@@ -17,7 +17,7 @@
   <a href="https://github.com/2styx2/roster/actions/workflows/ci.yml?query=branch%3Adev"><img src="https://github.com/2styx2/roster/actions/workflows/ci.yml/badge.svg?branch=dev" alt="CI"></a>
   <a href="https://github.com/2styx2/roster/releases"><img src="https://img.shields.io/github/v/release/2styx2/roster?include_prereleases&sort=semver&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue" alt="License: GPL-3.0-or-later"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
 </p>
 
 <p align="center">
@@ -208,4 +208,4 @@ cargo test && cargo clippy -p roster-core --all-targets -- -D warnings && cargo 
 
 ## License
 
-GPL-3.0-or-later. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE). Releases up to v0.7.0 were published under GPL-3.0-or-later.

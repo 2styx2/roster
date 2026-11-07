@@ -4,7 +4,7 @@ version = "0.7.0"
 description = "Give a box - and Claude running on it - access to every host on your network, from one YAML file."
 readme = "README.md"
 requires-python = ">=3.10"
-license = "GPL-3.0-or-later"
+license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
     "pyyaml>=6.0",
