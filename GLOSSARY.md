@@ -84,7 +84,7 @@ Background work roster serve owns: a Mesh run, a Discover scan or a Host's check
 _Avoid_: task, worker (serve's workers answer requests; a Job runs beside them)
 
 **Agent**:
-A coding agent (Claude Code, Codex, …) running in a herdr terminal on a Host or Box. It has an address (`orange3/t2`), a status (working, blocked, idle, done) and a short label for what it's on. A person's terminal to a Host is a Session, never an Agent.
+A coding agent (Claude Code, Codex, …) running in a herdr terminal on a Host or Box. It has an address (`box-b/t2`), a status (working, blocked, idle, done) and a short label for what it's on. A person's terminal to a Host is a Session, never an Agent.
 _Avoid_: Claude session, session, bot, worker
 
 **Hub**:
