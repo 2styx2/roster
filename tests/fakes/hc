@@ -18,6 +18,13 @@
 #   DIR/.../terminals/T.screen  what `hc read T` prints (its screen and history)
 #   DIR/.../terminals/T.sent    each `hc send T TEXT` appends TEXT and a newline (what the program was typed)
 #   DIR/.../terminals/T.wait    the WaitResult `hc wait T` prints (JSON; default: it stopped, reason status)
+#   DIR/peers/P/                a core that dialed in to this one (the Hub, as a remote machine's core sees it):
+#                               this core calls it P and reaches it only by herdr's call-back (remote.rs CALLS_BACK):
+#                               get, send, read and wait, on P's terminals that started work here
+#   DIR/peers/P/calls_me        what P calls this machine (P's refusal says "M may only reach ...")
+#   DIR/peers/P/down            P isn't connected now: a call to it fails (unavailable)
+#   DIR/peers/P/terminals/T.json  a terminal of P's that started work here (P/T); any other P/T is refused (denied)
+# An address on a machine this core neither added nor was dialed by is refused (machine_unknown).
 # Each machine's folder is shaped as DIR (its own terminals/, docs/ and name), so a command run "on" M reads
 # DIR/machines/M, and a test that runs roster on M points FAKE_HC_STATE there.
 # Commands: ls [--all] [--json] (live terminals: the short rows hc prints, `status` only when one is reported;
@@ -88,11 +95,6 @@ if words[:1] == ["ls"]:
     every = "--all" in args
     rows = [short(a, t) for a, t in everything().items() if every or t.get("state", "live") == "live"]
     say({"terminals": rows, "hidden_finished": 0, "machines": [{"name": n, "state": w} for n, w in machines()]})
-if words[:1] == ["get"] and len(words) == 2:
-    t = everything().get(words[1])
-    if t is None:
-        fail(f"no terminal {words[1]}")
-    say({"address": words[1], **t})
 if words[:2] == ["server", "status"]:
     name = (state / "name").read_text().strip() if (state / "name").exists() else "hub"
     live = sum(1 for t in terminals(state).values() if t.get("state", "live") == "live")
@@ -174,9 +176,40 @@ def refuse(kind, message, hint):
     sys.exit(1)
 
 
-def live_terminal(address):
-    """(record file, record) of the live terminal at ADDRESS, or hc's refusal."""
+def peer_of(address, method):
+    """The folder of the peer that ADDRESS (P/tN) names, once herdr's checks pass for METHOD on it (P dialed in to
+    this core, METHOD is one CALLS_BACK has, P is connected and P/tN started work here); else hc's refusal. None when
+    ADDRESS isn't a peer's."""
+    prefix, _, t = address.rpartition("/")
+    folder = state / "peers" / prefix
+    if not prefix or prefix in dict(machines()) or not folder.is_dir():
+        return None
+    if method not in ("get", "send", "read", "wait"):
+        refuse("denied", f"{prefix} only takes send, read, get and wait from here", "")
+    if (folder / "down").exists():
+        refuse("unavailable", f"{prefix} is not connected", "try again later")
+    if not (folder / "terminals" / f"{t}.json").exists():
+        me = (folder / "calls_me").read_text().strip() if (folder / "calls_me").exists() else "this machine"
+        refuse("denied", f"{me} may only reach the terminals here that started its own", "")
+    return folder
+
+
+def unknown_prefix(address):
+    """hc's refusal for an address on a machine this core neither added nor was dialed by."""
+    prefix = address.rpartition("/")[0]
+    name = (state / "name").read_text().strip() if (state / "name").exists() else "hub"
+    if prefix and prefix != name and prefix not in dict(machines()):
+        refuse("machine_unknown", f"unknown machine {prefix!r}", "hc machine ls")
+
+
+def live_terminal(address, method):
+    """(record file, record) of the live terminal at ADDRESS for METHOD, or hc's refusal."""
     machine, _, t = address.rpartition("/")
+    peer = peer_of(address, method)
+    if peer is not None:
+        f = peer / "terminals" / f"{t}.json"
+        return f, json.loads(f.read_text())
+    unknown_prefix(address)
     if address not in everything():
         refuse("not_found", f"no terminal {t!r}", "see `hc ls --all`")
     f = (state / "machines" / machine if machine else state) / "terminals" / f"{t}.json"
@@ -184,6 +217,18 @@ def live_terminal(address):
     if record.get("state", "live") != "live":
         refuse("finished", f"{address} has finished", f"hc rm {address}")
     return f, record
+
+
+if words[:1] == ["get"] and len(words) == 2:
+    peer = peer_of(words[1], "get")
+    if peer is not None:
+        f = peer / "terminals" / f"{words[1].rpartition('/')[2]}.json"
+        say({"address": words[1], **json.loads(f.read_text())})
+    unknown_prefix(words[1])
+    t = everything().get(words[1])
+    if t is None:
+        fail(f"no terminal {words[1]}")
+    say({"address": words[1], **t})
 
 
 def agent_commands():
@@ -197,24 +242,24 @@ def agent_commands():
         elif not a.startswith("--"):
             plain.append(a)
     if plain[:1] == ["send"] and len(plain) == 3:
-        f, t = live_terminal(plain[1])
+        f, t = live_terminal(plain[1], plain[0])
         with open(f.with_suffix(".sent"), "a") as out:
             out.write(plain[2] + "\n")
         say({"turn": t.get("turn", 0), "status": (t.get("status") or {}).get("state"), "started": None})
     if plain[:1] == ["read"] and len(plain) == 2:
-        f, _ = live_terminal(plain[1])
+        f, _ = live_terminal(plain[1], plain[0])
         screen = f.with_suffix(".screen")
         say({"text": screen.read_text() if screen.exists() else "", "complete": True,
              "how": "history" if "--lines" in args else "screen", "why": None})
     if plain[:1] == ["wait"] and len(plain) == 2:
-        f, t = live_terminal(plain[1])
+        f, t = live_terminal(plain[1], plain[0])
         result = f.with_suffix(".wait")
         if result.exists():
             say(json.loads(result.read_text()))
         say({"terminal": plain[1], "ended": True, "reason": "status", "status": (t.get("status") or {}).get("state"),
              "turn": t.get("turn", 0), "children": []})
     if plain[:1] == ["label"] and len(plain) >= 3:
-        f, t = live_terminal(plain[1])
+        f, t = live_terminal(plain[1], plain[0])
         for kv in plain[2:]:
             k, _, v = kv.partition("=")
             if v:

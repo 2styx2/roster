@@ -421,6 +421,29 @@ class FakeHc:
         """ADDRESS's herdr labels now."""
         return json.loads(self._beside(address, ".json").read_text())["labels"]
 
+    # ---- a core that dialed in (#556): the Hub, as a remote machine's core sees it
+
+    def peer(self, name: str, *, calls_me: str = "this machine", down: bool = False) -> None:
+        """NAME dialed in to this core (the Hub, after `hc machine add` there), calling this machine CALLS_ME; DOWN:
+        it isn't connected now."""
+        d = self.root / "peers" / name
+        (d / "terminals").mkdir(parents=True, exist_ok=True)
+        (d / "calls_me").write_text(calls_me)
+        if down:
+            (d / "down").write_text("")
+
+    def peer_terminal(self, peer: str, terminal: str, *, app: str = "claude-code", status: str = "idle") -> None:
+        """PEER's terminal that started work on this machine: the only kind herdr's call-back reaches."""
+        record = {"argv": [app], "cwd": "/home/ops", "labels": {}, "name": None, "parent": None,
+                  "status": {"app": app, "state": status}, "reported": True, "turn": 0,
+                  "created_ms": 1_700_000_000_000, "finished_ms": None, "exit_code": None, "state": "live", "title": ""}
+        (self.root / "peers" / peer / "terminals" / f"{terminal}.json").write_text(json.dumps(record))
+
+    def peer_sent(self, peer: str, terminal: str) -> list[str]:
+        """Each text `hc send PEER/TERMINAL` typed so far."""
+        f = self.root / "peers" / peer / "terminals" / f"{terminal}.sent"
+        return f.read_text().splitlines() if f.exists() else []
+
 
 @pytest.fixture
 def hc(fakes, tmp_path, monkeypatch):

@@ -166,3 +166,10 @@ def test_plain_roster_agent_lists_its_actions(capsys):
     rc, out, _ = agent(capsys)
     assert rc == 0
     assert all(word in out for word in ("send", "read", "wait", "label"))
+
+
+def test_on_the_hub_a_host_that_isnt_one_of_its_machines_says_how_to_add_it(hc, capsys):
+    hc.name("hub-01")
+    hc.machine("web-01")
+    text = refused(capsys, "send", "db-01/t2", "hi")
+    assert "db-01 isn't a machine of this herdr-core" in text and "hc machine add db-01" in text

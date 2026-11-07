@@ -18,7 +18,9 @@
 #                                 DIR/NAME/login    what `id -un` says there (fakes/host/id): the account logged in
 #                                 DIR/NAME/blocked  ip:port lines this Host can't reach (its `nc -z` fails)
 #                                 DIR/NAME/slow     seconds each connection to it takes before it runs anything
-#                                 DIR/NAME/hold     each connection to it waits while this file is there (the test
+#                                 DIR/NAME/hc       its herdr-core: the stand-in hc run there (`ssh NAME hc ...`)
+#                                                   takes this folder as its FAKE_HC_STATE (tests/fakes/hc)
+#                                 DIR/NAME/hold    each connection to it waits while this file is there (the test
 #                                                   deletes it to let them go: a signal, not a guess at how long)
 #                               FAKE_HOST_PATH=DIR goes first on every stand-in Host's PATH (a test's own tools)
 #                               Each run appends "start NAME" and "end NAME" to DIR/connections.
@@ -305,6 +307,8 @@ if hosts:
 
         os.makedirs(os.path.join(root, "home"), exist_ok=True)
         env = {**os.environ, "HOME": os.path.join(root, "home"), "FAKE_HOST_ROOT": shroot,
+               # the Host's own herdr-core: the stand-in hc run there answers from DIR/NAME/hc (#556), not the Box's
+               **({"FAKE_HC_STATE": os.path.join(root, "hc")} if os.path.isdir(os.path.join(root, "hc")) else {}),
                "PATH": os.pathsep.join([*filter(None, [os.environ.get("FAKE_HOST_PATH")]), os.path.join(os.path.dirname(os.path.abspath(__file__)), "host"),
                                         # Windows: the sh's own commands (sort, find) before Windows' namesakes
                                         *([os.path.dirname(os.environ.get("FAKE_SH", "/bin/sh"))] if os.name == "nt" else []),

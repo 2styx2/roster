@@ -625,12 +625,23 @@ written), naming `roster agents sync` on the Hub as the fix. On the Hub, and on 
 ### Reaching an Agent: `roster agent`
 
 `roster agent send|read|wait|label` act on one Agent by its address, as the directory shows it: `HOST/tN`, the Hub's
-own Agents `HUB/tN`; a bare `tN` is a terminal on this machine. roster asks this machine's herdr-core (`hc send`,
-`hc read`, `hc wait`, `hc label`), so what it reaches is what that core reaches:
+own Agents `HUB/tN`; a bare `tN` is a terminal on this machine. roster runs `hc send`, `hc read`, `hc wait` or
+`hc label` where the Agent can be reached:
 
-- **On the Hub**, every Agent: the Hub's own, and those on each connected machine (herdr routes `web-01/t2` there).
-- **On another machine**, the Agents on that same machine. An address on another machine is refused for now, with the
-  Hub as the place to send it from.
+- **On the Hub**, every Agent, through the Hub's herdr-core: the Hub's own, and those on each connected machine (herdr
+  routes `web-01/t2` there).
+- **On a remote Host**, which Host it is comes from the directory copy the Hub wrote there (its `you`), so run
+  `roster agents sync` on the Hub first. Then:
+  - its own Agents go to its own herdr-core;
+  - **a Hub Agent** (`hub-01/t1`) goes through herdr's call-back: this machine's herdr-core forwards it to the Hub,
+    which lets a machine `send`, `read` and `wait` (not `label`) only on a Hub terminal that started work on that
+    machine. So an Agent the Hub started can answer the Agent that started it (`hc get $HC_TERMINAL_ID` shows it as
+    `parent`), and no other Hub terminal;
+  - **an Agent on another remote Host** (`db-01/t3` from `web-01`) goes over the [Mesh](mesh.md): roster runs
+    `ssh -F MESH-CONFIG db-01 hc ...` with the Mesh's own ssh config and key on this Host (the file its `~/.ssh/config`
+    includes, by default `~/.ssh/roster-mesh/config`), and `hc` there finds the user's running herdr-core (in
+    `~/.local/bin` if it isn't on PATH). That needs a key Link from this Host to that one (`links:` or a meshed group in
+    `roster.yml`, then `roster mesh` on the Box). herdr itself doesn't route between machines.
 
 ```text
 $ roster agent send web-01/t2 "the tests pass now, rebase on dev"
@@ -646,7 +657,19 @@ t4 is labelled: migrate the database
 Before acting, roster checks that the address is a live terminal it can reach, so nothing is typed anywhere else. An
 unknown address (`no Agent at web-01/t9`), an Agent that has ended, a machine this herdr-core hasn't added, or one that
 isn't connected (`herdr says db-01 is unavailable`, with `hc machine login db-01` as the fix) is refused with what to do,
-and exits 1. `wait` exits 124 when `--timeout` ran out with the Agent still working, and says how to look at it.
+and exits 1. From a remote Host, so is a peer it can't reach, with the reason and the alternative:
+
+| Refused | What to do |
+|---|---|
+| `there's no Mesh Link from web-01 to db-01` | add `- { from: web-01, to: db-01 }` under `links:` in `roster.yml`, then `roster mesh`; or send it from the Hub |
+| `the Mesh reaches db-01 with a password only` | let the Mesh enroll a key on db-01 (no `enroll: false`), then `roster mesh` |
+| `db-01 didn't answer over the Mesh: ...` (ssh's words) | check it's up and `ssh db-01` works from this Host |
+| `herdr-core isn't installed on db-01` | make it a herdr machine from the Hub (`hc machine add db-01 --install`) |
+| `herdr lets a machine reach only the Hub terminals that started work on it` | send it from the Hub, or answer your own parent |
+| `hub-01 isn't connected to web-01 now` | try again once the Hub is back |
+| `herdr lets this machine only send, read and wait on the Hub's Agents` (`label`) | label it on the Hub |
+| no Agent directory here yet | `roster agents sync` on the Hub |
+ `wait` exits 124 when `--timeout` ran out with the Agent still working, and says how to look at it.
 `label` with no address labels the Agent it runs in (`HC_TERMINAL_ID`, which herdr sets in its terminals); the label is
 the herdr terminal label `roster.label`, which `roster agents` and the herdr-roster Agents panel show.
 
