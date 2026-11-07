@@ -9,8 +9,22 @@ from pathlib import Path
 
 import yaml
 
+from . import boxkeys
 from .common import NAME_RE, oneline, replace_file
-from .config import GROUP_ONLY, OS_VALUES, first, host_os, key_type, load_config_text, resolve_ssh, sudo_auth
+from .config import (
+    GROUP_ONLY,
+    OS_VALUES,
+    SERVICE_KEYS,
+    SERVICE_RE,
+    addresses_seen,
+    first,
+    host_os,
+    key_type,
+    load_config_text,
+    mesh_dir,
+    resolve_ssh,
+    sudo_auth,
+)
 from .errors import (
     GROUP_NOT_EMPTY,
     HOST_EXISTS,
@@ -34,6 +48,9 @@ SSH_KEYS = ("user", "port", "auth")                 # can live in the Host's ssh
 
 FLAGS = ("enroll", "reviewed")
 NEW_FIELDS = ("ip", "user", "port", "auth", *FLAGS, *TEXT, "os")    # what host.add and `roster add` can set
+# what `roster add` sets too (#563): every other key a Host can have in roster.yml, as it's written there
+MORE_FIELDS = ("product", "mac", "mesh", "mesh_dir", "key_type", "sudo", "shell_hooks", "seen_as", "services")
+ADD_FIELDS = NEW_FIELDS + MORE_FIELDS
 
 
 def current(h):
@@ -63,9 +80,10 @@ def check_value(field, v):
 
 # ---------------------------------------------------------------- rendering a value
 
-def render(v, style=None):
+def render(v, style=None, flow=False):
     """V as YAML text: plain when that reads back as the same string, else double-quoted (JSON is valid YAML).
-    STYLE is the replaced value's quoting, kept when it can hold V."""
+    STYLE is the replaced value's quoting, kept when it can hold V. FLOW: it goes inside `{...}` or `[...]`, where
+    a plain `,` `[` `]` `{` `}` would end it. A dict is a flow mapping, a list a flow sequence."""
     if v is None:
         return "null"
     if isinstance(v, bool):
@@ -73,9 +91,13 @@ def render(v, style=None):
     if isinstance(v, int):
         return str(v)
     if isinstance(v, dict):
-        return "{" + ", ".join(f"{k}: {render(x)}" for k, x in v.items()) + "}"
+        return "{" + ", ".join(f"{k}: {render(x, flow=True)}" for k, x in v.items()) + "}"
+    if isinstance(v, list):
+        return "[" + ", ".join(render(x, flow=True) for x in v) + "]"
     if style == "'" and "\n" not in v:
         return "'" + v.replace("'", "''") + "'"
+    if flow and re.search(r"[,\[\]{}]", v):
+        return json.dumps(v, ensure_ascii=False)
     if style != '"' and v and v == v.strip() and not re.match(r"[-?:,\[\]{}#&*!|>'\"%@`]", v) \
             and ": " not in v and " #" not in v and not v.endswith(":") and reads_back(v):
         return v
@@ -334,17 +356,95 @@ def reviewed(path, name, flag):
 
 def check_new(field, v):
     """A value from the app for a new Host's FIELD, or a ValueError (check_value's, plus the flags)."""
-    if field in FLAGS:
+    if field in (*FLAGS, "mesh", "shell_hooks"):
         if not isinstance(v, bool):
             raise ValueError(f"{field} must be true or false")
         return v
-    if field not in NEW_FIELDS:
-        raise ValueError(f"{field!r} can't be set here (only {', '.join(NEW_FIELDS)})")
+    if field not in ADD_FIELDS:
+        raise ValueError(f"{field!r} can't be set here (only {', '.join(ADD_FIELDS)})")
+    if field in MORE_FIELDS:
+        return check_more(field, v)
     if field == "os":
         if not isinstance(v, str) or v.strip().lower() not in OS_VALUES:
             raise ValueError(f"os must be {' or '.join(OS_VALUES)}")
         return v.strip().lower()
     return check_value(field, v)
+
+
+def check_more(field, v):
+    """MORE_FIELDS' values (#563), each checked as roster.yml's loader checks it, as it's written into the file:
+    `sudo` is the vault reference (written `sudo: {auth: REF}`), `services` {name: {port?, url?, scheme?, user?,
+    auth?, verify?, login?}}."""
+    if field in ("product", "mac"):
+        return check_text(field, v)
+    if field == "mesh_dir":
+        return as_value(lambda: mesh_dir("new", check_text(field, v)))
+    if field == "key_type":
+        try:
+            return boxkeys.parse(check_text(field, v)).name
+        except ValueError as e:
+            raise ValueError(f"key_type: {e}") from None
+    if field == "sudo":
+        ref = check_text(field, v)
+        return as_value(lambda: sudo_auth("new", [{"sudo": {"auth": ref}}]))
+    if field == "seen_as":
+        given = v if isinstance(v, list) else [v]
+        return as_value(lambda: addresses_seen("new", [check_text(field, x) for x in given]))
+    if not isinstance(v, dict) or not v:
+        raise ValueError("services must be a mapping of a name to its settings")
+    return {check_service_name(n): check_service(n, s) for n, s in v.items()}
+
+
+def check_text(field, v):
+    if not isinstance(v, str):
+        raise ValueError(f"{field} must be a string")
+    if "\n" in v or "\r" in v:
+        raise ValueError(f"{field} must be one line")
+    v = oneline(v)
+    if not v:
+        raise ValueError(f"{field} can't be empty")
+    return v
+
+
+def as_value(check):
+    """CHECK()'s answer, with the loader's InventoryError (its own words) as a ValueError."""
+    try:
+        return check()
+    except InventoryError as e:
+        raise ValueError(e.why.strip()) from None
+
+
+def check_service_name(name):
+    if not isinstance(name, str) or not SERVICE_RE.match(name):
+        raise ValueError(f"bad service name {name!r} (use letters, digits, . _ -)")
+    return name
+
+
+def check_service(name, s):
+    """One service's settings, as roster.yml takes them (config.SERVICE_KEYS); the load checks the rest (a url's
+    port against port:, a login: type)."""
+    if not isinstance(s, dict) or not s:
+        raise ValueError(f"service {name}: give it a port or a url")
+    out = {}
+    for k, v in s.items():
+        if k not in SERVICE_KEYS:
+            raise ValueError(f"service {name}: unknown setting {k!r} (use {', '.join(SERVICE_KEYS)})")
+        if k == "port":
+            if isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 65535:
+                raise ValueError(f"service {name}: port must be a number from 1 to 65535")
+        elif k == "verify":
+            if not isinstance(v, bool):
+                raise ValueError(f"service {name}: verify must be true or false")
+        else:
+            v = check_text(f"service {name}: {k}", v)
+            if k == "scheme" and v not in ("http", "https"):
+                raise ValueError(f"service {name}: scheme must be http or https")
+            if k == "url" and not re.match(r"^https?://[^\s/]+", v):
+                raise ValueError(f"service {name}: url must be http(s)://host[:port][/path]")
+        out[k] = v
+    if "port" not in out and "url" not in out:
+        raise ValueError(f"service {name}: give it a port or a url")
+    return out
 
 
 def invalid(field, message):
@@ -411,7 +511,8 @@ def add_text(text, group, name, entry):
         raise refuse(f"group {group}'s hosts: isn't a block of Hosts (line {gnode.start_mark.line + 1})")
     indent = hosts.value[0][0].start_mark.column
     if isinstance(hosts.value[-1][1], yaml.MappingNode) and hosts.value[-1][1].flow_style:
-        lines = [f"{' ' * indent}{name}: {{{', '.join(fields)}}}"]          # like the entry before it
+        flow = [f"{k}: {render(v, flow=True)}" for k, v in entry.items()]
+        lines = [f"{' ' * indent}{name}: {{{', '.join(flow)}}}"]            # like the entry before it
     else:
         pad = " " * (indent + block_step(hosts))
         lines = [f"{' ' * indent}{name}:", *(pad + f for f in fields)]
@@ -449,15 +550,36 @@ def added(path, group, name, fields):
     base = inherited(text, group)
     if not (fields.get("user") or base["user"]):
         raise invalid("user", f"no user for {name} (set it on the Host, its group, or defaults)")
-    entry = {"ip": fields["ip"]} | {k: fields[k] for k in NEW_FIELDS
-                                     if k != "ip" and k in fields and fields[k] != base[k]}
+    entry = {"ip": fields["ip"]} | {k: written_as(k, fields[k]) for k in ADD_FIELDS
+                                     if k != "ip" and k in fields and (k not in base or fields[k] != base[k])}
     new_text = add_text(text, group, name, entry)
     after = load_text(path, new_text)
     h = after["hosts"].get(name)
-    if h is None or h["group"] != group or any(current(h)[k] != v for k, v in fields.items()) \
+    if h is None or h["group"] != group or any(loaded_as(after, h, k, v) != v for k, v in fields.items()) \
             or not same_plus(before, after, name):
         raise refuse("the result loads differently than asked")
     return text, new_text, h
+
+
+def written_as(field, v):
+    """A checked value as roster.yml has it: `sudo` is its own block."""
+    return {"auth": v} if field == "sudo" else v
+
+
+def loaded_as(cfg, h, field, v):
+    """FIELD of Host H as CFG (load_config's) loaded it, comparable with check_new's value for it. A service is its
+    settings as given once it loads without a problem (the load fills in the rest)."""
+    if field in current(h):
+        return current(h)[field]
+    if field in ("mesh_dir", "seen_as", "sudo"):
+        return cfg[{"mesh_dir": "mesh_dirs"}.get(field, field)].get(h["name"])
+    if field == "services":
+        for p in h["problems"]:
+            if p["service"] in v:
+                raise invalid("services", f"{p['message']} ({p['fix']})")
+        return {n: s for n, s in v.items() if n in h["services"]
+                and all(h["services"][n][k] == x for k, x in s.items() if k in ("port", "verify"))}
+    return h.get(field)
 
 
 # An address (Q190): what Quick Connect opens, the form and `roster add` write, one rule (serve's quick_target uses it

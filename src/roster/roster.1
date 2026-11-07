@@ -10,7 +10,10 @@ roster check [\-\-box] [\-\-auth] [\-\-only LIST | \-\-host NAME] [\-\-json] [ho
 roster hosts [\-\-resources] [\-\-only LIST] [\-\-find TEXT] [\-\-all] [\-\-long] [\-\-json] [NAME ...]
 roster run [\-\-sudo] host ...
 roster ssh host
-roster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-save\-to\-vault] [\-\-save\-to TARGET] [\-\-provider PROVIDER] [\-\-json] [\-\-all] [\-\-mark\-seen] [\-\-no\-sync] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]
+roster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-description TEXT] [\-\-product TEXT] [\-\-mac MAC] [\-\-service SPEC] [\-\-web URL] [\-\-mesh | \-\-no\-mesh] [\-\-mesh\-dir DIR] [\-\-key\-type TYPE] [\-\-sudo\-auth REF] [\-\-shell\-hooks | \-\-no\-shell\-hooks] [\-\-seen\-as ADDR] [\-\-from\-vault] [\-\-save\-to\-vault] [\-\-save\-to TARGET] [\-\-provider PROVIDER] [\-\-json] [\-\-all] [\-\-mark\-seen] [\-\-no\-sync] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]
+roster changes [\-\-json] [{discard}]
+roster publish [\-m MSG] [\-\-dry\-run] [\-\-json]
+roster pull [\-\-json]
 roster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]
 roster web [\-d BODY] [\-H HEADER] [\-k] [\-\-timeout SECONDS] HOST [SERVICE] METHOD PATH [HOST [SERVICE] METHOD PATH ...]
 roster agents [\-\-remove] [\-\-json] [{sync,hook}]
@@ -186,7 +189,7 @@ An interactive ssh session to a Host, as the roster app's Host terminals open it
 the Host to log in to
 .SS add
 .PP
-\fBroster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-from\-vault] [\-\-save\-to\-vault] [\-\-save\-to TARGET] [\-\-provider PROVIDER] [\-\-json] [\-\-all] [\-\-mark\-seen] [\-\-no\-sync] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]\fR
+\fBroster add [\-\-ip ADDR] [\-\-user USER] [\-\-auth REF] [\-\-group GROUP] [\-\-enroll | \-\-no\-enroll] [\-\-os {windows,posix}] [\-\-title TEXT] [\-\-type TEXT] [\-\-port N] [\-\-description TEXT] [\-\-product TEXT] [\-\-mac MAC] [\-\-service SPEC] [\-\-web URL] [\-\-mesh | \-\-no\-mesh] [\-\-mesh\-dir DIR] [\-\-key\-type TYPE] [\-\-sudo\-auth REF] [\-\-shell\-hooks | \-\-no\-shell\-hooks] [\-\-seen\-as ADDR] [\-\-from\-vault] [\-\-save\-to\-vault] [\-\-save\-to TARGET] [\-\-provider PROVIDER] [\-\-json] [\-\-all] [\-\-mark\-seen] [\-\-no\-sync] [\-\-setup] [\-\-dry\-run] [\-y] [NAME]\fR
 .PP
 The vault items no Login in \fBroster.yml\fR names, the new ones since the last run marked (synced first; \fB\-\-no\-sync\fR), and in a terminal a walk adding each [Y/n/edit/skip] the \fBroster add NAME\fR way; \fB\-\-all\fR every one, \fB\-\-json\fR the list, \fB\-\-mark\-seen\fR\&. Never reads a password. See Vault items not in roster.yml
 .TP
@@ -223,6 +226,45 @@ a free label (nas, switch, esxi, ...)
 \fB\-\-port N\fR
 its SSH port (default: 22)
 .TP
+\fB\-\-description TEXT\fR
+one line about it
+.TP
+\fB\-\-product TEXT\fR
+its product (what \-\-only and \-\-find match too)
+.TP
+\fB\-\-mac MAC\fR
+its MAC address
+.TP
+\fB\-\-service SPEC\fR
+a service or web UI: NAME,KEY=VALUE,... with port, url, scheme (http, https), user, auth (its own Login), login (basic, bearer, ...) and verify (true, false), e.g. web,port=8443,scheme=https; or NAME:PORT. Again for more
+.TP
+\fB\-\-web URL\fR
+its web UI's URL (the `web` service's url:)
+.TP
+\fB\-\-mesh\fR
+in the Mesh (default: its group's)
+.TP
+\fB\-\-no\-mesh\fR
+left out of the Mesh
+.TP
+\fB\-\-mesh\-dir DIR\fR
+where it keeps its Mesh files as a source (an absolute path)
+.TP
+\fB\-\-key\-type TYPE\fR
+the SSH key type its key Login uses: ed25519, ecdsa, ecdsa\-256, ecdsa\-521, rsa or rsa\-BITS (default: its group's or roster.yml's)
+.TP
+\fB\-\-sudo\-auth REF\fR
+the vault item for its own sudo password (bw:ITEM, op:...), written as sudo: {auth: REF}
+.TP
+\fB\-\-shell\-hooks\fR
+the app sends its shell the hook line
+.TP
+\fB\-\-no\-shell\-hooks\fR
+it doesn't
+.TP
+\fB\-\-seen\-as ADDR\fR
+another address or network it connects from (10.0.9.1, 10.0.9.0/24); again for more
+.TP
 \fB\-\-from\-vault\fR
 fill \-\-ip (and \-\-port) from the \-\-auth item's URI and \-\-user from its username, never reading its password (bw, op); flags given win. With no NAME: list the vault items no Login in roster.yml names (new ones since the last run), and in a terminal add each one [Y/n/edit/skip]
 .TP
@@ -236,7 +278,7 @@ with \-\-save\-to\-vault: where the item goes for this run: personal, ORGANIZATI
 with \-\-save\-to\-vault: the vault to save in, bw or kp (default: the vault roster.yml's Logins use most)
 .TP
 \fB\-\-json\fR
-with \-\-from\-vault and no NAME: print the list as JSON, add nothing
+print the added Host as `hosts NAME \-\-json` does (with \-\-dry\-run: what it would write), never asking; with \-\-from\-vault and no NAME: print the list as JSON, add nothing
 .TP
 \fB\-\-all\fR
 with \-\-from\-vault and no NAME: every item roster.yml doesn't name, not only the new ones
@@ -255,6 +297,39 @@ print the lines it would add; write nothing
 .TP
 \fB\-y, \-\-yes\fR
 never ask: a missing value it can't default is an error naming its flag (with \-\-save\-to\-vault the password is still asked, and a locked vault's master password in a terminal)
+.SS changes
+.PP
+\fBroster changes [\-\-json] [{discard}]\fR
+.PP
+A team repo's Pending changes (the app's \fB:changes\fR): each Host and group they add, remove or change, git's diff of \fBroster.yml\fR against its last commit, and the message \fBpublish\fR would commit. \fBchanges discard\fR puts \fBroster.yml\fR back as its last commit has it (what it held kept as the backup in the git dir), then syncs this Box. A plain file has none, and says so: its edits are saved already, so there's nothing to publish. See A plain file or a team repo
+.TP
+\fBACTION\fR
+discard: put roster.yml back as the last commit has it (what it held is kept as the backup)
+.TP
+\fB\-\-json\fR
+print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
+.SS publish
+.PP
+\fBroster publish [\-m MSG] [\-\-dry\-run] [\-\-json]\fR
+.PP
+Commit \fBroster.yml\fR\&'s Pending changes (that file alone, with the repo's own git identity) and push them to the branch's upstream (the app's \fB:publish\fR), then sync this Box. It fetches first and never forces: new upstream commits that leave \fBroster.yml\fR alone are fast\-forwarded over; \fBroster.yml\fR changed there (92), commits here it didn't make (93), other uncommitted files (91), a refused commit (95) or a refused push (96: the commit is taken back, the changes stay Pending) stop it with nothing published. \fB\-m\fR gives the message (default: one naming each Host, group and Link). \fB\-\-dry\-run\fR shows the diff, the message and the upstream, and commits nothing. Nothing pending, or a plain file (no repo, or a repo with no remote), is error 90; a branch with no upstream is 94
+.TP
+\fB\-m, \-\-message MSG\fR
+the commit message (default: one naming each Host, group and Link that changed)
+.TP
+\fB\-\-dry\-run\fR
+show the diff and the message it would commit; commit and push nothing
+.TP
+\fB\-\-json\fR
+print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
+.SS pull
+.PP
+\fBroster pull [\-\-json]\fR
+.PP
+Bring the team's changes in (the app's pull before an edit): fast\-forward the infra repo to its upstream, then sync this Box when it moved. Never merges, rebases or stashes: Pending changes or other uncommitted files (71: publish or discard them first) and a branch that has diverged (72) are refused; a failed fetch is 73. A plain file, or a branch with no upstream, has nothing to pull and says so
+.TP
+\fB\-\-json\fR
+print JSON for scripts and tools, never a secret (see Machine\-readable output in docs/cli\-reference.md)
 .SS discover
 .PP
 \fBroster discover [\-\-write] [\-\-group NAME] [\-\-ports PORTS] [\-\-top\-ports N] [\-\-no\-ping] [\-\-os] [\-\-builtin] [\-\-timeout SECONDS] [\-\-force] [\-\-json] CIDR [CIDR ...]\fR
@@ -538,7 +613,7 @@ Internal, run by ssh: the \fBSSH_ASKPASS\fR helper for a \fBserve\fR password Se
 the prompt ssh shows
 .SH JSON OUTPUT
 .PP
-The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBhosts\fR (with \fB\-\-only\fR, \fB\-\-find\fR, \fB\-\-all\fR), \fBadd \-\-from\-vault\fR (no NAME: the list), \fBhosts NAME\fR, \fBhosts \-\-resources\fR, \fBcheck\fR, \fBcheck HOST\fR, \fBcheck \-\-box\fR, \fBcheck \-\-auth\fR, \fBdiscover\fR (its preview, without \fB\-\-write\fR), \fBmesh status\fR, \fBmesh \-\-dry\-run\fR (the plan), \fBvault status\fR and \fBagents\fR\&. The CLI is roster's interface for other apps; \fBroster serve\fR is the desktop app's own backend, not a public API. With \fB\-\-json\fR, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
+The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBhosts\fR (with \fB\-\-only\fR, \fB\-\-find\fR, \fB\-\-all\fR), \fBadd \-\-from\-vault\fR (no NAME: the list), \fBadd NAME\fR (the added Host), \fBchanges\fR, \fBchanges discard\fR, \fBpublish\fR (and its \fB\-\-dry\-run\fR), \fBpull\fR, \fBhosts NAME\fR, \fBhosts \-\-resources\fR, \fBcheck\fR, \fBcheck HOST\fR, \fBcheck \-\-box\fR, \fBcheck \-\-auth\fR, \fBdiscover\fR (its preview, without \fB\-\-write\fR), \fBmesh status\fR, \fBmesh \-\-dry\-run\fR (the plan), \fBvault status\fR and \fBagents\fR\&. The CLI is roster's interface for other apps; \fBroster serve\fR is the desktop app's own backend, not a public API. With \fB\-\-json\fR, stdout is one JSON document on one line, with no colour, table or warning, and the exit status is the same as without it.
 .IP \(bu 2
 \fBNever a secret.\fR Logins are references: the provider and the item (\fBbw:esx\-02 ssh\fR, \fBop:Lab/esx\-02\fR, \fBprompt\fR, \fBagent\fR). A \fBcmd:\fR or \fBenv:\fR reference says how a secret is fetched, and a password pasted into a \fBcmd:\fR line would show, so each one is cut to its kind (\fBcmd:\fR, \fBenv:\fR) everywhere in the output, error messages and check messages included, the way Plugins get them: a \fBcmd:\fR one to the end of its line, an \fBenv:\fR one its variable's name, wherever one starts a text or follows a space, a quote or one of \fB=:,({[\fR\&. An error message keeps a trailing \fB(code N)\fR\&. The cases both implementations are tested against are in \fBtests/vectors/redaction.json\fR\&. \fBcheck \-\-auth \-\-json\fR fetches every secret it tests and says only whether it was found. \fBvault reveal\fR has no \fB\-\-json\fR: it's for a person.
 .IP \(bu 2
@@ -552,6 +627,24 @@ The read commands take \fB\-\-json\fR, for scripts, other tools and Claude: \fBh
 .TP
 \fBadd \-\-from\-vault \-\-json\fR
 \fB{version, items: [{provider, id, name, auth, new, host?, address?, port?, user?, note?}], unmapped, new}\fR: the new items (every one with \fB\-\-all\fR) no Login names, the Host each suggests and the Login to write; \fBunmapped\fR and \fBnew\fR count them all. Never a value. Errors: \fB14\fR locked, \fB187\fR the listing failed, \fB188\fR no vault to list
+.TP
+\fBadd NAME ... \-\-json\fR
+\fB{version, host: Host, group: {name, title, description}}\fR: the Host as it loads once written, the same document as \fBhosts NAME \-\-json\fR\&. Its lines go to stderr; it never asks. With \fB\-\-dry\-run\fR: \fB{version, dry_run: true, host: Host, group, new_group, lines, kind}\fR, the Host as it would load, \fBlines\fR the ones the write would change (\fB+ \fR added, \fB\- \fR replaced), \fBkind\fR \fBrepo\fR or \fBfile\fR; nothing written. Errors: \fB80\fR a bad value (naming the field), \fB81\fR the name is taken, \fB184\fR the address and port are, \fB185\fR a value it needs, \fB186\fR a vault that can't give the fields without the password
+.TP
+\fBchanges \-\-json\fR
+\fB{version, path, repo, last_commit: {commit, subject, upstream, pushed}, diff, hosts: [{host, change, fields}], groups: [{group, change}], count, message, kind}\fR, as \fBchanges.diff\fR: \fBchange\fR is \fBadded\fR, \fBremoved\fR or \fBchanged\fR (\fBfields\fR: which), \fBcount\fR the changed Hosts (1 for a change that touches none), \fBmessage\fR what \fBpublish\fR would commit, \fBlast_commit.pushed\fR whether the upstream has the last commit (as last fetched). A plain file: \fBkind: file\fR, \fBrepo: null\fR, \fBdiff: ""\fR, \fBcount: 0\fR, \fBlast_commit: null\fR, never an error
+.TP
+\fBchanges discard \-\-json\fR
+\fB{version, discarded, backup, sync?}\fR, as \fBchanges.discard\fR: \fBbackup\fR where what it held is kept (\fBnull\fR when there was nothing to discard); \fBsync\fR (\fB{ok, error?, fix?}\fR) this Box's sync, when it discarded
+.TP
+\fBpublish \-\-json\fR
+\fB{version, commit, upstream, message, hosts, groups, pulled, sync: {ok, error?, fix?}}\fR, as \fBchanges.publish\fR: the commit pushed to \fBupstream\fR (\fBorigin/main\fR), \fBpulled\fR the upstream commits fast\-forwarded over first. Errors: \fB90\fR nothing to publish (or a plain file), \fB91\fR\-\fB96\fR (see \fBpublish\fR above), \fB73\fR the fetch failed, \fB1\fR a \fBroster.yml\fR that doesn't load
+.TP
+\fBpublish \-\-dry\-run \-\-json\fR
+\fB{version, dry_run: true, upstream, message, diff, hosts, groups, count}\fR: what it would commit and where it would push it (\fBupstream\fR \fBnull\fR with none); nothing committed or pushed. Error \fB90\fR as above
+.TP
+\fBpull \-\-json\fR
+\fB{version, updated, upstream, commits, ahead, from?, to?, message?, sync?}\fR, as \fBinventory.pull\fR: \fBcommits\fR the new ones it fast\-forwarded over, \fBfrom\fR/\fBto\fR the commits before and after, \fBmessage\fR why there was nothing to pull (a plain file, no upstream). Errors: \fB71\fR uncommitted changes, \fB72\fR diverged, \fB73\fR the fetch failed
 .TP
 \fBhosts \-\-json\fR
 \fB{version, hosts: [Host], resources: [resource], groups: {name: {title, description}}, hidden}\fR\&. Hosts and resources in \fBroster.yml\fR order, filtered as the table is; \fBhidden\fR counts the unreviewed Hosts left out (\fB\-\-all\fR shows them). Exit 1 when \fB\-\-find\fR matches nothing

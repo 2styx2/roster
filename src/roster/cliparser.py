@@ -223,6 +223,28 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
     s.add_argument("--title", metavar="TEXT", help="a one-line title")
     s.add_argument("--type", metavar="TEXT", help="a free label (nas, switch, esxi, ...)")
     s.add_argument("--port", type=int, metavar="N", help="its SSH port (default: 22)")
+    s.add_argument("--description", metavar="TEXT", help="one line about it")
+    s.add_argument("--product", metavar="TEXT", help="its product (what --only and --find match too)")
+    s.add_argument("--mac", metavar="MAC", help="its MAC address")
+    s.add_argument("--service", action="append", metavar="SPEC", help="a service or web UI: NAME,KEY=VALUE,... with "
+                   "port, url, scheme (http, https), user, auth (its own Login), login (basic, bearer, ...) and "
+                   "verify (true, false), e.g. web,port=8443,scheme=https; or NAME:PORT. Again for more")
+    s.add_argument("--web", metavar="URL", help="its web UI's URL (the `web` service's url:)")
+    on = s.add_mutually_exclusive_group()
+    on.add_argument("--mesh", dest="mesh", action="store_true", default=None, help="in the Mesh (default: its "
+                    "group's)")
+    on.add_argument("--no-mesh", dest="mesh", action="store_false", help="left out of the Mesh")
+    s.add_argument("--mesh-dir", metavar="DIR", help="where it keeps its Mesh files as a source (an absolute path)")
+    s.add_argument("--key-type", metavar="TYPE", help="the SSH key type its key Login uses: ed25519, ecdsa, "
+                   "ecdsa-256, ecdsa-521, rsa or rsa-BITS (default: its group's or roster.yml's)")
+    s.add_argument("--sudo-auth", metavar="REF", help="the vault item for its own sudo password (bw:ITEM, op:...), "
+                   "written as sudo: {auth: REF}")
+    on = s.add_mutually_exclusive_group()
+    on.add_argument("--shell-hooks", dest="shell_hooks", action="store_true", default=None, help="the app sends its "
+                    "shell the hook line")
+    on.add_argument("--no-shell-hooks", dest="shell_hooks", action="store_false", help="it doesn't")
+    s.add_argument("--seen-as", action="append", metavar="ADDR", help="another address or network it connects from "
+                   "(10.0.9.1, 10.0.9.0/24); again for more")
     s.add_argument("--from-vault", action="store_true", help="fill --ip (and --port) from the --auth item's URI and "
                    "--user from its username, never reading its password (bw, op); flags given win. With no NAME: list "
                    "the vault items no Login in roster.yml names (new ones since the last run), and in a terminal "
@@ -234,8 +256,9 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
                    "personal, ORGANIZATION/COLLECTION (bw) or GROUP (kp) (default: save_to: in roster.yml or init.lua)")
     s.add_argument("--provider", metavar="PROVIDER", help="with --save-to-vault: the vault to save in, bw or kp "
                    "(default: the vault roster.yml's Logins use most)")
-    s.add_argument("--json", action="store_true", help="with --from-vault and no NAME: print the list as JSON, add "
-                   "nothing")
+    s.add_argument("--json", action="store_true", help="print the added Host as `hosts NAME --json` does (with "
+                   "--dry-run: what it would write), never asking; with --from-vault and no NAME: print the list as "
+                   "JSON, add nothing")
     s.add_argument("--all", action="store_true", help="with --from-vault and no NAME: every item roster.yml doesn't "
                    "name, not only the new ones")
     s.add_argument("--mark-seen", action="store_true", help="with --from-vault and no NAME: remember every item "
@@ -248,6 +271,21 @@ def build_parser(argv: "Sequence[str]" = ()) -> Parser:
     s.add_argument("-y", "--yes", action="store_true", help="never ask: a missing value it can't default is an "
                    "error naming its flag (with --save-to-vault the password is still asked, and a locked vault's "
                    "master password in a terminal)")
+    s = sub.add_parser("changes", help="the Pending changes of a team-repo Inventory: roster.yml's diff against its "
+                       "last commit, by Host, and the message publish would commit; changes discard: drop them")
+    s.add_argument("action", nargs="?", choices=["discard"], help="discard: put roster.yml back as the last commit "
+                   "has it (what it held is kept as the backup)")
+    s.add_argument("--json", **as_json)
+    s = sub.add_parser("publish", help="commit roster.yml's Pending changes (that file alone) and push them to the "
+                       "team's repo, fetching first and never forcing; then sync this Box")
+    s.add_argument("-m", "--message", metavar="MSG", help="the commit message (default: one naming each Host, group "
+                   "and Link that changed)")
+    s.add_argument("--dry-run", action="store_true", help="show the diff and the message it would commit; commit and "
+                   "push nothing")
+    s.add_argument("--json", **as_json)
+    s = sub.add_parser("pull", help="bring the team's changes in: fast-forward the infra repo to its upstream (never "
+                       "a merge, rebase or stash), then sync this Box")
+    s.add_argument("--json", **as_json)
     s = sub.add_parser("discover", help="scan networks (nmap if installed) for Hosts; --write adds the new ones to "
                        "roster.yml, unreviewed")
     s.add_argument("targets", nargs="+", metavar="CIDR", help="e.g. 10.0.1.0/24 (several allowed)")
@@ -430,7 +468,10 @@ def check(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     if args.cmd == "add" and args.name is None and not args.from_vault:
         parser.error("roster add needs NAME, the new Host's name")
     if args.cmd == "add" and args.name is not None:
-        listed = [f for f, on in (("--json", args.json), ("--all", args.all), ("--mark-seen", args.mark_seen),
+        if args.json and (args.setup or args.save_to_vault):
+            parser.error("--json goes with an add that asks nothing: drop --setup and --save-to-vault (run setup "
+                         "--host NAME after it)")
+        listed = [f for f, on in (("--all", args.all), ("--mark-seen", args.mark_seen),
                                   ("--no-sync", args.no_sync)) if on]
         if listed:
             parser.error(f"{', '.join(listed)} go{'es' if len(listed) == 1 else ''} with --from-vault and no NAME "

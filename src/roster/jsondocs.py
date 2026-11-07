@@ -61,6 +61,18 @@ class ResourceInfoDoc(Part, frozen=True):
     group: GroupRef | None
 
 
+class AddPlanDoc(Part, frozen=True):
+    """`roster add NAME ... --dry-run --json` (#563): the Host as it would load, and the lines the write would change
+    (`- ` a line it replaces, `+ ` one it writes); nothing written. A real add prints HostInfoDoc."""
+
+    dry_run: Literal[True]
+    host: Host
+    group: GroupRef
+    new_group: bool
+    lines: list[str]
+    kind: Literal["repo", "file"]
+
+
 class ResourcesDoc(Part, frozen=True):
     """`roster hosts --resources --json`."""
 
@@ -368,6 +380,97 @@ class AgentSyncDoc(Part, frozen=True):
     updated: str                        # ISO-8601, UTC: the directory's own `updated`
     agents: int
     machines: list[AgentSyncMachine]
+
+
+# ---------------------------------------------------------------- Pending changes: changes, publish, pull (#563)
+
+class HostChange(Part, frozen=True):
+    """A Host the Pending changes add, remove or change (`fields`: which, for a change)."""
+
+    host: str
+    change: Literal["added", "removed", "changed"]
+    fields: list[str]
+
+
+class GroupChange(Part, frozen=True):
+    group: str
+    change: Literal["added", "removed", "changed"]
+
+
+class LastCommit(Part, frozen=True):
+    """The branch's last commit, and whether its upstream has it (as this Box last fetched)."""
+
+    commit: str
+    subject: str
+    upstream: str | None
+    pushed: bool
+
+
+class Synced(Part, frozen=True):
+    """This Box's `roster sync` after roster.yml changed: a failure doesn't undo the change."""
+
+    ok: bool
+    error: str | None = None
+    fix: str | None = None
+
+
+class ChangesDoc(Part, frozen=True):
+    """`roster changes --json`: serve's changes.diff. A plain file (`kind: file`) has none: `repo: null`, `count: 0`."""
+
+    path: str
+    repo: str | None
+    last_commit: LastCommit | None
+    diff: str
+    hosts: list[HostChange]
+    groups: list[GroupChange]
+    count: int
+    message: str
+    kind: Literal["repo", "file"]
+
+
+class DiscardDoc(Part, frozen=True):
+    """`roster changes discard --json`: serve's changes.discard."""
+
+    discarded: bool
+    backup: str | None
+    sync: Synced | None = None
+
+
+class PublishDoc(Part, frozen=True):
+    """`roster publish --json`: serve's changes.publish."""
+
+    commit: str
+    upstream: str
+    message: str
+    hosts: list[HostChange]
+    groups: list[GroupChange]
+    pulled: int
+    sync: Synced
+
+
+class PublishPlanDoc(Part, frozen=True):
+    """`roster publish --dry-run --json`: what it would commit, and where it would push it; nothing done."""
+
+    dry_run: Literal[True]
+    upstream: str | None
+    message: str
+    diff: str
+    hosts: list[HostChange]
+    groups: list[GroupChange]
+    count: int
+
+
+class PullDoc(Part, frozen=True):
+    """`roster pull --json`: serve's inventory.pull."""
+
+    updated: bool
+    upstream: str | None
+    commits: int
+    ahead: int
+    from_: str | None = Field(default=None, alias="from")
+    to: str | None = None
+    message: str | None = None
+    sync: Synced | None = None
 
 
 # ---------------------------------------------------------------- errors
