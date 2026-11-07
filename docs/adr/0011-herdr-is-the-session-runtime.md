@@ -12,7 +12,7 @@ roster's goal on a person's Box is: open work on any Host quickly, with the logi
 - **The herdr side is a mod in its own repo**, so other herdr users can install it from herdr's mod gallery. It calls the `roster` CLI and reads only its `--json` output, never `roster serve` (serve stays the app's private backend, [ADR 0010](0010-roster-mcp.md#1-transport-and-shape)).
 - **Which Hosts run `hc` is a person's choice on their Box**, toggled per Host in the mod; nothing about it goes into the team's `roster.yml`.
 - **Hosts that can't run `hc`** (switches, ESXi, Windows DCs, password-only gear) open as `roster ssh HOST` in a terminal on the Hub.
-- **The Agent directory** is kept by the Hub and written into each herdr machine, so an Agent on a remote Host can list its peers locally (`roster agents`). herdr's own messaging is hub-and-spoke (a remote can only answer the Hub terminal that started work there); **between remote Hosts, the Mesh carries Agent messages** (`roster agent send orange3/t2 …` runs `hc` on orange3 over the Mesh key).
+- **The Agent directory** is kept by the Hub and written into each herdr machine, so an Agent on a remote Host can list its peers locally (`roster agents`). herdr's own messaging is hub-and-spoke (a remote can only answer the Hub terminal that started work there); **between remote Hosts, the Mesh carries Agent messages** (`roster agent send box-b/t2 …` runs `hc` on box-b over the Mesh key).
 
 ## Considered
 
