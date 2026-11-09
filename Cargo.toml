@@ -1,0 +1,15 @@
+[package]
+name = "roster"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+description = "Know your network: Hosts from roster.yml, reached through ssh, fzf and tmux"
+repository = "https://github.com/2styx2/roster-rs"
+publish = false
+
+[dependencies]
+lexopt = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_norway = "0.9"
