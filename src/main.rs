@@ -65,6 +65,7 @@ fn run() -> Result<(), Fail> {
     let mut config = None;
     let mut command = None;
     let mut json = false;
+    let mut long = false; // `ls --long`
     let mut filter = None;
     let mut topic = false; // `help plugins`
     while let Some(arg) = parser.next().map_err(|e| usage_error(e.to_string()))? {
@@ -77,6 +78,7 @@ fn run() -> Result<(), Fail> {
                 config = Some(parser.value().map_err(|e| usage_error(e.to_string()))?);
             }
             Long("json") if command.as_deref() == Some("ls") => json = true,
+            Long("long") if command.as_deref() == Some("ls") => long = true,
             Value(v) if command.as_deref() == Some("ls") && filter.is_none() => {
                 filter = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }
@@ -117,7 +119,11 @@ fn run() -> Result<(), Fail> {
                     return Err(Fail { code: 1, msg });
                 }
             }
-            let render = if json { ls::json } else { ls::text };
+            let render = match (json, long) {
+                (true, _) => ls::json,
+                (_, true) => ls::long,
+                _ => ls::text,
+            };
             print!("{}", render(&inventory.hosts));
             Ok(())
         }
