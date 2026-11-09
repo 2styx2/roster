@@ -339,3 +339,156 @@ fn a_down_source_keeps_its_lines_on_its_peers() {
     );
     assert!(read(b.join(".ssh/authorized_keys")).contains("roster-mesh:box-c@box-a"));
 }
+
+/// Hosts for the table: two groups, each with Hosts that can't take part.
+fn table_inventory(defaults: &str, dev: &str, box_c: &str) -> String {
+    format!(
+        r#"
+box_name: box-a
+defaults: {{user: admin, auth: agent{defaults}}}
+groups:
+  dev:{dev}
+    hosts:
+      box-b: 10.0.0.6
+      box-c: {{ip: 10.0.0.7, port: 2222{box_c}}}
+      sw-01: {{ip: 10.0.0.22, enroll: false}}
+      new-01: {{ip: 10.0.0.20, reviewed: false}}
+      win-01: {{ip: 10.0.0.21, os: windows}}
+  ops:
+    hosts:
+      ops-01: 10.0.0.30
+      ops-02: 10.0.0.31
+"#
+    )
+}
+
+#[test]
+fn dry_run_plans_follow_the_inventory() {
+    let left_out = "roster: sw-01: left out of the Mesh: a Password Host (enroll: false)\n\
+                    roster: new-01: left out of the Mesh: unreviewed\n\
+                    roster: win-01: left out of the Mesh: os: windows\n";
+    let cases = [
+        // `mesh: true` in defaults: each group is its own web.
+        (
+            table_inventory(", mesh: true", "", ""),
+            "box-b -> box-c\nbox-c -> box-b\nops-01 -> ops-02\nops-02 -> ops-01\n",
+            left_out,
+        ),
+        // On a group: only its Hosts.
+        (
+            table_inventory("", "\n    mesh: true", ""),
+            "box-b -> box-c\nbox-c -> box-b\n",
+            left_out,
+        ),
+        // `mesh: false` on a Host opts out, leaving box-b alone: no web.
+        (
+            table_inventory("", "\n    mesh: true", ", mesh: false"),
+            "",
+            left_out,
+        ),
+        // One Host with `mesh: true` has nobody to reach.
+        (table_inventory("", "", ", mesh: true"), "", ""),
+        // No `mesh:` anywhere: no web, nothing said.
+        (table_inventory("", "", ""), "", ""),
+    ];
+    for (n, (inventory, arrows, stderr)) in cases.iter().enumerate() {
+        let s = sandbox(&format!("mesh-table-{n}"), inventory);
+        hosts_up(&s);
+        host(&s, "ops-02", "10.0.0.31");
+        let out = s.roster(&["setup", "--dry-run"]);
+        assert_eq!(out.code, 0, "case {n}: {}", out.stderr);
+        let plan: String = out
+            .stdout
+            .lines()
+            .filter(|l| l.contains(" -> "))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert_eq!(&plan, arrows, "case {n}");
+        assert!(out.stderr.ends_with(stderr), "case {n}: {}", out.stderr);
+        if arrows.is_empty() {
+            assert!(!out.stdout.contains(": would "), "case {n}: {}", out.stdout);
+        }
+    }
+}
+
+#[test]
+fn dry_run_lists_each_hosts_changes() {
+    let s = sandbox("mesh-dry-files", INVENTORY);
+    hosts_up(&s);
+    let out = s.roster(&["setup", "--dry-run"]);
+    let mesh: Vec<&str> = out
+        .stdout
+        .lines()
+        .filter(|l| l.starts_with("box-"))
+        .collect();
+    assert_eq!(
+        mesh,
+        [
+            "box-b -> box-c",
+            "box-c -> box-b",
+            "box-b: would make the Mesh key ~/.ssh/roster-mesh/id_ed25519",
+            "box-b: would write ~/.ssh/roster-mesh/config",
+            "box-b: would write ~/.ssh/roster-mesh/known_hosts",
+            "box-b: would write ~/ROSTER.md",
+            "box-b: would add the Include to ~/.ssh/config",
+            "box-b: would add box-c's key once it's made",
+            "box-c: would make the Mesh key ~/.ssh/roster-mesh/id_ed25519",
+            "box-c: would write ~/.ssh/roster-mesh/config",
+            "box-c: would write ~/.ssh/roster-mesh/known_hosts",
+            "box-c: would write ~/ROSTER.md",
+            "box-c: would add the Include to ~/.ssh/config",
+            "box-c: would add box-b's key once it's made",
+        ]
+    );
+}
+
+#[test]
+fn a_key_roster_did_not_make_is_never_used_or_replaced() {
+    let s = sandbox("mesh-foreign-key", INVENTORY);
+    let [b, c, ..] = hosts_up(&s);
+    let own = "ssh-ed25519 AAAAown user@laptop\n";
+    s.write(
+        "hosts/box-b/.ssh/roster-mesh/id_ed25519",
+        "THEIR PRIVATE KEY\n",
+    );
+    s.write("hosts/box-b/.ssh/roster-mesh/id_ed25519.pub", own);
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    let why = "roster: box-b: Mesh: ~/.ssh/roster-mesh/id_ed25519 isn't a Mesh key this Box made; left alone\n";
+    assert!(out.stderr.contains(why), "{}", out.stderr);
+    assert_eq!(read(b.join(".ssh/roster-mesh/id_ed25519.pub")), own);
+    assert_eq!(
+        read(b.join(".ssh/roster-mesh/id_ed25519")),
+        "THEIR PRIVATE KEY\n"
+    );
+    assert!(!b.join(".ssh/roster-mesh/config").exists());
+    assert_eq!(
+        read(c.join(".ssh/authorized_keys")),
+        BOX_LINE,
+        "box-b's key isn't sent"
+    );
+    // box-c's part goes ahead.
+    assert_eq!(
+        read(b.join(".ssh/authorized_keys")),
+        BOX_LINE.to_string() + &peer_line("box-c", "10.0.0.7")
+    );
+}
+
+#[test]
+fn no_ssh_inherits_a_secrets_variable() {
+    const PASSWORD: &str = "pw-7d2e-made-up";
+    let inventory = INVENTORY.replace("auth: agent", "auth: \"env:HOST_PW\"");
+    let mut s = sandbox("mesh-secrets", &inventory);
+    s.set_env("HOST_PW", PASSWORD);
+    s.set_env("BW_SESSION", "session-made-up");
+    hosts_up(&s);
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let env = read(s.home.join("ssh-hosts.env"));
+    assert!(
+        env.contains("FAKE_HOSTS="),
+        "the fake logged its environment"
+    );
+    assert!(!env.contains(PASSWORD), "{env}");
+    assert!(!env.contains("session-made-up"), "{env}");
+}
