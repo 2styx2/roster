@@ -388,11 +388,29 @@ The Hosts of a group with
 .BR defaults ;
 .B "mesh: false"
 on a Host opts it out) reach each other; groups don't reach each other.
-Only Enrolled, reviewed, POSIX Hosts take part: any other Host with
+Each
+.B links
+entry adds reach across groups: every Host of
+.B from
+reaches every Host of
+.BR to ,
+one way, or both ways with
+.BR "both: true" ;
+a pair already in a group's web isn't added twice.
+Remove a Link and the next run removes its lines.
+Only Enrolled, reviewed, POSIX Hosts without
+.B seen_as
+or
+.B mesh_dir
+(not supported yet) take part: any other Host with
 .B "mesh: true"
-is
+or at an end of a Link is
 .B left out of the Mesh
-with the reason on stderr.
+with the reason on stderr, in the plan and when applied.
+A Link with
+.B via
+is skipped the same way, with the line
+.BI "roster: link " FROM " \-> " TO " via " HOP ": skipped: via isn't supported yet" .
 Nothing is kept on the Box: each Host that takes the Box key is visited,
 one at a time, with
 .B ssh \-o BatchMode=yes \-o ConnectTimeout=10
@@ -992,7 +1010,7 @@ each end a Host or a group,
 .B both
 true for two-way, and
 .B via
-a Host that isn't an end.
+a Host that isn't an end (not supported yet: the Mesh skips such a Link).
 A name that is both a Host and a group can't be an end.
 .PP
 Host settings:
