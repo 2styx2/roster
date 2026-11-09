@@ -5,7 +5,7 @@ mod ls;
 mod plugin;
 
 /// Commands roster runs itself; any other name is a plugin.
-const BUILTINS: &[&str] = &["ls"];
+const BUILTINS: &[&str] = &["ls", "help"];
 
 use std::process::ExitCode;
 
@@ -14,6 +14,7 @@ usage: roster [-c FILE] COMMAND [ARGS]
 
 commands:
   ls [--json]    list Hosts: name, group, address, access, title
+  help plugins   how `roster NAME` runs a roster-NAME plugin from PATH
 
 options:
   -c FILE        the Inventory (default: $ROSTER_CONFIG, ./roster.yml,
@@ -53,6 +54,7 @@ fn run() -> Result<(), Fail> {
     let mut config = None;
     let mut command = None;
     let mut json = false;
+    let mut topic = false; // `help plugins`
     while let Some(arg) = parser.next().map_err(|e| usage_error(e.to_string()))? {
         match arg {
             Short('h') | Long("help") => {
@@ -63,6 +65,9 @@ fn run() -> Result<(), Fail> {
                 config = Some(parser.value().map_err(|e| usage_error(e.to_string()))?);
             }
             Long("json") if command.as_deref() == Some("ls") => json = true,
+            Value(v) if command.as_deref() == Some("help") && v == "plugins" && !topic => {
+                topic = true
+            }
             Value(v) if command.is_none() => {
                 let name = v.string().map_err(|e| usage_error(e.to_string()))?;
                 if !BUILTINS.contains(&name.as_str()) {
@@ -85,6 +90,10 @@ fn run() -> Result<(), Fail> {
             let inventory = inventory::Inventory::open(config.map(Into::into))?;
             let render = if json { ls::json } else { ls::text };
             print!("{}", render(&inventory.hosts));
+            Ok(())
+        }
+        Some("help") => {
+            print!("{}", if topic { plugin::HELP } else { USAGE });
             Ok(())
         }
         Some(other) => Err(usage_error(format!("unknown command '{other}'"))),
