@@ -189,7 +189,8 @@ fn setup_leaves_no_temp_files_and_honours_an_include_already_there() {
             "config.d",
             "roster",
             "roster_ed25519",
-            "roster_ed25519.pub"
+            "roster_ed25519.pub",
+            "roster_known_hosts"
         ]
     );
 }

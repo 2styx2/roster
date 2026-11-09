@@ -178,7 +178,7 @@ fn auth_env_that_is_unset_stops_before_ssh() {
 
 #[test]
 fn an_unsupported_reference_suggests_cmd() {
-    for (name, auth) in [("vault-op", "op:net/sw-01"), ("vault-bw", "bw:sw-01")] {
+    for (name, auth) in [("vault-op", "op:net/sw-01"), ("vault-kp", "kp:sw-01")] {
         let (s, _run) = sandbox(name, auth);
         let out = s.roster(&["ssh", "sw-01"]);
         assert_eq!(out.code, 1, "{auth}");
