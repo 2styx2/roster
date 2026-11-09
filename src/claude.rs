@@ -130,6 +130,47 @@ pub fn with_import(old: &str) -> Option<String> {
     Some(text + "@ROSTER.md\n")
 }
 
+/// CLAUDE.md without the `@ROSTER.md` line and the blank line `with_import`
+/// put before it; None when there's no such line.
+pub fn without_import(old: &str) -> Option<String> {
+    let text = crate::sshconf::without_line(old, "@ROSTER.md")?;
+    let text = text.trim_end();
+    Some(match text.is_empty() {
+        true => String::new(),
+        false => format!("{text}\n"),
+    })
+}
+
+/// The settings without the `DENY` rules, dropping `deny` and `permissions`
+/// once they're empty, and "" when nothing is left; None when no rule is
+/// there. Err: not a JSON object.
+pub fn without_deny(old: &str) -> Result<Option<String>, ()> {
+    let mut data: serde_json::Value = serde_json::from_str(old).map_err(|_| ())?;
+    let top = data.as_object_mut().ok_or(())?;
+    let Some(permissions) = top.get_mut("permissions").and_then(|p| p.as_object_mut()) else {
+        return Ok(None);
+    };
+    let Some(deny) = permissions.get_mut("deny").and_then(|d| d.as_array_mut()) else {
+        return Ok(None);
+    };
+    let before = deny.len();
+    deny.retain(|r| !DENY.iter().any(|d| r == d));
+    if deny.len() == before {
+        return Ok(None);
+    }
+    if deny.is_empty() {
+        permissions.remove("deny");
+    }
+    if permissions.is_empty() {
+        top.remove("permissions");
+    }
+    if top.is_empty() {
+        return Ok(Some(String::new()));
+    }
+    let text = serde_json::to_string_pretty(&data).map_err(|_| ())?;
+    Ok(Some(text + "\n"))
+}
+
 /// The settings with every `DENY` rule in `permissions.deny`, other keys
 /// kept; None when nothing is missing. Err: the old text isn't a JSON object.
 pub fn with_deny(old: Option<&str>) -> Result<Option<String>, ()> {

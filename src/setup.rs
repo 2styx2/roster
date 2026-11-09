@@ -1,7 +1,7 @@
 //! `roster setup`: make this Box ready to reach the Hosts.
 
 use crate::inventory::Inventory;
-use crate::{Fail, atomic, claude, hosts, mesh, remote, sshconf};
+use crate::{Fail, atomic, claude, hosts, mesh, remote, sshconf, undo};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,15 +9,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// `--dry-run`: say what would change, change nothing.
 static DRY: AtomicBool = AtomicBool::new(false);
 
-fn dry() -> bool {
+pub fn dry() -> bool {
     DRY.load(Ordering::Relaxed)
 }
 
 /// Run every setup step in order; each is idempotent and prints what it changed.
 /// A new step is one more line here.
-pub fn run(inv: &Inventory, dry_run: bool) -> Result<(), Fail> {
+/// With `undo`, remove what these steps made instead (`undo::run`).
+pub fn run(inv: &Inventory, dry_run: bool, undo: bool) -> Result<(), Fail> {
     DRY.store(dry_run, Ordering::Relaxed);
     remote::scrub(inv.secret_vars());
+    if undo {
+        return undo::run(inv);
+    }
     box_key(inv)?;
     ssh_config(inv)?;
     claude_files(inv)?;
@@ -60,7 +64,7 @@ pub fn home() -> PathBuf {
         .unwrap_or_default()
 }
 
-fn failed(what: impl std::fmt::Display) -> Fail {
+pub fn failed(what: impl std::fmt::Display) -> Fail {
     Fail {
         code: 1,
         msg: what.to_string(),
@@ -114,8 +118,7 @@ fn ssh_config(inv: &Inventory) -> Result<(), Fail> {
 
 /// ROSTER.md, the CLAUDE.md import and the Claude settings, beside roster.yml.
 fn claude_files(inv: &Inventory) -> Result<(), Fail> {
-    let yml = std::fs::canonicalize(&inv.path).unwrap_or(inv.path.clone());
-    let dir = yml.parent().unwrap_or(std::path::Path::new("."));
+    let dir = &beside_inventory(inv);
     save(&dir.join("ROSTER.md"), &claude::roster_md(inv), 0o644)?;
     let md = dir.join("CLAUDE.md");
     if let Some(text) = claude::with_import(&read(&md)?.unwrap_or_default()) {
@@ -138,8 +141,14 @@ fn claude_files(inv: &Inventory) -> Result<(), Fail> {
     Ok(())
 }
 
+/// The directory roster.yml is in, where ROSTER.md and the Claude files go.
+pub fn beside_inventory(inv: &Inventory) -> PathBuf {
+    let yml = std::fs::canonicalize(&inv.path).unwrap_or(inv.path.clone());
+    yml.parent().unwrap_or(std::path::Path::new(".")).to_path_buf()
+}
+
 /// A file's text, or None when it's missing.
-fn read(path: &std::path::Path) -> Result<Option<String>, Fail> {
+pub fn read(path: &std::path::Path) -> Result<Option<String>, Fail> {
     match std::fs::read_to_string(path) {
         Ok(text) => Ok(Some(text)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -148,7 +157,7 @@ fn read(path: &std::path::Path) -> Result<Option<String>, Fail> {
 }
 
 /// Atomically write `path` if its contents differ, and say so.
-fn save(path: &std::path::Path, contents: &str, mode: u32) -> Result<(), Fail> {
+pub fn save(path: &std::path::Path, contents: &str, mode: u32) -> Result<(), Fail> {
     if dry() {
         if read(path)?.as_deref() != Some(contents) {
             println!("would write {}", path.display());

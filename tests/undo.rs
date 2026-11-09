@@ -157,6 +157,92 @@ fn a_down_host_is_reported_and_a_rerun_finishes_it() {
     assert_eq!(read(c.join(".ssh/authorized_keys")), "");
 }
 
+#[test]
+fn undo_removes_the_box_files_roster_made_and_keeps_the_box_key() {
+    let s = sandbox("undo-box-clean");
+    hosts_up(&s);
+    assert_eq!(s.roster(&["setup"]).code, 0);
+    for f in ["ROSTER.md", "CLAUDE.md", ".claude/settings.json", ".ssh/config"] {
+        assert!(s.home.join(f).exists(), "{f}");
+    }
+    let out = s.roster(&["setup", "--undo"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    for f in [
+        ".ssh/config.d/roster",
+        ".ssh/config",
+        ".ssh/roster_known_hosts",
+        "ROSTER.md",
+        "CLAUDE.md",
+        ".claude/settings.json",
+    ] {
+        assert!(!s.home.join(f).exists(), "{f} should be gone");
+    }
+    let key = s.home.join(".ssh/roster_ed25519");
+    assert!(key.exists(), "the Box key is kept");
+    assert!(
+        out.stdout.contains(&format!(
+            "kept the Box key {}; delete it and its .pub by hand once nothing needs it\n",
+            key.display()
+        )),
+        "{}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains(&format!(
+            "removed {}\n",
+            s.home.join(".ssh/config.d/roster").display()
+        )),
+        "{}",
+        out.stdout
+    );
+}
+
+#[test]
+fn undo_takes_out_only_what_roster_added_to_the_users_files() {
+    let s = sandbox("undo-box-mine");
+    hosts_up(&s);
+    let config = "Host *\n    ServerAliveInterval 60\n\ninclude ~/.ssh/config.d/other\n";
+    s.write(".ssh/config", config);
+    let notes = "# Our notes\n\nBe nice.\n";
+    s.write("CLAUDE.md", notes);
+    s.write(
+        ".claude/settings.json",
+        r#"{"model": "x", "permissions": {"deny": ["Bash(rm:*)"], "allow": ["Read(*)"]}}"#,
+    );
+    assert_eq!(s.roster(&["setup"]).code, 0);
+    assert_ne!(read(s.home.join("CLAUDE.md")), notes);
+
+    let out = s.roster(&["setup", "--undo"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(read(s.home.join(".ssh/config")), config);
+    assert_eq!(read(s.home.join("CLAUDE.md")), notes);
+    let settings: serde_json::Value =
+        serde_json::from_str(&read(s.home.join(".claude/settings.json"))).unwrap();
+    assert_eq!(
+        settings,
+        serde_json::json!({"model": "x", "permissions": {"deny": ["Bash(rm:*)"], "allow": ["Read(*)"]}})
+    );
+}
+
+#[test]
+fn files_roster_did_not_write_are_left_alone() {
+    let s = sandbox("undo-box-foreign");
+    hosts_up(&s);
+    let md = "# My own ROSTER.md\n";
+    s.write("ROSTER.md", md);
+    let conf = "Host mine\n    HostName 10.0.0.99\n";
+    s.write(".ssh/config.d/roster", conf);
+    let out = s.roster(&["setup", "--undo"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(read(s.home.join("ROSTER.md")), md);
+    assert_eq!(read(s.home.join(".ssh/config.d/roster")), conf);
+    assert!(
+        out.stderr.contains("ROSTER.md wasn't written by roster; left it alone"),
+        "{}",
+        out.stderr
+    );
+}
+
 const OTHER_KEY: &str = "ssh-rsa AAAAother roster-mesh:box-c@box-z\n";
 
 #[test]

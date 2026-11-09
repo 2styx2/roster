@@ -51,7 +51,7 @@ pub fn render(inv: &Inventory, from: &Path) -> String {
 /// `~/.ssh/config` with `Include "<path>"` on top, or None when an Include
 /// of `.ssh/config.d/roster` (absolute or `~/`) is already there.
 pub fn with_include(config: &str, path: &Path) -> Option<String> {
-    let line = format!("Include \"{}\"", path.display());
+    let line = include_line(path);
     let included = config.lines().any(|l| {
         let mut words = l.split_whitespace();
         words
@@ -60,4 +60,19 @@ pub fn with_include(config: &str, path: &Path) -> Option<String> {
             && words.any(|w| w.trim_matches('"').ends_with(".ssh/config.d/roster"))
     });
     (!included).then(|| format!("{line}\n{config}"))
+}
+
+/// The line `Include "<path>"` that `with_include` adds.
+pub fn include_line(path: &Path) -> String {
+    format!("Include \"{}\"", path.display())
+}
+
+/// `text` without the lines that are exactly `line`; None when there's none.
+pub fn without_line(text: &str, line: &str) -> Option<String> {
+    let kept: Vec<&str> = text.lines().filter(|l| *l != line).collect();
+    if kept.len() == text.lines().count() {
+        return None;
+    }
+    let ends = text.ends_with('\n') && !kept.is_empty();
+    Some(kept.join("\n") + if ends { "\n" } else { "" })
 }

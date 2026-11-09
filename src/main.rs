@@ -208,10 +208,7 @@ fn run() -> Result<(), Fail> {
         }
         Some("setup") => {
             let inventory = inventory::Inventory::open(config.map(Into::into))?;
-            match undo {
-                true => undo::run(&inventory, dry_run),
-                false => setup::run(&inventory, dry_run),
-            }
+            setup::run(&inventory, dry_run, undo)
         }
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
         Some("run") => Err(usage_error("run needs a TARGET and -- CMD")),
