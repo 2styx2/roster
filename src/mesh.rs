@@ -482,6 +482,7 @@ fn parse(out: &str) -> Option<Seen> {
                 s.files.insert(rest.into(), String::new());
                 file = Some(rest.into());
             }
+            "nonl" => _ = s.files.get_mut(file.as_ref()?)?.pop(),
             "line" => s.lines.push(rest.into()),
             "end" => end = true,
             _ => return None,

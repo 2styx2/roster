@@ -646,3 +646,16 @@ fn a_link_reaches_one_way_and_removing_it_removes_its_lines() {
         BOX_LINE.to_string() + &peer_line("box-b", "10.0.0.6")
     );
 }
+
+#[test]
+fn a_file_without_a_final_newline_is_read_whole() {
+    let s = sandbox("mesh-no-newline", INVENTORY);
+    let [b, ..] = hosts_up(&s);
+    s.write("hosts/box-b/ROSTER.md", "my own notes");
+    let out = s.roster(&["setup"]);
+    assert!(!out.stderr.contains("cut short"), "{}", out.stderr);
+    let why = "box-b: warning: ~/ROSTER.md isn't the Mesh's; left alone";
+    assert!(out.stderr.contains(why), "{}", out.stderr);
+    assert_eq!(read(b.join("ROSTER.md")), "my own notes");
+    assert!(b.join(".ssh/roster-mesh/config").exists());
+}
