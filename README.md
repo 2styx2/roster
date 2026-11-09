@@ -19,7 +19,7 @@ Your password manager knows the secrets. roster knows your network: the team's H
 | `roster vault unlock\|lock` | unlock the vault once a day |
 | `roster watch [group]` | live view: up/down, ping, load, RAM, disk, failed services |
 
-A tiny tmux plugin binds `prefix + r` (picker) and `prefix + R` (several Hosts, synchronized panes).
+roster is its own tool; tmux is optional. `contrib/roster.tmux` binds `prefix + g` to the picker in a popup (Tab marks several Hosts for synchronized panes). Edit it to use another key.
 
 ## License
 
