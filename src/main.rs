@@ -16,6 +16,7 @@ mod run;
 mod setup;
 mod ssh;
 mod sshconf;
+mod undo;
 mod vault;
 mod web;
 
@@ -108,6 +109,7 @@ fn run() -> Result<(), Fail> {
     let mut target = None; // `check [TARGET]`
     let mut action = None; // `vault unlock|lock`
     let mut dry_run = false; // `setup --dry-run`
+    let mut undo = false; // `setup --undo`
     let mut web = web::Args::default();
     while let Some(arg) = parser.next().map_err(|e| usage_error(e.to_string()))? {
         match arg {
@@ -132,6 +134,7 @@ fn run() -> Result<(), Fail> {
             }
             Short('k') if command.as_deref() == Some("web") => web.insecure = true,
             Long("dry-run") if command.as_deref() == Some("setup") => dry_run = true,
+            Long("undo") if command.as_deref() == Some("setup") => undo = true,
             Value(v) if command.as_deref() == Some("ls") && filter.is_none() => {
                 filter = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }
@@ -203,10 +206,13 @@ fn run() -> Result<(), Fail> {
             let inventory = inventory::Inventory::open(config.map(Into::into))?;
             check::run(&inventory, target.as_deref(), json)
         }
-        Some("setup") => setup::run(
-            &inventory::Inventory::open(config.map(Into::into))?,
-            dry_run,
-        ),
+        Some("setup") => {
+            let inventory = inventory::Inventory::open(config.map(Into::into))?;
+            match undo {
+                true => undo::run(&inventory, dry_run),
+                false => setup::run(&inventory, dry_run),
+            }
+        }
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
         Some("run") => Err(usage_error("run needs a TARGET and -- CMD")),
         Some("web") => web::run(&inventory::Inventory::open(config.map(Into::into))?, web),

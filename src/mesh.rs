@@ -550,6 +550,30 @@ fn apply(inv: &Inventory, h: &Host, t: &Todo) -> Result<Seen, String> {
     visit(inv, h, &vars, APPLY)
 }
 
+/// `roster setup --undo` on Host `i`: remove all of this Box's Mesh there,
+/// which is the plan for no pairs at all. Ok(false): the Host refuses the
+/// Box key, so nothing of this Box's is reachable there.
+pub fn undo(inv: &Inventory, i: usize, dry: bool) -> Result<bool, String> {
+    let h = &inv.hosts[i];
+    let mut seen = vec![None; inv.hosts.len()];
+    match visit(inv, h, &[], "") {
+        Ok(s) => seen[i] = Some(s),
+        Err(why) if why.contains("Permission denied") => return Ok(false),
+        Err(why) => return Err(why),
+    }
+    let t = &plan(inv, &BTreeSet::new(), &seen, "")[i];
+    if !dry && !t.is_empty() {
+        apply(inv, h, t)?;
+    }
+    for (would, done) in t.says() {
+        match dry {
+            true => println!("{}: would {would}", h.name),
+            false => println!("{}: {done}", h.name),
+        }
+    }
+    Ok(true)
+}
+
 /// `roster setup`'s Mesh step, on the Hosts that take the Box key (`ready`).
 /// Returns how many Hosts aren't done; the next run finishes them.
 pub fn run(inv: &Inventory, ready: &[&Host], dry: bool) -> usize {
