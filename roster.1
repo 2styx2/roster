@@ -1,0 +1,121 @@
+.TH ROSTER 1 2026-11-09 "roster 0.0.0" "User Commands"
+.SH NAME
+roster \- know your network: list and reach the Hosts in roster.yml
+.SH SYNOPSIS
+.B roster
+.RB [ \-c
+.IR FILE ]
+.B ls
+.RB [ \-\-json ]
+.br
+.B roster \-h
+.SH DESCRIPTION
+.B roster
+reads an Inventory of Hosts from
+.I roster.yml
+and does one job per command.
+Output is plain text, or JSON with
+.BR \-\-json ,
+and never contains a secret.
+.SH OPTIONS
+.TP
+.BI \-c " FILE" "\fR, \fP\-\-config " FILE
+Read the Inventory from
+.IR FILE .
+May appear before or after the command.
+.TP
+.BR \-h ", " \-\-help
+Print usage and exit 0.
+.SH COMMANDS
+.TP
+.B ls
+Print one line per Host, in Inventory order, with the columns
+name, group, address, access and title, padded and separated by two spaces.
+There is no header line.
+Access is
+.B key
+for every Host for now.
+.TP
+.B ls \-\-json
+Print one JSON document:
+.RS
+.PP
+.nf
+{"v": 1, "hosts": [{"name": "box\-a", "group": "dev",
+  "ip": "10.0.0.5", "user": "admin", "access": "key",
+  "title": "Box A"}]}
+.fi
+.PP
+.B user
+is null when the Host sets none, and
+.B title
+is empty when it has none.
+Within
+.B \(dqv\(dq: 1
+fields are only added, never renamed or removed.
+No secret is ever included.
+.RE
+.SH INVENTORY
+The Inventory is the first of:
+.IP 1. 4
+the
+.B \-c
+.IR FILE ;
+.IP 2. 4
+.BR $ROSTER_CONFIG ;
+.IP 3. 4
+.I ./roster.yml
+in the current directory;
+.IP 4. 4
+.IR ~/.config/roster/roster.yml .
+.PP
+It holds
+.BR groups ,
+each with
+.B hosts
+by name.
+A Host is a mapping with
+.B ip
+(required),
+.B user
+and
+.BR title ,
+or just its address as a string:
+.PP
+.RS
+.nf
+groups:
+  dev:
+    hosts:
+      box\-a: {ip: 10.0.0.5, user: admin, title: Box A}
+      box\-b: 10.0.0.6
+.fi
+.RE
+.PP
+Keys roster doesn't use are loaded and ignored.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 2
+Usage error: an unknown command or option, or a missing value.
+.TP
+.B 3
+The Inventory won't load: no file was found, it can't be read, or it is
+invalid.
+The message names the file.
+.SH ENVIRONMENT
+.TP
+.B ROSTER_CONFIG
+The Inventory path, when
+.B \-c
+is not given.
+.TP
+.B HOME
+Used to find
+.IR ~/.config/roster/roster.yml .
+.SH SEE ALSO
+.BR ssh (1),
+.BR fzf (1),
+.BR tmux (1)
