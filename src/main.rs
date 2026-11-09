@@ -1,5 +1,6 @@
 //! roster: know your network. See roster(1).
 
+mod askpass;
 mod atomic;
 mod inventory;
 mod ls;
@@ -7,6 +8,7 @@ mod plugin;
 mod setup;
 mod ssh;
 mod sshconf;
+mod vault;
 
 /// Commands roster runs itself; any other name is a plugin.
 const BUILTINS: &[&str] = &["ls", "setup", "ssh", "help"];
@@ -49,10 +51,15 @@ pub fn usage_error(msg: impl Into<String>) -> Fail {
 }
 
 fn main() -> ExitCode {
+    if let Some(socket) = std::env::var_os(askpass::VAR) {
+        return askpass::helper(socket);
+    }
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(fail) => {
-            eprintln!("roster: {}", fail.msg);
+            if !fail.msg.is_empty() {
+                eprintln!("roster: {}", fail.msg);
+            }
             ExitCode::from(fail.code)
         }
     }

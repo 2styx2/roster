@@ -1,4 +1,22 @@
 #!/bin/sh
 # Fake ssh: appends its argv to $HOME/ssh.log and exits $FAKE_SSH_EXIT (0).
+# With $FAKE_SSH_ASKPASS set to a prompt, it saves its environment to
+# $HOME/ssh.env and, when roster gave it askpass, the askpass directory's mode
+# to askpass.mode; then runs "$SSH_ASKPASS PROMPT" as ssh does, saving what
+# it printed to askpass.got (the only file a test password may land in) and
+# its exit status to askpass.status. $FAKE_SSH_ASKPASS_AGAIN asks a second
+# time, saving that status to askpass.again.
 echo "$*" >>"$HOME/ssh.log"
+if [ -n "$FAKE_SSH_ASKPASS" ]; then
+  env >"$HOME/ssh.env"
+  if [ -n "$ROSTER_ASKPASS" ]; then
+    stat -c %a "$(dirname "$ROSTER_ASKPASS")" >"$HOME/askpass.mode"
+    "$SSH_ASKPASS" "$FAKE_SSH_ASKPASS" >"$HOME/askpass.got"
+    echo $? >"$HOME/askpass.status"
+    if [ -n "$FAKE_SSH_ASKPASS_AGAIN" ]; then
+      "$SSH_ASKPASS" "$FAKE_SSH_ASKPASS" >/dev/null 2>&1
+      echo $? >"$HOME/askpass.again"
+    fi
+  fi
+fi
 exit "${FAKE_SSH_EXIT:-0}"

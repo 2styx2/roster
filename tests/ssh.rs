@@ -47,20 +47,6 @@ fn ssh_to_an_unknown_host_exits_1_without_running_ssh() {
 }
 
 #[test]
-fn ssh_to_a_password_host_is_refused_for_now() {
-    let s = Sandbox::new("ssh-password");
-    s.write("roster.yml", INVENTORY);
-    let out = s.roster(&["ssh", "sw-01"]);
-    assert_eq!(out.code, 1);
-    assert!(
-        out.stderr.contains("sw-01 is a Password Host"),
-        "{}",
-        out.stderr
-    );
-    assert_eq!(log(&s), "");
-}
-
-#[test]
 fn ssh_without_a_host_is_a_usage_error() {
     let s = Sandbox::new("ssh-no-host");
     s.write("roster.yml", INVENTORY);
