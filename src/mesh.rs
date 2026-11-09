@@ -451,12 +451,10 @@ fn roster_md(inv: &Inventory, src: &Host, peers: &[&Host]) -> String {
     out
 }
 
-/// Parse the read script's report; None when it was cut short.
+/// Parse the read script's report; None when it was cut short (no `home`
+/// or no `end`, as in empty output).
 fn parse(out: &str) -> Option<Seen> {
     let mut s = Seen::default();
-    if out.is_empty() {
-        return Some(s);
-    }
     let mut file: Option<String> = None;
     let mut end = false;
     for l in out.lines() {
@@ -488,7 +486,7 @@ fn parse(out: &str) -> Option<Seen> {
             _ => return None,
         }
     }
-    end.then_some(s)
+    (end && s.home.is_some()).then_some(s)
 }
 
 /// Run `script` (and then the read script) on `h`; what was read, or why not.
