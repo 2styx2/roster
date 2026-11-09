@@ -1,5 +1,6 @@
 #!/bin/sh
-# Fake ssh: appends its argv to $HOME/ssh.log and exits $FAKE_SSH_EXIT (0).
+# Fake ssh: appends its argv to $HOME/ssh.log and exits $FAKE_SSH_EXIT (0);
+# a remote script (`sh -s` last) runs in a fresh empty HOME, as on a clean Host.
 # With $FAKE_SSH_ASKPASS set to a prompt, it saves its environment to
 # $HOME/ssh.env and, when roster gave it askpass, the askpass directory's mode
 # to askpass.mode; then runs "$SSH_ASKPASS PROMPT" as ssh does, saving what
@@ -16,7 +17,8 @@
 # $HOME/.ssh/*.pub) logs in when the Host's .ssh/authorized_keys has it,
 # unless -o PubkeyAuthentication=no is given or a
 # `nokey` file is there. Without BatchMode=yes, the Host's `password` file
-# logs in when $SSH_ASKPASS prints it. Then the remote command runs with sh
+# logs in when $SSH_ASKPASS prints it. A `mute` file there makes it exit 0
+# having run and printed nothing. Then the remote command runs with sh
 # in that HOME (after a `--`), stdin passed through, with FAKE_SSH_HOST set to
 # NAME; ssh's own environment is appended to $HOME/ssh-hosts.env first.
 echo "$*" >>"$HOME/ssh.log"
@@ -59,6 +61,7 @@ if [ -n "$FAKE_HOSTS" ]; then
     echo "admin@$name: Permission denied (publickey,password)." >&2
     exit 255
   fi
+  [ -e "$dir/mute" ] && exit 0
   cd "$dir" || exit 255
   env >>"$HOME/ssh-hosts.env"
   HOME=$dir FAKE_SSH_HOST=$name exec sh -c "$*"
@@ -85,4 +88,14 @@ if [ -n "$FAKE_SSH_RUN" ]; then
   esac
   exec sh -c "$*"
 fi
+# Otherwise a remote script (`... sh -s`) runs in a fresh empty HOME: a
+# clean Host.
+case "$*" in *" sh -s")
+  [ "${FAKE_SSH_EXIT:-0}" = 0 ] || exit "$FAKE_SSH_EXIT"
+  h=$(mktemp -d) || exit 255
+  HOME=$h sh -s
+  s=$?
+  rm -rf "$h"
+  exit $s ;;
+esac
 exit "${FAKE_SSH_EXIT:-0}"

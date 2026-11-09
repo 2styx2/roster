@@ -661,6 +661,20 @@ fn a_file_without_a_final_newline_is_read_whole() {
 }
 
 #[test]
+fn a_host_that_says_nothing_is_reported_and_gets_no_lines() {
+    let s = sandbox("mesh-mute", INVENTORY);
+    let [b, c, ..] = hosts_up(&s);
+    s.write("hosts/box-c/mute", "");
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    let why = "roster: box-c: Mesh: its report was cut short\n";
+    assert!(out.stderr.contains(why), "{}", out.stderr);
+    assert_eq!(read(b.join(".ssh/authorized_keys")), BOX_LINE);
+    assert_eq!(read(c.join(".ssh/authorized_keys")), BOX_LINE);
+    assert!(!out.stdout.contains("box-c: added"), "{}", out.stdout);
+}
+
+#[test]
 fn a_symlinked_file_on_a_host_stays_a_link() {
     let s = sandbox("mesh-symlink", INVENTORY);
     let [_, c, ..] = hosts_up(&s);
