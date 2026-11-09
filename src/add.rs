@@ -2,7 +2,7 @@
 //! comment, order and format around it stays. The vault import shares it.
 
 use crate::inventory::{Inventory, is_name};
-use crate::{Fail, atomic, setup, usage_error};
+use crate::{Fail, atomic, import, setup, usage_error};
 
 /// A Host to write: `NAME: {ip: .., port: .., user: .., auth: .., enroll: false}`.
 pub struct NewHost {
@@ -171,33 +171,31 @@ pub fn run(inv: Inventory, args: Args) -> Result<(), Fail> {
             .find(|f| f.0 == k)
             .map(|f| f.1.clone())
     };
-    let name = args
-        .name
-        .clone()
-        .ok_or_else(|| usage_error("add needs a NAME"))?;
-    if !is_name(&name) {
+    let name = flag("name").or(args.name.clone());
+    if let Some(bad) = name.as_ref().filter(|n| !is_name(n)) {
         return Err(usage_error(format!(
-            "'{name}' isn't a Host name (letters, digits, . _ -)"
+            "'{bad}' isn't a Host name (letters, digits, . _ -)"
         )));
     }
-    let port = match flag("port").map(|p| p.parse()) {
-        Some(Ok(p)) => Some(p),
-        Some(Err(_)) => return Err(usage_error("--port needs a number")),
-        None => None,
-    };
-    let enroll = match flag("enroll").as_deref() {
-        None | Some("true") => true,
-        Some("false") => false,
-        Some(_) => return Err(usage_error("--enroll is true or false")),
-    };
-    let h = NewHost {
-        group: flag("group").unwrap_or_else(|| "vault".into()),
-        ip: flag("ip").ok_or_else(|| usage_error("add needs --ip ADDR"))?,
-        user: flag("user"),
-        auth: flag("auth"),
-        name,
-        port,
-        enroll,
+    let h = match flag("from-vault") {
+        Some(item) => import::one(&item, name, flag("group"))?,
+        None => NewHost {
+            name: name.ok_or_else(|| usage_error("add needs a NAME"))?,
+            group: flag("group").unwrap_or_else(|| "vault".into()),
+            ip: flag("ip").ok_or_else(|| usage_error("add needs --ip ADDR"))?,
+            port: match flag("port").map(|p| p.parse()) {
+                Some(Ok(p)) => Some(p),
+                Some(Err(_)) => return Err(usage_error("--port needs a number")),
+                None => None,
+            },
+            user: flag("user"),
+            auth: flag("auth"),
+            enroll: match flag("enroll").as_deref() {
+                None | Some("true") => true,
+                Some("false") => false,
+                Some(_) => return Err(usage_error("--enroll is true or false")),
+            },
+        },
     };
     save(&inv, &h)?;
     println!(

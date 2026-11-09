@@ -7,6 +7,7 @@ mod bw;
 mod check;
 mod claude;
 mod hosts;
+mod import;
 mod inventory;
 mod ls;
 mod mesh;
@@ -241,7 +242,14 @@ fn run() -> Result<(), Fail> {
             setup::run(&inventory, dry_run, undo)
         }
         Some("add") => add::run(open(config)?, add),
-        Some("sync") => setup::box_files(&open(config)?),
+        Some("sync") => {
+            // The vault import first, so the Box files include its Hosts.
+            let inventory = open(config)?;
+            match import::sync(&inventory) {
+                true => setup::box_files(&open(Some(inventory.path.into()))?),
+                false => setup::box_files(&inventory),
+            }
+        }
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
         Some("run") => Err(usage_error("run needs a TARGET and -- CMD")),
         Some("web") => web::run(&open(config)?, web),
