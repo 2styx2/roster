@@ -102,23 +102,27 @@ fn insert(text: &str, group: &str, host: &str) -> Result<String, String> {
         return Err("`groups:` is written in flow style; make it a block to add Hosts".into());
     }
     let groups = block(&lines, g, 0);
+    // The indent of `groups:` entries is the step for new lines too.
     let gi = inner(&lines, groups.clone(), 2);
     let pad = |n: usize, s: &str| format!("{}{s}\n", " ".repeat(n));
     let (pos, new) = match child(&lines, groups.clone(), group)? {
         None => {
-            let new = pad(gi, &format!("{group}:")) + &pad(gi + 2, "hosts:") + &pad(gi + 4, host);
+            let new = pad(gi, &format!("{group}:")) + &pad(gi * 2, "hosts:") + &pad(gi * 3, host);
             (end_of(&lines, groups), new)
         }
         Some(i) => {
             let body = block(&lines, i, gi);
-            let hi = inner(&lines, body.clone(), gi + 2);
+            let hi = inner(&lines, body.clone(), gi * 2);
             match child(&lines, body.clone(), "hosts")? {
-                None => (end_of(&lines, body), pad(hi, "hosts:") + &pad(hi + 2, host)),
+                None => (
+                    end_of(&lines, body),
+                    pad(hi, "hosts:") + &pad(hi + gi, host),
+                ),
                 Some(h) => {
                     let hosts = block(&lines, h, hi);
                     (
                         end_of(&lines, hosts.clone()),
-                        pad(inner(&lines, hosts, hi + 2), host),
+                        pad(inner(&lines, hosts, hi + gi), host),
                     )
                 }
             }
