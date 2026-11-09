@@ -1,5 +1,8 @@
 //! roster: know your network. See roster(1).
 
+mod inventory;
+mod ls;
+
 use std::process::ExitCode;
 
 const USAGE: &str = "\
@@ -64,7 +67,9 @@ fn run() -> Result<(), Fail> {
     }
     match command.as_deref() {
         Some("ls") => {
-            let _ = (config, json);
+            let inventory = inventory::Inventory::open(config.map(Into::into))?;
+            let _ = json;
+            print!("{}", ls::text(&inventory.hosts));
             Ok(())
         }
         Some(other) => Err(usage_error(format!("unknown command '{other}'"))),
