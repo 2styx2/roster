@@ -21,9 +21,29 @@ fn failed(msg: String) -> Fail {
     Fail { code: 1, msg }
 }
 
-/// `s` quoted for a curl config file.
-fn quote(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+/// A `KEY = "VALUE"` line of a curl config, written straight into `config`
+/// so no copy of the value is left unwiped.
+fn option(config: &mut String, key: &str, parts: &[&str]) {
+    config.push_str(key);
+    config.push_str(" = \"");
+    for c in parts.iter().flat_map(|p| p.chars()) {
+        match c {
+            '\\' | '"' => config.extend(['\\', c]),
+            '\n' => config.push_str("\\n"),
+            '\r' => config.push_str("\\r"),
+            '\t' => config.push_str("\\t"),
+            _ => config.push(c),
+        }
+    }
+    config.push_str("\"\n");
+}
+
+/// `scheme://host[:port]` of a service URL; any user info is dropped.
+fn origin(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, a)| a);
+    Some(format!("{scheme}://{authority}"))
 }
 
 pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
@@ -35,7 +55,7 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
     let host = host.ok_or_else(|| failed(format!("no Host named '{name}' in the Inventory")))?;
     let svc = host.services.iter().find(|s| &s.name == service);
     let svc = svc.ok_or_else(|| failed(format!("{name} has no service '{service}'")))?;
-    let base = svc.url.as_deref().unwrap_or_default();
+    let base = svc.url.as_deref().and_then(origin).unwrap_or_default();
     let what = format!("{name} {service}");
     let mut config = Zeroizing::new(String::new());
     let secret = match &svc.auth {
@@ -44,8 +64,11 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
     };
     if let Some(secret) = &secret {
         let user = svc.user.as_deref().unwrap_or_default();
-        let login = Zeroizing::new(format!("{user}:{}", secret.expose()));
-        config.push_str(&format!("user = {}\n", *Zeroizing::new(quote(&login))));
+        let (key, parts) = match svc.login.as_str() {
+            "bearer" => ("header", ["Authorization: Bearer ", "", secret.expose()]),
+            _ => ("user", [user, ":", secret.expose()]),
+        };
+        option(&mut config, key, &parts);
     }
     let mut curl = Command::new("curl");
     curl.args(["-q", "-sS", "--proto", "=http,https", "--max-redirs", "0"])
