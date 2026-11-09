@@ -5,10 +5,11 @@ mod inventory;
 mod ls;
 mod plugin;
 mod setup;
+mod ssh;
 mod sshconf;
 
 /// Commands roster runs itself; any other name is a plugin.
-const BUILTINS: &[&str] = &["ls", "setup", "help"];
+const BUILTINS: &[&str] = &["ls", "setup", "ssh", "help"];
 
 use std::process::ExitCode;
 
@@ -19,6 +20,9 @@ commands:
   ls [--json] [FILTER]
                  list Hosts: name, group, address, access, title;
                  FILTER: names, groups, types or products, comma-separated
+  setup          make this Box's key and write the ssh config for the Hosts
+  ssh HOST [ARGS]
+                 ssh to an Enrolled Host by name; ARGS go to ssh unchanged
   help plugins   how `roster NAME` runs a roster-NAME plugin from PATH
 
 options:
@@ -26,7 +30,7 @@ options:
                  then ~/.config/roster/roster.yml)
   -h, --help     print this help
 
-exit codes: 0 ok, 1 nothing matched, 2 usage error, 3 the Inventory
+exit codes: 0 ok, 1 nothing matched or failed, 2 usage error, 3 the Inventory
 won't load.
 See roster(1) for details.
 ";
@@ -78,6 +82,13 @@ fn run() -> Result<(), Fail> {
             Value(v) if command.as_deref() == Some("help") && v == "plugins" && !topic => {
                 topic = true
             }
+            Value(v) if command.as_deref() == Some("ssh") => {
+                let host = v.string().map_err(|e| usage_error(e.to_string()))?;
+                let args = parser.raw_args().map_err(|e| usage_error(e.to_string()))?;
+                let args = args.collect();
+                let inventory = inventory::Inventory::open(config.map(Into::into))?;
+                return Err(ssh::exec(&inventory, &host, args));
+            }
             Value(v) if command.is_none() => {
                 let name = v.string().map_err(|e| usage_error(e.to_string()))?;
                 if !BUILTINS.contains(&name.as_str()) {
@@ -110,6 +121,7 @@ fn run() -> Result<(), Fail> {
             Ok(())
         }
         Some("setup") => setup::run(&inventory::Inventory::open(config.map(Into::into))?),
+        Some("ssh") => Err(usage_error("ssh needs a HOST")),
         Some("help") => {
             print!("{}", if topic { plugin::HELP } else { USAGE });
             Ok(())
