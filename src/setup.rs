@@ -36,8 +36,29 @@ pub fn run(inv: &Inventory, dry_run: bool, undo: bool) -> Result<(), Fail> {
 /// `roster sync`: the Box files only (ssh config, Include, ROSTER.md and the
 /// Claude files). No Host is contacted and no key is made.
 pub fn box_files(inv: &Inventory) -> Result<(), Fail> {
+    warn_duplicates(inv);
     ssh_config(inv)?;
     claude_files(inv)
+}
+
+/// Say so when several Hosts are one login (the same address, port and
+/// user), say from a hand edit: `add` and the vault import refuse them, but
+/// roster.yml is still the user's file. Another user is another login.
+fn warn_duplicates(inv: &Inventory) {
+    let mut seen: Vec<((String, u16, &str), Vec<&str>)> = Vec::new();
+    for h in &inv.hosts {
+        let login = (h.ip.to_lowercase(), h.port, h.user.as_str());
+        match seen.iter_mut().find(|(l, _)| *l == login) {
+            Some((_, names)) => names.push(&h.name),
+            None => seen.push((login, vec![&h.name])),
+        }
+    }
+    for ((ip, port, user), names) in seen.iter().filter(|(_, n)| n.len() > 1) {
+        eprintln!(
+            "roster: duplicate Hosts: {} are all {ip}:{port} as {user}; keep one",
+            names.join(", ")
+        );
+    }
 }
 
 /// ssh-keygen's `-t TYPE [-b BITS]` for a canonical key type.
