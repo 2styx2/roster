@@ -148,6 +148,11 @@ const DOCUMENTED: &[&str] = &[
     "\"error\"",
     "\"note\"",
     "Hosts: 2 ok, 1 failed",
+    // sync (ticket #21)
+    ".B sync",
+    "never contacts a Host and never makes a key",
+    "*/15 * * * * roster sync",
+    "bash-completion's",
     // Bitwarden (ticket #11)
     ".B vault unlock",
     ".B vault lock",

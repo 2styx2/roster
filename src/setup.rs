@@ -22,8 +22,7 @@ pub fn run(inv: &Inventory, dry_run: bool, undo: bool) -> Result<(), Fail> {
         return undo::run(inv);
     }
     box_key(inv)?;
-    ssh_config(inv)?;
-    claude_files(inv)?;
+    box_files(inv)?;
     let (ready, undone) = hosts::run(inv, dry_run)?;
     match undone + mesh::run(inv, &ready, dry_run) {
         0 => Ok(()),
@@ -32,6 +31,13 @@ pub fn run(inv: &Inventory, dry_run: bool, undo: bool) -> Result<(), Fail> {
             if n == 1 { "" } else { "s" }
         ))),
     }
+}
+
+/// `roster sync`: the Box files only (ssh config, Include, ROSTER.md and the
+/// Claude files). No Host is contacted and no key is made.
+pub fn box_files(inv: &Inventory) -> Result<(), Fail> {
+    ssh_config(inv)?;
+    claude_files(inv)
 }
 
 /// ssh-keygen's `-t TYPE [-b BITS]` for a canonical key type.

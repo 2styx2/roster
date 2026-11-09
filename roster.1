@@ -23,6 +23,11 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .B roster
 .RB [ \-c
 .IR FILE ]
+.B sync
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
 .B ssh
 .I HOST
 .RI [ ARGS ...]
@@ -596,6 +601,43 @@ and
 .BI "would remove " PATH\fR,
 and changes nothing.
 .RE
+.TP
+.B sync
+Rewrite the Box files from
+.IR roster.yml :
+steps 2 to 6 of
+.B setup
+(the ssh config, its
+.BR Include ,
+.IR ROSTER.md ,
+.I CLAUDE.md
+and the Claude settings), and nothing else.
+It never contacts a Host and never makes a key: no ssh, ssh\-keygen or
+ssh\-keyscan runs.
+When the Box key doesn't exist yet, the ssh config still names it in
+.BR IdentityFile ,
+where
+.B setup
+will make it.
+A rerun with no edit changes nothing and prints nothing, so it suits cron:
+.IP
+.nf
+*/15 * * * * roster sync
+.fi
+.IP
+bash-completion's
+.B ssh
+completion reads
+.B Host
+names through the
+.B Include
+in
+.IR ~/.ssh/config ,
+so
+.BI "ssh " <Tab>
+completes Hosts as long as
+.B sync
+keeps the file current.
 .TP
 .BI "ssh " HOST " \fR[\fPARGS\fR...]\fP"
 Replace roster with
@@ -1370,7 +1412,9 @@ says otherwise.
 .TP
 .I ~/.ssh/config.d/roster
 The ssh config written by
-.BR setup .
+.B setup
+and
+.BR sync .
 .TP
 .I ~/.ssh/config
 Gets the

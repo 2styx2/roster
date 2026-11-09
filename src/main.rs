@@ -21,7 +21,9 @@ mod vault;
 mod web;
 
 /// Commands roster runs itself; any other name is a plugin.
-const BUILTINS: &[&str] = &["check", "ls", "run", "setup", "ssh", "vault", "web", "help"];
+const BUILTINS: &[&str] = &[
+    "check", "ls", "run", "setup", "ssh", "sync", "vault", "web", "help",
+];
 
 use std::process::ExitCode;
 
@@ -45,6 +47,9 @@ commands:
                  remove what setup put on the Hosts (this Box's Mesh, then
                  its key line) and the Box (ssh config, Include, known_hosts,
                  ROSTER.md and Claude entries); the Box key is kept
+  sync           rewrite the Box files from roster.yml (ssh config, Include,
+                 ROSTER.md, Claude files) and nothing else: no Host, no key;
+                 quick enough for cron
   ssh HOST [ARGS]
                  ssh to a Host by name; ARGS go to ssh unchanged; a Password
                  Host's auth password goes to ssh through askpass
@@ -222,6 +227,7 @@ fn run() -> Result<(), Fail> {
             let inventory = open(config)?;
             setup::run(&inventory, dry_run, undo)
         }
+        Some("sync") => setup::box_files(&open(config)?),
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
         Some("run") => Err(usage_error("run needs a TARGET and -- CMD")),
         Some("web") => web::run(&open(config)?, web),
