@@ -73,6 +73,21 @@ const DOCUMENTED: &[&str] = &[
     "no Host named",
     "a Password Host",
     "ssh's exit status",
+    // Password Hosts: vault references and askpass (ticket #10)
+    ".SH VAULT",
+    "cmd:",
+    "env:",
+    ".B prompt",
+    "/dev/tty",
+    "agent \", \" key",
+    "use\n.B cmd:",
+    "SSH_ASKPASS_REQUIRE=force",
+    "ROSTER_ASKPASS",
+    "XDG_RUNTIME_DIR",
+    "0700",
+    "exactly one connection",
+    "passphrase",
+    "won't resolve",
 ];
 
 #[test]

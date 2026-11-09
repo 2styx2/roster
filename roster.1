@@ -221,9 +221,39 @@ ssh's exit status is roster's.
 .I HOST
 is a Host's name exactly.
 A name not in the Inventory exits 1 with
-.BI "no Host named '" HOST "' in the Inventory" ;
-a Password Host exits 1 too, since logging in with a password isn't
-built yet.
+.BI "no Host named '" HOST "' in the Inventory" .
+.IP
+For a Password Host, roster resolves its
+.B auth
+reference (see
+.BR VAULT )
+and starts ssh as a child instead, giving it the password through askpass:
+roster makes a directory only you can open (mode 0700) under
+.B $XDG_RUNTIME_DIR
+(else
+.BR $TMPDIR ,
+else
+.IR /tmp )
+with one Unix socket in it, and sets
+.B SSH_ASKPASS
+to the roster binary,
+.B SSH_ASKPASS_REQUIRE=force
+and
+.B ROSTER_ASKPASS
+to the socket.
+When ssh asks, roster runs again as the askpass helper, reads the password
+from the socket and prints it to ssh.
+roster answers exactly one connection and then removes the directory
+(also when something fails), so a wrong password isn't retried.
+The helper answers only a prompt that mentions a password or passphrase;
+it refuses anything else, such as ssh's yes/no question about a new host
+key.
+The password is never in an argument, ssh's environment, a file or the
+terminal.
+A reference that can't be resolved exits 1 before ssh runs.
+.BR agent ", " key " and " none
+run ssh with no password, as for an Enrolled Host.
+.IP
 No
 .I HOST
 is a usage error.
@@ -404,7 +434,8 @@ defaults to 22;
 .B auth
 (default
 .BR prompt )
-is a vault reference, only ever read when used.
+is a vault reference, only ever read when used (see
+.BR VAULT ).
 .TP
 .BR enroll ", " reviewed
 Both default to true.
@@ -460,6 +491,48 @@ An invalid Inventory stops every command with exit 3 and one message
 .RI "in the form " "FILE:LINE: KEY: why" ,
 for example
 .IR "roster.yml:7: groups.dev.hosts.box\-a.ip: can't hold a space" .
+.SH VAULT
+A Host's or service's
+.B auth
+is a reference to its password, resolved only when a command needs it.
+The password is held in memory that is wiped after use, and roster never
+prints it.
+.TP
+.BI cmd: COMMAND
+The first line
+.BI "sh \-c " COMMAND
+prints, for any password manager's CLI:
+.BR "cmd:pass show net/sw\-01" .
+The command's stdin and stderr are the terminal's, so it can ask to be
+unlocked.
+A non-zero exit or an empty line is an error.
+.TP
+.BI env: VAR
+The environment variable
+.IR VAR ,
+for CI.
+roster keeps
+.I VAR
+out of ssh's environment.
+.TP
+.B prompt
+Ask on
+.I /dev/tty
+with echo off.
+The default.
+.TP
+.BR agent ", " key ", " none
+No password.
+.PP
+Any other reference, such as
+.BI op: ITEM
+or
+.BI kp: ITEM ,
+is an error that says to use
+.B cmd:
+with that tool's CLI.
+.BI bw: ITEM
+(Bitwarden) is not built yet and fails the same way.
 .SH EXIT STATUS
 .TP
 .B 0
@@ -469,7 +542,9 @@ Success.
 Nothing matched the
 .IR FILTER ;
 .B ssh
-was given a Host it can't reach; or a
+was given a Host it can't reach, or a Password Host whose
+.B auth
+won't resolve; or a
 .B setup
 step failed.
 .TP
@@ -486,7 +561,8 @@ invalid.
 The message names the file.
 .TP
 .B 126
-A plugin, or ssh, was found but can't be run.
+A plugin, or ssh, was found but can't be run, or the askpass socket
+can't be made.
 .PP
 A plugin's exit status, and ssh's for
 .BR "roster ssh" ,
@@ -501,6 +577,14 @@ Set by roster for a plugin to the resolved path.
 .TP
 .B ROSTER_BIN
 Set by roster for a plugin to roster's own path.
+.TP
+.B ROSTER_ASKPASS
+Set by roster for ssh's askpass helper to the socket path.
+roster started with it set is that helper, nothing else.
+.TP
+.BR XDG_RUNTIME_DIR ", " TMPDIR
+Where the askpass directory goes, in that order, else
+.IR /tmp .
 .TP
 .B PATH
 Searched for

@@ -24,7 +24,8 @@ commands:
                  FILTER: names, groups, types or products, comma-separated
   setup          make this Box's key and write the ssh config for the Hosts
   ssh HOST [ARGS]
-                 ssh to an Enrolled Host by name; ARGS go to ssh unchanged
+                 ssh to a Host by name; ARGS go to ssh unchanged; a Password
+                 Host's auth password goes to ssh through askpass
   help plugins   how `roster NAME` runs a roster-NAME plugin from PATH
 
 options:
