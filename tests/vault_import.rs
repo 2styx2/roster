@@ -78,6 +78,8 @@ fn items() -> String {
             r#"{"uri":"10.0.0.14"}"#,
         ),
         r#"{"object":"item","type":2,"id":"id-h","name":"note-1 ssh","folderId":null}"#.into(),
+        // Nulls where bw may give them: skipped, not a parse failure.
+        r#"{"object":"item","type":1,"id":"id-i","name":"box-y ssh","folderId":null,"login":{"username":null,"password":null,"uris":null}}"#.into(),
     ]
     .join("\n")
 }
@@ -123,7 +125,8 @@ fn sync_imports_convention_items_into_roster_yml_then_writes_the_box_files() {
     }
     assert_eq!(
         out.stderr,
-        "roster: skipped vault item 'box-x ssh': its first URI has no address\n"
+        "roster: skipped vault item 'box-x ssh': its first URI has no address\n\
+         roster: skipped vault item 'box-y ssh': its first URI has no address\n"
     );
     assert_eq!(
         read(&s, "bw.log"),

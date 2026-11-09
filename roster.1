@@ -28,6 +28,33 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .B roster
 .RB [ \-c
 .IR FILE ]
+.B add
+.I NAME
+.B \-\-ip
+.I ADDR
+.RB [ \-\-group
+.IR G ]
+.RB [ \-\-user
+.IR U ]
+.RB [ \-\-port
+.IR P ]
+.RB [ \-\-auth
+.IR REF ]
+.RB [ \-\-enroll=false ]
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
+.B add \-\-from\-vault
+.I ITEM
+.RB [ \-\-name
+.IR NAME ]
+.RB [ \-\-group
+.IR G ]
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
 .B ssh
 .I HOST
 .RI [ ARGS ...]
@@ -603,7 +630,13 @@ and changes nothing.
 .RE
 .TP
 .B sync
-Rewrite the Box files from
+First, when Bitwarden is unlocked, import new Hosts from the vault into
+.I roster.yml
+(see
+.B Hosts from the vault
+under
+.BR VAULT ).
+Then rewrite the Box files from
 .IR roster.yml :
 steps 2 to 6 of
 .B setup
@@ -638,6 +671,64 @@ so
 completes Hosts as long as
 .B sync
 keeps the file current.
+.TP
+.BI "add " NAME " \-\-ip " ADDR
+Write a Host into
+.I roster.yml
+and run
+.BR sync 's
+Box steps, so
+.BI "ssh " NAME
+and
+.BI "roster ssh " NAME
+work at once.
+.B \-\-group
+names its group (default
+.BR vault ,
+made at the end of
+.B groups:
+if missing);
+.BR \-\-user ,
+.B \-\-port
+and
+.B \-\-auth
+set those fields, and
+.B \-\-enroll=false
+marks a Password Host.
+Nothing contacts the Host:
+.B setup
+installs the Box key.
+The Host goes after the last one under its group's
+.BR hosts: ,
+as one line,
+.IP
+.nf
+      box\-c: {ip: "10.0.0.9", port: 2222, user: "ops", auth: "bw:box\-c ssh"}
+.fi
+.IP
+and every other line of the file stays as it was, comments included.
+roster refuses, writing nothing, when the name is taken, when
+.BR groups: ,
+the group or its
+.B hosts:
+is written in flow style
+.RB ( "dev: {hosts: {...}}" ),
+or when the result won't load.
+A symlinked
+.I roster.yml
+is written through to its target.
+.TP
+.BI "add \-\-from\-vault " ITEM
+Add the Host one vault item makes, by its name or id, under the rules of
+.BR "Hosts from the vault" ,
+even when its name doesn't follow the convention.
+The Host is named
+.BR \-\-name ,
+else the item's HOST, else the item name made a valid name
+.RB ( "wiki admin" " is " wiki\-admin ).
+.B \-\-group
+overrides the folder's group.
+A name several items share is refused: give the id.
 .TP
 .BI "ssh " HOST " \fR[\fPARGS\fR...]\fP"
 Replace roster with
@@ -1306,6 +1397,69 @@ or
 is an error that says to use
 .B cmd:
 with that tool's CLI.
+.SS Hosts from the vault
+Add a login item in Bitwarden named
+.IB "HOST " ssh
+or
+.IB "HOST " ssh+ X
+.RB ( ssh
+in any case, HOST a valid Host name), and the next
+.B roster sync
+adds the Host to
+.IR roster.yml ,
+printing
+.BI "imported " HOST " from the vault (group " G ) .
+No hand edit is needed.
+The import runs only with a session key in the keyring (see
+.BR "vault unlock" ):
+it runs
+.BR "bw sync" ,
+.B bw list items
+and
+.BR "bw list folders" ,
+each with
+.BR \-\-nointeraction ,
+and never prompts, so it works from cron.
+Without a session key, or without
+.B bw
+or
+.BR keyctl ,
+it prints one line,
+.BR "vault import skipped" ,
+on stderr, and the rest of sync runs.
+.PP
+An item is imported when it is a login item, follows the convention, and
+no Host has the name HOST and no
+.B auth:
+names the item yet.
+Its first URI gives the address and port:
+.BI ssh:// USER @ HOST : PORT\fR,\fP
+.IB HOST : PORT\fR,\fP
+a bare HOST, or an
+.BR http (s)
+URL's host with port 22.
+Its user name is the Host's
+.BR user ,
+and
+.B auth
+is
+.BI bw: "ITEM NAME"\fR,\fP
+or
+.BI bw: ID
+when other items share the name.
+The group is the item's folder, lowercased with other characters made
+.B \-
+.RB ( "Lab Servers" " is " lab\-servers ),
+or
+.B vault
+without a folder.
+An item with no address in its first URI is skipped with one line on stderr.
+The Host is written as
+.B add
+writes one.
+.PP
+Only item names, ids, folders, URIs and user names are read: an item's
+password is never parsed, printed or written.
 .SH EXIT STATUS
 .TP
 .B 0
