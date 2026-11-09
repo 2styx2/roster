@@ -21,7 +21,7 @@ pub fn run(inv: &Inventory, dry_run: bool, undo: bool) -> Result<(), Fail> {
     if undo {
         return undo::run(inv);
     }
-    box_key(inv)?;
+    box_keys(inv)?;
     box_files(inv)?;
     let (ready, undone) = hosts::run(inv, dry_run)?;
     match undone + mesh::run(inv, &ready, dry_run) {
@@ -76,9 +76,20 @@ pub fn failed(what: impl std::fmt::Display) -> Fail {
     }
 }
 
-/// Make the Box key with ssh-keygen unless it exists.
-fn box_key(inv: &Inventory) -> Result<(), Fail> {
-    let key = expand(&inv.key_path);
+/// Make the Box key of each key type an Enrolled Host uses, unless it exists.
+fn box_keys(inv: &Inventory) -> Result<(), Fail> {
+    let mut made = Vec::new();
+    for h in inv.hosts.iter().filter(|h| h.enroll) {
+        if !made.contains(&&h.key_type) {
+            made.push(&h.key_type);
+            box_key(&expand(&inv.key_of(h)), &h.key_type, &inv.box_name)?;
+        }
+    }
+    Ok(())
+}
+
+/// Make the Box key `key` of type `key_type` with ssh-keygen unless it exists.
+fn box_key(key: &std::path::Path, key_type: &str, box_name: &str) -> Result<(), Fail> {
     if key.exists() {
         return Ok(());
     }
@@ -90,9 +101,9 @@ fn box_key(inv: &Inventory) -> Result<(), Fail> {
         mkdir_private(dir)?;
     }
     let mut cmd = Command::new("ssh-keygen");
-    cmd.arg("-q").args(keygen_args(&inv.key_type));
-    let comment = format!("roster-managed:{}", inv.box_name);
-    cmd.args(["-N", "", "-C", &comment, "-f"]).arg(&key);
+    cmd.arg("-q").args(keygen_args(key_type));
+    let comment = format!("roster-managed:{box_name}");
+    cmd.args(["-N", "", "-C", &comment, "-f"]).arg(key);
     match cmd.status() {
         Ok(s) if s.success() => {
             println!("made the Box key {}", key.display());
