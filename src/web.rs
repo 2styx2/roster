@@ -11,10 +11,14 @@ use zeroize::Zeroizing;
 /// The line curl's `-w` writes to stderr, which roster takes back.
 const MARK: &str = "roster-http-status:";
 
-/// The words after `web`.
+/// What follows `web`: HOST [SERVICE] METHOD PATH, `-d BODY`, `-H HEADER`
+/// and `-k`.
 #[derive(Default)]
 pub struct Args {
     pub words: Vec<String>,
+    pub body: Option<String>,
+    pub headers: Vec<String>,
+    pub insecure: bool,
 }
 
 fn failed(msg: String) -> Fail {
@@ -65,6 +69,11 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
         let msg = "PATH must start with / and stay on the service's origin";
         return Err(usage_error(format!("{msg}: no //, ://, .., spaces or \\")));
     }
+    if args.body.as_deref() == Some("@-") {
+        return Err(usage_error(
+            "-d @- can't be used: curl's stdin carries the Login",
+        ));
+    }
     let host = inv.hosts.iter().find(|h| &h.name == name);
     let host = host.ok_or_else(|| failed(format!("no Host named '{name}' in the Inventory")))?;
     // Without SERVICE: the one `ls` shows as the Host's web UI.
@@ -103,8 +112,19 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
             &format!("%{{stderr}}{MARK}%{{http_code}}\\n"),
             "-K",
             "-",
-        ])
-        .args(["-X", method, &format!("{base}{path}")])
+        ]);
+    if args.insecure || !svc.verify {
+        curl.arg("-k");
+    }
+    for header in &args.headers {
+        curl.args(["-H", header]);
+    }
+    match args.body.as_deref() {
+        Some(file) if file.starts_with('@') => drop(curl.args(["--data-binary", file])),
+        Some(body) => option(&mut config, "data-raw", &[body]),
+        None => {}
+    }
+    curl.args(["-X", method, &format!("{base}{path}")])
         .stdin(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = curl.spawn().map_err(|e| Fail {
