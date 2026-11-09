@@ -1,5 +1,6 @@
 //! roster: know your network. See roster(1).
 
+mod add;
 mod askpass;
 mod atomic;
 mod bw;
@@ -22,7 +23,7 @@ mod web;
 
 /// Commands roster runs itself; any other name is a plugin.
 const BUILTINS: &[&str] = &[
-    "check", "ls", "run", "setup", "ssh", "sync", "vault", "web", "help",
+    "add", "check", "ls", "run", "setup", "ssh", "sync", "vault", "web", "help",
 ];
 
 use std::process::ExitCode;
@@ -128,6 +129,7 @@ fn run() -> Result<(), Fail> {
     let mut dry_run = false; // `setup --dry-run`
     let mut undo = false; // `setup --undo`
     let mut web = web::Args::default();
+    let mut add = add::Args::default();
     while let Some(arg) = parser.next().map_err(|e| usage_error(e.to_string()))? {
         match arg {
             Short('h') | Long("help") => {
@@ -152,6 +154,17 @@ fn run() -> Result<(), Fail> {
             Short('k') if command.as_deref() == Some("web") => web.insecure = true,
             Long("dry-run") if command.as_deref() == Some("setup") => dry_run = true,
             Long("undo") if command.as_deref() == Some("setup") => undo = true,
+            Long(
+                f @ ("ip" | "group" | "user" | "port" | "auth" | "enroll" | "from-vault" | "name"),
+            ) if command.as_deref() == Some("add") => {
+                let f = f.to_string();
+                let v = parser.value().map_err(|e| usage_error(e.to_string()))?;
+                let v = v.string().map_err(|e| usage_error(e.to_string()))?;
+                add.flags.push((f, v));
+            }
+            Value(v) if command.as_deref() == Some("add") && add.name.is_none() => {
+                add.name = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
+            }
             Value(v) if command.as_deref() == Some("ls") && filter.is_none() => {
                 filter = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }
@@ -227,6 +240,7 @@ fn run() -> Result<(), Fail> {
             let inventory = open(config)?;
             setup::run(&inventory, dry_run, undo)
         }
+        Some("add") => add::run(open(config)?, add),
         Some("sync") => setup::box_files(&open(config)?),
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
         Some("run") => Err(usage_error("run needs a TARGET and -- CMD")),
