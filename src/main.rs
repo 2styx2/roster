@@ -3,6 +3,7 @@
 mod atomic;
 mod inventory;
 mod ls;
+mod pick;
 mod plugin;
 mod setup;
 mod ssh;
@@ -127,6 +128,6 @@ fn run() -> Result<(), Fail> {
             Ok(())
         }
         Some(other) => Err(usage_error(format!("unknown command '{other}'"))),
-        None => Err(usage_error("no command given")),
+        None => pick::run(&inventory::Inventory::open(config.map(Into::into))?),
     }
 }
