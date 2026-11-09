@@ -10,7 +10,7 @@ roster ships as source only. With a stable Rust toolchain:
 cargo install --locked --git https://github.com/2styx2/roster --root ~/.local
 ```
 
-Then `roster sync`, and see `roster.1` (`man ./roster.1`) for everything else.
+Then follow the **[tutorial](docs/tutorial.md)**: install, first setup, daily use, adding Hosts from Bitwarden, and a 30-minute outline for teaching it. `roster.1` (`man ./roster.1`) is the reference for every command and flag.
 
 Your password manager knows the secrets. roster knows your network: the team's Hosts in one `roster.yml`, logins from the vault, and a terminal-first CLI that does one job per command and composes with fzf, tmux and ssh.
 

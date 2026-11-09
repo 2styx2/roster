@@ -108,10 +108,10 @@ fn sync_imports_convention_items_into_roster_yml_then_writes_the_box_files() {
     let want = INVENTORY.replace(
         "# the end\n",
         "  lab-servers:\n    hosts:\n      \
-         box-c: {ip: \"10.0.0.9\", port: 2222, user: \"ops\", auth: \"bw:box-c ssh\"}\n  \
+         box-c: {ip: \"10.0.0.9\", port: 2222, user: \"ops\", auth: \"bw:box-c ssh\", reviewed: true}\n  \
          vault:\n    hosts:\n      \
-         esx-03: {ip: \"10.0.0.10\", port: 22, user: \"root\", auth: \"bw:esx-03 SSH+root\"}\n      \
-         sw-02: {ip: \"10.0.0.11\", port: 2200, auth: \"bw:id-c1\"}\n\
+         esx-03: {ip: \"10.0.0.10\", port: 22, user: \"root\", auth: \"bw:esx-03 SSH+root\", reviewed: true}\n      \
+         sw-02: {ip: \"10.0.0.11\", port: 2200, auth: \"bw:id-c1\", reviewed: true}\n\
          # the end\n",
     );
     assert_eq!(read(&s, "roster.yml"), want);
@@ -177,14 +177,15 @@ fn add_from_vault_imports_one_item_even_off_convention() {
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert!(read(&s, "roster.yml").contains(
         "  apps:\n    hosts:\n      wiki-admin: {ip: \"10.0.0.14\", port: 22, user: \"ops\", \
-         auth: \"bw:wiki admin\"}\n"
+         auth: \"bw:wiki admin\", reviewed: true}\n"
     ));
     assert!(read(&s, ".ssh/config.d/roster").contains("Host wiki-admin\n"));
     // By id, with a name; a name two items share is refused.
     let out = s.roster(&["add", "--from-vault", "id-c2", "--name", "sw-03"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert!(
-        read(&s, "roster.yml").contains("sw-03: {ip: \"10.0.0.12\", port: 22, auth: \"bw:id-c2\"}")
+        read(&s, "roster.yml")
+            .contains("sw-03: {ip: \"10.0.0.12\", port: 22, auth: \"bw:id-c2\", reviewed: true}")
     );
     let out = s.roster(&["add", "--from-vault", "sw-02 ssh"]);
     assert_eq!(out.code, 1);
@@ -229,4 +230,33 @@ fn no_item_password_reaches_output_files_or_argv() {
             .all(|l| l.starts_with("sync ") || l.starts_with("list ")),
         "{log}"
     );
+}
+
+#[test]
+fn imported_and_added_hosts_are_reviewed_even_when_defaults_are_not() {
+    // Putting a login in the vault, or `roster add`, is the review: such a
+    // Host is set up like any other, even under `defaults: reviewed: false`
+    // (which keeps Hosts found other ways hands-off).
+    let s = unlocked("import-reviewed");
+    s.write(
+        "roster.yml",
+        &INVENTORY.replace(
+            "defaults: {user: admin}",
+            "defaults: {user: admin, reviewed: false}",
+        ),
+    );
+    assert_eq!(s.roster(&["sync"]).code, 0);
+    let added = s.roster(&["add", "box-d", "--ip", "10.0.0.12"]);
+    assert_eq!(added.code, 0, "{}", added.stderr);
+    let ls = s.roster(&["ls"]).stdout;
+    for host in ["box-c", "esx-03", "box-d"] {
+        let line = ls.lines().find(|l| l.starts_with(host)).unwrap_or_default();
+        assert!(!line.contains("unreviewed"), "{host}: {line}");
+    }
+    // A Host that was already there keeps the default.
+    let b = ls
+        .lines()
+        .find(|l| l.starts_with("box-b"))
+        .unwrap_or_default();
+    assert!(b.contains("unreviewed"), "{b}");
 }
