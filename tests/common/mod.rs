@@ -45,8 +45,13 @@ impl Sandbox {
 
     /// Run `roster ARGS` with HOME and the working directory set to the sandbox.
     pub fn roster(&self, args: &[&str]) -> Out {
+        self.run(Path::new(env!("CARGO_BIN_EXE_roster")), args)
+    }
+
+    /// Run `PROGRAM ARGS` in the sandbox, as `roster` runs.
+    pub fn run(&self, program: &Path, args: &[&str]) -> Out {
         let fakes = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fakes");
-        let out = Command::new(env!("CARGO_BIN_EXE_roster"))
+        let out = Command::new(program)
             .args(args)
             .current_dir(&self.home)
             .env_clear()
