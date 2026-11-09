@@ -127,7 +127,31 @@ impl Inventory {
             let line = line_of(text, &b.at);
             broken(&path, line, format!("{}: {}", b.at.join("."), b.why))
         })?;
-        Ok(Inventory { path, ..inventory })
+        let inv = Inventory { path, ..inventory };
+        // Two types sharing one file would give a Host a key it refuses.
+        if let Some(h) =
+            (inv.hosts.iter()).find(|h| h.key_type != inv.key_type && inv.key_of(h) == inv.key_path)
+        {
+            let why = format!(
+                "key_path: {} is the {} key {} uses; remove key_path or point it at another file",
+                inv.key_path, h.key_type, h.name
+            );
+            return Err(broken(&inv.path, line_of(&text, &["key_path".into()]), why));
+        }
+        Ok(inv)
+    }
+
+    /// The Box key `h` logs in with (`~` not expanded), the one of its own
+    /// `key_type`: `key_path` for the Inventory's type, else `roster_<type>`
+    /// beside it, as v0.7.0.
+    pub fn key_of(&self, h: &Host) -> String {
+        if h.key_type == self.key_type {
+            return self.key_path.clone();
+        }
+        match self.key_path.rsplit_once('/') {
+            Some((dir, _)) => format!("{dir}/roster_{}", h.key_type),
+            None => format!("roster_{}", h.key_type),
+        }
     }
 
     /// Every variable a secret may come from: each `env:VAR` the Hosts and

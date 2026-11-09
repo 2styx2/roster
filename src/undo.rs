@@ -89,8 +89,14 @@ fn box_files(inv: &Inventory) -> Result<(), Fail> {
     if !dry() && !settings.exists() {
         let _ = std::fs::remove_dir(dir.join(".claude"));
     }
-    let key = expand(&inv.key_path);
-    if key.exists() {
+    let mut keys = vec![inv.key_path.clone()];
+    for h in &inv.hosts {
+        let key = inv.key_of(h);
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    for key in keys.iter().map(|k| expand(k)).filter(|k| k.exists()) {
         println!(
             "{} the Box key {}; delete it and its .pub by hand once nothing needs it",
             if dry() { "would keep" } else { "kept" },
