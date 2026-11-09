@@ -1,0 +1,30 @@
+#!/bin/sh
+# Fake ssh-keyscan: appends its argv to $HOME/ssh-keyscan.log and prints a
+# made-up host key line for -p PORT IP. With $FAKE_HOSTS set, only a fake
+# Host whose `ip` file holds IP and that has no `down` file answers. With
+# $FAKE_KEYSCAN_REAL set, the key is valid base64 of an Ed25519 key blob.
+echo "$*" >>"$HOME/ssh-keyscan.log"
+port=22
+while getopts T:p: o; do
+	case $o in
+	p) port=$OPTARG ;;
+	esac
+done
+shift $((OPTIND - 1))
+ip=$1
+if [ -n "$FAKE_HOSTS" ]; then
+	up=
+	for dir in "$FAKE_HOSTS"/*/; do
+		[ "$(cat "$dir/ip" 2>/dev/null)" = "$ip" ] && [ ! -e "$dir/down" ] && up=1
+	done
+	[ -n "$up" ] || exit 1
+fi
+if [ "$port" = 22 ]; then at=$ip; else at="[$ip]:$port"; fi
+echo "# $ip:$port SSH-2.0-Fake" >&2
+if [ -n "$FAKE_KEYSCAN_REAL" ]; then
+	# A key that parses (for a reader that decodes it): IP, padded, as its 32 bytes.
+	key=$(printf '\000\000\000\013ssh-ed25519\000\000\000\040%-32.32s' "$ip" | base64 -w0)
+	echo "$at ssh-ed25519 $key"
+	exit
+fi
+echo "$at ssh-ed25519 AAAAhost-$ip"

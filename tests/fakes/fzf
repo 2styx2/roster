@@ -1,0 +1,18 @@
+#!/bin/sh
+# Fake fzf: logs its argv to $HOME/fzf.log (one per line), prints the key
+# $FAKE_FZF_KEY, then the input lines whose first field is in $FAKE_FZF_PICK,
+# and exits $FAKE_FZF_EXIT (0). The --preview command runs for the first
+# pick, with its output in $HOME/preview.out.
+for a in "$@"; do echo "$a"; done >"$HOME/fzf.log"
+input=$(cat)
+echo "${FAKE_FZF_KEY-}"
+for pick in ${FAKE_FZF_PICK-}; do
+	printf '%s\n' "$input" | grep "^$pick "
+done
+for a in "$@"; do
+	case $a in --preview=*)
+		cmd=$(echo "${a#--preview=}" | sed "s/{1}/'${FAKE_FZF_PICK%% *}'/")
+		sh -c "$cmd" >"$HOME/preview.out" 2>&1 ;;
+	esac
+done
+exit "${FAKE_FZF_EXIT:-0}"

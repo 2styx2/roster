@@ -1,0 +1,9 @@
+#!/bin/sh
+# Fake plugin: records its argv and the plugin env in $HOME/hello.log.
+{
+	echo "argv: $*"
+	echo "ROSTER_CONFIG=${ROSTER_CONFIG-unset}"
+	echo "ROSTER_BIN=${ROSTER_BIN-unset}"
+} >"$HOME/hello.log"
+echo "hello from plugin"
+exit 7

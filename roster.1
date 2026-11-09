@@ -1,0 +1,1657 @@
+.TH ROSTER 1 2026-11-09 "roster 0.0.0" "User Commands"
+.SH NAME
+roster \- know your network: list and reach the Hosts in roster.yml
+.SH SYNOPSIS
+.B roster
+.RB [ \-c
+.IR FILE ]
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
+.B ls
+.RB [ \-\-json | \-\-long ]
+.RI [ FILTER ]
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
+.B setup
+.RB [ \-\-undo ]
+.RB [ \-\-dry\-run ]
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
+.B sync
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
+.B add
+.I NAME
+.B \-\-ip
+.I ADDR
+.RB [ \-\-group
+.IR G ]
+.RB [ \-\-user
+.IR U ]
+.RB [ \-\-port
+.IR P ]
+.RB [ \-\-auth
+.IR REF ]
+.RB [ \-\-enroll=false ]
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
+.B add \-\-from\-vault
+.I ITEM
+.RB [ \-\-name
+.IR NAME ]
+.RB [ \-\-group
+.IR G ]
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
+.B ssh
+.I HOST
+.RI [ ARGS ...]
+.br
+.B roster vault
+.BR unlock | lock
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
+.B run
+.RB [ \-\-json ]
+.I TARGET
+.B \-\-
+.I CMD
+.RI [ ARG ...]
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
+.B check
+.RB [ \-\-json ]
+.RI [ TARGET ]
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
+.B web
+.RB [ \-k ]
+.RB [ \-d
+.IR BODY ]
+.RB [ \-H
+.IR HEADER ]...
+.I HOST
+.RI [ SERVICE ]
+.I METHOD PATH
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
+.I NAME
+.RI [ ARGS ...]
+.br
+.B roster help plugins
+.br
+.B roster \-h
+.SH DESCRIPTION
+.B roster
+reads an Inventory of Hosts from
+.I roster.yml
+and does one job per command.
+Output is plain text, or JSON with
+.BR \-\-json ,
+and never contains a secret.
+.SH OPTIONS
+.TP
+.BI \-c " FILE" "\fR, \fP\-\-config " FILE
+Read the Inventory from
+.IR FILE .
+May appear before or after the command.
+.TP
+.BR \-h ", " \-\-help
+Print usage and exit 0.
+.SH COMMANDS
+.TP
+.B roster
+With no command, open the picker: the
+.B ls
+lines in
+.BR fzf (1),
+with a preview of the Host under the cursor
+.RB ( "roster ls \-\-long " \fIHOST\fP ).
+Tab marks several Hosts.
+Each Host picked runs
+.BI "roster \-c " "FILE " "ssh " HOST,
+with roster's own path and the Inventory's absolute path.
+Inside tmux
+.RB ( TMUX
+set), Enter opens it in a new tmux window named after the Host and
+.B ctrl\-v
+in a split of the current one; marked Hosts open in one new window, a pane
+each, tiled, with
+.B synchronize\-panes
+on, so what is typed goes to all of them.
+Outside tmux, the pick replaces roster in place, as
+.B ssh
+does; marking several Hosts there exits 1.
+Leaving fzf without a pick exits 0 and runs nothing.
+Without fzf on
+.BR PATH ,
+roster says to install fzf and exits 1.
+.I contrib/roster.tmux
+binds tmux's
+.B prefix+g
+to the picker in a popup (edit the script to pick another key).
+.TP
+.B ls
+Print one line per Host, in Inventory order, with the columns
+name, group, address, access and title, padded and separated by two spaces.
+There is no header line.
+Access is
+.B unreviewed
+when the Host has
+.BR "reviewed: false" ,
+else
+.B password
+when it has
+.BR "enroll: false" ,
+else
+.BR key .
+.TP
+.BI "ls " FILTER
+Only the Hosts whose name, group,
+.B type
+or
+.B product
+equals one of the comma-separated words in
+.I FILTER
+(exactly, case and all):
+.BR "roster ls hypervisors,printer" .
+Nothing matched is exit 1, with a message on stderr.
+.TP
+.B ls \-\-long
+Print each Host as
+.I key: value
+lines (name, group, address, access, title and description, blank ones
+left out), with a blank line between Hosts.
+For people and the picker's preview; scripts use
+.BR \-\-json .
+.TP
+.B ls \-\-json
+Print one JSON document:
+.RS
+.PP
+.nf
+{"v": 1, "hosts": [{"name": "box\-a", "group": "dev",
+  "ip": "10.0.0.5", "user": "admin", "port": 22,
+  "access": "key", "title": "Box A", "description": "",
+  "type": "", "product": "", "os": "posix",
+  "key_type": "ed25519", "mesh": null,
+  "web": null,
+  "services": [{"name": "web", "port": 443,
+    "url": "https://10.0.0.5", "scheme": "https",
+    "user": "admin", "login": "basic", "verify": true}]}]}
+.fi
+.PP
+Each field is the Host's resolved setting (see
+.BR INVENTORY ).
+.BR title ,
+.BR description ,
+.B type
+and
+.B product
+are empty when unset;
+.B mesh
+is null when unset;
+.B web
+is null unless the Inventory gives a service a URL;
+.B scheme
+and
+.B url
+are null when roster can't tell.
+A service's
+.B auth
+and the Host's are vault references and are never printed.
+Within
+.B \(dqv\(dq: 1
+fields are only added, never renamed or removed.
+No secret is ever included.
+.RE
+.TP
+.B setup
+Make this Box ready to reach the Hosts by name.
+Each step is skipped when it's already done, so a rerun after editing
+.I roster.yml
+is quick and changes only what the edit changed; each change prints one line.
+.RS
+.IP 1. 4
+The Box keys, one Box key per
+.B key_type
+the Enrolled Hosts use: each Host logs in with the Box key of its own
+.B key_type
+(see
+.BR INVENTORY ).
+When one is missing, it is made with
+.BR "ssh\-keygen \-q \-t " ALG
+.RB [ \-b
+.IR BITS ]
+.B \-N \(dq\(dq \-C roster\-managed:\c
+.IR BOX ,
+where
+.I BOX
+is
+.BR box_name .
+An existing key is never replaced.
+.IP 2. 4
+The ssh config,
+.IR ~/.ssh/config.d/roster ,
+mode 0600, written whole.
+Its first line is
+.BI "# Generated by roster from " PATH
+with the Inventory's path; don't edit it by hand.
+It has one block per Host, sorted by name:
+.IP
+.nf
+# Box B [dev]
+Host box\-b
+    HostName 10.0.0.6
+    User admin
+    Port 22
+    UserKnownHostsFile "~/.ssh/roster_known_hosts"
+    StrictHostKeyChecking accept\-new
+    ConnectTimeout 10
+    ServerAliveInterval 30
+    ControlMaster auto
+    ControlPath "~/.ssh/cm\-%C"
+    ControlPersist 10m
+    IdentityFile "~/.ssh/roster_ed25519"
+    IdentitiesOnly yes
+.fi
+.IP
+A Password Host gets
+.B PubkeyAuthentication no
+in place of the
+.B IdentityFile
+line.
+An
+.B "os: windows"
+Host gets
+.B ControlMaster no
+and no
+.B ControlPath
+or
+.BR ControlPersist .
+A % in an address is written %%.
+.IP 3. 4
+The
+.B Include
+of that file goes on the first line of
+.IR ~/.ssh/config ,
+above any
+.B Host
+block, unless an
+.B Include
+of
+.I ~/.ssh/config.d/roster
+is already there.
+.IP 4. 4
+.IR ROSTER.md ,
+next to
+.I roster.yml
+(not in the working directory), mode 0644, written whole for Claude.
+Its first line is
+.BI "<!\-\- generated by roster from " FILE " \- regenerate with `roster sync` \-\->"
+as in the Python roster, so the two can share it.
+Then come how to connect (by access: key, password, unreviewed), the
+rules (never read
+.IR ~/.ssh ,
+never fetch a password, ask before changing state), the groups, and
+the Hosts as a table.
+With more than 60 Hosts, a summary takes the table's place:
+the count, and the counts by product and type.
+The limit is built in; a
+.B claude_inline_limit
+in
+.I roster.yml
+is ignored.
+A vault reference is never written: a service with a stored login is
+marked
+.BR (login) .
+.IP 5. 4
+.IR CLAUDE.md ,
+next to
+.IR roster.yml :
+gets an
+.B @ROSTER.md
+line at its end, once; the rest is kept.
+.IP 6. 4
+.IR .claude/settings.json ,
+next to
+.IR roster.yml :
+.B permissions.deny
+gets
+.B Read(~/.ssh/**)
+and
+.BR Edit(~/.ssh/**) ,
+each added once.
+Every other key is kept, and a file that denies both already is left
+as it is.
+A file that isn't valid JSON is left alone with a warning.
+The user's own
+.I ~/.claude
+is never touched.
+.IP 7. 4
+The Hosts, one at a time, in Inventory order.
+A Host that is unreviewed, has
+.BR "os: windows" ,
+or is a Password Host
+.RB ( "enroll: false" )
+is skipped, with one line on stderr giving the reason, and is never
+contacted.
+For each other Host:
+.RS
+.IP a. 4
+Its host key is recorded:
+.B ssh\-keyscan \-T 5 \-p
+.I PORT IP
+is appended to
+.I ~/.ssh/roster_known_hosts
+(mode 0600), unless that file already has
+.I IP
+(or
+.BI [ IP ]: PORT
+off port 22).
+No answer means the Host is
+.BR down :
+it is reported and left for the next run.
+.IP b. 4
+The probe:
+.B ssh \-o BatchMode=yes \-o ControlMaster=no
+.I HOST
+.BR true .
+When it succeeds the Host takes the Box key and there is nothing to do.
+.IP c. 4
+Otherwise roster resolves the Host's
+.B auth
+(see
+.BR VAULT )
+and logs in once with that password through askpass, with
+.BR "\-o PubkeyAuthentication=no" .
+A script on stdin
+.RB ( "ssh " \fIHOST\fP " sh \-s" ;
+nothing else is in argv) appends the line
+.BI "TYPE KEY roster\-managed:" BOX
+to
+.IR ~/.ssh/authorized_keys ,
+making
+.I ~/.ssh
+mode 0700 if it's missing.
+The file is copied next to itself with its mode kept, the line is added
+to the copy, and the copy is moved into place.
+A line with the same key (whatever its tag, such as the legacy
+.BR fleet\-managed: )
+is never added twice.
+An
+.B auth
+of
+.BR agent ,
+.B key
+or
+.B none
+gives no password, so the key can't be installed that way.
+.RE
+.IP
+A Host that is down, refuses the password, or fails the install is
+reported on stderr and the run goes on with the next Host; at the end
+roster says how many Hosts aren't done and exits 1.
+Run
+.B setup
+again to finish them: Hosts already done cost one probe.
+.IP 8. 4
+The Mesh: Hosts that ssh to each other.
+The Hosts of a group with
+.B "mesh: true"
+(set on the group, on a Host, or in
+.BR defaults ;
+.B "mesh: false"
+on a Host opts it out) reach each other; groups don't reach each other.
+Each
+.B links
+entry adds reach across groups: every Host of
+.B from
+reaches every Host of
+.BR to ,
+one way, or both ways with
+.BR "both: true" ;
+a pair already in a group's web isn't added twice.
+Remove a Link and the next run removes its lines.
+Only Enrolled, reviewed, POSIX Hosts without
+.B seen_as
+or
+.B mesh_dir
+(not supported yet) take part: any other Host with
+.B "mesh: true"
+or at an end of a Link is
+.B left out of the Mesh
+with the reason on stderr, in the plan and when applied.
+A Link with
+.B via
+is skipped the same way, with the line
+.BI "roster: link " FROM " \-> " TO " via " HOP ": skipped: via isn't supported yet" .
+Nothing is kept on the Box: each Host that takes the Box key is visited,
+one at a time, with
+.B ssh \-o BatchMode=yes \-o ConnectTimeout=10
+.I HOST
+.BR "sh \-s" .
+A read-only script reports the Host's Mesh key, its Mesh files and its
+authorized_keys lines tagged
+.BI roster\-mesh: SRC @ BOX\fR;
+roster plans from that and the Inventory, and a second script makes the
+plan so on a Host that needs changes.
+On a source Host, in
+.IR ~/.ssh/roster\-mesh/ ,
+mode 0700:
+.RS
+.IP \(bu 2
+the Mesh key,
+.I id_ed25519
+(or
+.IR roster_mesh_<key_type> ),
+made there with
+.B ssh\-keygen \-C roster\-mesh:\c
+.IB SRC @ BOX
+when it's missing: the private key never leaves the Host;
+.IP \(bu 2
+.IR known_hosts :
+the peers' host keys, copied from the Box's
+.IR ~/.ssh/roster_known_hosts ;
+.IP \(bu 2
+.IR config :
+one block per peer, with
+.BR "StrictHostKeyChecking yes" ,
+that known_hosts and the Mesh key.
+Its first line is
+.BI "# Written by roster mesh for " SRC " (owner " BOX ) ...
+.RE
+.IP
+.I ~/.ssh/config
+gets two lines at the top: the mark
+.B # roster\-mesh: the Mesh's ssh config (roster mesh adds and removes these two lines)
+and
+.BI "Include " HOME /.ssh/roster\-mesh/config\fR.
+.I ~/ROSTER.md
+lists the peers for Claude there (first line
+.BI "<!\-\- roster\-mesh: written by roster for " SRC " (owner " BOX );\fR...),
+and when
+.I ~/.claude
+exists,
+.I ~/.claude/CLAUDE.md
+gets
+.BR @~/ROSTER.md .
+Each peer's
+.I ~/.ssh/authorized_keys
+gets one line per source:
+.IP
+.nf
+from="IP",no\-agent\-forwarding,no\-X11\-forwarding TYPE KEY roster\-mesh:SRC@BOX
+.fi
+.IP
+Every file is written to a copy beside it and moved into place.
+These are v0.7.0's names and marks, so the Python roster sees the same
+Mesh.
+A Host that leaves the web (removed from
+.IR roster.yml ,
+or its
+.B mesh: true
+gone) loses its lines on the next run, and a Host that is no longer a
+source loses its Mesh files, the Include and the import.
+Ownership: only lines tagged
+.BI @ BOX
+are added or removed, only keys whose
+.I .pub
+carries that tag are deleted, and only files whose first line names this
+Box as owner are rewritten or deleted.
+A Mesh key roster didn't make, or another Box's Mesh config, is
+.BR "left alone" :
+that Host's own part is skipped and counts as not done.
+A Host that is down is not done either; the lines of a source that
+couldn't be read stay as they are on its peers until a run reaches it.
+A rerun with nothing to change prints nothing.
+.IP
+.B \-\-dry\-run
+prints the plan and changes nothing, here or on a Host:
+who reaches whom in the Mesh, one
+.IB SOURCE " \-> " PEER
+line each, then
+.IB HOST ": would " CHANGE
+for each Mesh change;
+.BI "would write " PATH ,
+.B would make the Box key
+and, per Host,
+.B would install the Box key on
+.I HOST
+or
+.BR "would record the host key of " \fIHOST\fP " and install the Box key" .
+It runs no ssh\-keyscan and contacts a Host only with the read-only probe,
+and only when its host key is already recorded.
+.PP
+Every file is written atomically: to a temporary file in the same
+directory, flushed to disk, then renamed into place, so an interrupted run
+leaves the old file or the new one.
+A file that exists keeps its mode.
+.I ~/.ssh
+and
+.I ~/.ssh/config.d
+are made mode 0700 if missing.
+After
+.BR setup ,
+.BI "ssh " HOST
+and anything that speaks ssh (rsync, an editor's remote mode)
+reach a Host by its name.
+.PP
+.B setup \-\-undo
+removes what
+.B setup
+put on the Hosts and the Box, for a user leaving or uninstalling roster,
+and nothing else.
+Each Enrolled, reviewed, POSIX Host is visited in turn with
+.BR "ssh \-o BatchMode=yes" ,
+using the Box key.
+First its Mesh goes, as if no Host were in it: every authorized_keys line
+tagged
+.BI roster\-mesh: SRC @ BOX\fR,
+the Mesh keys whose
+.I .pub
+carries that tag, and the Mesh config, known_hosts,
+.IR ~/ROSTER.md ,
+the Include and the import this Box wrote.
+Last, since it cuts off roster's own way in, the Box key's line goes:
+every authorized_keys line whose last field is exactly
+.BI roster\-managed: BOX
+or the legacy
+.BI fleet\-managed: BOX\fR,
+written to a copy beside the file and moved into place.
+Other Boxes' lines and keys and lines added by hand are never touched.
+A Host that refuses the Box key has nothing of this Box's roster can
+reach, and counts as done.
+A Host that is down, or whose Mesh cleanup fails, keeps its key line and
+is not done: roster says how many Hosts aren't done and exits 1, and
+.B setup \-\-undo
+again finishes them.
+.PP
+Once every Host is done, the Box's files go:
+.IR ~/.ssh/config.d/roster ,
+the exact
+.BI "Include \(dq" HOME /.ssh/config.d/roster\(dq
+line in
+.IR ~/.ssh/config ,
+.IR ~/.ssh/roster_known_hosts ,
+and, next to
+.IR roster.yml ,
+.IR ROSTER.md ,
+the
+.B @ROSTER.md
+line in
+.I CLAUDE.md
+and the two deny rules in
+.IR .claude/settings.json .
+A file is deleted only when nothing else is left in it; a
+.I ROSTER.md
+or ssh config whose first line isn't roster's is left alone with a
+warning.
+The Box keys are kept, since they may still be needed elsewhere:
+roster prints
+.BI "kept the Box key " PATH
+for each, and they are deleted by hand
+.RB ( "rm ~/.ssh/roster_ed25519 ~/.ssh/roster_ed25519.pub" ).
+.PP
+Side by side with the Python roster v0.7.0, with the same
+.BR box_name ,
+each removes what the other wrote on the Hosts: v0.7.0's
+.B "mesh cut \-\-all"
+takes this roster's Mesh and its
+.B revoke
+the key lines, and
+.B setup \-\-undo
+takes v0.7.0's Mesh and key lines.
+.PP
+.B setup \-\-undo \-\-dry\-run
+reads each Host and lists what would go, as
+.IB HOST ": would remove " ...
+and
+.BI "would remove " PATH\fR,
+and changes nothing.
+.RE
+.TP
+.B sync
+First, when Bitwarden is unlocked, import new Hosts from the vault into
+.I roster.yml
+(see
+.B Hosts from the vault
+under
+.BR VAULT ).
+Then rewrite the Box files from
+.IR roster.yml :
+steps 2 to 6 of
+.B setup
+(the ssh config, its
+.BR Include ,
+.IR ROSTER.md ,
+.I CLAUDE.md
+and the Claude settings), and nothing else.
+It never contacts a Host and never makes a key: no ssh, ssh\-keygen or
+ssh\-keyscan runs.
+When the Box key doesn't exist yet, the ssh config still names it in
+.BR IdentityFile ,
+where
+.B setup
+will make it.
+A rerun with no edit changes nothing and prints nothing, so it suits cron:
+.IP
+.nf
+*/15 * * * * roster sync
+.fi
+.IP
+bash-completion's
+.B ssh
+completion reads
+.B Host
+names through the
+.B Include
+in
+.IR ~/.ssh/config ,
+so
+.BI "ssh " <Tab>
+completes Hosts as long as
+.B sync
+keeps the file current.
+.TP
+.BI "add " NAME " \-\-ip " ADDR
+Write a Host into
+.I roster.yml
+and run
+.BR sync 's
+Box steps, so
+.BI "ssh " NAME
+and
+.BI "roster ssh " NAME
+work at once.
+.B \-\-group
+names its group (default
+.BR vault ,
+made at the end of
+.B groups:
+if missing);
+.BR \-\-user ,
+.B \-\-port
+and
+.B \-\-auth
+set those fields, and
+.B \-\-enroll=false
+marks a Password Host.
+Nothing contacts the Host:
+.B setup
+installs the Box key.
+The Host goes after the last one under its group's
+.BR hosts: ,
+as one line,
+.IP
+.nf
+      box\-c: {ip: "10.0.0.9", port: 2222, user: "ops", auth: "bw:box\-c ssh"}
+.fi
+.IP
+and every other line of the file stays as it was, comments included.
+roster refuses, writing nothing, when the name is taken, when
+.BR groups: ,
+the group or its
+.B hosts:
+is written in flow style
+.RB ( "dev: {hosts: {...}}" ),
+or when the result won't load.
+A symlinked
+.I roster.yml
+is written through to its target.
+.TP
+.BI "add \-\-from\-vault " ITEM
+Add the Host one vault item makes, by its name or id, under the rules of
+.BR "Hosts from the vault" ,
+even when its name doesn't follow the convention.
+The Host is named
+.BR \-\-name ,
+else the item's HOST, else the item name made a valid name
+.RB ( "wiki admin" " is " wiki\-admin ).
+.B \-\-group
+overrides the folder's group.
+A name several items share is refused: give the id.
+.TP
+.BI "ssh " HOST " \fR[\fPARGS\fR...]\fP"
+Replace roster with
+.BI "ssh " "HOST ARGS"
+for an Enrolled Host, using the block
+.B setup
+wrote.
+.I ARGS
+go to ssh unchanged, options and
+.B \-\-
+included:
+.BR "roster ssh box\-b \-\- uptime" .
+ssh's exit status is roster's.
+.I HOST
+is a Host's name exactly.
+A name not in the Inventory exits 1 with
+.BI "no Host named '" HOST "' in the Inventory" .
+.IP
+For a Password Host, roster resolves its
+.B auth
+reference (see
+.BR VAULT )
+and starts ssh as a child instead, giving it the password through askpass:
+roster makes a directory only you can open (mode 0700) under
+.B $XDG_RUNTIME_DIR
+(else
+.BR $TMPDIR ,
+else
+.IR /tmp )
+with one Unix socket in it, and sets
+.B SSH_ASKPASS
+to the roster binary,
+.B SSH_ASKPASS_REQUIRE=force
+and
+.B ROSTER_ASKPASS
+to the socket.
+When ssh asks, roster runs again as the askpass helper, reads the password
+from the socket and prints it to ssh.
+roster answers exactly one connection and then removes the directory
+(also when something fails), so a wrong password isn't retried.
+If ssh hasn't asked within 60 seconds, roster stops listening, removes the
+directory and just waits for ssh.
+The helper answers only a prompt that mentions a password or passphrase;
+it refuses anything else, such as ssh's yes/no question about a new host
+key.
+The password is never in an argument, ssh's environment, a file or the
+terminal.
+A reference that can't be resolved exits 1 before ssh runs.
+.BR agent ", " key " and " none
+run ssh with no password, as for an Enrolled Host.
+.IP
+No
+.I HOST
+is a usage error.
+.TP
+.BI "run " "TARGET " "\-\- " CMD
+Run
+.I CMD
+on every Host
+.I TARGET
+names, in parallel:
+.BR "roster run dev,esx\-02 \-\- uptime" .
+.I TARGET
+is Host and group names, comma-separated, in any mix; each Host runs once.
+A name that is neither exits 1 with
+.BI "no Host or group named '" NAME "' in the Inventory"
+before anything runs.
+Unreviewed Hosts are skipped, each with
+.BI "roster: skipped " HOST ": unreviewed"
+on stderr; nothing left to run exits 1.
+.I CMD
+and its arguments go to the Host's shell as
+.B ssh
+joins them, so quote what the local shell shouldn't expand.
+.IP
+Each Host gets
+.BI "ssh \-o BatchMode=yes \-o ConnectTimeout=10 " "HOST " "\-\- " CMD
+(a Password Host without
+.BR BatchMode ,
+which would stop ssh asking askpass), with stdin from
+.IR /dev/null .
+At most 32 Hosts run at once (a constant in the source).
+The connect timeout means a down or unreachable Host fails after 10 seconds
+instead of holding up the others; a command that hangs on a Host still
+does.
+Each line a Host prints goes out as it arrives, prefixed
+.BI "" HOST ": "
+\(em stdout lines to stdout, stderr lines to stderr; lines from different
+Hosts don't mix within a line, but their order across Hosts is arrival order.
+.IP
+Password Hosts get their passwords through askpass, as for
+.BR ssh .
+Every Password Host's
+.B auth
+is resolved before any Host starts, so prompts come one at a time and a
+reference that won't resolve exits 1 before any ssh runs.
+No ssh, a key Host's included, inherits an
+.B env:
+variable a password came from.
+.IP
+roster exits 1 if any Host failed (a non-zero exit, a signal, or ssh that
+couldn't start), after
+.BI "roster: failed on " "HOST" ", ..."
+on stderr; else 0.
+.TP
+.B run \-\-json
+Print nothing until every Host is done, then one JSON document, Hosts in
+.I TARGET
+order:
+.RS
+.PP
+.nf
+{"v": 1, "hosts": [
+  {"host": "box\-a", "exit": 0, "stdout": "...", "stderr": ""}
+]}
+.fi
+.PP
+.B exit
+is the Host's ssh exit status (255 when ssh itself failed, such as a
+connect timeout), or null when ssh was killed by a signal or couldn't start.
+.B stdout
+and
+.B stderr
+are the whole output, unprefixed; bytes that aren't UTF\-8 are replaced.
+Skipped Hosts are not listed. The exit status is as without
+.BR \-\-json .
+.RE
+.TP
+.BI "check " [TARGET]
+Explain why a Host can't be reached, or show the fleet's health at a glance.
+.I TARGET
+is as for
+.BR run ;
+with none, every Host in the Inventory is checked.
+Each Host goes through these stages in order, stopping at the first that
+fails:
+.RS
+.TP
+.B dns
+.B ip
+resolves through the system resolver.
+.TP
+.B port
+A TCP connection to the first address and
+.B port
+opens within 5 seconds.
+.TP
+.B login
+.BI "ssh \-o BatchMode=yes \-o ConnectTimeout=10 " HOST " exit"
+succeeds
+.RB ( exit
+works in sh, cmd and PowerShell, so an
+.B "os: windows"
+Host checks too), with stdin from
+.IR /dev/null ;
+on failure, ssh's own error is shown.
+No ssh inherits an
+.B env:
+variable a password came from.
+.TP
+.B vault
+For a Password Host, instead of
+.BR login :
+its
+.B auth
+reference resolves (see
+.BR VAULT ).
+The password is never shown.
+References are resolved one at a time before the network checks, so a
+.B cmd:
+that asks for an unlock asks once.
+.B prompt
+is not asked for: the Host passes with
+.BR "(auth prompt: not checked here)" .
+.RE
+.IP
+Hosts are checked in parallel, at most 32 at once, and printed in
+.I TARGET
+order, one line each, then a summary:
+.RS
+.PP
+.nf
+box\-a: ok
+box\-b: login: admin@10.0.0.6: Permission denied (publickey).
+esx\-02: ok
+3 Hosts: 2 ok, 1 failed
+.fi
+.RE
+.IP
+Unreviewed Hosts are checked too. roster exits 1 if any Host failed, else 0.
+.TP
+.B check \-\-json
+One JSON document instead, Hosts in the same order:
+.RS
+.PP
+.nf
+{"v": 1, "hosts": [
+  {"host": "box\-a", "ok": true, "failed": null, "error": null, "note": null},
+  {"host": "box\-b", "ok": false, "failed": "port",
+   "error": "10.0.0.6:22: Connection refused (os error 111)", "note": null}
+]}
+.fi
+.PP
+.B failed
+is the stage that failed
+.RB ( dns ", " port ", " login " or " vault ),
+.B error
+says why, and
+.B note
+says what wasn't checked. The exit status is as without
+.BR \-\-json .
+.RE
+.TP
+.B vault unlock
+Unlock Bitwarden once for the day.
+roster runs
+.BR "bw unlock \-\-raw \-\-passwordenv ROSTER_BW_MASTER" ,
+with the master password from
+.B BW_PASSWORD
+or asked on
+.IR /dev/tty ,
+and set only in bw's environment, never in an argument.
+The session key goes into the kernel keyring with
+.BR keyctl (1):
+a
+.B user
+key
+.B roster:bw\-session
+in the user keyring
+.BR @u ,
+which expires after 12 hours.
+It is never written to a file.
+Without
+.B keyctl
+nothing can be kept: roster says to install keyutils, exits 1, and each
+.B bw:
+reference asks for the master password.
+.TP
+.B vault lock
+Purge the key from the keyring and run
+.BR "bw lock" .
+.IP
+Both delete roster 0.7's
+.I ~/.config/roster/bw\-session
+file if it is there, and say so; roster never reads it.
+.TP
+.BI "web " "HOST " "\fR[\fPSERVICE\fR]\fP " "METHOD PATH"
+Call a Host's web API with
+.BR curl (1)
+and the service's stored Login, without the caller ever seeing the
+credential.
+.I SERVICE
+is a name under the Host's
+.BR services ;
+without it, the one
+.B ls
+shows as
+.BR web :
+the
+.B web
+service (or the legacy
+.B web:
+field), else the first service with a URL.
+.I METHOD
+is upper case, such as GET or POST.
+.I PATH
+must start with
+.B /
+and stay on the service's origin (its scheme, address and port; any path
+in the service's URL is dropped): no
+.BR // ,
+.BR :// ,
+.BR .. ,
+spaces or backslashes.
+.IP
+curl's arguments hold nothing secret: roster runs
+.B curl \-q \-sS \-\-proto =http,https \-\-max\-redirs 0 \-w ... \-K \-
+.BI "\-X " "METHOD URL" ,
+so redirects are not followed and
+.I ~/.curlrc
+is not read.
+The Login goes to curl as a config on its stdin
+.RB ( "\-K \-" ),
+never in argv:
+.B user = """USER:PASSWORD"""
+for
+.B login: basic
+(the service's
+.BR user ),
+or
+.B header = """Authorization: Bearer TOKEN"""
+for
+.BR "login: bearer" .
+.B login: none
+sends no Login, and nor does an
+.B auth
+of
+.BR agent ,
+.B key
+or
+.BR none .
+The credential is resolved as in
+.BR VAULT ,
+and no
+.B env:
+variable of the Host's reaches curl's environment.
+.IP
+The response body goes to stdout and curl's errors to stderr.
+roster exits 0 when the HTTP status is below 400, else prints
+.BI "roster: " "HOST SERVICE" ": HTTP " STATUS
+(or
+.B no HTTP response
+when curl failed) and exits 1.
+.RS
+.TP
+.BI \-d " BODY"
+Send
+.I BODY
+as the request body, in the stdin config, so an
+.B @
+in it is not special.
+.BI \-d " @FILE"
+reads the body from
+.I FILE
+.RB ( "\-\-data\-binary @FILE" );
+.B \-d @\-
+is refused, since stdin carries the Login.
+.TP
+.BI \-H " HEADER"
+Add a request header; repeatable.
+.TP
+.B \-k
+Don't verify the TLS certificate, as for a service with
+.BR "verify: false" .
+.RE
+.TP
+.B help plugins
+Print the plugin contract below, with an example.
+.B help
+alone prints usage.
+.TP
+.I NAME
+.RI [ ARGS ...]
+Any other name runs a plugin; see
+.BR PLUGINS .
+.SH PLUGINS
+Anyone can extend roster in any language, git style:
+.B roster
+.I NAME ARGS
+runs the first executable
+.BI roster\- NAME
+on
+.B PATH
+with
+.I ARGS
+unchanged.
+Options after
+.I NAME
+belong to the plugin;
+.B \-c
+.I FILE
+before it picks the Inventory.
+roster replaces itself with the plugin, so the plugin's exit status is
+roster's.
+.PP
+Built-in commands always win: a
+.B roster\-ls
+on
+.B PATH
+that would shadow
+.B ls
+is ignored with a warning.
+A name that is neither built in nor on
+.B PATH
+is a usage error (exit 2).
+.PP
+The plugin's environment adds:
+.TP
+.B ROSTER_CONFIG
+the resolved Inventory path, absolute; unset when no Inventory is found,
+since a plugin may not need one.
+.TP
+.B ROSTER_BIN
+roster's own path, to call back into it.
+.PP
+A plugin reads Hosts with
+.BR "\(dq$ROSTER_BIN\(dq ls \-\-json" ,
+whose
+.B \(dqv\(dq
+field versions the format (see
+.BR "ls \-\-json" ).
+Plugins never get secret values: not in the environment, not in
+.BR \-\-json .
+An example, saved as
+.B roster\-names
+on
+.B PATH
+and made executable:
+.PP
+.RS
+.nf
+#!/bin/sh
+"$ROSTER_BIN" ls | cut \-d' ' \-f1
+.fi
+.RE
+.PP
+More examples, unsupported, are in
+.I contrib/
+in the source.
+.SH INVENTORY
+The Inventory is the first of:
+.IP 1. 4
+the
+.B \-c
+.IR FILE ;
+.IP 2. 4
+.BR $ROSTER_CONFIG ;
+.IP 3. 4
+.I ./roster.yml
+in the current directory;
+.IP 4. 4
+.IR ~/.config/roster/roster.yml .
+.PP
+It holds
+.BR groups ,
+each with
+.B hosts
+by name.
+A Host is a mapping of settings, or just its address as a string:
+.PP
+.RS
+.nf
+box_name: lab\-box
+defaults: {user: admin}
+groups:
+  dev:
+    title: Dev boxes
+    ssh: {user: deploy, auth: "bw:dev deploy"}
+    hosts:
+      box\-a: {ip: 10.0.0.5, title: Box A, services: {web: 443}}
+      box\-b: 10.0.0.6
+links:
+  \- {from: box\-a, to: box\-b, both: true}
+.fi
+.RE
+.PP
+A setting is looked up on the Host, then its group, then
+.BR defaults ,
+then roster's built-in value.
+At each of those layers, an
+.B ssh:
+block of
+.BR user ,
+.B port
+and
+.B auth
+beats the plain keys of the same name.
+A group's own
+.BR title ,
+.B description
+and
+.B hosts
+describe the group and are not inherited.
+.PP
+Top-level keys:
+.TP
+.B groups
+Required: group name to its settings and
+.BR hosts .
+A Host name is letters, digits, . _ and \-, and a Host is in one group.
+.TP
+.B box_name
+This Box's name in key tags (default: the short hostname); characters other
+than letters, digits, _ and \- become \-.
+An empty name (with no hostname to fall back on) is refused.
+.TP
+.B key_type
+This Box's key type:
+.BR ed25519 " (default), " ecdsa " (P-384), " ecdsa\-256 ", " ecdsa\-521 ,
+.B rsa
+(3072 bits) or
+.BI rsa\- BITS
+(3072 to 16384).
+.TP
+.B key_path
+This Box's key file (default:
+.IR ~/.ssh/roster_<key_type> ),
+the one the Hosts of the top-level
+.B key_type
+use.
+A Host of another type uses
+.IR roster_<type> " beside it"
+.RI ( ~/.ssh/roster_ecdsa
+for a FIPS-mode Host with
+.BR "key_type: ecdsa" ,
+which refuses Ed25519).
+A
+.B key_path
+that names another type's key is refused: remove it or point it at another file.
+.TP
+.B links
+A list of
+.BR "{from, to, both, via}" :
+each end a Host or a group,
+.B both
+true for two-way, and
+.B via
+a Host that isn't an end (not supported yet: the Mesh skips such a Link).
+A name that is both a Host and a group can't be an end.
+.PP
+Host settings:
+.TP
+.B ip
+Required. No space, quote or control character; a % only as an IPv6 zone
+.RI ( fe80::1%eth0 ).
+.TP
+.BR user ", " port ", " auth
+The ssh login.
+.B user
+is required somewhere in the chain and holds no space, quote or %;
+.B port
+defaults to 22;
+.B auth
+(default
+.BR prompt )
+is a vault reference, only ever read when used (see
+.BR VAULT ).
+.TP
+.BR enroll ", " reviewed
+Both default to true.
+.B "enroll: false"
+is a Password Host;
+.B "reviewed: false"
+an unreviewed one, found by a scan.
+.TP
+.BR os ", " key_type ", " mesh
+.B os
+is
+.B posix
+(default) or
+.BR windows ;
+.B key_type
+as above (default: the top-level one);
+.B mesh
+true, false or unset: whether the Host is in its group's Mesh (see
+.BR setup ).
+.TP
+.BR title ", " description ", " type ", " product
+Free text on one line.
+The legacy
+.B notes
+stands in for an unset
+.BR description .
+.TP
+.B services
+Name to a port
+.RB ( "db: 5432" ),
+a URL
+.RB ( "ui: https://10.0.0.5:8443" ),
+or
+.BR "{port, url, scheme, user, auth, verify, login}" .
+Entries merge field by field down the layers.
+Ports 443 and 8443 mean https, and 80, 8000, 8008, 8080 and 8888 http.
+.B login
+is
+.BR basic " (default), " bearer " or " none ;
+an entry roster can't use is left out.
+The legacy
+.BI "web: " URL
+is a service named web.
+.PP
+Other keys, such as
+.BR resources ,
+.BR sudo ,
+.B shell_hooks
+or
+.BR workers ,
+are loaded and ignored.
+.PP
+A true-or-false setting
+.RB ( enroll ,
+.BR reviewed ,
+.BR mesh ,
+.BR verify ,
+.BR both )
+also takes
+.BR yes / no ,
+.BR on / off
+and
+.BR y / n ,
+in any case, as v0.7.0 reads them; anything else is an error
+(a service with a bad
+.B verify
+is left out).
+.PP
+An invalid Inventory stops every command with exit 3 and one message
+.RI "in the form " "FILE:LINE: KEY: why" ,
+for example
+.IR "roster.yml:7: groups.dev.hosts.box\-a.ip: can't hold a space" .
+.SH VAULT
+A Host's or service's
+.B auth
+is a reference to its password, resolved only when a command needs it.
+The password is held in memory that is wiped after use, and roster never
+prints it.
+Hosts that share a reference resolve it once per run
+.RB ( prompt
+asks once per Host), and Bitwarden is unlocked at most once.
+.TP
+.BI cmd: COMMAND
+The first line
+.BI "sh \-c " COMMAND
+prints, for any password manager's CLI:
+.BR "cmd:pass show net/sw\-01" .
+The command's stdin and stderr are the terminal's, so it can ask to be
+unlocked.
+A non-zero exit or an empty line is an error.
+.TP
+.BI env: VAR
+The environment variable
+.IR VAR ,
+for CI.
+roster keeps
+.I VAR
+(and every other Host's, and
+.BR BW_PASSWORD " and " BW_SESSION )
+out of the environment of each ssh and curl it starts.
+.TP
+.B prompt
+Ask on
+.I /dev/tty
+with echo off.
+The default.
+.TP
+.BI bw: ITEM\fR[\fB#\fIFIELD\fR]
+Bitwarden's item
+.IR ITEM ,
+through
+.BR "bw get item " \fIITEM\fP " \-\-nointeraction" ,
+with the session key from the keyring (see
+.BR "vault unlock" )
+as
+.B BW_SESSION
+in bw's environment only.
+Without
+.I FIELD
+it is the login password;
+.B #username
+is the login user name,
+.B #notes
+the notes, and any other
+.I FIELD
+a custom field, matched exactly, then ignoring case.
+A missing or expired key means Bitwarden is locked: roster says to run
+.B roster vault unlock
+and unlocks for this run only, with the master password from
+.B BW_PASSWORD
+or
+.IR /dev/tty ,
+storing nothing.
+roster keeps
+.B BW_PASSWORD
+out of ssh's environment.
+.IP
+Security: the session key is never on disk, in a backup or in a synced
+repo, and it expires on its own.
+But any process running as the same user can read it with
+.BR "keyctl print" ,
+just as it could read a file.
+.TP
+.BR agent ", " key ", " none
+No password.
+.PP
+Any other reference, such as
+.BI op: ITEM
+or
+.BI kp: ITEM ,
+is an error that says to use
+.B cmd:
+with that tool's CLI.
+.SS Hosts from the vault
+Add a login item in Bitwarden named
+.IB "HOST " ssh
+or
+.IB "HOST " ssh+ X
+.RB ( ssh
+in any case, HOST a valid Host name), and the next
+.B roster sync
+adds the Host to
+.IR roster.yml ,
+printing
+.BI "imported " HOST " from the vault (group " G ) .
+No hand edit is needed.
+The import runs only with a session key in the keyring (see
+.BR "vault unlock" ):
+it runs
+.BR "bw sync" ,
+.B bw list items
+and
+.BR "bw list folders" ,
+each with
+.BR \-\-nointeraction ,
+and never prompts, so it works from cron.
+Without a session key, or without
+.B bw
+or
+.BR keyctl ,
+it prints one line,
+.BR "vault import skipped" ,
+on stderr, and the rest of sync runs.
+.PP
+An item is imported when it is a login item, follows the convention, and
+no Host has the name HOST and no
+.B auth:
+names the item yet.
+Its first URI gives the address and port:
+.BI ssh:// USER @ HOST : PORT\fR,\fP
+.IB HOST : PORT\fR,\fP
+a bare HOST, or an
+.BR http (s)
+URL's host with port 22.
+Its user name is the Host's
+.BR user ,
+and
+.B auth
+is
+.BI bw: "ITEM NAME"\fR,\fP
+or
+.BI bw: ID
+when other items share the name.
+The group is the item's folder, lowercased with other characters made
+.B \-
+.RB ( "Lab Servers" " is " lab\-servers ),
+or
+.B vault
+without a folder.
+An item with no address in its first URI is skipped with one line on stderr.
+The Host is written as
+.B add
+writes one.
+.PP
+Only item names, ids, folders, URIs and user names are read: an item's
+password is never parsed, printed or written.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Nothing matched the
+.IR FILTER ;
+.B ssh
+was given a Host it can't reach, or a Password Host whose
+.B auth
+won't resolve;
+.B run
+failed on a Host, was given an unknown
+.IR TARGET ,
+or had no reviewed Host to run on;
+.B check
+found a Host failing or was given an unknown
+.IR TARGET ;
+.B web
+got an HTTP status of 400 or more, or no response, or was given an unknown
+Host or service; a
+.B setup
+step failed, or a Host wasn't done (down, refused the password, or
+the install failed), or with
+.B \-\-undo
+a Host wasn't done (down, or its Mesh cleanup failed);
+.B vault unlock
+or
+.B lock
+failed, or found no keyctl; or the picker can't run fzf or tmux.
+.TP
+.B 2
+Usage error: an unknown command or option, or a missing value.
+An unknown command is one that is neither built in nor a
+.BI roster\- NAME
+on
+.BR PATH .
+.TP
+.B 3
+The Inventory won't load: no file was found, it can't be read, or it is
+invalid.
+The message names the file.
+.TP
+.B 126
+A plugin, or ssh, was found but can't be run, curl can't be started, or
+the askpass socket
+can't be made.
+.PP
+A plugin's exit status, and ssh's for
+.BR "roster ssh" ,
+is passed through unchanged.
+.SH ENVIRONMENT
+.TP
+.B BW_PASSWORD
+The Bitwarden master password, for
+.B vault unlock
+and a locked
+.B bw:
+reference; else it is asked on
+.IR /dev/tty .
+.TP
+.B BW_SESSION
+Set by roster in bw's environment only; roster ignores one you set.
+.TP
+.B ROSTER_CONFIG
+The Inventory path, when
+.B \-c
+is not given.
+Set by roster for a plugin to the resolved path.
+.TP
+.B ROSTER_BIN
+Set by roster for a plugin to roster's own path.
+.TP
+.B ROSTER_ASKPASS
+Set by roster for ssh's askpass helper to the socket path.
+roster started with it set is that helper, nothing else.
+.TP
+.BR XDG_RUNTIME_DIR ", " TMPDIR
+Where the askpass directory goes, in that order, else
+.IR /tmp .
+.TP
+.B PATH
+Searched for
+.BI roster\- NAME
+plugins, and for fzf and tmux.
+.TP
+.B TMUX
+Set inside tmux; the picker then opens Hosts in tmux windows and panes.
+.TP
+.B HOME
+Used to find
+.IR ~/.config/roster/roster.yml ,
+.I ~/.ssh
+and the Box key.
+.SH COMPLETION
+.I contrib/roster.bash
+completes
+.B roster
+in bash: the commands, each command's flags, the words after
+.B vault
+and
+.BR help ,
+a file after
+.BR \-c ,
+and Host and group names for
+.BR ssh ,
+.BR run ,
+.BR check ,
+.BR web ,
+.B ls
+and a bare
+.BR roster .
+The names come from
+.B roster ls
+at each Tab (honouring
+.BR \-c ),
+so a Host added to
+.I roster.yml
+completes at once, with nothing to regenerate.
+When
+.I roster.yml
+won't load, no names complete and nothing is printed.
+Install it by copying it to
+.I ~/.local/share/bash\-completion/completions/roster
+or by adding
+.B source /path/to/roster.bash
+to
+.IR ~/.bashrc .
+.PP
+For plain
+.BR ssh ,
+bash\-completion reads
+.B Host
+names through the
+.B Include
+in
+.IR ~/.ssh/config ;
+run
+.B roster sync
+(from cron, say) to keep that file current.
+.SH FILES
+.TP
+.I ~/.ssh/roster_<key_type>
+The Box keys, one per key type in use, and their
+.IR .pub ;
+the top-level type's is at
+.B key_path
+when set.
+.TP
+.I ~/.ssh/config.d/roster
+The ssh config written by
+.B setup
+and
+.BR sync .
+.TP
+.I ~/.ssh/config
+Gets the
+.B Include
+line, once.
+.TP
+.I ~/.ssh/roster_known_hosts
+roster's own known hosts, named in each Host block;
+.B setup
+appends what ssh\-keyscan finds.
+.TP
+.I ~/.ssh/roster\-mesh/
+On a Host in the Mesh: its Mesh key, known_hosts and config, with
+.I ~/ROSTER.md
+beside them (see
+.BR setup ).
+.TP
+.IR ROSTER.md ", " CLAUDE.md ", " .claude/settings.json
+Next to
+.IR roster.yml ;
+what Claude reads, written by
+.BR setup .
+.SH SEE ALSO
+.BR ssh (1),
+.BR fzf (1),
+.BR tmux (1)

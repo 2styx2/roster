@@ -1,0 +1,103 @@
+#!/bin/sh
+# Fake ssh: appends its argv to $HOME/ssh.log and exits $FAKE_SSH_EXIT (0);
+# a remote script (`sh -s` last) runs in a fresh empty HOME, as on a clean Host.
+# With $FAKE_SSH_ASKPASS set to a prompt, it saves its environment to
+# $HOME/ssh.env and, when roster gave it askpass, the askpass directory's mode
+# to askpass.mode; then runs "$SSH_ASKPASS PROMPT" as ssh does, saving what
+# it printed to askpass.got (the only file a test password may land in) and
+# its exit status to askpass.status. $FAKE_SSH_ASKPASS_AGAIN asks a second
+# time, saving that status to askpass.again.
+# With $FAKE_SSH_RUN set, it skips `-o OPT` pairs, takes the Host and runs
+# the command after `--` with sh (FAKE_SSH_HOST set to the Host), unless the
+# Host is in $FAKE_SSH_DOWN (comma-separated): then it fails as ssh does.
+#
+# With $FAKE_HOSTS set it acts as a Host instead: $FAKE_HOSTS/NAME is Host
+# NAME's HOME (NAME is the first argument that isn't an option). A `down`
+# file there makes it exit 255. The Box key (the key field of the .pub of the
+# IdentityFile roster's ssh config gives NAME, else of any $HOME/.ssh/*.pub) logs in when the Host's .ssh/authorized_keys has it,
+# unless -o PubkeyAuthentication=no is given or a
+# `nokey` file is there. Without BatchMode=yes, the Host's `password` file
+# logs in when $SSH_ASKPASS prints it. A `mute` file there makes it exit 0
+# having run and printed nothing. Then the remote command runs with sh
+# in that HOME (after a `--`), stdin passed through, with FAKE_SSH_HOST set to
+# NAME; ssh's own environment is appended to $HOME/ssh-hosts.env first.
+echo "$*" >>"$HOME/ssh.log"
+if [ -n "$FAKE_HOSTS" ]; then
+  batch= pubkey=1
+  while [ $# -gt 0 ]; do
+    case $1 in
+    -o)
+      case $2 in
+      BatchMode=yes) batch=1 ;;
+      PubkeyAuthentication=no) pubkey= ;;
+      esac
+      shift 2 ;;
+    -[pilFJLRDEbcemwW]) shift 2 ;;
+    -*) shift ;;
+    *) break ;;
+    esac
+  done
+  name=$1
+  shift
+  [ "$1" = -- ] && shift
+  dir=$FAKE_HOSTS/$name
+  if [ ! -d "$dir" ] || [ -e "$dir/down" ]; then
+    echo "ssh: connect to host $name port 22: Connection timed out" >&2
+    exit 255
+  fi
+  ok=
+  if [ -n "$pubkey" ] && [ ! -e "$dir/nokey" ] && [ -f "$dir/.ssh/authorized_keys" ]; then
+    pubs=$(awk -v h="$name" '$1 == "Host" { on = $2 == h } on && $1 == "IdentityFile" { gsub(/"/, "", $2); print $2 ".pub" }' \
+      "$HOME/.ssh/config.d/roster" 2>/dev/null | sed "s|^~/|$HOME/|")
+    for pub in ${pubs:-"$HOME"/.ssh/*.pub}; do
+      [ -f "$pub" ] || continue
+      key=$(cut -d' ' -f2 "$pub")
+      grep -v '^[[:space:]]*#' "$dir/.ssh/authorized_keys" | grep -qF -- " $key" && ok=1
+    done
+  fi
+  if [ -z "$ok" ] && [ -z "$batch" ] && [ -n "$SSH_ASKPASS" ] && [ -f "$dir/password" ]; then
+    got=$("$SSH_ASKPASS" "admin@$name's password: ") &&
+      [ "$got" = "$(cat "$dir/password")" ] && ok=1
+  fi
+  if [ -z "$ok" ]; then
+    echo "admin@$name: Permission denied (publickey,password)." >&2
+    exit 255
+  fi
+  [ -e "$dir/mute" ] && exit 0
+  cd "$dir" || exit 255
+  env >>"$HOME/ssh-hosts.env"
+  HOME=$dir FAKE_SSH_HOST=$name exec sh -c "$*"
+fi
+if [ -n "$FAKE_SSH_ASKPASS" ]; then
+  env >"$HOME/ssh.env"
+  if [ -n "$ROSTER_ASKPASS" ]; then
+    stat -c %a "$(dirname "$ROSTER_ASKPASS")" >"$HOME/askpass.mode"
+    "$SSH_ASKPASS" "$FAKE_SSH_ASKPASS" >"$HOME/askpass.got"
+    echo $? >"$HOME/askpass.status"
+    if [ -n "$FAKE_SSH_ASKPASS_AGAIN" ]; then
+      "$SSH_ASKPASS" "$FAKE_SSH_ASKPASS" >/dev/null 2>&1
+      echo $? >"$HOME/askpass.again"
+    fi
+  fi
+fi
+if [ -n "$FAKE_SSH_RUN" ]; then
+  while [ "$1" = -o ]; do shift 2; done
+  FAKE_SSH_HOST=$1 && shift && export FAKE_SSH_HOST
+  [ "$1" = -- ] && shift
+  case ",$FAKE_SSH_DOWN," in *",$FAKE_SSH_HOST,"*)
+    echo "ssh: connect to host $FAKE_SSH_HOST port 22: Connection timed out" >&2
+    exit 255 ;;
+  esac
+  exec sh -c "$*"
+fi
+# Otherwise a remote script (`... sh -s`) runs in a fresh empty HOME: a
+# clean Host.
+case "$*" in *" sh -s")
+  [ "${FAKE_SSH_EXIT:-0}" = 0 ] || exit "$FAKE_SSH_EXIT"
+  h=$(mktemp -d) || exit 255
+  HOME=$h sh -s
+  s=$?
+  rm -rf "$h"
+  exit $s ;;
+esac
+exit "${FAKE_SSH_EXIT:-0}"
