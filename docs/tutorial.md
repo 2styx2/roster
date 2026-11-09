@@ -56,7 +56,7 @@ roster ships as source only. You build it yourself, from code you can read. One 
 git clone https://github.com/2styx2/roster ~/src/roster
 cd ~/src/roster
 make install                # into ~/.local, no sudo
-roster --version            # roster 0.7.0
+roster --version            # roster 0.7.1
 ```
 
 `make install` puts three files under `~/.local`:
@@ -68,7 +68,7 @@ roster --version            # roster 0.7.0
 `~/.local/bin` must be on your `PATH` (it is on most systems). Open a new terminal, then try `roster <Tab>` and `man roster`.
 
 - **For every user on the machine:** `sudo make install PREFIX=/usr/local`.
-- **A specific release:** `git checkout vX.Y.Z` first. `make install` exists from the first release after v0.7.0; for v0.7.0 itself, use the `cargo install` line below.
+- **A specific release:** `git checkout vX.Y.Z` first. `make install` exists from v0.7.1; for v0.7.0, use the `cargo install` line below.
 - **To update:** `git pull`, then `make install` again.
 - **To remove all three:** `make uninstall`, with the same `PREFIX`.
 
