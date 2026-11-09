@@ -117,9 +117,14 @@ impl Inventory {
     pub fn open(flag: Option<PathBuf>) -> Result<Inventory, Fail> {
         let path = find(flag)?;
         let text = std::fs::read_to_string(&path).map_err(|e| broken(&path, None, e))?;
-        let doc: Value = serde_norway::from_str(&text).map_err(|e| broken(&path, None, e))?;
+        Inventory::load(path, &text)
+    }
+
+    /// Parse and check `text` as the Inventory at `path`.
+    pub fn load(path: PathBuf, text: &str) -> Result<Inventory, Fail> {
+        let doc: Value = serde_norway::from_str(text).map_err(|e| broken(&path, None, e))?;
         let inventory = parse(&doc).map_err(|b| {
-            let line = line_of(&text, &b.at);
+            let line = line_of(text, &b.at);
             broken(&path, line, format!("{}: {}", b.at.join("."), b.why))
         })?;
         Ok(Inventory { path, ..inventory })
@@ -517,7 +522,7 @@ fn ssh_block<'a>(layer: &'a Mapping, at: &[&str]) -> Result<Option<&'a Mapping>,
 }
 
 /// Host names: letters, digits, `.`, `_` and `-`.
-fn is_name(s: &str) -> bool {
+pub fn is_name(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
