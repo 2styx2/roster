@@ -7,6 +7,7 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .IR FILE ]
 .B ls
 .RB [ \-\-json ]
+.RI [ FILTER ]
 .br
 .B roster \-h
 .SH DESCRIPTION
@@ -33,8 +34,26 @@ Print one line per Host, in Inventory order, with the columns
 name, group, address, access and title, padded and separated by two spaces.
 There is no header line.
 Access is
-.B key
-for every Host for now.
+.B unreviewed
+when the Host has
+.BR "reviewed: false" ,
+else
+.B password
+when it has
+.BR "enroll: false" ,
+else
+.BR key .
+.TP
+.BI "ls " FILTER
+Only the Hosts whose name, group,
+.B type
+or
+.B product
+equals one of the comma-separated words in
+.I FILTER
+(exactly, case and all):
+.BR "roster ls hypervisors,printer" .
+Nothing matched is exit 1, with a message on stderr.
 .TP
 .B ls \-\-json
 Print one JSON document:
@@ -42,14 +61,35 @@ Print one JSON document:
 .PP
 .nf
 {"v": 1, "hosts": [{"name": "box\-a", "group": "dev",
-  "ip": "10.0.0.5", "user": "admin", "access": "key",
-  "title": "Box A"}]}
+  "ip": "10.0.0.5", "user": "admin", "port": 22,
+  "access": "key", "title": "Box A", "description": "",
+  "type": "", "product": "", "os": "posix",
+  "key_type": "ed25519", "mesh": null,
+  "web": "https://10.0.0.5",
+  "services": [{"name": "web", "port": 443,
+    "url": "https://10.0.0.5", "scheme": "https",
+    "user": "admin", "login": "basic", "verify": true}]}]}
 .fi
 .PP
-.B user
-is null when the Host sets none, and
-.B title
-is empty when it has none.
+Each field is the Host's resolved setting (see
+.BR INVENTORY ).
+.BR title ,
+.BR description ,
+.B type
+and
+.B product
+are empty when unset;
+.B mesh
+is null when unset;
+.B web
+is null when no service has a URL;
+.B scheme
+and
+.B url
+are null when roster can't tell.
+A service's
+.B auth
+and the Host's are vault references and are never printed.
 Within
 .B \(dqv\(dq: 1
 fields are only added, never renamed or removed.
@@ -74,29 +114,154 @@ It holds
 each with
 .B hosts
 by name.
-A Host is a mapping with
-.B ip
-(required),
-.B user
-and
-.BR title ,
-or just its address as a string:
+A Host is a mapping of settings, or just its address as a string:
 .PP
 .RS
 .nf
+box_name: lab\-box
+defaults: {user: admin}
 groups:
   dev:
+    title: Dev boxes
+    ssh: {user: deploy, auth: "bw:dev deploy"}
     hosts:
-      box\-a: {ip: 10.0.0.5, user: admin, title: Box A}
+      box\-a: {ip: 10.0.0.5, title: Box A, services: {web: 443}}
       box\-b: 10.0.0.6
+links:
+  \- {from: box\-a, to: box\-b, both: true}
 .fi
 .RE
 .PP
-Keys roster doesn't use are loaded and ignored.
+A setting is looked up on the Host, then its group, then
+.BR defaults ,
+then roster's built-in value.
+At each of those layers, an
+.B ssh:
+block of
+.BR user ,
+.B port
+and
+.B auth
+beats the plain keys of the same name.
+A group's own
+.BR title ,
+.B description
+and
+.B hosts
+describe the group and are not inherited.
+.PP
+Top-level keys:
+.TP
+.B groups
+Required: group name to its settings and
+.BR hosts .
+A Host name is letters, digits, . _ and \-, and a Host is in one group.
+.TP
+.B box_name
+This Box's name in key tags (default: the short hostname); characters other
+than letters, digits, _ and \- become \-.
+.TP
+.B key_type
+This Box's key type:
+.BR ed25519 " (default), " ecdsa " (P-384), " ecdsa\-256 ", " ecdsa\-521 ,
+.B rsa
+(3072 bits) or
+.BI rsa\- BITS
+(3072 to 16384).
+.TP
+.B key_path
+This Box's key file (default:
+.IR ~/.ssh/roster_<key_type> ).
+.TP
+.B links
+A list of
+.BR "{from, to, both, via}" :
+each end a Host or a group,
+.B both
+true for two-way, and
+.B via
+a Host that isn't an end.
+A name that is both a Host and a group can't be an end.
+.PP
+Host settings:
+.TP
+.B ip
+Required. No space, quote or control character; a % only as an IPv6 zone
+.RI ( fe80::1%eth0 ).
+.TP
+.BR user ", " port ", " auth
+The ssh login.
+.B user
+is required somewhere in the chain and holds no space, quote or %;
+.B port
+defaults to 22;
+.B auth
+(default
+.BR prompt )
+is a vault reference, only ever read when used.
+.TP
+.BR enroll ", " reviewed
+Both default to true.
+.B "enroll: false"
+is a Password Host;
+.B "reviewed: false"
+an unreviewed one, found by a scan.
+.TP
+.BR os ", " key_type ", " mesh
+.B os
+is
+.B posix
+(default) or
+.BR windows ;
+.B key_type
+as above (default: the top-level one);
+.B mesh
+true, false or unset.
+.TP
+.BR title ", " description ", " type ", " product
+Free text on one line.
+The legacy
+.B notes
+stands in for an unset
+.BR description .
+.TP
+.B services
+Name to a port
+.RB ( "db: 5432" ),
+a URL
+.RB ( "ui: https://10.0.0.5:8443" ),
+or
+.BR "{port, url, scheme, user, auth, verify, login}" .
+Entries merge field by field down the layers.
+Ports 443 and 8443 mean https, and 80, 8000, 8008, 8080 and 8888 http.
+.B login
+is
+.BR basic " (default), " bearer " or " none ;
+an entry roster can't use is left out.
+The legacy
+.BI "web: " URL
+is a service named web.
+.PP
+Other keys, such as
+.BR resources ,
+.BR sudo ,
+.B shell_hooks
+or
+.BR workers ,
+are loaded and ignored.
+.PP
+An invalid Inventory stops every command with exit 3 and one message
+.RI "in the form " "FILE:LINE: KEY: why" ,
+for example
+.IR "roster.yml:7: groups.dev.hosts.box\-a.ip: can't hold a space" .
 .SH EXIT STATUS
 .TP
 .B 0
 Success.
+.TP
+.B 1
+Nothing matched the
+.IR FILTER .
 .TP
 .B 2
 Usage error: an unknown command or option, or a missing value.
