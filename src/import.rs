@@ -99,15 +99,9 @@ impl Vault {
     /// The Host `item` makes as NAME, in GROUP or its folder's group.
     fn host(&self, item: &Item, name: String, group: Option<String>) -> Result<NewHost, String> {
         let login = item.login.as_ref().ok_or("it isn't a login item")?;
-        let uri = login
-            .uris
-            .iter()
-            .flatten()
-            .next()
-            .and_then(|u| u.uri.as_deref());
-        let (ip, port) = uri
-            .and_then(address)
-            .ok_or("its first URI has no address")?;
+        let uri = login.uris.iter().flatten().next();
+        let uri = uri.and_then(|u| address(u.uri.as_deref()?));
+        let (ip, port) = uri.ok_or("its first URI has no address")?;
         let unique = self.items.iter().filter(|o| o.name == item.name).count() == 1;
         let reference = match unique && !item.name.contains('#') {
             true => &item.name,
@@ -117,10 +111,10 @@ impl Vault {
             .folders
             .iter()
             .find(|f| f.id.is_some() && f.id == item.folder);
-        let group = group.or_else(|| folder.map(|f| name_of(&f.name)).filter(|g| !g.is_empty()));
+        let group = group.or_else(|| folder.map(|f| name_of(&f.name)));
         Ok(NewHost {
             name,
-            group: group.unwrap_or_else(|| "vault".into()),
+            group: group.filter(|g| !g.is_empty()).unwrap_or("vault".into()),
             ip,
             port: Some(port),
             user: login.username.clone().filter(|u| !u.is_empty()),

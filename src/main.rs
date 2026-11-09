@@ -49,9 +49,15 @@ commands:
                  remove what setup put on the Hosts (this Box's Mesh, then
                  its key line) and the Box (ssh config, Include, known_hosts,
                  ROSTER.md and Claude entries); the Box key is kept
-  sync           rewrite the Box files from roster.yml (ssh config, Include,
-                 ROSTER.md, Claude files) and nothing else: no Host, no key;
-                 quick enough for cron
+  sync           import new `HOST ssh` items from Bitwarden into roster.yml
+                 (when unlocked), then rewrite the Box files from roster.yml
+                 (ssh config, Include, ROSTER.md, Claude files) and nothing
+                 else: no Host, no key; quick enough for cron
+  add NAME --ip ADDR [--group G] [--user U] [--port P] [--auth REF]
+      [--enroll=false]
+                 write a Host into roster.yml (comments kept), then sync
+  add --from-vault ITEM [--name NAME] [--group G]
+                 the same, from one Bitwarden item (name or id)
   ssh HOST [ARGS]
                  ssh to a Host by name; ARGS go to ssh unchanged; a Password
                  Host's auth password goes to ssh through askpass
