@@ -22,6 +22,9 @@ impl NewHost {
         fields.extend(self.user.as_deref().map(|u| format!("user: {}", quote(u))));
         fields.extend(self.auth.as_deref().map(|a| format!("auth: {}", quote(a))));
         fields.extend((!self.enroll).then(|| "enroll: false".to_string()));
+        // Adding a Host (or its login to the vault) is the review: it's set
+        // up even under `defaults: reviewed: false`.
+        fields.push("reviewed: true".to_string());
         format!("{}: {{{}}}", self.name, fields.join(", "))
     }
 }
