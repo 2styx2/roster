@@ -144,21 +144,23 @@ impl Todo {
 }
 
 /// Why a Host can't take part, if it can't: only Enrolled, reviewed, POSIX
-/// Hosts are visited.
-pub fn left_out(h: &Host) -> Option<&'static str> {
-    match () {
-        _ if !h.reviewed => Some("unreviewed"),
-        _ if !h.enroll => Some("a Password Host (enroll: false)"),
-        _ if h.os == "windows" => Some("os: windows"),
-        _ => None,
+/// Hosts without settings v1 doesn't follow are visited.
+pub fn left_out(h: &Host) -> Option<String> {
+    match h.mesh_unsupported {
+        _ if !h.reviewed => Some("unreviewed".into()),
+        _ if !h.enroll => Some("a Password Host (enroll: false)".into()),
+        _ if h.os == "windows" => Some("os: windows".into()),
+        Some(key) => Some(format!("{key} isn't supported yet")),
+        None => None,
     }
 }
 
 /// Who reaches whom, as (source, peer) indexes into `inv.hosts`: the Hosts
 /// of a group with `mesh: true` (from `defaults`, the group or the Host;
 /// `mesh: false` opts out) reach each other. Each Link adds its ends' pairs,
-/// both ways with `both: true`.
-pub fn pairs(inv: &Inventory) -> BTreeSet<(usize, usize)> {
+/// both ways with `both: true`. Also returns a line for each Host left out
+/// and each Link skipped.
+pub fn pairs(inv: &Inventory) -> (BTreeSet<(usize, usize)>, Vec<String>) {
     let hosts = &inv.hosts;
     let ok = |i: usize| hosts[i].mesh != Some(false) && left_out(&hosts[i]).is_none();
     let meshed: Vec<usize> = (0..hosts.len())
@@ -172,16 +174,30 @@ pub fn pairs(inv: &Inventory) -> BTreeSet<(usize, usize)> {
             }
         }
     }
+    // Hosts named for the Mesh, by `mesh: true` or a Link, that can't take part.
+    let mut named: BTreeSet<usize> = (0..hosts.len())
+        .filter(|&i| hosts[i].mesh == Some(true))
+        .collect();
     // A Link's end: the Host of that name, or every Host of that group.
-    let end = |name: &str| -> Vec<usize> {
+    let mut end = |name: &str| -> Vec<usize> {
         let host = hosts.iter().position(|h| h.name == name);
-        (0..hosts.len())
-            .filter(|&i| host.map_or(hosts[i].group == name, |h| h == i) && ok(i))
-            .collect()
+        let all = (0..hosts.len()).filter(|&i| host.map_or(hosts[i].group == name, |h| h == i));
+        named.extend(all.clone().filter(|&i| hosts[i].mesh != Some(false)));
+        all.filter(|&i| ok(i)).collect()
     };
+    let mut skipped = Vec::new();
     for l in &inv.links {
+        if let Some(via) = &l.via {
+            let arrow = if l.both { "<->" } else { "->" };
+            skipped.push(format!(
+                "roster: link {} {arrow} {} via {via}: skipped: via isn't supported yet",
+                l.from, l.to
+            ));
+            continue;
+        }
+        let to = end(&l.to);
         for a in end(&l.from) {
-            for b in end(&l.to).into_iter().filter(|&b| b != a) {
+            for &b in to.iter().filter(|&&b| b != a) {
                 out.insert((a, b));
                 if l.both {
                     out.insert((b, a));
@@ -189,7 +205,11 @@ pub fn pairs(inv: &Inventory) -> BTreeSet<(usize, usize)> {
             }
         }
     }
-    out
+    let why = named.into_iter().filter_map(|i| {
+        let h = &hosts[i];
+        left_out(h).map(|why| format!("roster: {}: left out of the Mesh: {why}", h.name))
+    });
+    (out, why.chain(skipped).collect())
 }
 
 /// The Mesh key's file name for a key type: v0.7.0's names.
@@ -533,11 +553,9 @@ fn apply(inv: &Inventory, h: &Host, t: &Todo) -> Result<Seen, String> {
 /// `roster setup`'s Mesh step, on the Hosts that take the Box key (`ready`).
 /// Returns how many Hosts aren't done; the next run finishes them.
 pub fn run(inv: &Inventory, ready: &[&Host], dry: bool) -> usize {
-    let pairs = pairs(inv);
-    for h in inv.hosts.iter().filter(|h| h.mesh == Some(true)) {
-        if let Some(why) = left_out(h) {
-            eprintln!("roster: {}: left out of the Mesh: {why}", h.name);
-        }
+    let (pairs, skipped) = pairs(inv);
+    for line in skipped {
+        eprintln!("{line}");
     }
     if dry {
         for &(a, b) in &pairs {

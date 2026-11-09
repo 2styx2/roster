@@ -61,6 +61,9 @@ pub struct Host {
     /// Canonical, as `Inventory::key_type`; the Inventory's unless set.
     pub key_type: String,
     pub mesh: Option<bool>,
+    /// `seen_as` (on the Host) or `mesh_dir`, when set: Mesh settings v1
+    /// doesn't follow yet.
+    pub mesh_unsupported: Option<&'static str>,
     /// In Inventory order; the entries roster can't use are left out.
     pub services: Vec<Service>,
     /// The web UI: the `web` service's URL, else the first service given one.
@@ -610,6 +613,11 @@ fn host(at: &[&str; 4], layers: [&Mapping; 3], box_key: &str) -> Result<Host, Ba
         os,
         key_type,
         mesh,
+        mesh_unsupported: match () {
+            _ if layers[0].contains_key("seen_as") => Some("seen_as"),
+            _ if first(&layers, "mesh_dir").is_some() => Some("mesh_dir"),
+            _ => None,
+        },
         services: Vec::new(),
         web: None,
         title: oneline(first(&layers, "title")),

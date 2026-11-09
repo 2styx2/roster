@@ -544,6 +544,74 @@ fn links_add_one_way_or_two_way_reach_across_groups() {
 }
 
 #[test]
+fn links_v1_cannot_follow_are_skipped_with_a_reason_in_plan_and_apply() {
+    let cases = [
+        (
+            "  - {from: box-b, to: ops-01, via: ops-02}\n",
+            "",
+            "roster: link box-b -> ops-01 via ops-02: skipped: via isn't supported yet\n",
+        ),
+        (
+            "  - {from: box-b, to: ops-01, both: true, via: ops-02}\n",
+            "",
+            "roster: link box-b <-> ops-01 via ops-02: skipped: via isn't supported yet\n",
+        ),
+        (
+            "  - {from: box-b, to: ops-01}\n",
+            "ops-01: {ip: 10.0.0.30, seen_as: [192.0.2.30]}",
+            "roster: ops-01: left out of the Mesh: seen_as isn't supported yet\n",
+        ),
+        (
+            "  - {from: ops-01, to: box-b}\n",
+            "ops-01: {ip: 10.0.0.30, mesh_dir: /srv/mesh}",
+            "roster: ops-01: left out of the Mesh: mesh_dir isn't supported yet\n",
+        ),
+        (
+            "  - {from: box-b, to: sw-01}\n",
+            "",
+            "roster: sw-01: left out of the Mesh: a Password Host (enroll: false)\n",
+        ),
+        (
+            "  - {from: win-01, to: ops-01, both: true}\n",
+            "",
+            "roster: win-01: left out of the Mesh: os: windows\n",
+        ),
+    ];
+    for (n, (links, ops, why)) in cases.iter().enumerate() {
+        let mut inventory = with_links(links);
+        if !ops.is_empty() {
+            inventory = inventory.replace("ops-01: 10.0.0.30", ops);
+        }
+        let s = sandbox(&format!("mesh-skip-{n}"), &inventory);
+        hosts_up(&s);
+        host(&s, "ops-02", "10.0.0.31");
+        // Only the group's own web: the Link adds nothing.
+        let out = s.roster(&["setup", "--dry-run"]);
+        assert_eq!(out.code, 0, "case {n}: {}", out.stderr);
+        assert_eq!(
+            arrows(&out.stdout),
+            "box-b -> box-c\nbox-c -> box-b\n",
+            "case {n}"
+        );
+        assert_eq!(
+            out.stderr.matches(why).count(),
+            1,
+            "case {n}: {}",
+            out.stderr
+        );
+        let out = s.roster(&["setup"]);
+        assert_eq!(out.code, 0, "case {n}: {}", out.stderr);
+        assert_eq!(
+            out.stderr.matches(why).count(),
+            1,
+            "case {n}: {}",
+            out.stderr
+        );
+        assert!(!out.stdout.contains("ops-"), "case {n}: {}", out.stdout);
+    }
+}
+
+#[test]
 fn a_link_reaches_one_way_and_removing_it_removes_its_lines() {
     let linked = format!("{INVENTORY}links:\n  - {{from: box-b, to: ops-01}}\n");
     let s = sandbox("mesh-link-apply", &linked);
