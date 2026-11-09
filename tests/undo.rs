@@ -82,13 +82,21 @@ fn undo_removes_only_this_boxs_key_lines_from_each_host() {
     let s = sandbox("undo-key-lines");
     let hosts = hosts_up(&s);
     for h in &hosts {
-        add(h.join(".ssh/authorized_keys"), &format!("{HAND_LINE}{OTHERS}{LEGACY}"));
+        add(
+            h.join(".ssh/authorized_keys"),
+            &format!("{HAND_LINE}{OTHERS}{LEGACY}"),
+        );
     }
     let out = s.roster(&["setup", "--undo"]);
     assert_eq!(out.code, 0, "{}\n{}", out.stdout, out.stderr);
     for h in &hosts {
         let keys = h.join(".ssh/authorized_keys");
-        assert_eq!(read(&keys), format!("{HAND_LINE}{OTHERS}"), "{}", h.display());
+        assert_eq!(
+            read(&keys),
+            format!("{HAND_LINE}{OTHERS}"),
+            "{}",
+            h.display()
+        );
         use std::os::unix::fs::PermissionsExt;
         let mode = std::fs::metadata(&keys).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
@@ -116,7 +124,11 @@ fn the_key_line_stays_until_the_mesh_is_gone_and_a_rerun_finishes() {
     let out = s.roster(&["setup", "--undo"]);
     chmod(&mesh, 0o700);
     assert_eq!(out.code, 1, "{}", out.stderr);
-    assert!(out.stderr.contains("roster: box-b: Mesh: failed"), "{}", out.stderr);
+    assert!(
+        out.stderr.contains("roster: box-b: Mesh: failed"),
+        "{}",
+        out.stderr
+    );
     let last = "roster: 1 Host not done; run `roster setup --undo` again to finish\n";
     assert!(out.stderr.ends_with(last), "{}", out.stderr);
     assert!(read(b.join(".ssh/authorized_keys")).contains("roster-managed:box-a"));
@@ -146,7 +158,11 @@ fn a_down_host_is_reported_and_a_rerun_finishes_it() {
     s.write("hosts/box-c/down", "");
     let out = s.roster(&["setup", "--undo"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
-    assert!(out.stderr.contains("roster: box-c: Mesh: down: "), "{}", out.stderr);
+    assert!(
+        out.stderr.contains("roster: box-c: Mesh: down: "),
+        "{}",
+        out.stderr
+    );
     assert_eq!(read(c.join(".ssh/authorized_keys")), BOX_LINE);
     assert_eq!(read(b.join(".ssh/authorized_keys")), "");
     assert_eq!(read(ops.join(".ssh/authorized_keys")), "");
@@ -162,7 +178,12 @@ fn undo_removes_the_box_files_roster_made_and_keeps_the_box_key() {
     let s = sandbox("undo-box-clean");
     hosts_up(&s);
     assert_eq!(s.roster(&["setup"]).code, 0);
-    for f in ["ROSTER.md", "CLAUDE.md", ".claude/settings.json", ".ssh/config"] {
+    for f in [
+        "ROSTER.md",
+        "CLAUDE.md",
+        ".claude/settings.json",
+        ".ssh/config",
+    ] {
         assert!(s.home.join(f).exists(), "{f}");
     }
     let out = s.roster(&["setup", "--undo"]);
@@ -237,7 +258,8 @@ fn files_roster_did_not_write_are_left_alone() {
     assert_eq!(read(s.home.join("ROSTER.md")), md);
     assert_eq!(read(s.home.join(".ssh/config.d/roster")), conf);
     assert!(
-        out.stderr.contains("ROSTER.md wasn't written by roster; left it alone"),
+        out.stderr
+            .contains("ROSTER.md wasn't written by roster; left it alone"),
         "{}",
         out.stderr
     );
@@ -299,7 +321,11 @@ fn box_files_stay_while_a_host_is_not_done() {
     s.write("hosts/box-c/down", "");
     let out = s.roster(&["setup", "--undo"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
-    for f in [".ssh/config.d/roster", ".ssh/roster_known_hosts", "ROSTER.md"] {
+    for f in [
+        ".ssh/config.d/roster",
+        ".ssh/roster_known_hosts",
+        "ROSTER.md",
+    ] {
         assert!(s.home.join(f).exists(), "{f} is needed by the rerun");
     }
 }
@@ -319,10 +345,19 @@ fn undo_removes_this_boxs_mesh_and_leaves_other_boxes_alone() {
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert!(read(c.join(".ssh/authorized_keys")).contains("roster-mesh:box-b@box-a"));
     for h in [&b, &c, &ops] {
-        add(h.join(".ssh/authorized_keys"), &format!("{HAND_LINE}{OTHERS}"));
+        add(
+            h.join(".ssh/authorized_keys"),
+            &format!("{HAND_LINE}{OTHERS}"),
+        );
     }
-    s.write("hosts/box-c/.ssh/roster-mesh/roster_mesh_rsa.pub", OTHER_KEY);
-    s.write("hosts/box-c/.ssh/roster-mesh/roster_mesh_rsa", "THEIR KEY\n");
+    s.write(
+        "hosts/box-c/.ssh/roster-mesh/roster_mesh_rsa.pub",
+        OTHER_KEY,
+    );
+    s.write(
+        "hosts/box-c/.ssh/roster-mesh/roster_mesh_rsa",
+        "THEIR KEY\n",
+    );
 
     let out = s.roster(&["setup", "--undo"]);
     assert_eq!(out.code, 0, "{}\n{}", out.stdout, out.stderr);
