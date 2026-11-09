@@ -125,9 +125,6 @@ impl Inventory {
         Ok(Inventory { path, ..inventory })
     }
 
-    /// The Hosts a TARGET names: Host and group names, comma-separated, in
-    /// the order given, each Host once. Unreviewed Hosts are included; the
-    /// caller skips them. An unknown name exits 1.
     /// Every variable a secret may come from: each `env:VAR` the Hosts and
     /// services name, and Bitwarden's.
     pub fn secret_vars(&self) -> Vec<String> {
@@ -143,6 +140,9 @@ impl Inventory {
         vars
     }
 
+    /// The Hosts a TARGET names: Host and group names, comma-separated, in
+    /// the order given, each Host once. Unreviewed Hosts are included; the
+    /// caller skips them. An unknown name exits 1.
     pub fn targets(&self, target: &str) -> Result<Vec<&Host>, Fail> {
         let mut found: Vec<&Host> = Vec::new();
         for word in target.split(',').map(str::trim).filter(|w| !w.is_empty()) {
@@ -162,7 +162,7 @@ impl Inventory {
             }
         }
         match found.is_empty() {
-            true => Err(crate::usage_error("run needs a TARGET: Hosts or groups")),
+            true => Err(crate::usage_error("needs a TARGET: Hosts or groups")),
             false => Ok(found),
         }
     }

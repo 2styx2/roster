@@ -62,6 +62,19 @@ fn a_closed_port_fails_and_ssh_is_not_tried() {
 }
 
 #[test]
+fn an_empty_target_is_a_usage_error_that_does_not_name_run() {
+    let s = sandbox("check-empty-target", &["box-a: 127.0.0.1".into()]);
+    let out = s.roster(&["check", ","]);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert!(
+        out.stderr.contains("needs a TARGET: Hosts or groups"),
+        "{}",
+        out.stderr
+    );
+    assert!(!out.stderr.contains("run"), "{}", out.stderr);
+}
+
+#[test]
 fn a_name_that_does_not_resolve_fails_at_dns() {
     let s = sandbox("check-dns", &["box-z: {ip: box-z.invalid}".into()]);
     let out = s.roster(&["check", "box-z"]);
