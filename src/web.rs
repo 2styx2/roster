@@ -77,18 +77,14 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
     let host = inv.hosts.iter().find(|h| &h.name == name);
     let host = host.ok_or_else(|| failed(format!("no Host named '{name}' in the Inventory")))?;
     // Without SERVICE: the one `ls` shows as the Host's web UI.
-    let (found, missing) = match service {
-        Some(n) => (Some(n), format!("{name} has no service '{n}'")),
-        None => (
-            host.web.as_ref(),
-            format!("{name} has no web service: name one"),
-        ),
-    };
     let svc = host.services.iter().find(|s| match service {
-        Some(_) => Some(&s.name) == found,
-        None => found.is_some() && s.url.as_ref() == found,
+        Some(n) => &s.name == n,
+        None => s.url.is_some() && s.url == host.web,
     });
-    let svc = svc.ok_or_else(|| failed(missing))?;
+    let svc = svc.ok_or_else(|| match service {
+        Some(n) => failed(format!("{name} has no service '{n}'")),
+        None => failed(format!("{name} has no web service: name one")),
+    })?;
     let what = format!("{name} {}", svc.name);
     let base = svc.url.as_deref().and_then(origin);
     let base = base.ok_or_else(|| failed(format!("{what} has no http(s) URL")))?;
