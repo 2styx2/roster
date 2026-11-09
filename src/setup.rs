@@ -144,7 +144,9 @@ fn claude_files(inv: &Inventory) -> Result<(), Fail> {
 /// The directory roster.yml is in, where ROSTER.md and the Claude files go.
 pub fn beside_inventory(inv: &Inventory) -> PathBuf {
     let yml = std::fs::canonicalize(&inv.path).unwrap_or(inv.path.clone());
-    yml.parent().unwrap_or(std::path::Path::new(".")).to_path_buf()
+    yml.parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf()
 }
 
 /// A file's text, or None when it's missing.
