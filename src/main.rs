@@ -1,6 +1,7 @@
 //! roster: know your network. See roster(1).
 
 mod atomic;
+mod claude;
 mod inventory;
 mod ls;
 mod pick;
@@ -23,7 +24,8 @@ commands:
   ls [--json] [--long] [FILTER]
                  list Hosts: name, group, address, access, title;
                  FILTER: names, groups, types or products, comma-separated
-  setup          make this Box's key and write the ssh config for the Hosts
+  setup          make this Box's key; write the ssh config for the Hosts and,
+                 next to roster.yml, ROSTER.md and the Claude files
   ssh HOST [ARGS]
                  ssh to an Enrolled Host by name; ARGS go to ssh unchanged
   help plugins   how `roster NAME` runs a roster-NAME plugin from PATH
