@@ -19,6 +19,15 @@ pub struct Inventory {
     pub key_type: String,
     pub hosts: Vec<Host>,
     pub links: Vec<Link>,
+    /// The groups in file order, with their own `title` and `description`.
+    pub groups: Vec<Group>,
+}
+
+/// A group as it describes itself; what its Hosts inherit is in each Host.
+pub struct Group {
+    pub name: String,
+    pub title: String,
+    pub description: String,
 }
 
 /// One `links:` entry. Each end names a Host or a group.
@@ -313,10 +322,16 @@ fn parse(doc: &Value) -> Result<Inventory, Bad> {
         }
     };
     let mut hosts = Vec::new();
+    let mut described = Vec::new();
     for (group, body) in groups {
         let group = text(group).unwrap_or_default();
         let g = &["groups", &group];
         let body = as_map(body, g, "a mapping")?.unwrap_or(&empty);
+        described.push(Group {
+            name: group.clone(),
+            title: oneline(body.get("title")),
+            description: oneline(body.get("description")),
+        });
         let members = as_map(&body["hosts"], &["groups", &group, "hosts"], "a mapping")?;
         // `hosts`, `title` and `description` describe the group; the rest is inherited.
         let inherited: Mapping = body
@@ -353,6 +368,7 @@ fn parse(doc: &Value) -> Result<Inventory, Bad> {
         key_type,
         links: links(&doc["links"], &hosts, &groups)?,
         hosts,
+        groups: described,
     })
 }
 

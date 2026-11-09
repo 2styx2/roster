@@ -2,8 +2,10 @@
 
 mod askpass;
 mod atomic;
+mod claude;
 mod inventory;
 mod ls;
+mod pick;
 mod plugin;
 mod setup;
 mod ssh;
@@ -16,13 +18,16 @@ const BUILTINS: &[&str] = &["ls", "setup", "ssh", "help"];
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-usage: roster [-c FILE] COMMAND [ARGS]
+usage: roster [-c FILE] [COMMAND [ARGS]]
 
 commands:
-  ls [--json] [FILTER]
+  (none)         pick Hosts with fzf and ssh to them: in tmux, Enter opens a
+                 window, ctrl-v a split, Tab-marked Hosts synchronized panes
+  ls [--json] [--long] [FILTER]
                  list Hosts: name, group, address, access, title;
                  FILTER: names, groups, types or products, comma-separated
-  setup          make this Box's key and write the ssh config for the Hosts
+  setup          make this Box's key; write the ssh config for the Hosts and,
+                 next to roster.yml, ROSTER.md and the Claude files
   ssh HOST [ARGS]
                  ssh to a Host by name; ARGS go to ssh unchanged; a Password
                  Host's auth password goes to ssh through askpass
@@ -72,6 +77,7 @@ fn run() -> Result<(), Fail> {
     let mut config = None;
     let mut command = None;
     let mut json = false;
+    let mut long = false; // `ls --long`
     let mut filter = None;
     let mut topic = false; // `help plugins`
     while let Some(arg) = parser.next().map_err(|e| usage_error(e.to_string()))? {
@@ -84,6 +90,7 @@ fn run() -> Result<(), Fail> {
                 config = Some(parser.value().map_err(|e| usage_error(e.to_string()))?);
             }
             Long("json") if command.as_deref() == Some("ls") => json = true,
+            Long("long") if command.as_deref() == Some("ls") => long = true,
             Value(v) if command.as_deref() == Some("ls") && filter.is_none() => {
                 filter = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }
@@ -124,7 +131,11 @@ fn run() -> Result<(), Fail> {
                     return Err(Fail { code: 1, msg });
                 }
             }
-            let render = if json { ls::json } else { ls::text };
+            let render = match (json, long) {
+                (true, _) => ls::json,
+                (_, true) => ls::long,
+                _ => ls::text,
+            };
             print!("{}", render(&inventory.hosts));
             Ok(())
         }
@@ -135,6 +146,6 @@ fn run() -> Result<(), Fail> {
             Ok(())
         }
         Some(other) => Err(usage_error(format!("unknown command '{other}'"))),
-        None => Err(usage_error("no command given")),
+        None => pick::run(&inventory::Inventory::open(config.map(Into::into))?),
     }
 }
