@@ -173,6 +173,22 @@ pub fn unlock() -> Result<(), Fail> {
     Ok(())
 }
 
+/// The vault's items and folders as JSON, after a `bw sync`, for the import.
+/// Only a session key already in the keyring is used: this never prompts.
+pub fn list() -> Result<[Zeroizing<Vec<u8>>; 2], String> {
+    let session = match stored() {
+        Ok(Some(session)) => session,
+        Ok(None) => return Err("Bitwarden is locked (`roster vault unlock`)".into()),
+        Err(_) => return Err("keyctl isn't installed, so there's no Bitwarden session".into()),
+    };
+    let env = [("BW_SESSION", session.as_str())];
+    bw(&["sync"], &env)?;
+    Ok([
+        bw(&["list", "items"], &env)?,
+        bw(&["list", "folders"], &env)?,
+    ])
+}
+
 /// `roster vault lock`: forget the session key and lock bw.
 pub fn lock() -> Result<(), Fail> {
     drop_legacy();

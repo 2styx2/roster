@@ -4,7 +4,8 @@
 # Appends its argv to $HOME/bw.log. `unlock --raw --passwordenv VAR` takes
 # the master password below and prints the session key below; `get item
 # NAME` needs that key in BW_SESSION; `lock` always works. Every call needs
-# --nointeraction.
+# --nointeraction. `sync`, `list items` (the items as a JSON array) and
+# `list folders` ($FAKE_BW_FOLDERS, default []) need the key too.
 if [ -z "$FAKE_BW_ITEMS" ]; then
   echo "fake bw: no fake vault configured: $*" >&2
   exit 99
@@ -29,6 +30,14 @@ case "$1 $2" in
     echo "Not found." >&2
     exit 1
   }
+  ;;
+"sync "* | "list items" | "list folders")
+  [ "$BW_SESSION" = "$session" ] || { echo "Vault is locked." >&2; exit 1; }
+  case "$1 $2" in
+  "sync "*) echo "Syncing complete." ;;
+  "list items") printf '%s\n' "$FAKE_BW_ITEMS" | paste -sd, - | sed 's/^/[/; s/$/]/' ;;
+  *) printf '%s\n' "${FAKE_BW_FOLDERS:-[]}" ;;
+  esac
   ;;
 "lock "*) echo "Your vault is locked." ;;
 *) echo "fake bw: unexpected: $*" >&2; exit 98 ;;
