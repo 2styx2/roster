@@ -2,6 +2,11 @@
 
 use crate::inventory::Host;
 
+/// `{"v": 1, "hosts": [...]}`. Fields are only ever added within `v`.
+pub fn json(hosts: &[Host]) -> String {
+    serde_json::json!({ "v": 1, "hosts": hosts }).to_string() + "\n"
+}
+
 /// Columns: name, group, address, access, title; padded, two spaces apart.
 pub fn text(hosts: &[Host]) -> String {
     let rows: Vec<[&str; 5]> = hosts
