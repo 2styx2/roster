@@ -1,10 +1,20 @@
-# roster (Rust)
+# roster
 
-> **Pre-release rewrite.** This replaces [2styx2/roster](https://github.com/2styx2/roster) (Python CLI + desktop app) with one Rust binary. Until it covers daily use, the old roster stays the one to run.
+> One small Rust binary. It replaced the Python CLI and desktop app, now archived at [2styx2/roster-archive](https://github.com/2styx2/roster-archive); the numbering carries on from its v0.7.0.
+
+## Install
+
+roster ships as source only. With a stable Rust toolchain:
+
+```sh
+cargo install --locked --git https://github.com/2styx2/roster --root ~/.local
+```
+
+Then `roster sync`, and see `roster.1` (`man ./roster.1`) for everything else.
 
 Your password manager knows the secrets. roster knows your network: the team's Hosts in one `roster.yml`, logins from the vault, and a terminal-first CLI that does one job per command and composes with fzf, tmux and ssh.
 
-## Commands (planned)
+## Commands
 
 | Command | What it does |
 |---|---|

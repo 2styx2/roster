@@ -1,11 +1,11 @@
 [package]
 name = "roster"
-version = "0.0.0"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
 description = "Know your network: Hosts from roster.yml, reached through ssh, fzf and tmux"
-repository = "https://github.com/2styx2/roster-rs"
+repository = "https://github.com/2styx2/roster"
 publish = false
 
 [dependencies]
