@@ -41,9 +41,13 @@ fn private_dir() -> io::Result<Dir> {
     Ok(Dir(path))
 }
 
+/// How long askpass listens for ssh's ask; after that ssh runs on without it.
+const TTL: Duration = Duration::from_secs(60);
+
 /// Run `ssh` (a prepared command) as a child that gets `secret` through
 /// askpass, and return its exit status. Serves at most one connection, then
-/// removes the socket's directory; a second ask from ssh fails.
+/// removes the socket's directory; a second ask from ssh fails, as does a
+/// first one after TTL.
 pub fn run(ssh: Command, secret: &Secret) -> io::Result<ExitStatus> {
     run_with(ssh, secret, |_| ())
 }
@@ -67,6 +71,7 @@ pub fn run_with(
         .env(VAR, &socket);
     let mut child = ssh.spawn()?;
     started(&mut child);
+    let until = std::time::Instant::now() + TTL;
     loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
@@ -78,6 +83,9 @@ pub fn run_with(
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                 if let Some(status) = child.try_wait()? {
                     return Ok(status);
+                }
+                if std::time::Instant::now() >= until {
+                    break; // no ask in time: stop listening, just wait
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
