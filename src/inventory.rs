@@ -121,6 +121,33 @@ impl Inventory {
         })?;
         Ok(Inventory { path, ..inventory })
     }
+
+    /// The Hosts a TARGET names: Host and group names, comma-separated, in
+    /// the order given, each Host once. Unreviewed Hosts are included; the
+    /// caller skips them. An unknown name exits 1.
+    pub fn targets(&self, target: &str) -> Result<Vec<&Host>, Fail> {
+        let mut found: Vec<&Host> = Vec::new();
+        for word in target.split(',').map(str::trim).filter(|w| !w.is_empty()) {
+            let hosts: Vec<_> = self.hosts.iter().filter(|h| h.name == word).collect();
+            let hosts = match hosts.is_empty() {
+                true => self.hosts.iter().filter(|h| h.group == word).collect(),
+                false => hosts,
+            };
+            if hosts.is_empty() {
+                let msg = format!("no Host or group named '{word}' in the Inventory");
+                return Err(Fail { code: 1, msg });
+            }
+            for h in hosts {
+                if !found.iter().any(|f| f.name == h.name) {
+                    found.push(h);
+                }
+            }
+        }
+        match found.is_empty() {
+            true => Err(crate::usage_error("run needs a TARGET: Hosts or groups")),
+            false => Ok(found),
+        }
+    }
 }
 
 /// The Inventory path by the lookup order, or None when no file is found.

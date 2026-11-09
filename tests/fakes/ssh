@@ -6,6 +6,9 @@
 # it printed to askpass.got (the only file a test password may land in) and
 # its exit status to askpass.status. $FAKE_SSH_ASKPASS_AGAIN asks a second
 # time, saving that status to askpass.again.
+# With $FAKE_SSH_RUN set, it skips `-o OPT` pairs, takes the Host and runs
+# the command after `--` with sh (FAKE_SSH_HOST set to the Host), unless the
+# Host is in $FAKE_SSH_DOWN (comma-separated): then it fails as ssh does.
 #
 # With $FAKE_HOSTS set it acts as a Host instead: $FAKE_HOSTS/NAME is Host
 # NAME's HOME (NAME is the first argument that isn't an option). A `down`
@@ -14,7 +17,7 @@
 # unless -o PubkeyAuthentication=no is given or a
 # `nokey` file is there. Without BatchMode=yes, the Host's `password` file
 # logs in when $SSH_ASKPASS prints it. Then the remote command runs with sh
-# in that HOME, stdin passed through.
+# in that HOME (after a `--`), stdin passed through.
 echo "$*" >>"$HOME/ssh.log"
 if [ -n "$FAKE_HOSTS" ]; then
   batch= pubkey=1
@@ -33,6 +36,7 @@ if [ -n "$FAKE_HOSTS" ]; then
   done
   name=$1
   shift
+  [ "$1" = -- ] && shift
   dir=$FAKE_HOSTS/$name
   if [ ! -d "$dir" ] || [ -e "$dir/down" ]; then
     echo "ssh: connect to host $name port 22: Connection timed out" >&2
@@ -68,5 +72,15 @@ if [ -n "$FAKE_SSH_ASKPASS" ]; then
       echo $? >"$HOME/askpass.again"
     fi
   fi
+fi
+if [ -n "$FAKE_SSH_RUN" ]; then
+  while [ "$1" = -o ]; do shift 2; done
+  FAKE_SSH_HOST=$1 && shift && export FAKE_SSH_HOST
+  [ "$1" = -- ] && shift
+  case ",$FAKE_SSH_DOWN," in *",$FAKE_SSH_HOST,"*)
+    echo "ssh: connect to host $FAKE_SSH_HOST port 22: Connection timed out" >&2
+    exit 255 ;;
+  esac
+  exec sh -c "$*"
 fi
 exit "${FAKE_SSH_EXIT:-0}"

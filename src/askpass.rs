@@ -8,7 +8,7 @@ use std::io::{self, Read, Write};
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
-use std::process::{Command, ExitStatus};
+use std::process::{Child, Command, ExitStatus};
 use std::time::Duration;
 use zeroize::Zeroizing;
 
@@ -41,7 +41,17 @@ fn private_dir() -> io::Result<Dir> {
 /// Run `ssh` (a prepared command) as a child that gets `secret` through
 /// askpass, and return its exit status. Serves at most one connection, then
 /// removes the socket's directory; a second ask from ssh fails.
-pub fn run(mut ssh: Command, secret: &Secret) -> io::Result<ExitStatus> {
+pub fn run(ssh: Command, secret: &Secret) -> io::Result<ExitStatus> {
+    run_with(ssh, secret, |_| ())
+}
+
+/// `run`, calling `started` with the child as soon as it is spawned, so the
+/// caller can take its piped output while askpass serves.
+pub fn run_with(
+    mut ssh: Command,
+    secret: &Secret,
+    started: impl FnOnce(&mut Child),
+) -> io::Result<ExitStatus> {
     let dir = private_dir()?;
     let socket = dir.0.join("s");
     let listener = UnixListener::bind(&socket)?;
@@ -53,6 +63,7 @@ pub fn run(mut ssh: Command, secret: &Secret) -> io::Result<ExitStatus> {
         .env("SSH_ASKPASS_REQUIRE", "force")
         .env(VAR, &socket);
     let mut child = ssh.spawn()?;
+    started(&mut child);
     loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
