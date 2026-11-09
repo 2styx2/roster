@@ -8,6 +8,14 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .B ls
 .RB [ \-\-json ]
 .br
+.B roster
+.RB [ \-c
+.IR FILE ]
+.I NAME
+.RI [ ARGS ...]
+.br
+.B roster help plugins
+.br
 .B roster \-h
 .SH DESCRIPTION
 .B roster
@@ -55,6 +63,80 @@ Within
 fields are only added, never renamed or removed.
 No secret is ever included.
 .RE
+.TP
+.B help plugins
+Print the plugin contract below, with an example.
+.B help
+alone prints usage.
+.TP
+.I NAME
+.RI [ ARGS ...]
+Any other name runs a plugin; see
+.BR PLUGINS .
+.SH PLUGINS
+Anyone can extend roster in any language, git style:
+.B roster
+.I NAME ARGS
+runs the first executable
+.BI roster\- NAME
+on
+.B PATH
+with
+.I ARGS
+unchanged.
+Options after
+.I NAME
+belong to the plugin;
+.B \-c
+.I FILE
+before it picks the Inventory.
+roster replaces itself with the plugin, so the plugin's exit status is
+roster's.
+.PP
+Built-in commands always win: a
+.B roster\-ls
+on
+.B PATH
+that would shadow
+.B ls
+is ignored with a warning.
+A name that is neither built in nor on
+.B PATH
+is a usage error (exit 2).
+.PP
+The plugin's environment adds:
+.TP
+.B ROSTER_CONFIG
+the resolved Inventory path, absolute; unset when no Inventory is found,
+since a plugin may not need one.
+.TP
+.B ROSTER_BIN
+roster's own path, to call back into it.
+.PP
+A plugin reads Hosts with
+.BR "\(dq$ROSTER_BIN\(dq ls \-\-json" ,
+whose
+.B \(dqv\(dq
+field versions the format (see
+.BR "ls \-\-json" ).
+Plugins never get secret values: not in the environment, not in
+.BR \-\-json .
+An example, saved as
+.B roster\-names
+on
+.B PATH
+and made executable:
+.PP
+.RS
+.nf
+#!/bin/sh
+"$ROSTER_BIN" ls | cut \-d' ' \-f1
+.fi
+.RE
+.PP
+More examples, unsupported, are in
+.I contrib/
+in the source.
 .SH INVENTORY
 The Inventory is the first of:
 .IP 1. 4
@@ -100,17 +182,35 @@ Success.
 .TP
 .B 2
 Usage error: an unknown command or option, or a missing value.
+An unknown command is one that is neither built in nor a
+.BI roster\- NAME
+on
+.BR PATH .
 .TP
 .B 3
 The Inventory won't load: no file was found, it can't be read, or it is
 invalid.
 The message names the file.
+.TP
+.B 126
+A plugin was found but can't be run.
+.PP
+A plugin's exit status is passed through unchanged.
 .SH ENVIRONMENT
 .TP
 .B ROSTER_CONFIG
 The Inventory path, when
 .B \-c
 is not given.
+Set by roster for a plugin to the resolved path.
+.TP
+.B ROSTER_BIN
+Set by roster for a plugin to roster's own path.
+.TP
+.B PATH
+Searched for
+.BI roster\- NAME
+plugins.
 .TP
 .B HOME
 Used to find
