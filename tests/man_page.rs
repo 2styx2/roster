@@ -111,7 +111,6 @@ const DOCUMENTED: &[&str] = &[
     // setup, the Host side (ticket #14)
     "\\-\\-dry\\-run",
     "ssh\\-keyscan \\-T 5",
-    "BatchMode=yes",
     "PubkeyAuthentication=no",
     "sh \\-s",
     "authorized_keys",
@@ -122,6 +121,19 @@ const DOCUMENTED: &[&str] = &[
     "aren't done and exits 1",
     "would install the Box key on",
     "read-only probe",
+    // run (ticket #12)
+    ".BI \"run \" \"TARGET \" \"\\-\\- \" CMD",
+    ".B run \\-\\-json",
+    "no Host or group named",
+    ": unreviewed",
+    "BatchMode=yes",
+    "ConnectTimeout=10",
+    "At most 32 Hosts",
+    "roster: failed on",
+    "\"exit\"",
+    "\"stdout\"",
+    "\"stderr\"",
+    "\"host\"",
 ];
 
 #[test]

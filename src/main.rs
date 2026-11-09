@@ -9,13 +9,14 @@ mod ls;
 mod pick;
 mod plugin;
 mod remote;
+mod run;
 mod setup;
 mod ssh;
 mod sshconf;
 mod vault;
 
 /// Commands roster runs itself; any other name is a plugin.
-const BUILTINS: &[&str] = &["ls", "setup", "ssh", "help"];
+const BUILTINS: &[&str] = &["ls", "run", "setup", "ssh", "help"];
 
 use std::process::ExitCode;
 
@@ -36,6 +37,10 @@ commands:
   ssh HOST [ARGS]
                  ssh to a Host by name; ARGS go to ssh unchanged; a Password
                  Host's auth password goes to ssh through askpass
+  run [--json] TARGET -- CMD
+                 run CMD on Hosts in parallel, lines prefixed `host: `;
+                 TARGET: Hosts and groups, comma-separated; exit 1 if any
+                 Host failed
   help plugins   how `roster NAME` runs a roster-NAME plugin from PATH
 
 options:
@@ -95,11 +100,21 @@ fn run() -> Result<(), Fail> {
             Short('c') | Long("config") => {
                 config = Some(parser.value().map_err(|e| usage_error(e.to_string()))?);
             }
-            Long("json") if command.as_deref() == Some("ls") => json = true,
+            Long("json") if matches!(command.as_deref(), Some("ls" | "run")) => json = true,
             Long("long") if command.as_deref() == Some("ls") => long = true,
             Long("dry-run") if command.as_deref() == Some("setup") => dry_run = true,
             Value(v) if command.as_deref() == Some("ls") && filter.is_none() => {
                 filter = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
+            }
+            Value(v) if command.as_deref() == Some("run") => {
+                let target = v.string().map_err(|e| usage_error(e.to_string()))?;
+                let mut rest = parser.raw_args().map_err(|e| usage_error(e.to_string()))?;
+                let cmd: Vec<_> = match rest.next() {
+                    Some(dash) if dash == "--" => rest.collect(),
+                    _ => return Err(usage_error("run needs -- before the command")),
+                };
+                let inventory = inventory::Inventory::open(config.map(Into::into))?;
+                return run::run(&inventory, &target, cmd, json);
             }
             Value(v) if command.as_deref() == Some("help") && v == "plugins" && !topic => {
                 topic = true
@@ -151,6 +166,7 @@ fn run() -> Result<(), Fail> {
             dry_run,
         ),
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
+        Some("run") => Err(usage_error("run needs a TARGET and -- CMD")),
         Some("help") => {
             print!("{}", if topic { plugin::HELP } else { USAGE });
             Ok(())
