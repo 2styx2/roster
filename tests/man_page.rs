@@ -59,6 +59,20 @@ const DOCUMENTED: &[&str] = &[
     "box_name",
     "key_path",
     "FILE:LINE: KEY: why",
+    // setup, the Box side (ticket #7)
+    ".B setup",
+    "ssh\\-keygen",
+    "roster\\-managed:",
+    "~/.ssh/config.d/roster",
+    "Include",
+    "PubkeyAuthentication no",
+    "ControlPersist 10m",
+    "atomically",
+    // ssh (ticket #7)
+    ".B ssh",
+    "no Host named",
+    "a Password Host",
+    "ssh's exit status",
 ];
 
 #[test]
