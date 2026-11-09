@@ -2,12 +2,15 @@
 
 mod askpass;
 mod atomic;
+mod bw;
 mod check;
 mod claude;
+mod hosts;
 mod inventory;
 mod ls;
 mod pick;
 mod plugin;
+mod remote;
 mod run;
 mod setup;
 mod ssh;
@@ -15,7 +18,7 @@ mod sshconf;
 mod vault;
 
 /// Commands roster runs itself; any other name is a plugin.
-const BUILTINS: &[&str] = &["check", "ls", "run", "setup", "ssh", "help"];
+const BUILTINS: &[&str] = &["check", "ls", "run", "setup", "ssh", "vault", "help"];
 
 use std::process::ExitCode;
 
@@ -28,8 +31,11 @@ commands:
   ls [--json] [--long] [FILTER]
                  list Hosts: name, group, address, access, title;
                  FILTER: names, groups, types or products, comma-separated
-  setup          make this Box's key; write the ssh config for the Hosts and,
-                 next to roster.yml, ROSTER.md and the Claude files
+  setup [--dry-run]
+                 make this Box's key; write the ssh config for the Hosts and,
+                 next to roster.yml, ROSTER.md and the Claude files; install
+                 the Box key on each Enrolled Host (vault password, once);
+                 --dry-run prints the plan and changes nothing
   ssh HOST [ARGS]
                  ssh to a Host by name; ARGS go to ssh unchanged; a Password
                  Host's auth password goes to ssh through askpass
@@ -40,6 +46,8 @@ commands:
   check [--json] [TARGET]
                  per Host: DNS, port, then a BatchMode ssh login (a Password
                  Host: its auth resolves); one line each; exit 1 on a failure
+  vault unlock   unlock Bitwarden for 12 h (session key in the kernel keyring)
+  vault lock     lock Bitwarden and forget the session key
   help plugins   how `roster NAME` runs a roster-NAME plugin from PATH
 
 options:
@@ -90,6 +98,8 @@ fn run() -> Result<(), Fail> {
     let mut filter = None;
     let mut topic = false; // `help plugins`
     let mut target = None; // `check [TARGET]`
+    let mut action = None; // `vault unlock|lock`
+    let mut dry_run = false; // `setup --dry-run`
     while let Some(arg) = parser.next().map_err(|e| usage_error(e.to_string()))? {
         match arg {
             Short('h') | Long("help") => {
@@ -103,6 +113,7 @@ fn run() -> Result<(), Fail> {
                 json = true
             }
             Long("long") if command.as_deref() == Some("ls") => long = true,
+            Long("dry-run") if command.as_deref() == Some("setup") => dry_run = true,
             Value(v) if command.as_deref() == Some("ls") && filter.is_none() => {
                 filter = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }
@@ -121,6 +132,9 @@ fn run() -> Result<(), Fail> {
             }
             Value(v) if command.as_deref() == Some("help") && v == "plugins" && !topic => {
                 topic = true
+            }
+            Value(v) if command.as_deref() == Some("vault") && action.is_none() => {
+                action = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }
             Value(v) if command.as_deref() == Some("ssh") => {
                 let host = v.string().map_err(|e| usage_error(e.to_string()))?;
@@ -168,9 +182,17 @@ fn run() -> Result<(), Fail> {
             let inventory = inventory::Inventory::open(config.map(Into::into))?;
             check::run(&inventory, target.as_deref(), json)
         }
-        Some("setup") => setup::run(&inventory::Inventory::open(config.map(Into::into))?),
+        Some("setup") => setup::run(
+            &inventory::Inventory::open(config.map(Into::into))?,
+            dry_run,
+        ),
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
         Some("run") => Err(usage_error("run needs a TARGET and -- CMD")),
+        Some("vault") => match action.as_deref() {
+            Some("unlock") => bw::unlock(),
+            Some("lock") => bw::lock(),
+            _ => Err(usage_error("vault needs unlock or lock")),
+        },
         Some("help") => {
             print!("{}", if topic { plugin::HELP } else { USAGE });
             Ok(())

@@ -17,6 +17,7 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .RB [ \-c
 .IR FILE ]
 .B setup
+.RB [ \-\-dry\-run ]
 .br
 .B roster
 .RB [ \-c
@@ -24,6 +25,9 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .B ssh
 .I HOST
 .RI [ ARGS ...]
+.br
+.B roster vault
+.BR unlock | lock
 .br
 .B roster
 .RB [ \-c
@@ -296,6 +300,85 @@ A file that isn't valid JSON is left alone with a warning.
 The user's own
 .I ~/.claude
 is never touched.
+.IP 7. 4
+The Hosts, one at a time, in Inventory order.
+A Host that is unreviewed, has
+.BR "os: windows" ,
+or is a Password Host
+.RB ( "enroll: false" )
+is skipped, with one line on stderr giving the reason, and is never
+contacted.
+For each other Host:
+.RS
+.IP a. 4
+Its host key is recorded:
+.B ssh\-keyscan \-T 5 \-p
+.I PORT IP
+is appended to
+.I ~/.ssh/roster_known_hosts
+(mode 0600), unless that file already has
+.I IP
+(or
+.BI [ IP ]: PORT
+off port 22).
+No answer means the Host is
+.BR down :
+it is reported and left for the next run.
+.IP b. 4
+The probe:
+.B ssh \-o BatchMode=yes \-o ControlMaster=no
+.I HOST
+.BR true .
+When it succeeds the Host takes the Box key and there is nothing to do.
+.IP c. 4
+Otherwise roster resolves the Host's
+.B auth
+(see
+.BR VAULT )
+and logs in once with that password through askpass, with
+.BR "\-o PubkeyAuthentication=no" .
+A script on stdin
+.RB ( "ssh " \fIHOST\fP " sh \-s" ;
+nothing else is in argv) appends the line
+.BI "TYPE KEY roster\-managed:" BOX
+to
+.IR ~/.ssh/authorized_keys ,
+making
+.I ~/.ssh
+mode 0700 if it's missing.
+The file is copied next to itself with its mode kept, the line is added
+to the copy, and the copy is moved into place.
+A line with the same key (whatever its tag, such as the legacy
+.BR fleet\-managed: )
+is never added twice.
+An
+.B auth
+of
+.BR agent ,
+.B key
+or
+.B none
+gives no password, so the key can't be installed that way.
+.RE
+.IP
+A Host that is down, refuses the password, or fails the install is
+reported on stderr and the run goes on with the next Host; at the end
+roster says how many Hosts aren't done and exits 1.
+Run
+.B setup
+again to finish them: Hosts already done cost one probe.
+.IP
+.B \-\-dry\-run
+prints the plan and changes nothing, here or on a Host:
+.BI "would write " PATH ,
+.B would make the Box key
+and, per Host,
+.B would install the Box key on
+.I HOST
+or
+.BR "would record the host key of " \fIHOST\fP " and install the Box key" .
+It runs no ssh\-keyscan and contacts a Host only with the read-only probe,
+and only when its host key is already recorded.
 .PP
 Every file is written atomically: to a temporary file in the same
 directory, flushed to disk, then renamed into place, so an interrupted run
@@ -517,6 +600,39 @@ says why, and
 says what wasn't checked. The exit status is as without
 .BR \-\-json .
 .RE
+.TP
+.B vault unlock
+Unlock Bitwarden once for the day.
+roster runs
+.BR "bw unlock \-\-raw \-\-passwordenv ROSTER_BW_MASTER" ,
+with the master password from
+.B BW_PASSWORD
+or asked on
+.IR /dev/tty ,
+and set only in bw's environment, never in an argument.
+The session key goes into the kernel keyring with
+.BR keyctl (1):
+a
+.B user
+key
+.B roster:bw\-session
+in the user keyring
+.BR @u ,
+which expires after 12 hours.
+It is never written to a file.
+Without
+.B keyctl
+nothing can be kept: roster says to install keyutils, exits 1, and each
+.B bw:
+reference asks for the master password.
+.TP
+.B vault lock
+Purge the key from the keyring and run
+.BR "bw lock" .
+.IP
+Both delete roster 0.7's
+.I ~/.config/roster/bw\-session
+file if it is there, and say so; roster never reads it.
 .TP
 .B help plugins
 Print the plugin contract below, with an example.
@@ -781,6 +897,42 @@ Ask on
 with echo off.
 The default.
 .TP
+.BI bw: ITEM\fR[\fB#\fIFIELD\fR]
+Bitwarden's item
+.IR ITEM ,
+through
+.BR "bw get item " \fIITEM\fP " \-\-nointeraction" ,
+with the session key from the keyring (see
+.BR "vault unlock" )
+as
+.B BW_SESSION
+in bw's environment only.
+Without
+.I FIELD
+it is the login password;
+.B #username
+is the login user name,
+.B #notes
+the notes, and any other
+.I FIELD
+a custom field, matched exactly, then ignoring case.
+A missing or expired key means Bitwarden is locked: roster says to run
+.B roster vault unlock
+and unlocks for this run only, with the master password from
+.B BW_PASSWORD
+or
+.IR /dev/tty ,
+storing nothing.
+roster keeps
+.B BW_PASSWORD
+out of ssh's environment.
+.IP
+Security: the session key is never on disk, in a backup or in a synced
+repo, and it expires on its own.
+But any process running as the same user can read it with
+.BR "keyctl print" ,
+just as it could read a file.
+.TP
 .BR agent ", " key ", " none
 No password.
 .PP
@@ -791,8 +943,6 @@ or
 is an error that says to use
 .B cmd:
 with that tool's CLI.
-.BI bw: ITEM
-(Bitwarden) is not built yet and fails the same way.
 .SH EXIT STATUS
 .TP
 .B 0
@@ -814,7 +964,12 @@ found a Host failing or was given an unknown
 .IR TARGET ;
 a
 .B setup
-step failed; or the picker can't run fzf or tmux.
+step failed, or a Host wasn't done (down, refused the password, or
+the install failed);
+.B vault unlock
+or
+.B lock
+failed, or found no keyctl; or the picker can't run fzf or tmux.
 .TP
 .B 2
 Usage error: an unknown command or option, or a missing value.
@@ -836,6 +991,17 @@ A plugin's exit status, and ssh's for
 .BR "roster ssh" ,
 is passed through unchanged.
 .SH ENVIRONMENT
+.TP
+.B BW_PASSWORD
+The Bitwarden master password, for
+.B vault unlock
+and a locked
+.B bw:
+reference; else it is asked on
+.IR /dev/tty .
+.TP
+.B BW_SESSION
+Set by roster in bw's environment only; roster ignores one you set.
 .TP
 .B ROSTER_CONFIG
 The Inventory path, when
@@ -886,7 +1052,9 @@ Gets the
 line, once.
 .TP
 .I ~/.ssh/roster_known_hosts
-roster's own known hosts, named in each Host block.
+roster's own known hosts, named in each Host block;
+.B setup
+appends what ssh\-keyscan finds.
 .TP
 .IR ROSTER.md ", " CLAUDE.md ", " .claude/settings.json
 Next to
