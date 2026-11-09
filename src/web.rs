@@ -48,19 +48,45 @@ fn origin(url: &str) -> Option<String> {
 
 pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
     let (name, service, method, path) = match &args.words[..] {
-        [h, s, m, p] => (h, s, m, p),
+        [h, s, m, p] => (h, Some(s), m, p),
+        [h, m, p] => (h, None, m, p),
         _ => return Err(usage_error("web needs HOST [SERVICE] METHOD PATH")),
     };
+    if method.is_empty() || !method.bytes().all(|b| b.is_ascii_uppercase()) {
+        return Err(usage_error(format!(
+            "METHOD '{method}' isn't like GET or POST"
+        )));
+    }
+    let leaves = path.starts_with("//") || path.contains("://") || path.contains("..");
+    if !path.starts_with('/')
+        || leaves
+        || path.contains(|c: char| c.is_whitespace() || c.is_control() || c == '\\')
+    {
+        let msg = "PATH must start with / and stay on the service's origin";
+        return Err(usage_error(format!("{msg}: no //, ://, .., spaces or \\")));
+    }
     let host = inv.hosts.iter().find(|h| &h.name == name);
     let host = host.ok_or_else(|| failed(format!("no Host named '{name}' in the Inventory")))?;
-    let svc = host.services.iter().find(|s| &s.name == service);
-    let svc = svc.ok_or_else(|| failed(format!("{name} has no service '{service}'")))?;
-    let base = svc.url.as_deref().and_then(origin).unwrap_or_default();
-    let what = format!("{name} {service}");
+    // Without SERVICE: the one `ls` shows as the Host's web UI.
+    let (found, missing) = match service {
+        Some(n) => (Some(n), format!("{name} has no service '{n}'")),
+        None => (
+            host.web.as_ref(),
+            format!("{name} has no web service: name one"),
+        ),
+    };
+    let svc = host.services.iter().find(|s| match service {
+        Some(_) => Some(&s.name) == found,
+        None => found.is_some() && s.url.as_ref() == found,
+    });
+    let svc = svc.ok_or_else(|| failed(missing))?;
+    let what = format!("{name} {}", svc.name);
+    let base = svc.url.as_deref().and_then(origin);
+    let base = base.ok_or_else(|| failed(format!("{what} has no http(s) URL")))?;
     let mut config = Zeroizing::new(String::new());
     let secret = match &svc.auth {
-        Some(auth) => vault::resolve(auth, &what)?,
-        None => None,
+        Some(auth) if svc.login != "none" => vault::resolve(auth, &what)?,
+        _ => None,
     };
     if let Some(secret) = &secret {
         let user = svc.user.as_deref().unwrap_or_default();

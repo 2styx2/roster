@@ -17,7 +17,8 @@ fn sandbox(name: &str) -> Sandbox {
          open: {port: 80, login: none}\n          \
          self: {port: 9443, scheme: https, verify: false, login: none}\n          \
          ssh-only: 2222\n      \
-         box-b: {ip: 10.0.0.6, web: \"https://10.0.0.6\", auth: env:API_PASS}\n",
+         box-b: {ip: 10.0.0.6, web: \"https://10.0.0.6\", auth: env:API_PASS}\n      \
+         box-c: 10.0.0.7\n",
     );
     s.set_env("API_PASS", PASSWORD);
     s
@@ -113,6 +114,80 @@ fn an_http_error_status_exits_1() {
     assert_eq!(out.stderr, "roster: box-a api: HTTP 404\n");
     s.set_env("FAKE_CURL_STATUS", "399");
     assert_eq!(s.roster(&["web", "box-a", "api", "GET", "/"]).code, 0);
+}
+
+#[test]
+fn a_path_that_could_leave_the_origin_is_refused() {
+    let s = sandbox("web-path");
+    for path in [
+        "v1/status",
+        "//10.0.0.66/x",
+        "/a/../b",
+        "/..",
+        "/x?next=http://10.0.0.66/",
+        "/a b",
+        "/a\\b",
+        "/a\nb",
+    ] {
+        let out = s.roster(&["web", "box-a", "api", "GET", path]);
+        assert_eq!(out.code, 2, "{path:?}: {}", out.stderr);
+        assert!(out.stderr.contains("PATH"), "{path:?}: {}", out.stderr);
+    }
+    assert_eq!(read(&s, "curl.log"), "", "curl never ran");
+}
+
+#[test]
+fn without_service_the_web_service_is_used() {
+    let s = sandbox("web-default");
+    let out = s.roster(&["web", "box-b", "GET", "/"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(calls(&s), [argv(&["-X", "GET", "https://10.0.0.6/"])]);
+    assert_eq!(
+        read(&s, "curl.stdin"),
+        format!("user = \"admin:{PASSWORD}\"\n"),
+        "the legacy web: field takes the Host's user and auth"
+    );
+}
+
+#[test]
+fn login_none_sends_no_credential() {
+    let s = sandbox("web-none");
+    let out = s.roster(&["web", "box-a", "open", "DELETE", "/x"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(calls(&s), [argv(&["-X", "DELETE", "http://10.0.0.5/x"])]);
+    assert_eq!(read(&s, "curl.stdin"), "");
+}
+
+#[test]
+fn unknown_hosts_services_and_bad_words_stop_before_curl() {
+    let s = sandbox("web-unknown");
+    let cases: [(&[&str], i32, &str); 7] = [
+        (&["web", "box-z", "GET", "/"], 1, "no Host named 'box-z'"),
+        (
+            &["web", "box-a", "nope", "GET", "/"],
+            1,
+            "box-a has no service 'nope'",
+        ),
+        (
+            &["web", "box-a", "ssh-only", "GET", "/"],
+            1,
+            "box-a ssh-only has no http(s) URL",
+        ),
+        (
+            &["web", "box-c", "GET", "/"],
+            1,
+            "box-c has no web service: name one",
+        ),
+        (&["web", "box-a", "api", "get", "/"], 2, "METHOD"),
+        (&["web", "box-a", "api", "-X", "/"], 2, "-X"),
+        (&["web", "box-a"], 2, "web needs HOST [SERVICE] METHOD PATH"),
+    ];
+    for (args, code, msg) in cases {
+        let out = s.roster(args);
+        assert_eq!(out.code, code, "{args:?}: {}", out.stderr);
+        assert!(out.stderr.contains(msg), "{args:?}: {}", out.stderr);
+    }
+    assert_eq!(read(&s, "curl.log"), "", "curl never ran");
 }
 
 #[test]
