@@ -181,6 +181,15 @@ const DOCUMENTED: &[&str] = &[
     ".B seen_as",
     ".B mesh_dir",
     "via isn't supported yet",
+    // setup --undo (ticket #17)
+    ".B setup \\-\\-undo",
+    ".RB [ \\-\\-undo ]",
+    ".BI fleet\\-managed: BOX",
+    "cuts off roster's own way in",
+    "kept the Box key",
+    "deleted by hand",
+    ".B setup \\-\\-undo \\-\\-dry\\-run",
+    "Mesh cleanup failed",
     // web (ticket #18)
     ".BI \"web \" \"HOST \"",
     "curl (1)",
