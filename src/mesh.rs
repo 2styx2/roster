@@ -156,17 +156,36 @@ pub fn left_out(h: &Host) -> Option<&'static str> {
 
 /// Who reaches whom, as (source, peer) indexes into `inv.hosts`: the Hosts
 /// of a group with `mesh: true` (from `defaults`, the group or the Host;
-/// `mesh: false` opts out) reach each other. Links (#16) add their pairs here.
+/// `mesh: false` opts out) reach each other. Each Link adds its ends' pairs,
+/// both ways with `both: true`.
 pub fn pairs(inv: &Inventory) -> BTreeSet<(usize, usize)> {
     let hosts = &inv.hosts;
+    let ok = |i: usize| hosts[i].mesh != Some(false) && left_out(&hosts[i]).is_none();
     let meshed: Vec<usize> = (0..hosts.len())
-        .filter(|&i| hosts[i].mesh == Some(true) && left_out(&hosts[i]).is_none())
+        .filter(|&i| hosts[i].mesh == Some(true) && ok(i))
         .collect();
     let mut out = BTreeSet::new();
     for &a in &meshed {
         for &b in &meshed {
             if a != b && hosts[a].group == hosts[b].group {
                 out.insert((a, b));
+            }
+        }
+    }
+    // A Link's end: the Host of that name, or every Host of that group.
+    let end = |name: &str| -> Vec<usize> {
+        let host = hosts.iter().position(|h| h.name == name);
+        (0..hosts.len())
+            .filter(|&i| host.map_or(hosts[i].group == name, |h| h == i) && ok(i))
+            .collect()
+    };
+    for l in &inv.links {
+        for a in end(&l.from) {
+            for b in end(&l.to).into_iter().filter(|&b| b != a) {
+                out.insert((a, b));
+                if l.both {
+                    out.insert((b, a));
+                }
             }
         }
     }
