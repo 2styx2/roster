@@ -50,7 +50,7 @@ if [ -n "$FAKE_HOSTS" ]; then
     for pub in "$HOME"/.ssh/*.pub; do
       [ -f "$pub" ] || continue
       key=$(cut -d' ' -f2 "$pub")
-      grep -qF -- " $key" "$dir/.ssh/authorized_keys" && ok=1
+      grep -v '^[[:space:]]*#' "$dir/.ssh/authorized_keys" | grep -qF -- " $key" && ok=1
     done
   fi
   if [ -z "$ok" ] && [ -z "$batch" ] && [ -n "$SSH_ASKPASS" ] && [ -f "$dir/password" ]; then

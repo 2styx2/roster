@@ -181,6 +181,19 @@ fn a_key_already_there_but_not_taken_is_not_added_twice() {
 }
 
 #[test]
+fn a_commented_out_copy_of_the_key_is_not_present() {
+    let s = sandbox("hosts-commented");
+    host(&s, "box-b", "10.0.0.6");
+    host(&s, "box-c", "10.0.0.7");
+    let old = "# ssh-ed25519 AAAAfake roster-managed:box-a\n";
+    let ak = s.write("hosts/box-b/.ssh/authorized_keys", old);
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(read(&ak), format!("{old}{BOX_LINE}"));
+    assert!(out.stdout.contains("installed the Box key on box-b\n"));
+}
+
+#[test]
 fn a_wrong_password_is_reported_and_no_password_leaks() {
     let s = sandbox("hosts-wrong-pw");
     let b = host(&s, "box-b", "10.0.0.6");
