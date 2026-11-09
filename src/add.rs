@@ -154,8 +154,24 @@ pub fn save(inv: &Inventory, h: &NewHost) -> Result<(), Fail> {
     let path = &inv.path;
     let text = std::fs::read_to_string(path).map_err(|e| fail(e.to_string()))?;
     let text = insert(&text, &h.group, &h.line()).map_err(fail)?;
-    Inventory::load(path.clone(), &text)
+    let new = Inventory::load(path.clone(), &text)
         .map_err(|e| fail(format!("the result won't load: {}", e.msg)))?;
+    // No second Host for one login: the same address, port and user as a
+    // Host already there (resolved through defaults and the group). Another
+    // user, or another port, is another login and allowed.
+    let login = |o: &crate::inventory::Host| (o.ip.to_lowercase(), o.port, o.user.clone());
+    if let Some(added) = new.hosts.iter().find(|o| o.name == h.name) {
+        if let Some(twin) = new
+            .hosts
+            .iter()
+            .find(|o| o.name != h.name && login(o) == login(added))
+        {
+            return Err(fail(format!(
+                "{} is already {}:{} as {}",
+                twin.name, added.ip, added.port, added.user
+            )));
+        }
+    }
     atomic::write(path, text.as_bytes(), 0o600).map_err(|e| fail(e.to_string()))
 }
 
