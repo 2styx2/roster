@@ -108,6 +108,20 @@ const DOCUMENTED: &[&str] = &[
     "exactly one connection",
     "passphrase",
     "won't resolve",
+    // setup, the Host side (ticket #14)
+    "\\-\\-dry\\-run",
+    "ssh\\-keyscan \\-T 5",
+    "BatchMode=yes",
+    "PubkeyAuthentication=no",
+    "sh \\-s",
+    "authorized_keys",
+    "fleet\\-managed:",
+    "os: windows",
+    "enroll: false",
+    ".BR down",
+    "aren't done and exits 1",
+    "would install the Box key on",
+    "read-only probe",
 ];
 
 #[test]
