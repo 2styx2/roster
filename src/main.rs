@@ -2,6 +2,10 @@
 
 mod inventory;
 mod ls;
+mod plugin;
+
+/// Commands roster runs itself; any other name is a plugin.
+const BUILTINS: &[&str] = &["ls", "help"];
 
 use std::process::ExitCode;
 
@@ -12,6 +16,7 @@ commands:
   ls [--json] [FILTER]
                  list Hosts: name, group, address, access, title;
                  FILTER: names, groups, types or products, comma-separated
+  help plugins   how `roster NAME` runs a roster-NAME plugin from PATH
 
 options:
   -c FILE        the Inventory (default: $ROSTER_CONFIG, ./roster.yml,
@@ -53,6 +58,7 @@ fn run() -> Result<(), Fail> {
     let mut command = None;
     let mut json = false;
     let mut filter = None;
+    let mut topic = false; // `help plugins`
     while let Some(arg) = parser.next().map_err(|e| usage_error(e.to_string()))? {
         match arg {
             Short('h') | Long("help") => {
@@ -66,8 +72,22 @@ fn run() -> Result<(), Fail> {
             Value(v) if command.as_deref() == Some("ls") && filter.is_none() => {
                 filter = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }
+            Value(v) if command.as_deref() == Some("help") && v == "plugins" && !topic => {
+                topic = true
+            }
             Value(v) if command.is_none() => {
-                command = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
+                let name = v.string().map_err(|e| usage_error(e.to_string()))?;
+                if !BUILTINS.contains(&name.as_str()) {
+                    let rest = parser.raw_args().map_err(|e| usage_error(e.to_string()))?;
+                    return Err(plugin::exec(&name, config.map(Into::into), rest.collect()));
+                }
+                if let Some(shadow) = plugin::find(&name) {
+                    eprintln!(
+                        "roster: warning: {} is ignored: '{name}' is built-in",
+                        shadow.display()
+                    );
+                }
+                command = Some(name)
             }
             _ => return Err(usage_error(arg.unexpected().to_string())),
         }
@@ -84,6 +104,10 @@ fn run() -> Result<(), Fail> {
             }
             let render = if json { ls::json } else { ls::text };
             print!("{}", render(&inventory.hosts));
+            Ok(())
+        }
+        Some("help") => {
+            print!("{}", if topic { plugin::HELP } else { USAGE });
             Ok(())
         }
         Some(other) => Err(usage_error(format!("unknown command '{other}'"))),
