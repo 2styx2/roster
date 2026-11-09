@@ -112,7 +112,7 @@ fn keyscan(h: &Host) -> Option<String> {
 /// Err is a one-line message naming the Host.
 fn install(inv: &Inventory, h: &Host, memo: &mut vault::Memo) -> Result<(), String> {
     let name = &h.name;
-    let line = box_line(inv)?;
+    let line = box_line(inv, h)?;
     let Some(secret) = memo.resolve(&h.auth, name).map_err(|f| f.msg)? else {
         return Err(format!(
             "{name}: doesn't take the Box key, and auth: {} gives no password to install it with",
@@ -140,9 +140,9 @@ fn install(inv: &Inventory, h: &Host, memo: &mut vault::Memo) -> Result<(), Stri
     }
 }
 
-/// `TYPE KEY roster-managed:BOX`, from the Box key's `.pub`.
-fn box_line(inv: &Inventory) -> Result<String, String> {
-    let path = expand(&format!("{}.pub", inv.key_path));
+/// `TYPE KEY roster-managed:BOX`, from the `.pub` of `h`'s Box key.
+fn box_line(inv: &Inventory, h: &Host) -> Result<String, String> {
+    let path = expand(&format!("{}.pub", inv.key_of(h)));
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut fields = text.split_whitespace();
     match (fields.next(), fields.next()) {

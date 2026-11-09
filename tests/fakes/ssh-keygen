@@ -2,13 +2,15 @@
 # Fake ssh-keygen: appends its argv to $HOME/ssh-keygen.log and writes a
 # made-up key pair to the -f FILE, tagged with the -C comment. On a fake Host
 # (FAKE_SSH_HOST set by fake ssh) the key is that Host's own: AAAAmesh-NAME.
+# A Box key of another type than ed25519 (-t) is AAAAfake-TYPE.
 # With -y it prints FILE's public key (FILE.pub's line) and writes nothing.
 echo "$*" >>"$HOME/ssh-keygen.log"
-file= comment= public=
+file= comment= public= type=ed25519
 while [ $# -gt 0 ]; do
 	case $1 in
 	-f) file=$2; shift ;;
 	-C) comment=$2; shift ;;
+	-t) type=$2; shift ;;
 	-P) shift ;;
 	-y) public=1 ;;
 	esac
@@ -21,6 +23,10 @@ if [ -n "$public" ]; then
 fi
 echo "FAKE PRIVATE KEY" >"$file"
 chmod 600 "$file"
-key=AAAAfake
-[ -z "$FAKE_SSH_HOST" ] || key=AAAAmesh-$FAKE_SSH_HOST
-echo "ssh-ed25519 $key $comment" >"$file.pub"
+alg=ssh-ed25519 key=AAAAfake
+case $type in
+ecdsa) alg=ecdsa-sha2-nistp384 key=AAAAfake-ecdsa ;;
+rsa) alg=ssh-rsa key=AAAAfake-rsa ;;
+esac
+[ -z "$FAKE_SSH_HOST" ] || alg=ssh-ed25519 key=AAAAmesh-$FAKE_SSH_HOST
+echo "$alg $key $comment" >"$file.pub"
