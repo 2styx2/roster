@@ -71,6 +71,10 @@ fn unlock_now(what: &str) -> Result<Zeroizing<String>, Fail> {
         Ok(v) => Zeroizing::new(v),
         Err(_) => vault::ask("Bitwarden master password", what)?,
     };
+    // bw reads an empty --passwordenv as unset and gives a confusing error.
+    if master.is_empty() {
+        return Err(failed(format!("{what}: no master password given")));
+    }
     let args = ["unlock", "--raw", "--passwordenv", MASTER_VAR];
     let out = bw(&args, &[(MASTER_VAR, &master)]).map_err(|e| failed(format!("{what}: {e}")))?;
     let session = Zeroizing::new(String::from_utf8_lossy(&out).trim().to_string());

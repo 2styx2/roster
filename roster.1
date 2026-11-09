@@ -953,6 +953,12 @@ with the master password from
 or asked on
 .IR /dev/tty ,
 and set only in bw's environment, never in an argument.
+An empty master password fails at once with
+.IR "no master password given" ,
+before bw runs.
+Run it from a terminal: without one there is no
+.I /dev/tty
+to ask on.
 The session key goes into the kernel keyring with
 .BR keyctl (1):
 a

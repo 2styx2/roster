@@ -172,6 +172,22 @@ fn a_wrong_master_password_fails_and_stores_nothing() {
 }
 
 #[test]
+fn an_empty_master_password_is_refused_before_bw_runs() {
+    let mut s = sandbox("bw-empty", "bw:sw-01");
+    s.set_env("BW_PASSWORD", "");
+    let out = s.roster(&["vault", "unlock"]);
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr
+            .contains("roster: vault unlock: no master password given"),
+        "{}",
+        out.stderr
+    );
+    assert!(!read(&s, "bw.log").contains("unlock"), "bw unlock ran");
+    assert!(!read(&s, "keyctl.log").contains("padd"));
+}
+
+#[test]
 fn lock_purges_the_key_and_locks_bw() {
     let s = sandbox("bw-lock", "bw:sw-01");
     unlock(&s);
