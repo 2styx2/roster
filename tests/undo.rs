@@ -100,6 +100,63 @@ fn undo_removes_only_this_boxs_key_lines_from_each_host() {
     );
 }
 
+fn chmod(path: impl AsRef<Path>, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+#[test]
+fn the_key_line_stays_until_the_mesh_is_gone_and_a_rerun_finishes() {
+    let s = sandbox("undo-order");
+    let [b, c, _] = hosts_up(&s);
+    assert_eq!(s.roster(&["setup"]).code, 0);
+    // box-b's Mesh key can't be deleted: its Mesh cleanup fails.
+    let mesh = b.join(".ssh/roster-mesh");
+    chmod(&mesh, 0o500);
+    let out = s.roster(&["setup", "--undo"]);
+    chmod(&mesh, 0o700);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(out.stderr.contains("roster: box-b: Mesh: failed"), "{}", out.stderr);
+    let last = "roster: 1 Host not done; run `roster setup --undo` again to finish\n";
+    assert!(out.stderr.ends_with(last), "{}", out.stderr);
+    assert!(read(b.join(".ssh/authorized_keys")).contains("roster-managed:box-a"));
+    assert!(!read(c.join(".ssh/authorized_keys")).contains("box-a"));
+
+    let out = s.roster(&["setup", "--undo"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(!mesh.exists());
+    assert_eq!(read(b.join(".ssh/authorized_keys")), "");
+    assert!(
+        out.stdout.contains("box-b: removed the Box key\n"),
+        "{}",
+        out.stdout
+    );
+    assert!(!out.stdout.contains("box-c:"), "{}", out.stdout);
+
+    // Done: a rerun reaches no Host and changes nothing.
+    let out = s.roster(&["setup", "--undo"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(!out.stdout.contains("remove"), "{}", out.stdout);
+}
+
+#[test]
+fn a_down_host_is_reported_and_a_rerun_finishes_it() {
+    let s = sandbox("undo-down");
+    let [b, c, ops] = hosts_up(&s);
+    s.write("hosts/box-c/down", "");
+    let out = s.roster(&["setup", "--undo"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(out.stderr.contains("roster: box-c: Mesh: down: "), "{}", out.stderr);
+    assert_eq!(read(c.join(".ssh/authorized_keys")), BOX_LINE);
+    assert_eq!(read(b.join(".ssh/authorized_keys")), "");
+    assert_eq!(read(ops.join(".ssh/authorized_keys")), "");
+
+    std::fs::remove_file(c.join("down")).unwrap();
+    let out = s.roster(&["setup", "--undo"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(read(c.join(".ssh/authorized_keys")), "");
+}
+
 const OTHER_KEY: &str = "ssh-rsa AAAAother roster-mesh:box-c@box-z\n";
 
 #[test]
