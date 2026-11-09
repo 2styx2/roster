@@ -507,7 +507,23 @@ fn visit(inv: &Inventory, h: &Host, vars: &[(&str, &str)], script: &str) -> Resu
     match ran.code {
         0 => parse(&ran.stdout).ok_or_else(|| "its report was cut short".into()),
         255 => Err(format!("down: {}", ran.why())),
-        code => Err(format!("failed ({code}): {}", ran.why())),
+        code => Err(format!(
+            "failed ({code}): {}{}",
+            ran.why(),
+            windows_hint(&ran.stderr)
+        )),
+    }
+}
+
+/// When a Host's shell isn't sh (PowerShell or cmd say so in their own
+/// words), the likely fix: mark it `os: windows`, which the Mesh leaves out.
+fn windows_hint(stderr: &str) -> &'static str {
+    let windows =
+        stderr.contains("CommandNotFoundException") || stderr.contains("is not recognized as");
+    if windows {
+        " (a Windows Host? give it `os: windows`)"
+    } else {
+        ""
     }
 }
 

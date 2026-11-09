@@ -110,7 +110,7 @@ fn scratch() -> io::Result<File> {
     Ok(file)
 }
 
-/// Does `host` take the Box key? `ssh -o BatchMode=yes HOST true`: no
+/// Does `host` take the Box key? `ssh -o BatchMode=yes HOST exit`: no
 /// password, no question, nothing changed on the Host.
 pub fn accepts_key(host: &str) -> bool {
     ssh()
@@ -120,7 +120,8 @@ pub fn accepts_key(host: &str) -> bool {
             "-o",
             "ControlMaster=no",
             host,
-            "true",
+            // Every shell has `exit`; PowerShell and cmd have no `true`.
+            "exit",
         ])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())

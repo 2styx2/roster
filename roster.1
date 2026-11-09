@@ -362,6 +362,16 @@ or is a Password Host
 .RB ( "enroll: false" )
 is skipped, with one line on stderr giving the reason, and is never
 contacted.
+Mark a Windows Host
+.B "os: windows"
+(a
+.B type:
+is only a label): its shell has no sh, so the Mesh's scripts fail there
+with
+.IR "(a Windows Host? give it \`os: windows\`)" .
+The probe that asks whether a Host takes the Box key runs
+.BR exit ,
+which every shell has.
 For each other Host:
 .RS
 .IP a. 4

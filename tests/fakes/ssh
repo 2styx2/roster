@@ -64,6 +64,13 @@ if [ -n "$FAKE_HOSTS" ]; then
     exit 255
   fi
   [ -e "$dir/mute" ] && exit 0
+  # A `powershell` file there: a Windows Host's shell, which has `exit` but
+  # no `true` (and no sh for remote scripts).
+  if [ -e "$dir/powershell" ]; then
+    [ "$*" = exit ] && exit 0
+    echo "    + FullyQualifiedErrorId : CommandNotFoundException" >&2
+    exit 1
+  fi
   cd "$dir" || exit 255
   env >>"$HOME/ssh-hosts.env"
   HOME=$dir FAKE_SSH_HOST=$name exec sh -c "$*"
