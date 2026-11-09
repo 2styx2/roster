@@ -1,11 +1,14 @@
 //! roster: know your network. See roster(1).
 
+mod atomic;
 mod inventory;
 mod ls;
 mod plugin;
+mod setup;
+mod sshconf;
 
 /// Commands roster runs itself; any other name is a plugin.
-const BUILTINS: &[&str] = &["ls", "help"];
+const BUILTINS: &[&str] = &["ls", "setup", "help"];
 
 use std::process::ExitCode;
 
@@ -106,6 +109,7 @@ fn run() -> Result<(), Fail> {
             print!("{}", render(&inventory.hosts));
             Ok(())
         }
+        Some("setup") => setup::run(&inventory::Inventory::open(config.map(Into::into))?),
         Some("help") => {
             print!("{}", if topic { plugin::HELP } else { USAGE });
             Ok(())
