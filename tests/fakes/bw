@@ -1,0 +1,5 @@
+#!/bin/sh
+# Tripwire: shadows any real bw on PATH, so no test can reach a real vault.
+# The ticket that adds the Vault turns this into a configurable fake.
+echo "fake bw: no fake vault configured: $*" >&2
+exit 99
