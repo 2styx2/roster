@@ -202,3 +202,23 @@ fn setup_without_an_inventory_exits_3() {
     assert_eq!(out.code, 3, "{}", out.stderr);
     assert_eq!(read(&s, "ssh-keygen.log"), "");
 }
+
+#[test]
+fn a_symlinked_ssh_config_stays_a_link_and_its_target_gets_the_include() {
+    let s = Sandbox::new("setup-symlink");
+    s.write("roster.yml", INVENTORY);
+    let mine = "Host *\n    ServerAliveInterval 60\n";
+    let target = s.write("dotfiles/ssh_config", mine);
+    std::fs::create_dir_all(s.home.join(".ssh")).unwrap();
+    let link = s.home.join(".ssh/config");
+    std::os::unix::fs::symlink("../dotfiles/ssh_config", &link).unwrap();
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(link.symlink_metadata().unwrap().is_symlink());
+    let include = format!(
+        "Include \"{}\"\n",
+        s.home.join(".ssh/config.d/roster").display()
+    );
+    let now = std::fs::read_to_string(target).unwrap();
+    assert_eq!(now, format!("{include}{mine}"));
+}

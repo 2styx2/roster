@@ -659,3 +659,19 @@ fn a_file_without_a_final_newline_is_read_whole() {
     assert_eq!(read(b.join("ROSTER.md")), "my own notes");
     assert!(b.join(".ssh/roster-mesh/config").exists());
 }
+
+#[test]
+fn a_symlinked_file_on_a_host_stays_a_link() {
+    let s = sandbox("mesh-symlink", INVENTORY);
+    let [_, c, ..] = hosts_up(&s);
+    let keys = c.join(".ssh/authorized_keys");
+    std::fs::rename(&keys, c.join("keys")).unwrap();
+    std::os::unix::fs::symlink("../keys", &keys).unwrap();
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(keys.symlink_metadata().unwrap().is_symlink());
+    assert_eq!(
+        read(c.join("keys")),
+        BOX_LINE.to_string() + &peer_line("box-b", "10.0.0.6")
+    );
+}

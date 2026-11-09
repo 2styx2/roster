@@ -15,10 +15,12 @@ t= d=
 trap 'rm -rf "$t" "$d"' EXIT
 
 # put FILE MODE CMD...: CMD's output becomes FILE; an existing FILE keeps
-# its mode, a new one gets MODE. Nothing moves unless CMD succeeded.
+# its mode, a new one gets MODE. Nothing moves unless CMD succeeded. A
+# symlink stays one: its target is written.
 put() {
 	f=$1 m=$2
 	shift 2
+	if [ -L "$f" ]; then f=$(readlink -f "$f"); fi
 	t=$f.roster-$$
 	if [ -f "$f" ]; then cp -p "$f" "$t"; else : >"$t" && chmod "$m" "$t"; fi
 	"$@" >"$t"
