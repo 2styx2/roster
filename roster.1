@@ -17,6 +17,7 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .RB [ \-c
 .IR FILE ]
 .B setup
+.RB [ \-\-dry\-run ]
 .br
 .B roster
 .RB [ \-c
@@ -279,6 +280,85 @@ A file that isn't valid JSON is left alone with a warning.
 The user's own
 .I ~/.claude
 is never touched.
+.IP 7. 4
+The Hosts, one at a time, in Inventory order.
+A Host that is unreviewed, has
+.BR "os: windows" ,
+or is a Password Host
+.RB ( "enroll: false" )
+is skipped, with one line on stderr giving the reason, and is never
+contacted.
+For each other Host:
+.RS
+.IP a. 4
+Its host key is recorded:
+.B ssh\-keyscan \-T 5 \-p
+.I PORT IP
+is appended to
+.I ~/.ssh/roster_known_hosts
+(mode 0600), unless that file already has
+.I IP
+(or
+.BI [ IP ]: PORT
+off port 22).
+No answer means the Host is
+.BR down :
+it is reported and left for the next run.
+.IP b. 4
+The probe:
+.B ssh \-o BatchMode=yes \-o ControlMaster=no
+.I HOST
+.BR true .
+When it succeeds the Host takes the Box key and there is nothing to do.
+.IP c. 4
+Otherwise roster resolves the Host's
+.B auth
+(see
+.BR VAULT )
+and logs in once with that password through askpass, with
+.BR "\-o PubkeyAuthentication=no" .
+A script on stdin
+.RB ( "ssh " \fIHOST\fP " sh \-s" ;
+nothing else is in argv) appends the line
+.BI "TYPE KEY roster\-managed:" BOX
+to
+.IR ~/.ssh/authorized_keys ,
+making
+.I ~/.ssh
+mode 0700 if it's missing.
+The file is copied next to itself with its mode kept, the line is added
+to the copy, and the copy is moved into place.
+A line with the same key (whatever its tag, such as the legacy
+.BR fleet\-managed: )
+is never added twice.
+An
+.B auth
+of
+.BR agent ,
+.B key
+or
+.B none
+gives no password, so the key can't be installed that way.
+.RE
+.IP
+A Host that is down, refuses the password, or fails the install is
+reported on stderr and the run goes on with the next Host; at the end
+roster says how many Hosts aren't done and exits 1.
+Run
+.B setup
+again to finish them: Hosts already done cost one probe.
+.IP
+.B \-\-dry\-run
+prints the plan and changes nothing, here or on a Host:
+.BI "would write " PATH ,
+.B would make the Box key
+and, per Host,
+.B would install the Box key on
+.I HOST
+or
+.BR "would record the host key of " \fIHOST\fP " and install the Box key" .
+It runs no ssh\-keyscan and contacts a Host only with the read-only probe,
+and only when its host key is already recorded.
 .PP
 Every file is written atomically: to a temporary file in the same
 directory, flushed to disk, then renamed into place, so an interrupted run
@@ -635,7 +715,8 @@ was given a Host it can't reach, or a Password Host whose
 .B auth
 won't resolve; a
 .B setup
-step failed; or the picker can't run fzf or tmux.
+step failed, or a Host wasn't done (down, refused the password, or
+the install failed); or the picker can't run fzf or tmux.
 .TP
 .B 2
 Usage error: an unknown command or option, or a missing value.
@@ -707,7 +788,9 @@ Gets the
 line, once.
 .TP
 .I ~/.ssh/roster_known_hosts
-roster's own known hosts, named in each Host block.
+roster's own known hosts, named in each Host block;
+.B setup
+appends what ssh\-keyscan finds.
 .TP
 .IR ROSTER.md ", " CLAUDE.md ", " .claude/settings.json
 Next to

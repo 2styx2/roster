@@ -28,8 +28,11 @@ commands:
   ls [--json] [--long] [FILTER]
                  list Hosts: name, group, address, access, title;
                  FILTER: names, groups, types or products, comma-separated
-  setup          make this Box's key; write the ssh config for the Hosts and,
-                 next to roster.yml, ROSTER.md and the Claude files
+  setup [--dry-run]
+                 make this Box's key; write the ssh config for the Hosts and,
+                 next to roster.yml, ROSTER.md and the Claude files; install
+                 the Box key on each Enrolled Host (vault password, once);
+                 --dry-run prints the plan and changes nothing
   ssh HOST [ARGS]
                  ssh to a Host by name; ARGS go to ssh unchanged; a Password
                  Host's auth password goes to ssh through askpass
