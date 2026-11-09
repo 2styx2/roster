@@ -222,6 +222,11 @@ const DOCUMENTED: &[&str] = &[
     // side by side with the Python roster (ticket #19)
     "Side by side with the Python roster v0.7.0",
     ".B \"mesh cut \\-\\-all\"",
+    // each Host's own key type (ticket #23)
+    "one Box key per",
+    ".IR roster_<type> \" beside it\"",
+    "the Box key of its own",
+    "point it at another file",
 ];
 
 #[test]

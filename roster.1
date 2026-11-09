@@ -206,11 +206,13 @@ Each step is skipped when it's already done, so a rerun after editing
 is quick and changes only what the edit changed; each change prints one line.
 .RS
 .IP 1. 4
-The Box key: when
-.B key_path
-(default
-.IR ~/.ssh/roster_<key_type> )
-is missing, it is made with
+The Box keys, one Box key per
+.B key_type
+the Enrolled Hosts use: each Host logs in with the Box key of its own
+.B key_type
+(see
+.BR INVENTORY ).
+When one is missing, it is made with
 .BR "ssh\-keygen \-q \-t " ALG
 .RB [ \-b
 .IR BITS ]
@@ -578,10 +580,10 @@ A file is deleted only when nothing else is left in it; a
 .I ROSTER.md
 or ssh config whose first line isn't roster's is left alone with a
 warning.
-The Box key is kept, since it may still be needed elsewhere:
+The Box keys are kept, since they may still be needed elsewhere:
 roster prints
 .BI "kept the Box key " PATH
-and it is deleted by hand
+for each, and they are deleted by hand
 .RB ( "rm ~/.ssh/roster_ed25519 ~/.ssh/roster_ed25519.pub" ).
 .PP
 Side by side with the Python roster v0.7.0, with the same
@@ -1124,7 +1126,19 @@ This Box's key type:
 .TP
 .B key_path
 This Box's key file (default:
-.IR ~/.ssh/roster_<key_type> ).
+.IR ~/.ssh/roster_<key_type> ),
+the one the Hosts of the top-level
+.B key_type
+use.
+A Host of another type uses
+.IR roster_<type> " beside it"
+.RI ( ~/.ssh/roster_ecdsa
+for a FIPS-mode Host with
+.BR "key_type: ecdsa" ,
+which refuses Ed25519).
+A
+.B key_path
+that names another type's key is refused: remove it or point it at another file.
 .TP
 .B links
 A list of
@@ -1450,11 +1464,11 @@ run
 .SH FILES
 .TP
 .I ~/.ssh/roster_<key_type>
-The Box key and its
-.IR .pub ,
-unless
+The Box keys, one per key type in use, and their
+.IR .pub ;
+the top-level type's is at
 .B key_path
-says otherwise.
+when set.
 .TP
 .I ~/.ssh/config.d/roster
 The ssh config written by
