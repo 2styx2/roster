@@ -38,6 +38,13 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .B roster
 .RB [ \-c
 .IR FILE ]
+.B check
+.RB [ \-\-json ]
+.RI [ TARGET ]
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
 .I NAME
 .RI [ ARGS ...]
 .br
@@ -430,6 +437,87 @@ Skipped Hosts are not listed. The exit status is as without
 .BR \-\-json .
 .RE
 .TP
+.BI "check " [TARGET]
+Explain why a Host can't be reached, or show the fleet's health at a glance.
+.I TARGET
+is as for
+.BR run ;
+with none, every Host in the Inventory is checked.
+Each Host goes through these stages in order, stopping at the first that
+fails:
+.RS
+.TP
+.B dns
+.B ip
+resolves through the system resolver.
+.TP
+.B port
+A TCP connection to the first address and
+.B port
+opens within 5 seconds.
+.TP
+.B login
+.BI "ssh \-o BatchMode=yes \-o ConnectTimeout=10 " HOST " true"
+succeeds, with stdin from
+.IR /dev/null ;
+on failure, ssh's own error is shown.
+No ssh inherits an
+.B env:
+variable a password came from.
+.TP
+.B vault
+For a Password Host, instead of
+.BR login :
+its
+.B auth
+reference resolves (see
+.BR VAULT ).
+The password is never shown.
+References are resolved one at a time before the network checks, so a
+.B cmd:
+that asks for an unlock asks once.
+.B prompt
+is not asked for: the Host passes with
+.BR "(auth prompt: not checked here)" .
+.RE
+.IP
+Hosts are checked in parallel, at most 32 at once, and printed in
+.I TARGET
+order, one line each, then a summary:
+.RS
+.PP
+.nf
+box\-a: ok
+box\-b: login: admin@10.0.0.6: Permission denied (publickey).
+esx\-02: ok
+3 Hosts: 2 ok, 1 failed
+.fi
+.RE
+.IP
+Unreviewed Hosts are checked too. roster exits 1 if any Host failed, else 0.
+.TP
+.B check \-\-json
+One JSON document instead, Hosts in the same order:
+.RS
+.PP
+.nf
+{"v": 1, "hosts": [
+  {"host": "box\-a", "ok": true, "failed": null, "error": null, "note": null},
+  {"host": "box\-b", "ok": false, "failed": "port",
+   "error": "10.0.0.6:22: Connection refused (os error 111)", "note": null}
+]}
+.fi
+.PP
+.B failed
+is the stage that failed
+.RB ( dns ", " port ", " login " or " vault ),
+.B error
+says why, and
+.B note
+says what wasn't checked. The exit status is as without
+.BR \-\-json .
+.RE
+.TP
 .B help plugins
 Print the plugin contract below, with an example.
 .B help
@@ -720,7 +808,11 @@ won't resolve;
 .B run
 failed on a Host, was given an unknown
 .IR TARGET ,
-or had no reviewed Host to run on; a
+or had no reviewed Host to run on;
+.B check
+found a Host failing or was given an unknown
+.IR TARGET ;
+a
 .B setup
 step failed; or the picker can't run fzf or tmux.
 .TP

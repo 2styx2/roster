@@ -121,6 +121,19 @@ const DOCUMENTED: &[&str] = &[
     "\"stdout\"",
     "\"stderr\"",
     "\"host\"",
+    // check (ticket #13)
+    ".BI \"check \" [TARGET]",
+    ".B check \\-\\-json",
+    "system resolver",
+    "5 seconds",
+    "BatchMode=yes \\-o ConnectTimeout=10 \" HOST \" true",
+    "ssh's own error",
+    "not checked here",
+    "\"ok\"",
+    "\"failed\"",
+    "\"error\"",
+    "\"note\"",
+    "Hosts: 2 ok, 1 failed",
 ];
 
 #[test]
