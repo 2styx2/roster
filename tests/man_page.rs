@@ -175,7 +175,9 @@ const DOCUMENTED: &[&str] = &[
     // completion (ticket #21)
     ".SH COMPLETION",
     "contrib/roster.bash",
-    "~/.local/share/bash\\-completion/completions/roster",
+    "$PREFIX/share/bash\\-completion/completions/roster",
+    ".B make install",
+    ".B make uninstall",
     "nothing to regenerate",
     // Bitwarden (ticket #11)
     ".B vault unlock",
