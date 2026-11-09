@@ -68,8 +68,8 @@ fn run() -> Result<(), Fail> {
     match command.as_deref() {
         Some("ls") => {
             let inventory = inventory::Inventory::open(config.map(Into::into))?;
-            let _ = json;
-            print!("{}", ls::text(&inventory.hosts));
+            let render = if json { ls::json } else { ls::text };
+            print!("{}", render(&inventory.hosts));
             Ok(())
         }
         Some(other) => Err(usage_error(format!("unknown command '{other}'"))),
