@@ -3,10 +3,12 @@
 mod askpass;
 mod atomic;
 mod claude;
+mod hosts;
 mod inventory;
 mod ls;
 mod pick;
 mod plugin;
+mod remote;
 mod setup;
 mod ssh;
 mod sshconf;
@@ -80,6 +82,7 @@ fn run() -> Result<(), Fail> {
     let mut long = false; // `ls --long`
     let mut filter = None;
     let mut topic = false; // `help plugins`
+    let mut dry_run = false; // `setup --dry-run`
     while let Some(arg) = parser.next().map_err(|e| usage_error(e.to_string()))? {
         match arg {
             Short('h') | Long("help") => {
@@ -91,6 +94,7 @@ fn run() -> Result<(), Fail> {
             }
             Long("json") if command.as_deref() == Some("ls") => json = true,
             Long("long") if command.as_deref() == Some("ls") => long = true,
+            Long("dry-run") if command.as_deref() == Some("setup") => dry_run = true,
             Value(v) if command.as_deref() == Some("ls") && filter.is_none() => {
                 filter = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }
@@ -139,7 +143,9 @@ fn run() -> Result<(), Fail> {
             print!("{}", render(&inventory.hosts));
             Ok(())
         }
-        Some("setup") => setup::run(&inventory::Inventory::open(config.map(Into::into))?),
+        Some("setup") => {
+            setup::run(&inventory::Inventory::open(config.map(Into::into))?, dry_run)
+        },
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
         Some("help") => {
             print!("{}", if topic { plugin::HELP } else { USAGE });

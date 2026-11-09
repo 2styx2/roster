@@ -6,7 +6,57 @@
 # it printed to askpass.got (the only file a test password may land in) and
 # its exit status to askpass.status. $FAKE_SSH_ASKPASS_AGAIN asks a second
 # time, saving that status to askpass.again.
+#
+# With $FAKE_HOSTS set it acts as a Host instead: $FAKE_HOSTS/NAME is Host
+# NAME's HOME (NAME is the first argument that isn't an option). A `down`
+# file there makes it exit 255. The Box key (the key field of any
+# $HOME/.ssh/*.pub) logs in when the Host's .ssh/authorized_keys has it,
+# unless -o PubkeyAuthentication=no is given or a
+# `nokey` file is there. Without BatchMode=yes, the Host's `password` file
+# logs in when $SSH_ASKPASS prints it. Then the remote command runs with sh
+# in that HOME, stdin passed through.
 echo "$*" >>"$HOME/ssh.log"
+if [ -n "$FAKE_HOSTS" ]; then
+  batch= pubkey=1
+  while [ $# -gt 0 ]; do
+    case $1 in
+    -o)
+      case $2 in
+      BatchMode=yes) batch=1 ;;
+      PubkeyAuthentication=no) pubkey= ;;
+      esac
+      shift 2 ;;
+    -[pilFJLRDEbcemwW]) shift 2 ;;
+    -*) shift ;;
+    *) break ;;
+    esac
+  done
+  name=$1
+  shift
+  dir=$FAKE_HOSTS/$name
+  if [ ! -d "$dir" ] || [ -e "$dir/down" ]; then
+    echo "ssh: connect to host $name port 22: Connection timed out" >&2
+    exit 255
+  fi
+  ok=
+  if [ -n "$pubkey" ] && [ ! -e "$dir/nokey" ] && [ -f "$dir/.ssh/authorized_keys" ]; then
+    for pub in "$HOME"/.ssh/*.pub; do
+      [ -f "$pub" ] || continue
+      key=$(cut -d' ' -f2 "$pub")
+      grep -qF -- " $key" "$dir/.ssh/authorized_keys" && ok=1
+    done
+  fi
+  if [ -z "$ok" ] && [ -z "$batch" ] && [ -n "$SSH_ASKPASS" ] && [ -f "$dir/password" ]; then
+    got=$("$SSH_ASKPASS" "admin@$name's password: ") &&
+      [ "$got" = "$(cat "$dir/password")" ] && ok=1
+  fi
+  if [ -z "$ok" ]; then
+    echo "admin@$name: Permission denied (publickey,password)." >&2
+    exit 255
+  fi
+  cd "$dir" || exit 255
+  HOME=$dir exec sh -c "$*"
+fi
 if [ -n "$FAKE_SSH_ASKPASS" ]; then
   env >"$HOME/ssh.env"
   if [ -n "$ROSTER_ASKPASS" ]; then
