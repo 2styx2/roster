@@ -53,3 +53,24 @@ pub fn text(hosts: &[Host]) -> String {
     }
     out
 }
+
+/// One `key: value` line per field, blank fields left out; a blank line
+/// between Hosts. The picker's preview.
+pub fn long(hosts: &[Host]) -> String {
+    let blocks: Vec<String> = hosts
+        .iter()
+        .map(|h| {
+            let fields = [
+                ("name", &*h.name),
+                ("group", &*h.group),
+                ("address", &*h.ip),
+                ("access", h.access()),
+                ("title", &*h.title),
+                ("description", &*h.description),
+            ];
+            let lines = fields.iter().filter(|(_, v)| !v.is_empty());
+            lines.map(|(k, v)| format!("{k}: {v}\n")).collect()
+        })
+        .collect();
+    blocks.join("\n")
+}

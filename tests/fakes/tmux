@@ -1,0 +1,5 @@
+#!/bin/sh
+# Fake tmux: appends its argv to $HOME/tmux.log, and prints a window id for -P.
+echo "$*" >>"$HOME/tmux.log"
+for a in "$@"; do [ "$a" = -P ] && echo @7; done
+exit 0
