@@ -4,10 +4,12 @@ mod askpass;
 mod atomic;
 mod bw;
 mod claude;
+mod hosts;
 mod inventory;
 mod ls;
 mod pick;
 mod plugin;
+mod remote;
 mod run;
 mod setup;
 mod ssh;
@@ -28,8 +30,11 @@ commands:
   ls [--json] [--long] [FILTER]
                  list Hosts: name, group, address, access, title;
                  FILTER: names, groups, types or products, comma-separated
-  setup          make this Box's key; write the ssh config for the Hosts and,
-                 next to roster.yml, ROSTER.md and the Claude files
+  setup [--dry-run]
+                 make this Box's key; write the ssh config for the Hosts and,
+                 next to roster.yml, ROSTER.md and the Claude files; install
+                 the Box key on each Enrolled Host (vault password, once);
+                 --dry-run prints the plan and changes nothing
   ssh HOST [ARGS]
                  ssh to a Host by name; ARGS go to ssh unchanged; a Password
                  Host's auth password goes to ssh through askpass
@@ -89,6 +94,7 @@ fn run() -> Result<(), Fail> {
     let mut filter = None;
     let mut topic = false; // `help plugins`
     let mut action = None; // `vault unlock|lock`
+    let mut dry_run = false; // `setup --dry-run`
     while let Some(arg) = parser.next().map_err(|e| usage_error(e.to_string()))? {
         match arg {
             Short('h') | Long("help") => {
@@ -100,6 +106,7 @@ fn run() -> Result<(), Fail> {
             }
             Long("json") if matches!(command.as_deref(), Some("ls" | "run")) => json = true,
             Long("long") if command.as_deref() == Some("ls") => long = true,
+            Long("dry-run") if command.as_deref() == Some("setup") => dry_run = true,
             Value(v) if command.as_deref() == Some("ls") && filter.is_none() => {
                 filter = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }
@@ -161,7 +168,10 @@ fn run() -> Result<(), Fail> {
             print!("{}", render(&inventory.hosts));
             Ok(())
         }
-        Some("setup") => setup::run(&inventory::Inventory::open(config.map(Into::into))?),
+        Some("setup") => setup::run(
+            &inventory::Inventory::open(config.map(Into::into))?,
+            dry_run,
+        ),
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
         Some("run") => Err(usage_error("run needs a TARGET and -- CMD")),
         Some("vault") => match action.as_deref() {
