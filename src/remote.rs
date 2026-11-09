@@ -10,20 +10,27 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Variables a secret may come from: no ssh started here inherits them.
+/// Variables a secret may come from: no ssh or curl roster starts inherits them.
 static SCRUB: OnceLock<Vec<String>> = OnceLock::new();
 
-/// Keep `vars` (`Inventory::secret_vars`) from every ssh started here.
+/// Keep `vars` (`Inventory::secret_vars`) from every `command`; set when
+/// the Inventory is opened.
 pub fn scrub(vars: Vec<String>) {
     let _ = SCRUB.set(vars);
 }
 
-fn ssh() -> Command {
-    let mut ssh = Command::new("ssh");
+/// `program` (ssh, curl) without any variable a secret may come from: the
+/// one way roster starts a program that talks to a Host.
+pub fn command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
     for var in SCRUB.get().into_iter().flatten() {
-        ssh.env_remove(var);
+        cmd.env_remove(var);
     }
-    ssh
+    cmd
+}
+
+fn ssh() -> Command {
+    command("ssh")
 }
 
 /// What a remote script did. `code` is ssh's exit status: the script's, or

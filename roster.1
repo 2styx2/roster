@@ -1204,7 +1204,9 @@ The environment variable
 for CI.
 roster keeps
 .I VAR
-out of ssh's environment.
+(and every other Host's, and
+.BR BW_PASSWORD " and " BW_SESSION )
+out of the environment of each ssh and curl it starts.
 .TP
 .B prompt
 Ask on

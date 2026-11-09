@@ -13,9 +13,6 @@ use zeroize::Zeroizing;
 /// when debug-printed.
 pub struct Secret {
     value: Zeroizing<String>,
-    /// The environment variable it came from (`env:VAR`, or `BW_PASSWORD`
-    /// for `bw:`), which askpass keeps out of ssh's environment.
-    pub from_env: Option<String>,
 }
 
 impl Secret {
@@ -58,23 +55,25 @@ impl Memo {
 /// Resolve `reference` for `what` (a Host or service name, for the prompt
 /// and errors). `agent`, `key` and `none` mean there is no password.
 pub fn resolve(reference: &str, what: &str) -> Result<Option<Secret>, Fail> {
-    let secret = |value: Zeroizing<String>, from_env| {
+    // The variables a secret may come from are kept out of every ssh and
+    // curl by `remote::command`.
+    let secret = |value: Zeroizing<String>| {
         if value.is_empty() {
             return Err(failed(format!(
                 "{what}: auth {reference} gave an empty password"
             )));
         }
-        Ok(Some(Secret { value, from_env }))
+        Ok(Some(Secret { value }))
     };
     match reference.split_once(':') {
         _ if matches!(reference, "agent" | "key" | "none") => Ok(None),
-        _ if reference == "prompt" => secret(ask(&format!("password for {what}"), what)?, None),
-        Some(("cmd", command)) => secret(command_line(command, what)?, None),
+        _ if reference == "prompt" => secret(ask(&format!("password for {what}"), what)?),
+        Some(("cmd", command)) => secret(command_line(command, what)?),
         Some(("env", var)) => match std::env::var(var) {
-            Ok(v) => secret(Zeroizing::new(v), Some(var.to_string())),
+            Ok(v) => secret(Zeroizing::new(v)),
             Err(_) => Err(failed(format!("{what}: auth env:{var}: {var} isn't set"))),
         },
-        Some(("bw", item)) => secret(crate::bw::get(item, what)?, Some("BW_PASSWORD".into())),
+        Some(("bw", item)) => secret(crate::bw::get(item, what)?),
         _ => Err(failed(format!(
             "{what}: auth '{reference}' isn't supported: use cmd:COMMAND with your \
              password manager's CLI, or env:VAR or prompt"

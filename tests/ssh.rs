@@ -47,6 +47,23 @@ fn ssh_to_an_unknown_host_exits_1_without_running_ssh() {
 }
 
 #[test]
+fn ssh_to_a_key_host_gets_no_other_hosts_secret_variable() {
+    const PASSWORD: &str = "pw-5e1a-made-up";
+    let mut s = Sandbox::new("ssh-scrub");
+    s.write(
+        "roster.yml",
+        &INVENTORY.replace("enroll: false}", "enroll: false, auth: \"env:PW\"}"),
+    );
+    s.set_env("PW", PASSWORD);
+    s.set_env("FAKE_SSH_ASKPASS", "unused");
+    let out = s.roster(&["ssh", "box-b"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let env = std::fs::read_to_string(s.home.join("ssh.env")).unwrap();
+    assert!(env.contains("HOME="), "the fake logged its environment");
+    assert!(!env.contains(PASSWORD), "{env}");
+}
+
+#[test]
 fn ssh_without_a_host_is_a_usage_error() {
     let s = Sandbox::new("ssh-no-host");
     s.write("roster.yml", INVENTORY);

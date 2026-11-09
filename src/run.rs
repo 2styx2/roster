@@ -6,7 +6,7 @@ use crate::vault::{self, Secret};
 use crate::{Fail, askpass};
 use std::ffi::OsString;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ExitStatus, Stdio};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -46,15 +46,9 @@ pub fn run(inv: &Inventory, target: &str, cmd: Vec<OsString>, json: bool) -> Res
             false => memo.resolve(&h.auth, &h.name)?,
         });
     }
-    // No ssh, a key Host's included, inherits a variable a password came from.
-    let scrub: Vec<&str> = secrets
-        .iter()
-        .flatten()
-        .filter_map(|s| s.from_env.as_deref())
-        .collect();
     let jobs: Vec<_> = hosts.iter().zip(&secrets).collect();
     let outcomes = parallel(&jobs, |(host, secret)| {
-        one(host, secret.as_deref(), &scrub, &cmd, json)
+        one(host, secret.as_deref(), &cmd, json)
     });
     if json {
         let docs = hosts.iter().zip(&outcomes).map(|(h, o)| {
@@ -97,17 +91,8 @@ pub fn parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Ve
 }
 
 /// Run CMD on one Host, streaming its lines (or collecting them for JSON).
-fn one(
-    host: &Host,
-    secret: Option<&Secret>,
-    scrub: &[&str],
-    cmd: &[OsString],
-    json: bool,
-) -> Outcome {
-    let mut ssh = Command::new("ssh");
-    for var in scrub {
-        ssh.env_remove(var);
-    }
+fn one(host: &Host, secret: Option<&Secret>, cmd: &[OsString], json: bool) -> Outcome {
+    let mut ssh = crate::remote::command("ssh");
     if secret.is_none() {
         ssh.args(["-o", "BatchMode=yes"]);
     }

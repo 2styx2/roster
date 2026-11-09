@@ -5,7 +5,7 @@
 use crate::inventory::Inventory;
 use crate::{Fail, usage_error, vault};
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use zeroize::Zeroizing;
 
 /// The line curl's `-w` writes to stderr, which roster takes back.
@@ -101,7 +101,7 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
         };
         option(&mut config, key, &parts);
     }
-    let mut curl = Command::new("curl");
+    let mut curl = crate::remote::command("curl");
     curl.args(["-q", "-sS", "--proto", "=http,https", "--max-redirs", "0"])
         .args([
             "-w",
@@ -109,15 +109,6 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
             "-K",
             "-",
         ]);
-    // curl inherits no variable a Login of this Host's comes from.
-    let auths = host.services.iter().filter_map(|s| s.auth.as_deref());
-    let vars = auths
-        .chain([host.auth.as_str()])
-        .filter_map(|a| a.strip_prefix("env:"));
-    let from = secret.as_ref().and_then(|s| s.from_env.as_deref());
-    for var in vars.chain(from) {
-        curl.env_remove(var);
-    }
     if args.insecure || !svc.verify {
         curl.arg("-k");
     }
