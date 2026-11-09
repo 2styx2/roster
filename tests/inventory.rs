@@ -393,6 +393,15 @@ fn yaml_1_1_booleans_read_as_v0_7_0_reads_them() {
 }
 
 #[test]
+fn an_empty_box_name_is_refused() {
+    let err = refused(
+        "inv-box-name-empty",
+        &format!("box_name: \"\"\n{HEAD}      box-a: 10.0.0.5\n"),
+    );
+    assert!(err.contains("roster.yml:1: box_name:"), "{err}");
+}
+
+#[test]
 fn a_bool_field_that_isnt_a_boolean_is_refused_with_its_line() {
     let cases = [
         ("enroll", "enroll: maybe"),

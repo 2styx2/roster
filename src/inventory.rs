@@ -334,19 +334,22 @@ fn key_type(v: &Value) -> Option<String> {
 const KEY_TYPES: &str =
     "must be ed25519, ecdsa, ecdsa-256, ecdsa-521, rsa or rsa-BITS (3072 to 16384)";
 
-/// `box_name` or the short hostname, as it goes into a key's tag.
-fn box_name(given: Option<String>) -> String {
+/// `box_name` or the short hostname, as it goes into a key's tag:
+/// `[A-Za-z0-9_-]+`, or refused.
+fn box_name(given: Option<String>) -> Result<String, Bad> {
     let host = || std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default();
     let name = given.unwrap_or_else(|| host().trim().split('.').next().unwrap_or("").into());
-    name.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' {
-                c
-            } else {
-                '-'
-            }
+    let name: String = name
+        .chars()
+        .map(|c| match c.is_ascii_alphanumeric() || c == '_' {
+            true => c,
+            false => '-',
         })
-        .collect()
+        .collect();
+    match name.is_empty() {
+        true => bad(&["box_name"], "empty: set box_name to this Box's name"),
+        false => Ok(name),
+    }
 }
 
 fn parse(doc: &Value) -> Result<Inventory, Bad> {
@@ -411,7 +414,7 @@ fn parse(doc: &Value) -> Result<Inventory, Bad> {
     let groups: Vec<String> = groups.keys().filter_map(text).collect();
     Ok(Inventory {
         path: PathBuf::new(),
-        box_name: box_name(text(&doc["box_name"])),
+        box_name: box_name(text(&doc["box_name"]))?,
         key_path,
         key_type,
         links: links(&doc["links"], &hosts, &groups)?,
