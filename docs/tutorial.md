@@ -56,7 +56,7 @@ roster ships as source only. You build it yourself, from code you can read. One 
 git clone https://github.com/2styx2/roster ~/src/roster
 cd ~/src/roster
 make install                # into ~/.local, no sudo
-roster --version            # roster 0.7.1
+roster --version            # roster 0.7.2
 ```
 
 `make install` puts three files under `~/.local`:
@@ -74,7 +74,7 @@ roster --version            # roster 0.7.1
 
 Without a clone, `cargo install --locked --git https://github.com/2styx2/roster --root ~/.local` installs only the binary.
 
-For tmux, add this to `~/.tmux.conf`. It makes `prefix` then `g` open the picker in a popup:
+For tmux, add this to `~/.tmux.conf`. It makes `prefix` then `g` open the picker (`roster pick`) in a popup:
 
 ```
 source-file ~/src/roster/contrib/roster.tmux
@@ -165,7 +165,7 @@ From then on you log in with your key. Run it again whenever Hosts are added: a 
 ## 6. Daily use
 
 ```sh
-roster                       # fuzzy-pick a Host and connect
+roster pick                  # fuzzy-pick a Host and connect
 roster ls                    # every Host: name, group, address, access, title
 roster ls lab                # filter by name, group, type or product
 roster ssh box-a             # connect (Password Hosts too: the password goes in for you)
@@ -303,7 +303,7 @@ roster setup --undo             # remove your key and Mesh entries from every Ho
 2. **Install together (7 minutes).** Section 2, then `roster --version`.
 3. **Inventory and unlock (5 minutes).** Section 3: show `roster ls`. Section 4: everyone runs `roster vault unlock`.
 4. **First setup (5 minutes).** `roster sync`, then `ssh <Tab>` to show the names complete. Then `roster setup --dry-run` and `roster setup`.
-5. **Daily use (5 minutes).** The picker (Enter, ctrl-v, Tab), `roster run lab -- uptime`, and `roster check`.
+5. **Daily use (5 minutes).** The picker, `roster pick` (Enter, ctrl-v, Tab), `roster run lab -- uptime`, and `roster check`.
 6. **Add a Host live (5 minutes).** Create a `demo-01 ssh` item in Bitwarden, run `roster sync`, then `ssh demo-01`. Delete the item afterwards and remove the Host's line from `roster.yml`.
 
 Hand out section 11 as a cheat sheet.

@@ -26,7 +26,7 @@ fn sandbox(name: &str, pick: &str) -> Sandbox {
 #[test]
 fn outside_tmux_the_pick_runs_ssh_in_place() {
     let s = sandbox("pick-outside", "box-b");
-    let out = s.roster(&[]);
+    let out = s.roster(&["pick"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(read(&s, "ssh.log"), "box-b\n");
     assert_eq!(read(&s, "tmux.log"), "");
@@ -49,7 +49,7 @@ fn roster_ssh(s: &Sandbox, host: &str) -> String {
 #[test]
 fn in_tmux_enter_opens_a_new_window() {
     let s = in_tmux("pick-window", "box-b", "");
-    let out = s.roster(&[]);
+    let out = s.roster(&["pick"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     let want = format!("new-window -n box-b {}\n", roster_ssh(&s, "box-b"));
     assert_eq!(read(&s, "tmux.log"), want);
@@ -59,7 +59,7 @@ fn in_tmux_enter_opens_a_new_window() {
 #[test]
 fn in_tmux_ctrl_v_opens_a_split() {
     let s = in_tmux("pick-split", "box-a", "ctrl-v");
-    let out = s.roster(&[]);
+    let out = s.roster(&["pick"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     let want = format!("split-window {}\n", roster_ssh(&s, "box-a"));
     assert_eq!(read(&s, "tmux.log"), want);
@@ -68,7 +68,7 @@ fn in_tmux_ctrl_v_opens_a_split() {
 #[test]
 fn in_tmux_marked_hosts_open_as_synchronized_panes_in_one_window() {
     let s = in_tmux("pick-multi", "box-a box-b sw-01", "");
-    let out = s.roster(&[]);
+    let out = s.roster(&["pick"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     let want = format!(
         "new-window -P -F #{{window_id}} {}\n\
@@ -87,7 +87,7 @@ fn in_tmux_marked_hosts_open_as_synchronized_panes_in_one_window() {
 #[test]
 fn outside_tmux_marking_several_hosts_is_refused() {
     let s = sandbox("pick-multi-outside", "box-a box-b");
-    let out = s.roster(&[]);
+    let out = s.roster(&["pick"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
     assert!(out.stderr.contains("inside tmux"), "{}", out.stderr);
     assert_eq!(read(&s, "ssh.log"), "");
@@ -96,7 +96,7 @@ fn outside_tmux_marking_several_hosts_is_refused() {
 #[test]
 fn fzf_gets_the_ls_lines_and_the_keys() {
     let s = sandbox("pick-fzf-args", "box-a");
-    s.roster(&[]);
+    s.roster(&["pick"]);
     let args = read(&s, "fzf.log");
     assert!(args.contains("--multi\n"), "{args}");
     assert!(args.contains("--expect=ctrl-v\n"), "{args}");
@@ -105,7 +105,7 @@ fn fzf_gets_the_ls_lines_and_the_keys() {
 #[test]
 fn the_preview_shows_the_host_in_full() {
     let s = sandbox("pick-preview", "box-a");
-    s.roster(&[]);
+    s.roster(&["pick"]);
     assert_eq!(
         read(&s, "preview.out"),
         "name: box-a\ngroup: dev\naddress: 10.0.0.5\naccess: key\n\
@@ -118,7 +118,7 @@ fn without_fzf_roster_says_how_to_install_it() {
     let mut s = sandbox("pick-no-fzf", "box-b");
     let empty = s.home.join("empty-path").display().to_string();
     s.set_env("PATH", &empty);
-    let out = s.roster(&[]);
+    let out = s.roster(&["pick"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
     assert!(out.stderr.contains("install fzf"), "{}", out.stderr);
     assert_eq!(read(&s, "ssh.log"), "");
@@ -128,7 +128,7 @@ fn without_fzf_roster_says_how_to_install_it() {
 fn a_cancelled_pick_runs_nothing() {
     let mut s = sandbox("pick-cancel", "");
     s.set_env("FAKE_FZF_EXIT", "130");
-    let out = s.roster(&[]);
+    let out = s.roster(&["pick"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(out.stderr, "");
     assert_eq!(read(&s, "ssh.log"), "");
