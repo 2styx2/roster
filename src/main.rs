@@ -69,6 +69,12 @@ fn run() -> Result<(), Fail> {
                     let rest = parser.raw_args().map_err(|e| usage_error(e.to_string()))?;
                     return Err(plugin::exec(&name, config.map(Into::into), rest.collect()));
                 }
+                if let Some(shadow) = plugin::find(&name) {
+                    eprintln!(
+                        "roster: warning: {} is ignored: '{name}' is built-in",
+                        shadow.display()
+                    );
+                }
                 command = Some(name)
             }
             _ => return Err(usage_error(arg.unexpected().to_string())),

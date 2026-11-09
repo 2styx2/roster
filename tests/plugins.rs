@@ -49,3 +49,32 @@ fn no_inventory_leaves_roster_config_unset() {
     let log = log(&s);
     assert!(log.contains("ROSTER_CONFIG=unset\n"), "{log}");
 }
+
+#[test]
+fn a_name_not_built_in_nor_on_path_is_a_usage_error() {
+    let s = Sandbox::new("plugin-missing");
+    let out = s.roster(&["nosuch", "arg"]);
+    assert_eq!(out.code, 2);
+    assert!(out.stderr.contains("roster-nosuch"), "{}", out.stderr);
+    assert!(out.stderr.contains("roster -h"), "{}", out.stderr);
+    assert_eq!(out.stdout, "");
+}
+
+#[test]
+fn a_built_in_wins_over_a_shadowing_plugin_with_a_warning() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut s = Sandbox::new("plugin-shadow");
+    s.write(
+        "roster.yml",
+        "groups:\n  dev:\n    hosts:\n      box-a: 10.0.0.5\n",
+    );
+    let fake = s.write("bin/roster-ls", "#!/bin/sh\necho shadow\n");
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:/usr/bin:/bin", s.home.join("bin").display());
+    s.set_env("PATH", &path);
+    let out = s.roster(&["ls"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(out.stdout.starts_with("box-a"), "{}", out.stdout);
+    assert!(out.stderr.contains("roster-ls"), "{}", out.stderr);
+    assert!(out.stderr.contains("built-in"), "{}", out.stderr);
+}
