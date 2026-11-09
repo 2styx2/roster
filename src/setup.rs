@@ -1,16 +1,26 @@
 //! `roster setup`: make this Box ready to reach the Hosts.
 
 use crate::inventory::Inventory;
-use crate::{Fail, atomic, claude, sshconf};
+use crate::{Fail, atomic, claude, hosts, sshconf};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// `--dry-run`: say what would change, change nothing.
+static DRY: AtomicBool = AtomicBool::new(false);
+
+fn dry() -> bool {
+    DRY.load(Ordering::Relaxed)
+}
 
 /// Run every setup step in order; each is idempotent and prints what it changed.
-/// A new step (ROSTER.md, the Host side) is one more line here.
-pub fn run(inv: &Inventory) -> Result<(), Fail> {
+/// A new step is one more line here.
+pub fn run(inv: &Inventory, dry_run: bool) -> Result<(), Fail> {
+    DRY.store(dry_run, Ordering::Relaxed);
     box_key(inv)?;
     ssh_config(inv)?;
     claude_files(inv)?;
+    hosts::run(inv, dry_run)?;
     Ok(())
 }
 
@@ -39,6 +49,10 @@ fn failed(what: impl std::fmt::Display) -> Fail {
 fn box_key(inv: &Inventory) -> Result<(), Fail> {
     let key = expand(&inv.key_path);
     if key.exists() {
+        return Ok(());
+    }
+    if dry() {
+        println!("would make the Box key {}", key.display());
         return Ok(());
     }
     if let Some(dir) = key.parent() {
@@ -97,6 +111,7 @@ fn claude_files(inv: &Inventory) -> Result<(), Fail> {
     let settings = dir.join(".claude/settings.json");
     match claude::with_deny(read(&settings)?.as_deref()) {
         Ok(None) => {}
+        Ok(Some(_)) if dry() => println!("would write {}", settings.display()),
         Ok(Some(text)) => {
             std::fs::create_dir_all(dir.join(".claude"))
                 .map_err(|e| failed(format!("{}: {e}", dir.display())))?;
@@ -121,6 +136,12 @@ fn read(path: &std::path::Path) -> Result<Option<String>, Fail> {
 
 /// Atomically write `path` if its contents differ, and say so.
 fn save(path: &std::path::Path, contents: &str, mode: u32) -> Result<(), Fail> {
+    if dry() {
+        if read(path)?.as_deref() != Some(contents) {
+            println!("would write {}", path.display());
+        }
+        return Ok(());
+    }
     match atomic::update(path, contents, mode) {
         Ok(true) => {
             println!("wrote {}", path.display());
@@ -133,6 +154,9 @@ fn save(path: &std::path::Path, contents: &str, mode: u32) -> Result<(), Fail> {
 
 /// Create `dir` (and its parents) with mode 0700 if it's missing.
 fn mkdir_private(dir: &std::path::Path) -> Result<(), Fail> {
+    if dry() {
+        return Ok(());
+    }
     use std::os::unix::fs::DirBuilderExt;
     std::fs::DirBuilder::new()
         .recursive(true)

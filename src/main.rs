@@ -3,11 +3,14 @@
 mod askpass;
 mod atomic;
 mod bw;
+mod check;
 mod claude;
+mod hosts;
 mod inventory;
 mod ls;
 mod pick;
 mod plugin;
+mod remote;
 mod run;
 mod setup;
 mod ssh;
@@ -16,7 +19,7 @@ mod vault;
 mod web;
 
 /// Commands roster runs itself; any other name is a plugin.
-const BUILTINS: &[&str] = &["ls", "run", "setup", "ssh", "vault", "web", "help"];
+const BUILTINS: &[&str] = &["check", "ls", "run", "setup", "ssh", "vault", "web", "help"];
 
 use std::process::ExitCode;
 
@@ -29,8 +32,11 @@ commands:
   ls [--json] [--long] [FILTER]
                  list Hosts: name, group, address, access, title;
                  FILTER: names, groups, types or products, comma-separated
-  setup          make this Box's key; write the ssh config for the Hosts and,
-                 next to roster.yml, ROSTER.md and the Claude files
+  setup [--dry-run]
+                 make this Box's key; write the ssh config for the Hosts and,
+                 next to roster.yml, ROSTER.md and the Claude files; install
+                 the Box key on each Enrolled Host (vault password, once);
+                 --dry-run prints the plan and changes nothing
   ssh HOST [ARGS]
                  ssh to a Host by name; ARGS go to ssh unchanged; a Password
                  Host's auth password goes to ssh through askpass
@@ -38,6 +44,9 @@ commands:
                  run CMD on Hosts in parallel, lines prefixed `host: `;
                  TARGET: Hosts and groups, comma-separated; exit 1 if any
                  Host failed
+  check [--json] [TARGET]
+                 per Host: DNS, port, then a BatchMode ssh login (a Password
+                 Host: its auth resolves); one line each; exit 1 on a failure
   web [-k] [-d BODY] [-H HEADER]... HOST [SERVICE] METHOD PATH
                  call a Host's web API with curl and the service's Login,
                  which goes to curl on stdin; exit 1 if the HTTP status is
@@ -93,7 +102,9 @@ fn run() -> Result<(), Fail> {
     let mut long = false; // `ls --long`
     let mut filter = None;
     let mut topic = false; // `help plugins`
+    let mut target = None; // `check [TARGET]`
     let mut action = None; // `vault unlock|lock`
+    let mut dry_run = false; // `setup --dry-run`
     let mut web = web::Args::default();
     while let Some(arg) = parser.next().map_err(|e| usage_error(e.to_string()))? {
         match arg {
@@ -104,7 +115,9 @@ fn run() -> Result<(), Fail> {
             Short('c') | Long("config") => {
                 config = Some(parser.value().map_err(|e| usage_error(e.to_string()))?);
             }
-            Long("json") if matches!(command.as_deref(), Some("ls" | "run")) => json = true,
+            Long("json") if matches!(command.as_deref(), Some("ls" | "run" | "check")) => {
+                json = true
+            }
             Long("long") if command.as_deref() == Some("ls") => long = true,
             Short(flag @ ('d' | 'H')) if command.as_deref() == Some("web") => {
                 let v = parser.value().map_err(|e| usage_error(e.to_string()))?;
@@ -115,6 +128,7 @@ fn run() -> Result<(), Fail> {
                 }
             }
             Short('k') if command.as_deref() == Some("web") => web.insecure = true,
+            Long("dry-run") if command.as_deref() == Some("setup") => dry_run = true,
             Value(v) if command.as_deref() == Some("ls") && filter.is_none() => {
                 filter = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }
@@ -127,6 +141,9 @@ fn run() -> Result<(), Fail> {
                 };
                 let inventory = inventory::Inventory::open(config.map(Into::into))?;
                 return run::run(&inventory, &target, cmd, json);
+            }
+            Value(v) if command.as_deref() == Some("check") && target.is_none() => {
+                target = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }
             Value(v) if command.as_deref() == Some("help") && v == "plugins" && !topic => {
                 topic = true
@@ -179,7 +196,14 @@ fn run() -> Result<(), Fail> {
             print!("{}", render(&inventory.hosts));
             Ok(())
         }
-        Some("setup") => setup::run(&inventory::Inventory::open(config.map(Into::into))?),
+        Some("check") => {
+            let inventory = inventory::Inventory::open(config.map(Into::into))?;
+            check::run(&inventory, target.as_deref(), json)
+        }
+        Some("setup") => setup::run(
+            &inventory::Inventory::open(config.map(Into::into))?,
+            dry_run,
+        ),
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
         Some("run") => Err(usage_error("run needs a TARGET and -- CMD")),
         Some("web") => web::run(&inventory::Inventory::open(config.map(Into::into))?, web),
