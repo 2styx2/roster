@@ -172,6 +172,13 @@ fn parse(doc: &Value) -> Result<Vec<Host>, Bad> {
         for (name, fields) in members.into_iter().flatten() {
             let name = text(name).unwrap_or_default();
             let at = ["groups", &group, "hosts", &name];
+            if !is_name(&name) {
+                return bad(&at, "a Host name is letters, digits, . _ and -");
+            }
+            if let Some(other) = hosts.iter().find(|h: &&Host| h.name == name) {
+                let why = format!("listed twice, in groups {} and {group}", other.group);
+                return bad(&at, why + ": a Host is in one group");
+            }
             let short; // `NAME: "10.0.0.5"` is `NAME: {ip: 10.0.0.5}`
             let own = match fields {
                 Value::String(ip) => {
@@ -209,6 +216,25 @@ fn ssh_block<'a>(layer: &'a Mapping, at: &[&str]) -> Result<Option<&'a Mapping>,
     Ok(block)
 }
 
+/// Host names: letters, digits, `.`, `_` and `-`.
+fn is_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// `fe80::1%eth0`: the only place a `%` may appear in an address.
+fn is_zoned_ipv6(ip: &str) -> bool {
+    let Some((addr, zone)) = ip.split_once('%') else {
+        return false;
+    };
+    addr.contains(':')
+        && addr
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.')
+        && is_name(zone)
+}
+
 /// LAYERS: the Host's own fields, its group's, then `defaults`.
 fn host(at: &[&str; 4], layers: [&Mapping; 3]) -> Result<Host, Bad> {
     let mut flat = Vec::new();
@@ -221,7 +247,37 @@ fn host(at: &[&str; 4], layers: [&Mapping; 3]) -> Result<Host, Bad> {
     if ip.trim().is_empty() {
         return bad(&field("ip"), "missing: every Host needs an address");
     }
+    let ip = ip.trim();
+    let unsafe_char = |s: &str| {
+        s.chars()
+            .any(|c| c.is_whitespace() || c == '"' || c.is_control())
+    };
+    if unsafe_char(ip) {
+        return bad(
+            &field("ip"),
+            "can't hold a space, a quote or a control character",
+        );
+    }
+    if ip.contains('%') && !is_zoned_ipv6(ip) {
+        return bad(
+            &field("ip"),
+            "can't hold a % except as an IPv6 zone (fe80::1%eth0)",
+        );
+    }
     let user = first(&flat, "user").and_then(text).unwrap_or_default();
+    let user = user.trim();
+    if user.is_empty() {
+        return bad(
+            &field("user"),
+            "missing: set it on the Host, its group or defaults",
+        );
+    }
+    if unsafe_char(user) || user.contains('%') {
+        return bad(
+            &field("user"),
+            "can't hold a space, a quote, a % or a control character",
+        );
+    }
     let port = match first(&flat, "port") {
         None => 22,
         Some(v) => match text(v).and_then(|p| p.parse().ok()) {
@@ -232,8 +288,8 @@ fn host(at: &[&str; 4], layers: [&Mapping; 3]) -> Result<Host, Bad> {
     Ok(Host {
         name: at[3].into(),
         group: at[1].into(),
-        ip: ip.trim().into(),
-        user: user.trim().into(),
+        ip: ip.into(),
+        user: user.into(),
         port,
         auth: first(&flat, "auth")
             .and_then(text)

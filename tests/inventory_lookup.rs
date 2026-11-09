@@ -4,7 +4,7 @@ use common::Sandbox;
 
 /// An Inventory with one Host, named so the test can tell which file was read.
 fn one_host(name: &str) -> String {
-    format!("groups:\n  dev:\n    hosts:\n      {name}: 10.0.0.5\n")
+    format!("defaults: {{user: admin}}\ngroups:\n  dev:\n    hosts:\n      {name}: 10.0.0.5\n")
 }
 
 fn listed(s: &Sandbox, args: &[&str]) -> String {
