@@ -1,0 +1,13 @@
+#!/bin/sh
+# Fake nc, for `nc -z [-w SECS] ADDRESS PORT` (the Python roster's Mesh probe
+# on a Host): appends its argv to $HOME/nc.log; never connects. With
+# $FAKE_HOSTS set, it succeeds when a fake Host whose `ip` file holds ADDRESS
+# has no `down` file; otherwise it fails.
+echo "$*" >>"$HOME/nc.log"
+for last; do :; done
+eval "addr=\${$(($# - 1))}"
+[ -n "$FAKE_HOSTS" ] || exit 1
+for dir in "$FAKE_HOSTS"/*/; do
+	[ "$(cat "$dir/ip" 2>/dev/null)" = "$addr" ] && [ ! -e "$dir/down" ] && exit 0
+done
+exit 1
