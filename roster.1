@@ -41,6 +41,19 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .B roster
 .RB [ \-c
 .IR FILE ]
+.B web
+.RB [ \-k ]
+.RB [ \-d
+.IR BODY ]
+.RB [ \-H
+.IR HEADER ]...
+.I HOST
+.RI [ SERVICE ]
+.I METHOD PATH
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
 .I NAME
 .RI [ ARGS ...]
 .br
@@ -466,6 +479,96 @@ Both delete roster 0.7's
 .I ~/.config/roster/bw\-session
 file if it is there, and say so; roster never reads it.
 .TP
+.BI "web " "HOST " "\fR[\fPSERVICE\fR]\fP " "METHOD PATH"
+Call a Host's web API with
+.BR curl (1)
+and the service's stored Login, without the caller ever seeing the
+credential.
+.I SERVICE
+is a name under the Host's
+.BR services ;
+without it, the one
+.B ls
+shows as
+.BR web :
+the
+.B web
+service (or the legacy
+.B web:
+field), else the first service with a URL.
+.I METHOD
+is upper case, such as GET or POST.
+.I PATH
+must start with
+.B /
+and stay on the service's origin (its scheme, address and port; any path
+in the service's URL is dropped): no
+.BR // ,
+.BR :// ,
+.BR .. ,
+spaces or backslashes.
+.IP
+curl's arguments hold nothing secret: roster runs
+.B curl \-q \-sS \-\-proto =http,https \-\-max\-redirs 0 \-w ... \-K \-
+.BI "\-X " "METHOD URL" ,
+so redirects are not followed and
+.I ~/.curlrc
+is not read.
+The Login goes to curl as a config on its stdin
+.RB ( "\-K \-" ),
+never in argv:
+.B user = """USER:PASSWORD"""
+for
+.B login: basic
+(the service's
+.BR user ),
+or
+.B header = """Authorization: Bearer TOKEN"""
+for
+.BR "login: bearer" .
+.B login: none
+sends no Login, and nor does an
+.B auth
+of
+.BR agent ,
+.B key
+or
+.BR none .
+The credential is resolved as in
+.BR VAULT ,
+and no
+.B env:
+variable of the Host's reaches curl's environment.
+.IP
+The response body goes to stdout and curl's errors to stderr.
+roster exits 0 when the HTTP status is below 400, else prints
+.BI "roster: " "HOST SERVICE" ": HTTP " STATUS
+(or
+.B no HTTP response
+when curl failed) and exits 1.
+.RS
+.TP
+.BI \-d " BODY"
+Send
+.I BODY
+as the request body, in the stdin config, so an
+.B @
+in it is not special.
+.BI \-d " @FILE"
+reads the body from
+.I FILE
+.RB ( "\-\-data\-binary @FILE" );
+.B \-d @\-
+is refused, since stdin carries the Login.
+.TP
+.BI \-H " HEADER"
+Add a request header; repeatable.
+.TP
+.B \-k
+Don't verify the TLS certificate, as for a service with
+.BR "verify: false" .
+.RE
+.TP
 .B help plugins
 Print the plugin contract below, with an example.
 .B help
@@ -790,7 +893,10 @@ won't resolve;
 .B run
 failed on a Host, was given an unknown
 .IR TARGET ,
-or had no reviewed Host to run on; a
+or had no reviewed Host to run on;
+.B web
+got an HTTP status of 400 or more, or no response, or was given an unknown
+Host or service; a
 .B setup
 step failed;
 .B vault unlock
@@ -811,7 +917,8 @@ invalid.
 The message names the file.
 .TP
 .B 126
-A plugin, or ssh, was found but can't be run, or the askpass socket
+A plugin, or ssh, was found but can't be run, curl can't be started, or
+the askpass socket
 can't be made.
 .PP
 A plugin's exit status, and ssh's for

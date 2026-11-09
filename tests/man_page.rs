@@ -135,6 +135,24 @@ const DOCUMENTED: &[&str] = &[
     "never on disk",
     "install keyutils",
     "~/.config/roster/bw\\-session",
+    // web (ticket #18)
+    ".BI \"web \" \"HOST \"",
+    "curl (1)",
+    "stay on the service's origin",
+    "\\-K \\-",
+    "\\-\\-max\\-redirs 0",
+    "~/.curlrc",
+    ".B user = \"\"\"USER:PASSWORD\"\"\"",
+    "Authorization: Bearer TOKEN",
+    ".B login: none",
+    "below 400",
+    "no HTTP response",
+    ".BI \\-d \" BODY\"",
+    ".B \\-d @\\-",
+    ".BI \\-H \" HEADER\"",
+    ".B \\-k",
+    "verify: false",
+    "curl can't be started",
 ];
 
 #[test]
