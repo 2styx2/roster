@@ -744,8 +744,12 @@ A TCP connection to the first address and
 opens within 5 seconds.
 .TP
 .B login
-.BI "ssh \-o BatchMode=yes \-o ConnectTimeout=10 " HOST " true"
-succeeds, with stdin from
+.BI "ssh \-o BatchMode=yes \-o ConnectTimeout=10 " HOST " exit"
+succeeds
+.RB ( exit
+works in sh, cmd and PowerShell, so an
+.B "os: windows"
+Host checks too), with stdin from
 .IR /dev/null ;
 on failure, ssh's own error is shown.
 No ssh inherits an
