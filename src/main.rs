@@ -2,6 +2,7 @@
 
 mod askpass;
 mod atomic;
+mod bw;
 mod claude;
 mod inventory;
 mod ls;
@@ -14,7 +15,7 @@ mod sshconf;
 mod vault;
 
 /// Commands roster runs itself; any other name is a plugin.
-const BUILTINS: &[&str] = &["ls", "run", "setup", "ssh", "help"];
+const BUILTINS: &[&str] = &["ls", "run", "setup", "ssh", "vault", "help"];
 
 use std::process::ExitCode;
 
@@ -36,6 +37,8 @@ commands:
                  run CMD on Hosts in parallel, lines prefixed `host: `;
                  TARGET: Hosts and groups, comma-separated; exit 1 if any
                  Host failed
+  vault unlock   unlock Bitwarden for 12 h (session key in the kernel keyring)
+  vault lock     lock Bitwarden and forget the session key
   help plugins   how `roster NAME` runs a roster-NAME plugin from PATH
 
 options:
@@ -85,6 +88,7 @@ fn run() -> Result<(), Fail> {
     let mut long = false; // `ls --long`
     let mut filter = None;
     let mut topic = false; // `help plugins`
+    let mut action = None; // `vault unlock|lock`
     while let Some(arg) = parser.next().map_err(|e| usage_error(e.to_string()))? {
         match arg {
             Short('h') | Long("help") => {
@@ -111,6 +115,9 @@ fn run() -> Result<(), Fail> {
             }
             Value(v) if command.as_deref() == Some("help") && v == "plugins" && !topic => {
                 topic = true
+            }
+            Value(v) if command.as_deref() == Some("vault") && action.is_none() => {
+                action = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }
             Value(v) if command.as_deref() == Some("ssh") => {
                 let host = v.string().map_err(|e| usage_error(e.to_string()))?;
@@ -157,6 +164,11 @@ fn run() -> Result<(), Fail> {
         Some("setup") => setup::run(&inventory::Inventory::open(config.map(Into::into))?),
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
         Some("run") => Err(usage_error("run needs a TARGET and -- CMD")),
+        Some("vault") => match action.as_deref() {
+            Some("unlock") => bw::unlock(),
+            Some("lock") => bw::lock(),
+            _ => Err(usage_error("vault needs unlock or lock")),
+        },
         Some("help") => {
             print!("{}", if topic { plugin::HELP } else { USAGE });
             Ok(())
