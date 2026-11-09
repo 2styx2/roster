@@ -63,9 +63,6 @@ pub fn run_with(
     let socket = dir.0.join("s");
     let listener = UnixListener::bind(&socket)?;
     listener.set_nonblocking(true)?;
-    if let Some(var) = &secret.from_env {
-        ssh.env_remove(var);
-    }
     ssh.env("SSH_ASKPASS", std::env::current_exe()?)
         .env("SSH_ASKPASS_REQUIRE", "force")
         .env(VAR, &socket);

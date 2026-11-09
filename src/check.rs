@@ -5,7 +5,7 @@
 use crate::inventory::{Host, Inventory};
 use crate::{Fail, vault};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 /// Seconds ssh waits to connect.
@@ -19,9 +19,8 @@ const PROMPT: &str = "auth prompt: not checked here";
 enum Auth {
     /// `ssh -o BatchMode=yes HOST true`.
     Login,
-    /// A Password Host's vault reference, already resolved (or not); Ok
-    /// holds the variable an `env:` password came from.
-    Vault(Result<Option<String>, String>),
+    /// A Password Host's vault reference, already resolved (or not).
+    Vault(Result<(), String>),
     /// A Password Host that would ask on the terminal: not checked.
     Prompt,
 }
@@ -41,7 +40,7 @@ fn auth(host: &Host, memo: &mut vault::Memo) -> Auth {
         return Auth::Prompt;
     }
     match memo.resolve(&host.auth, &host.name) {
-        Ok(Some(secret)) => Auth::Vault(Ok(secret.from_env.clone())),
+        Ok(Some(_)) => Auth::Vault(Ok(())),
         Ok(None) => Auth::Login,
         Err(fail) => {
             let prefix = format!("{}: ", host.name);
@@ -51,7 +50,7 @@ fn auth(host: &Host, memo: &mut vault::Memo) -> Auth {
     }
 }
 
-fn one(host: &Host, auth: &Auth, scrub: &[&str]) -> Report {
+fn one(host: &Host, auth: &Auth) -> Report {
     let fail = |stage, why| Report {
         failed: Some((stage, why)),
         note: None,
@@ -67,21 +66,16 @@ fn one(host: &Host, auth: &Auth, scrub: &[&str]) -> Report {
         return fail("port", format!("{addr}: {e}"));
     }
     let (failed, note) = match auth {
-        Auth::Login => (login(host, scrub).err().map(|e| ("login", e)), None),
+        Auth::Login => (login(host).err().map(|e| ("login", e)), None),
         Auth::Vault(r) => (r.as_ref().err().map(|e| ("vault", e.clone())), None),
         Auth::Prompt => (None, Some(PROMPT)),
     };
     Report { failed, note }
 }
 
-/// Log in with no prompt and run `true`; on failure, ssh's own words. No
-/// variable a password came from reaches ssh.
-fn login(host: &Host, scrub: &[&str]) -> Result<(), String> {
-    let mut ssh = Command::new("ssh");
-    for var in scrub {
-        ssh.env_remove(var);
-    }
-    let out = ssh
+/// Log in with no prompt and run `true`; on failure, ssh's own words.
+fn login(host: &Host) -> Result<(), String> {
+    let out = crate::remote::command("ssh")
         .args(["-o", "BatchMode=yes"])
         .args(["-o", &format!("ConnectTimeout={CONNECT_TIMEOUT}")])
         .args([&host.name, "true"])
@@ -102,14 +96,7 @@ pub fn run(inv: &Inventory, target: Option<&str>, json: bool) -> Result<(), Fail
     // Vault references one at a time, so a `cmd:` unlock never races another.
     let mut memo = vault::Memo::default();
     let jobs: Vec<_> = hosts.iter().map(|h| (*h, auth(h, &mut memo))).collect();
-    let scrub: Vec<&str> = jobs
-        .iter()
-        .filter_map(|(_, a)| match a {
-            Auth::Vault(Ok(var)) => var.as_deref(),
-            _ => None,
-        })
-        .collect();
-    let reports = crate::run::parallel(&jobs, |(h, auth)| one(h, auth, &scrub));
+    let reports = crate::run::parallel(&jobs, |(h, auth)| one(h, auth));
     let failed = reports.iter().filter(|r| r.failed.is_some()).count();
     if json {
         let docs = hosts.iter().zip(&reports).map(|(h, r)| {

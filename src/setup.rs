@@ -1,7 +1,7 @@
 //! `roster setup`: make this Box ready to reach the Hosts.
 
 use crate::inventory::Inventory;
-use crate::{Fail, atomic, claude, hosts, mesh, remote, sshconf, undo};
+use crate::{Fail, atomic, claude, hosts, mesh, sshconf, undo};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,7 +18,6 @@ pub fn dry() -> bool {
 /// With `undo`, remove what these steps made instead (`undo::run`).
 pub fn run(inv: &Inventory, dry_run: bool, undo: bool) -> Result<(), Fail> {
     DRY.store(dry_run, Ordering::Relaxed);
-    remote::scrub(inv.secret_vars());
     if undo {
         return undo::run(inv);
     }

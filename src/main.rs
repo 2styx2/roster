@@ -101,6 +101,14 @@ fn main() -> ExitCode {
     }
 }
 
+/// The Inventory, with every variable a secret may come from kept out of
+/// each ssh and curl roster starts from here on.
+fn open(config: Option<std::ffi::OsString>) -> Result<inventory::Inventory, Fail> {
+    let inventory = inventory::Inventory::open(config.map(Into::into))?;
+    remote::scrub(inventory.secret_vars());
+    Ok(inventory)
+}
+
 fn run() -> Result<(), Fail> {
     use lexopt::prelude::*;
     let mut parser = lexopt::Parser::from_env();
@@ -149,7 +157,7 @@ fn run() -> Result<(), Fail> {
                     Some(dash) if dash == "--" => rest.collect(),
                     _ => return Err(usage_error("run needs -- before the command")),
                 };
-                let inventory = inventory::Inventory::open(config.map(Into::into))?;
+                let inventory = open(config)?;
                 return run::run(&inventory, &target, cmd, json);
             }
             Value(v) if command.as_deref() == Some("check") && target.is_none() => {
@@ -168,7 +176,7 @@ fn run() -> Result<(), Fail> {
                 let host = v.string().map_err(|e| usage_error(e.to_string()))?;
                 let args = parser.raw_args().map_err(|e| usage_error(e.to_string()))?;
                 let args = args.collect();
-                let inventory = inventory::Inventory::open(config.map(Into::into))?;
+                let inventory = open(config)?;
                 return Err(ssh::exec(&inventory, &host, args));
             }
             Value(v) if command.is_none() => {
@@ -190,7 +198,7 @@ fn run() -> Result<(), Fail> {
     }
     match command.as_deref() {
         Some("ls") => {
-            let mut inventory = inventory::Inventory::open(config.map(Into::into))?;
+            let mut inventory = open(config)?;
             if let Some(filter) = filter {
                 inventory.hosts.retain(|h| h.matches(&filter));
                 if inventory.hosts.is_empty() {
@@ -207,16 +215,16 @@ fn run() -> Result<(), Fail> {
             Ok(())
         }
         Some("check") => {
-            let inventory = inventory::Inventory::open(config.map(Into::into))?;
+            let inventory = open(config)?;
             check::run(&inventory, target.as_deref(), json)
         }
         Some("setup") => {
-            let inventory = inventory::Inventory::open(config.map(Into::into))?;
+            let inventory = open(config)?;
             setup::run(&inventory, dry_run, undo)
         }
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
         Some("run") => Err(usage_error("run needs a TARGET and -- CMD")),
-        Some("web") => web::run(&inventory::Inventory::open(config.map(Into::into))?, web),
+        Some("web") => web::run(&open(config)?, web),
         Some("vault") => match action.as_deref() {
             Some("unlock") => bw::unlock(),
             Some("lock") => bw::lock(),
@@ -227,6 +235,6 @@ fn run() -> Result<(), Fail> {
             Ok(())
         }
         Some(other) => Err(usage_error(format!("unknown command '{other}'"))),
-        None => pick::run(&inventory::Inventory::open(config.map(Into::into))?),
+        None => pick::run(&open(config)?),
     }
 }

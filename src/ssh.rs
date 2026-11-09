@@ -14,7 +14,7 @@ pub fn exec(inv: &Inventory, name: &str, args: Vec<OsString>) -> Fail {
     let Some(host) = inv.hosts.iter().find(|h| h.name == name) else {
         return fail(1, format!("no Host named '{name}' in the Inventory"));
     };
-    let mut ssh = std::process::Command::new("ssh");
+    let mut ssh = crate::remote::command("ssh");
     ssh.arg(name).args(args);
     let secret = if host.enroll {
         None

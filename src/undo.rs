@@ -11,7 +11,7 @@ use std::path::Path;
 const REMOVE_KEY: &str = include_str!("sh/remove-key.sh");
 const OPTS: [&str; 4] = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"];
 
-/// `setup` has set the dry-run flag and scrubbed the secret variables.
+/// `setup` has set the dry-run flag; opening the Inventory scrubbed the secret variables.
 pub fn run(inv: &Inventory) -> Result<(), Fail> {
     let mut undone = 0;
     for (i, h) in inv.hosts.iter().enumerate() {
