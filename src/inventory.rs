@@ -289,19 +289,22 @@ fn oneline(v: Option<&Value>) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// YAML truthiness, as v0.7.0 reads `enroll` and `reviewed`.
-fn truthy(v: Option<&Value>, default: bool) -> bool {
+/// A boolean as v0.7.0 reads it: YAML 1.1's true/false, yes/no, on/off and
+/// y/n, any case; null is false. None for anything else.
+fn flag(v: &Value) -> Option<bool> {
     match v {
-        None => default,
-        Some(Value::Null) => false,
-        Some(Value::Bool(b)) => *b,
-        Some(Value::Number(n)) => n.as_f64() != Some(0.0),
-        Some(Value::String(s)) => !s.is_empty(),
-        Some(Value::Sequence(s)) => !s.is_empty(),
-        Some(Value::Mapping(m)) => !m.is_empty(),
-        Some(Value::Tagged(_)) => true,
+        Value::Null => Some(false),
+        Value::Bool(b) => Some(*b),
+        Value::String(s) => match s.to_lowercase().as_str() {
+            "true" | "yes" | "on" | "y" => Some(true),
+            "false" | "no" | "off" | "n" => Some(false),
+            _ => None,
+        },
+        _ => None,
     }
 }
+
+const BOOL: &str = "must be true or false (yes/no and on/off work too)";
 
 fn port_of(v: &Value) -> Option<u16> {
     text(v)?.trim().parse().ok().filter(|&p| p > 0)
@@ -466,11 +469,7 @@ fn links(v: &Value, hosts: &[Host], groups: &[String]) -> Result<Vec<Link>, Bad>
         if ends[0] == ends[1] {
             return bad(&at(""), format!("links {} to itself", ends[0]));
         }
-        let both = match &entry["both"] {
-            Value::Null => false,
-            Value::Bool(b) => *b,
-            _ => return bad(&at("both"), "must be true or false"),
-        };
+        let both = flag(&entry["both"]).map_or_else(|| bad(&at("both"), BOOL), Ok)?;
         let via = text(&entry["via"]);
         if let Some(via) = &via {
             if !is_host(via) || ends.contains(via) {
@@ -594,10 +593,14 @@ fn host(at: &[&str; 4], layers: [&Mapping; 3], box_key: &str) -> Result<Host, Ba
         None | Some(Value::Null) => box_key.into(),
         Some(v) => key_type(v).map_or_else(|| bad(&field("key_type"), KEY_TYPES), Ok)?,
     };
+    let boolean = |key: &'static str, default: bool| match first(&layers, key) {
+        None => Ok(default),
+        Some(v) => flag(v).map_or_else(|| bad(&field(key), BOOL), Ok),
+    };
+    let (enroll, reviewed) = (boolean("enroll", true)?, boolean("reviewed", true)?);
     let mesh = match first(&layers, "mesh") {
         None | Some(Value::Null) => None,
-        Some(Value::Bool(b)) => Some(*b),
-        Some(_) => return bad(&field("mesh"), "must be true or false"),
+        Some(_) => Some(boolean("mesh", false)?),
     };
     let mut host = Host {
         name: at[3].into(),
@@ -608,8 +611,8 @@ fn host(at: &[&str; 4], layers: [&Mapping; 3], box_key: &str) -> Result<Host, Ba
         auth: first(&flat, "auth")
             .and_then(text)
             .unwrap_or("prompt".into()),
-        enroll: truthy(first(&layers, "enroll"), true),
-        reviewed: truthy(first(&layers, "reviewed"), true),
+        enroll,
+        reviewed,
         os,
         key_type,
         mesh,
@@ -750,6 +753,7 @@ fn service(
         Some(v) => text(v).map(|s| s.trim().to_string()),
         None => host.clone(),
     };
+    let verify = e.get("verify").map_or(Some(true), flag)?;
     Some(Service {
         name: name.into(),
         port,
@@ -757,7 +761,7 @@ fn service(
         scheme,
         user: or_host("user", &login.0),
         auth: or_host("auth", &login.1),
-        verify: truthy(e.get("verify"), true),
+        verify,
         login: login_type,
     })
 }

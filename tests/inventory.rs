@@ -369,3 +369,44 @@ fn ls_filter_matching_nothing_exits_1() {
     assert_eq!(out.stdout, "");
     assert!(out.stderr.contains("hv"), "{}", out.stderr);
 }
+
+#[test]
+fn yaml_1_1_booleans_read_as_v0_7_0_reads_them() {
+    let h = hosts(
+        "inv-yaml11",
+        &format!(
+            "{HEAD}      a: {{ip: 10.0.0.1, enroll: no}}\n      b: {{ip: 10.0.0.2, enroll: Off}}\n      \
+             c: {{ip: 10.0.0.3, reviewed: N}}\n      d: {{ip: 10.0.0.4, enroll: YES, reviewed: on}}\n      \
+             e: {{ip: 10.0.0.5, mesh: yes}}\n      f: {{ip: 10.0.0.6, mesh: FALSE}}\n      \
+             g: {{ip: 10.0.0.7, enroll: True, mesh: n}}\n"
+        ),
+    );
+    let access = |n: &str| h[n]["access"].clone();
+    assert_eq!(access("a"), "password");
+    assert_eq!(access("b"), "password");
+    assert_eq!(access("c"), "unreviewed");
+    assert_eq!(access("d"), "key");
+    assert_eq!(access("g"), "key");
+    assert_eq!(h["e"]["mesh"], true);
+    assert_eq!(h["f"]["mesh"], false);
+    assert_eq!(h["g"]["mesh"], false);
+}
+
+#[test]
+fn a_bool_field_that_isnt_a_boolean_is_refused_with_its_line() {
+    let cases = [
+        ("enroll", "enroll: maybe"),
+        ("reviewed", "reviewed: 2"),
+        ("mesh", "mesh: sometimes"),
+    ];
+    for (name, field) in cases {
+        let err = refused(
+            &format!("inv-bool-{name}"),
+            &format!("{HEAD}      box-a:\n        ip: 10.0.0.5\n        {field}\n"),
+        );
+        assert!(
+            err.contains(&format!("roster.yml:7: groups.dev.hosts.box-a.{name}:")),
+            "{name}: {err}"
+        );
+    }
+}
