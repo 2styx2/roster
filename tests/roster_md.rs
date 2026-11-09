@@ -71,7 +71,8 @@ fn snapshot(dir: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>, std::tim
             let m = e.metadata().unwrap();
             if m.is_dir() {
                 todo.push(e.path());
-            } else if m.is_file() {
+            } else if m.is_file() && e.path().extension().is_none_or(|x| x != "log") {
+                // The fakes' logs grow with each run (the Host probe); skip them.
                 let bytes = std::fs::read(e.path()).unwrap();
                 files.push((e.path(), bytes, m.modified().unwrap()));
             }
