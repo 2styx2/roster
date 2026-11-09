@@ -33,14 +33,14 @@ struct Report {
     note: Option<&'static str>,
 }
 
-fn auth(host: &Host) -> Auth {
+fn auth(host: &Host, memo: &mut vault::Memo) -> Auth {
     if host.enroll {
         return Auth::Login;
     }
     if host.auth == "prompt" {
         return Auth::Prompt;
     }
-    match vault::resolve(&host.auth, &host.name) {
+    match memo.resolve(&host.auth, &host.name) {
         Ok(Some(secret)) => Auth::Vault(Ok(secret.from_env.clone())),
         Ok(None) => Auth::Login,
         Err(fail) => {
@@ -100,7 +100,8 @@ pub fn run(inv: &Inventory, target: Option<&str>, json: bool) -> Result<(), Fail
         None => inv.hosts.iter().collect(),
     };
     // Vault references one at a time, so a `cmd:` unlock never races another.
-    let jobs: Vec<_> = hosts.iter().map(|h| (*h, auth(h))).collect();
+    let mut memo = vault::Memo::default();
+    let jobs: Vec<_> = hosts.iter().map(|h| (*h, auth(h, &mut memo))).collect();
     let scrub: Vec<&str> = jobs
         .iter()
         .filter_map(|(_, a)| match a {

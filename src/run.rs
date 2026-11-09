@@ -39,11 +39,11 @@ pub fn run(inv: &Inventory, target: &str, cmd: Vec<OsString>, json: bool) -> Res
         return Err(Fail { code: 1, msg });
     }
     // Every password first, one prompt at a time, before any thread starts.
-    let mut secrets = Vec::with_capacity(hosts.len());
+    let (mut memo, mut secrets) = (vault::Memo::default(), Vec::with_capacity(hosts.len()));
     for h in &hosts {
         secrets.push(match h.enroll {
             true => None,
-            false => vault::resolve(&h.auth, &h.name)?,
+            false => memo.resolve(&h.auth, &h.name)?,
         });
     }
     // No ssh, a key Host's included, inherits a variable a password came from.
@@ -54,7 +54,7 @@ pub fn run(inv: &Inventory, target: &str, cmd: Vec<OsString>, json: bool) -> Res
         .collect();
     let jobs: Vec<_> = hosts.iter().zip(&secrets).collect();
     let outcomes = parallel(&jobs, |(host, secret)| {
-        one(host, secret.as_ref(), &scrub, &cmd, json)
+        one(host, secret.as_deref(), &scrub, &cmd, json)
     });
     if json {
         let docs = hosts.iter().zip(&outcomes).map(|(h, o)| {

@@ -1183,6 +1183,9 @@ A Host's or service's
 is a reference to its password, resolved only when a command needs it.
 The password is held in memory that is wiped after use, and roster never
 prints it.
+Hosts that share a reference resolve it once per run
+.RB ( prompt
+asks once per Host), and Bitwarden is unlocked at most once.
 .TP
 .BI cmd: COMMAND
 The first line

@@ -6,6 +6,7 @@ use crate::Fail;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use zeroize::Zeroizing;
 
 /// A password. Wiped from memory when dropped, never displayed, and `***`
@@ -31,6 +32,27 @@ impl std::fmt::Debug for Secret {
 
 fn failed(msg: String) -> Fail {
     Fail { code: 1, msg }
+}
+
+/// The references a run has resolved: each distinct one once (`prompt` once
+/// per Host). Fill it before any thread starts.
+#[derive(Default)]
+pub struct Memo(Vec<(String, Option<Arc<Secret>>)>);
+
+impl Memo {
+    /// `resolve`, or what it gave last time for the same reference.
+    pub fn resolve(&mut self, reference: &str, what: &str) -> Result<Option<Arc<Secret>>, Fail> {
+        let key = match reference {
+            "prompt" => format!("prompt {what}"),
+            _ => reference.to_string(),
+        };
+        if let Some((_, secret)) = self.0.iter().find(|(k, _)| *k == key) {
+            return Ok(secret.clone());
+        }
+        let secret = resolve(reference, what)?.map(Arc::new);
+        self.0.push((key, secret.clone()));
+        Ok(secret)
+    }
 }
 
 /// Resolve `reference` for `what` (a Host or service name, for the prompt
