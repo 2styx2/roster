@@ -1402,10 +1402,18 @@ roster keeps
 out of ssh's environment.
 .IP
 Security: the session key is never on disk, in a backup or in a synced
-repo, and it expires on its own.
-But any process running as the same user can read it with
+repo, and it expires on its own (12 h, or
+.BR "vault lock" ).
+Its permissions are
+.BR 0x3f0b0000 :
+the owner's processes may view, read and search it, so
+.B roster sync
+from cron (in a keyring session of its own) can import from the vault;
+none of them may change, replace or relink it or extend its life;
+group and other users get nothing.
+So any process running as the same user can read it with
 .BR "keyctl print" ,
-just as it could read a file.
+just as it could read a file; no other user can.
 .TP
 .BR agent ", " key ", " none
 No password.
