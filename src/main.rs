@@ -143,9 +143,10 @@ fn run() -> Result<(), Fail> {
             print!("{}", render(&inventory.hosts));
             Ok(())
         }
-        Some("setup") => {
-            setup::run(&inventory::Inventory::open(config.map(Into::into))?, dry_run)
-        },
+        Some("setup") => setup::run(
+            &inventory::Inventory::open(config.map(Into::into))?,
+            dry_run,
+        ),
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
         Some("help") => {
             print!("{}", if topic { plugin::HELP } else { USAGE });

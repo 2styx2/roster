@@ -18,7 +18,11 @@ pub struct Ran {
 impl Ran {
     /// The last line of stderr, for a one-line report.
     pub fn why(&self) -> &str {
-        self.stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("")
+        self.stderr
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
     }
 }
 
@@ -77,7 +81,14 @@ pub fn run(host: &str, opts: &[&str], script: &str, secret: Option<&Secret>) -> 
 /// password, no question, nothing changed on the Host.
 pub fn accepts_key(host: &str) -> bool {
     Command::new("ssh")
-        .args(["-o", "BatchMode=yes", "-o", "ControlMaster=no", host, "true"])
+        .args([
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ControlMaster=no",
+            host,
+            "true",
+        ])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
