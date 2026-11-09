@@ -1,7 +1,7 @@
 //! `roster setup`: make this Box ready to reach the Hosts.
 
 use crate::inventory::Inventory;
-use crate::{Fail, atomic, claude, hosts, sshconf};
+use crate::{Fail, atomic, claude, hosts, mesh, remote, sshconf};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,11 +17,33 @@ fn dry() -> bool {
 /// A new step is one more line here.
 pub fn run(inv: &Inventory, dry_run: bool) -> Result<(), Fail> {
     DRY.store(dry_run, Ordering::Relaxed);
+    remote::scrub(inv.secret_vars());
     box_key(inv)?;
     ssh_config(inv)?;
     claude_files(inv)?;
-    hosts::run(inv, dry_run)?;
-    Ok(())
+    let (ready, undone) = hosts::run(inv, dry_run)?;
+    match undone + mesh::run(inv, &ready, dry_run) {
+        0 => Ok(()),
+        n => Err(failed(format!(
+            "{n} Host{} not done; run `roster setup` again to finish",
+            if n == 1 { "" } else { "s" }
+        ))),
+    }
+}
+
+/// ssh-keygen's `-t TYPE [-b BITS]` for a canonical key type.
+pub fn keygen_args(key_type: &str) -> Vec<&str> {
+    let (alg, bits) = match key_type.split_once('-') {
+        Some((alg, bits)) => (alg, Some(bits)),
+        None if key_type == "ecdsa" => ("ecdsa", Some("384")),
+        None if key_type == "rsa" => ("rsa", Some("3072")),
+        None => (key_type, None),
+    };
+    let mut args = vec!["-t", alg];
+    if let Some(bits) = bits {
+        args.extend(["-b", bits]);
+    }
+    args
 }
 
 /// `~/...` made absolute with $HOME.
@@ -58,17 +80,8 @@ fn box_key(inv: &Inventory) -> Result<(), Fail> {
     if let Some(dir) = key.parent() {
         mkdir_private(dir)?;
     }
-    let (alg, bits) = match inv.key_type.split_once('-') {
-        Some((alg, bits)) => (alg, Some(bits)),
-        None if inv.key_type == "ecdsa" => ("ecdsa", Some("384")),
-        None if inv.key_type == "rsa" => ("rsa", Some("3072")),
-        None => (inv.key_type.as_str(), None),
-    };
     let mut cmd = Command::new("ssh-keygen");
-    cmd.args(["-q", "-t", alg]);
-    if let Some(bits) = bits {
-        cmd.args(["-b", bits]);
-    }
+    cmd.arg("-q").args(keygen_args(&inv.key_type));
     let comment = format!("roster-managed:{}", inv.box_name);
     cmd.args(["-N", "", "-C", &comment, "-f"]).arg(&key);
     match cmd.status() {

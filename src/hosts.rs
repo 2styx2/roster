@@ -10,8 +10,10 @@ use crate::{Fail, atomic, remote, vault};
 const ADD_KEY: &str = include_str!("sh/add-key.sh");
 
 /// With `dry`, print what would be done: Hosts whose host key is known get
-/// the read-only probe; nothing is written here or on a Host.
-pub fn run(inv: &Inventory, dry: bool) -> Result<(), Fail> {
+/// the read-only probe; nothing is written here or on a Host. Returns the
+/// Hosts that take the Box key and how many Hosts aren't done.
+pub fn run(inv: &Inventory, dry: bool) -> Result<(Vec<&Host>, usize), Fail> {
+    let mut ready = Vec::new();
     let known_hosts = home().join(".ssh/roster_known_hosts");
     let mut known = std::fs::read_to_string(&known_hosts).unwrap_or_default();
     let mut undone = 0;
@@ -49,6 +51,7 @@ pub fn run(inv: &Inventory, dry: bool) -> Result<(), Fail> {
             println!("recorded the host key of {}", h.name);
         }
         if remote::accepts_key(&h.name) {
+            ready.push(h);
             continue;
         }
         if dry {
@@ -56,20 +59,17 @@ pub fn run(inv: &Inventory, dry: bool) -> Result<(), Fail> {
             continue;
         }
         match install(inv, h) {
-            Ok(()) => println!("installed the Box key on {}", h.name),
+            Ok(()) => {
+                println!("installed the Box key on {}", h.name);
+                ready.push(h);
+            }
             Err(msg) => {
                 eprintln!("roster: {msg}");
                 undone += 1;
             }
         }
     }
-    match undone {
-        0 => Ok(()),
-        n => Err(failed(format!(
-            "{n} Host{} not done; run `roster setup` again to finish",
-            if n == 1 { "" } else { "s" }
-        ))),
-    }
+    Ok((ready, undone))
 }
 
 fn failed(msg: String) -> Fail {
@@ -77,7 +77,7 @@ fn failed(msg: String) -> Fail {
 }
 
 /// The name a Host's key goes by in known_hosts: `IP`, or `[IP]:PORT`.
-fn known_as(h: &Host) -> String {
+pub fn known_as(h: &Host) -> String {
     match h.port {
         22 => h.ip.clone(),
         port => format!("[{}]:{port}", h.ip),

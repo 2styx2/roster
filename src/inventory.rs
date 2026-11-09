@@ -125,6 +125,21 @@ impl Inventory {
     /// The Hosts a TARGET names: Host and group names, comma-separated, in
     /// the order given, each Host once. Unreviewed Hosts are included; the
     /// caller skips them. An unknown name exits 1.
+    /// Every variable a secret may come from: each `env:VAR` the Hosts and
+    /// services name, and Bitwarden's.
+    pub fn secret_vars(&self) -> Vec<String> {
+        let mut vars = vec!["BW_PASSWORD".to_string(), "BW_SESSION".to_string()];
+        for h in &self.hosts {
+            let services = h.services.iter().filter_map(|s| s.auth.as_deref());
+            for auth in std::iter::once(h.auth.as_str()).chain(services) {
+                if let Some(var) = auth.strip_prefix("env:") {
+                    vars.push(var.to_string());
+                }
+            }
+        }
+        vars
+    }
+
     pub fn targets(&self, target: &str) -> Result<Vec<&Host>, Fail> {
         let mut found: Vec<&Host> = Vec::new();
         for word in target.split(',').map(str::trim).filter(|w| !w.is_empty()) {

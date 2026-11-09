@@ -1,6 +1,7 @@
 #!/bin/sh
 # Fake ssh-keygen: appends its argv to $HOME/ssh-keygen.log and writes a
-# made-up key pair to the -f FILE, tagged with the -C comment.
+# made-up key pair to the -f FILE, tagged with the -C comment. On a fake Host
+# (FAKE_SSH_HOST set by fake ssh) the key is that Host's own: AAAAmesh-NAME.
 echo "$*" >>"$HOME/ssh-keygen.log"
 file= comment=
 while [ $# -gt 0 ]; do
@@ -13,4 +14,6 @@ done
 [ -n "$file" ] || { echo "fake ssh-keygen: no -f" >&2; exit 1; }
 echo "FAKE PRIVATE KEY" >"$file"
 chmod 600 "$file"
-echo "ssh-ed25519 AAAAfake $comment" >"$file.pub"
+key=AAAAfake
+[ -z "$FAKE_SSH_HOST" ] || key=AAAAmesh-$FAKE_SSH_HOST
+echo "ssh-ed25519 $key $comment" >"$file.pub"

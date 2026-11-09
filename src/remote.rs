@@ -7,7 +7,24 @@ use crate::vault::Secret;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Variables a secret may come from: no ssh started here inherits them.
+static SCRUB: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Keep `vars` (`Inventory::secret_vars`) from every ssh started here.
+pub fn scrub(vars: Vec<String>) {
+    let _ = SCRUB.set(vars);
+}
+
+fn ssh() -> Command {
+    let mut ssh = Command::new("ssh");
+    for var in SCRUB.get().into_iter().flatten() {
+        ssh.env_remove(var);
+    }
+    ssh
+}
 
 /// What a remote script did. `code` is ssh's exit status: the script's, or
 /// 255 when ssh itself failed (down, refused).
@@ -46,7 +63,7 @@ pub fn run(host: &str, opts: &[&str], script: &str, secret: Option<&Secret>) -> 
     stdin.write_all(script.as_bytes())?;
     stdin.seek(SeekFrom::Start(0))?;
     let (mut out, mut err) = (scratch()?, scratch()?);
-    let mut ssh = Command::new("ssh");
+    let mut ssh = ssh();
     ssh.args(["-o", "ControlMaster=no"])
         .args(opts)
         .args([host, "sh", "-s"])
@@ -89,7 +106,7 @@ fn scratch() -> io::Result<File> {
 /// Does `host` take the Box key? `ssh -o BatchMode=yes HOST true`: no
 /// password, no question, nothing changed on the Host.
 pub fn accepts_key(host: &str) -> bool {
-    Command::new("ssh")
+    ssh()
         .args([
             "-o",
             "BatchMode=yes",
