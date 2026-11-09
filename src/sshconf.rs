@@ -39,7 +39,7 @@ pub fn render(inv: &Inventory, from: &Path) -> String {
             "    ControlMaster auto\n    ControlPath \"~/.ssh/cm-%C\"\n    ControlPersist 10m\n"
         };
         if h.enroll {
-            let _ = writeln!(out, "    IdentityFile \"{}\"", inv.key_path);
+            let _ = writeln!(out, "    IdentityFile \"{}\"", inv.key_of(h));
             out += "    IdentitiesOnly yes\n";
         } else {
             out += "    IdentitiesOnly yes\n    PubkeyAuthentication no\n";
