@@ -122,7 +122,18 @@ impl Inventory {
             let line = line_of(&text, &b.at);
             broken(&path, line, format!("{}: {}", b.at.join("."), b.why))
         })?;
-        Ok(Inventory { path, ..inventory })
+        let inv = Inventory { path, ..inventory };
+        // Two types sharing one file would give a Host a key it refuses.
+        if let Some(h) =
+            (inv.hosts.iter()).find(|h| h.key_type != inv.key_type && inv.key_of(h) == inv.key_path)
+        {
+            let why = format!(
+                "key_path: {} is the {} key {} uses; remove key_path or point it at another file",
+                inv.key_path, h.key_type, h.name
+            );
+            return Err(broken(&inv.path, line_of(&text, &["key_path".into()]), why));
+        }
+        Ok(inv)
     }
 
     /// The Box key `h` logs in with (`~` not expanded), the one of its own
