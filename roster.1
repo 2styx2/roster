@@ -1401,6 +1401,52 @@ Used to find
 .IR ~/.config/roster/roster.yml ,
 .I ~/.ssh
 and the Box key.
+.SH COMPLETION
+.I contrib/roster.bash
+completes
+.B roster
+in bash: the commands, each command's flags, the words after
+.B vault
+and
+.BR help ,
+a file after
+.BR \-c ,
+and Host and group names for
+.BR ssh ,
+.BR run ,
+.BR check ,
+.BR web ,
+.B ls
+and a bare
+.BR roster .
+The names come from
+.B roster ls
+at each Tab (honouring
+.BR \-c ),
+so a Host added to
+.I roster.yml
+completes at once, with nothing to regenerate.
+When
+.I roster.yml
+won't load, no names complete and nothing is printed.
+Install it by copying it to
+.I ~/.local/share/bash\-completion/completions/roster
+or by adding
+.B source /path/to/roster.bash
+to
+.IR ~/.bashrc .
+.PP
+For plain
+.BR ssh ,
+bash\-completion reads
+.B Host
+names through the
+.B Include
+in
+.IR ~/.ssh/config ;
+run
+.B roster sync
+(from cron, say) to keep that file current.
 .SH FILES
 .TP
 .I ~/.ssh/roster_<key_type>
