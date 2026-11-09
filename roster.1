@@ -360,9 +360,106 @@ roster says how many Hosts aren't done and exits 1.
 Run
 .B setup
 again to finish them: Hosts already done cost one probe.
+.IP 8. 4
+The Mesh: Hosts that ssh to each other.
+The Hosts of a group with
+.B "mesh: true"
+(set on the group, on a Host, or in
+.BR defaults ;
+.B "mesh: false"
+on a Host opts it out) reach each other; groups don't reach each other.
+Only Enrolled, reviewed, POSIX Hosts take part: any other Host with
+.B "mesh: true"
+is
+.B left out of the Mesh
+with the reason on stderr.
+Nothing is kept on the Box: each Host that takes the Box key is visited,
+one at a time, with
+.B ssh \-o BatchMode=yes \-o ConnectTimeout=10
+.I HOST
+.BR "sh \-s" .
+A read-only script reports the Host's Mesh key, its Mesh files and its
+authorized_keys lines tagged
+.BI roster\-mesh: SRC @ BOX\fR;
+roster plans from that and the Inventory, and a second script makes the
+plan so on a Host that needs changes.
+On a source Host, in
+.IR ~/.ssh/roster\-mesh/ ,
+mode 0700:
+.RS
+.IP \(bu 2
+the Mesh key,
+.I id_ed25519
+(or
+.IR roster_mesh_<key_type> ),
+made there with
+.B ssh\-keygen \-C roster\-mesh:\c
+.IB SRC @ BOX
+when it's missing: the private key never leaves the Host;
+.IP \(bu 2
+.IR known_hosts :
+the peers' host keys, copied from the Box's
+.IR ~/.ssh/roster_known_hosts ;
+.IP \(bu 2
+.IR config :
+one block per peer, with
+.BR "StrictHostKeyChecking yes" ,
+that known_hosts and the Mesh key.
+Its first line is
+.BI "# Written by roster mesh for " SRC " (owner " BOX ) ...
+.RE
+.IP
+.I ~/.ssh/config
+gets two lines at the top: the mark
+.B # roster\-mesh: the Mesh's ssh config (roster mesh adds and removes these two lines)
+and
+.BI "Include " HOME /.ssh/roster\-mesh/config\fR.
+.I ~/ROSTER.md
+lists the peers for Claude there (first line
+.BI "<!\-\- roster\-mesh: written by roster for " SRC " (owner " BOX );\fR...),
+and when
+.I ~/.claude
+exists,
+.I ~/.claude/CLAUDE.md
+gets
+.BR @~/ROSTER.md .
+Each peer's
+.I ~/.ssh/authorized_keys
+gets one line per source:
+.IP
+.nf
+from="IP",no\-agent\-forwarding,no\-X11\-forwarding TYPE KEY roster\-mesh:SRC@BOX
+.fi
+.IP
+Every file is written to a copy beside it and moved into place.
+These are v0.7.0's names and marks, so the Python roster sees the same
+Mesh.
+A Host that leaves the web (removed from
+.IR roster.yml ,
+or its
+.B mesh: true
+gone) loses its lines on the next run, and a Host that is no longer a
+source loses its Mesh files, the Include and the import.
+Ownership: only lines tagged
+.BI @ BOX
+are added or removed, only keys whose
+.I .pub
+carries that tag are deleted, and only files whose first line names this
+Box as owner are rewritten or deleted.
+A Mesh key roster didn't make, or another Box's Mesh config, is
+.BR "left alone" :
+that Host's own part is skipped and counts as not done.
+A Host that is down is not done either; the lines of a source that
+couldn't be read stay as they are on its peers until a run reaches it.
+A rerun with nothing to change prints nothing.
 .IP
 .B \-\-dry\-run
 prints the plan and changes nothing, here or on a Host:
+who reaches whom in the Mesh, one
+.IB SOURCE " \-> " PEER
+line each, then
+.IB HOST ": would " CHANGE
+for each Mesh change;
 .BI "would write " PATH ,
 .B would make the Box key
 and, per Host,
@@ -741,7 +838,8 @@ is
 .B key_type
 as above (default: the top-level one);
 .B mesh
-true, false or unset.
+true, false or unset: whether the Host is in its group's Mesh (see
+.BR setup ).
 .TP
 .BR title ", " description ", " type ", " product
 Free text on one line.
@@ -963,6 +1061,12 @@ line, once.
 roster's own known hosts, named in each Host block;
 .B setup
 appends what ssh\-keyscan finds.
+.TP
+.I ~/.ssh/roster\-mesh/
+On a Host in the Mesh: its Mesh key, known_hosts and config, with
+.I ~/ROSTER.md
+beside them (see
+.BR setup ).
 .TP
 .IR ROSTER.md ", " CLAUDE.md ", " .claude/settings.json
 Next to
