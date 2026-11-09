@@ -1,6 +1,6 @@
 # roster (Rust): notes for agents
 
-A rewrite of roster (2styx2/roster) as one Rust binary, following the Unix philosophy: each command does one job, prints plain text by default and `--json` for scripts, and composes with fzf, tmux and ssh. No GUI, no plugin system, no long-running server.
+A rewrite of the Python roster (now archived as 2styx2/roster-archive) as one Rust binary, following the Unix philosophy: each command does one job, prints plain text by default and `--json` for scripts, and composes with fzf, tmux and ssh. No GUI, no plugin system, no long-running server.
 
 ## Rules
 - Commits and pull requests carry no `Co-Authored-By` trailer and no Claude/AI attribution line.

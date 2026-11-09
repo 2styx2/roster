@@ -15,7 +15,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 const TAG: &str = "v0.7.0";
-const REPO: &str = "https://github.com/2styx2/roster";
+const REPO: &str = "https://github.com/2styx2/roster-archive";
 const BOX_LINE: &str = "ssh-ed25519 AAAAfake roster-managed:box-a\n";
 
 const INVENTORY: &str = r#"

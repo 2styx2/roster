@@ -118,6 +118,12 @@ May appear before or after the command.
 .TP
 .BR \-h ", " \-\-help
 Print usage and exit 0.
+.TP
+.BR \-V ", " \-\-version
+Print
+.BI "roster " VERSION
+and exit 0.
+The rewrite carries on the Python roster's numbering: the first is 0.7.0.
 .SH COMMANDS
 .TP
 .B roster
@@ -1077,6 +1083,10 @@ Don't verify the TLS certificate, as for a service with
 Print the plugin contract below, with an example.
 .B help
 alone prints usage.
+.TP
+.B version
+The same as
+.BR \-\-version .
 .TP
 .I NAME
 .RI [ ARGS ...]

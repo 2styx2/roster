@@ -24,7 +24,7 @@ mod web;
 
 /// Commands roster runs itself; any other name is a plugin.
 const BUILTINS: &[&str] = &[
-    "add", "check", "ls", "run", "setup", "ssh", "sync", "vault", "web", "help",
+    "add", "check", "ls", "run", "setup", "ssh", "sync", "vault", "web", "help", "version",
 ];
 
 use std::process::ExitCode;
@@ -75,11 +75,13 @@ commands:
   vault unlock   unlock Bitwarden for 12 h (session key in the kernel keyring)
   vault lock     lock Bitwarden and forget the session key
   help plugins   how `roster NAME` runs a roster-NAME plugin from PATH
+  version        print roster's version (also -V, --version)
 
 options:
   -c FILE        the Inventory (default: $ROSTER_CONFIG, ./roster.yml,
                  then ~/.config/roster/roster.yml)
   -h, --help     print this help
+  -V, --version  print roster's version
 
 exit codes: 0 ok, 1 nothing matched or failed, 2 usage error, 3 the Inventory
 won't load.
@@ -141,6 +143,10 @@ fn run() -> Result<(), Fail> {
         match arg {
             Short('h') | Long("help") => {
                 print!("{USAGE}");
+                return Ok(());
+            }
+            Short('V') | Long("version") => {
+                println!("roster {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             Short('c') | Long("config") => {
@@ -266,6 +272,10 @@ fn run() -> Result<(), Fail> {
         },
         Some("help") => {
             print!("{}", if topic { plugin::HELP } else { USAGE });
+            Ok(())
+        }
+        Some("version") => {
+            println!("roster {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         Some(other) => Err(usage_error(format!("unknown command '{other}'"))),
