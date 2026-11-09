@@ -5,8 +5,12 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .B roster
 .RB [ \-c
 .IR FILE ]
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
 .B ls
-.RB [ \-\-json ]
+.RB [ \-\-json | \-\-long ]
 .RI [ FILTER ]
 .br
 .B roster
@@ -49,6 +53,37 @@ May appear before or after the command.
 Print usage and exit 0.
 .SH COMMANDS
 .TP
+.B roster
+With no command, open the picker: the
+.B ls
+lines in
+.BR fzf (1),
+with a preview of the Host under the cursor
+.RB ( "roster ls \-\-long " \fIHOST\fP ).
+Tab marks several Hosts.
+Each Host picked runs
+.BI "roster \-c " "FILE " "ssh " HOST,
+with roster's own path and the Inventory's absolute path.
+Inside tmux
+.RB ( TMUX
+set), Enter opens it in a new tmux window named after the Host and
+.B ctrl\-v
+in a split of the current one; marked Hosts open in one new window, a pane
+each, tiled, with
+.B synchronize\-panes
+on, so what is typed goes to all of them.
+Outside tmux, the pick replaces roster in place, as
+.B ssh
+does; marking several Hosts there exits 1.
+Leaving fzf without a pick exits 0 and runs nothing.
+Without fzf on
+.BR PATH ,
+roster says to install fzf and exits 1.
+.I contrib/roster.tmux
+binds tmux's
+.B prefix+r
+to the picker in a popup.
+.TP
 .B ls
 Print one line per Host, in Inventory order, with the columns
 name, group, address, access and title, padded and separated by two spaces.
@@ -74,6 +109,14 @@ equals one of the comma-separated words in
 (exactly, case and all):
 .BR "roster ls hypervisors,printer" .
 Nothing matched is exit 1, with a message on stderr.
+.TP
+.B ls \-\-long
+Print each Host as
+.I key: value
+lines (name, group, address, access, title and description, blank ones
+left out), with a blank line between Hosts.
+For people and the picker's preview; scripts use
+.BR \-\-json .
 .TP
 .B ls \-\-json
 Print one JSON document:
@@ -469,9 +512,9 @@ Success.
 Nothing matched the
 .IR FILTER ;
 .B ssh
-was given a Host it can't reach; or a
+was given a Host it can't reach; a
 .B setup
-step failed.
+step failed; or the picker can't run fzf or tmux.
 .TP
 .B 2
 Usage error: an unknown command or option, or a missing value.
@@ -505,7 +548,10 @@ Set by roster for a plugin to roster's own path.
 .B PATH
 Searched for
 .BI roster\- NAME
-plugins.
+plugins, and for fzf and tmux.
+.TP
+.B TMUX
+Set inside tmux; the picker then opens Hosts in tmux windows and panes.
 .TP
 .B HOME
 Used to find

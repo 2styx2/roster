@@ -15,10 +15,12 @@ const BUILTINS: &[&str] = &["ls", "setup", "ssh", "help"];
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-usage: roster [-c FILE] COMMAND [ARGS]
+usage: roster [-c FILE] [COMMAND [ARGS]]
 
 commands:
-  ls [--json] [FILTER]
+  (none)         pick Hosts with fzf and ssh to them: in tmux, Enter opens a
+                 window, ctrl-v a split, Tab-marked Hosts synchronized panes
+  ls [--json] [--long] [FILTER]
                  list Hosts: name, group, address, access, title;
                  FILTER: names, groups, types or products, comma-separated
   setup          make this Box's key and write the ssh config for the Hosts

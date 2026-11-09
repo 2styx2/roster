@@ -73,6 +73,15 @@ const DOCUMENTED: &[&str] = &[
     "no Host named",
     "a Password Host",
     "ssh's exit status",
+    // the picker (ticket #9)
+    "With no command, open the picker",
+    "fzf (1)",
+    "ls \\-\\-long",
+    "ctrl\\-v",
+    "synchronize\\-panes",
+    "install fzf",
+    "contrib/roster.tmux",
+    ".B TMUX",
 ];
 
 #[test]
