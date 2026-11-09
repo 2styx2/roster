@@ -45,7 +45,9 @@ pub fn box_files(inv: &Inventory) -> Result<(), Fail> {
 /// user), say from a hand edit: `add` and the vault import refuse them, but
 /// roster.yml is still the user's file. Another user is another login.
 fn warn_duplicates(inv: &Inventory) {
-    let mut seen: Vec<((String, u16, &str), Vec<&str>)> = Vec::new();
+    /// One login: address (lowercase), port, user.
+    type Login<'a> = (String, u16, &'a str);
+    let mut seen: Vec<(Login, Vec<&str>)> = Vec::new();
     for h in &inv.hosts {
         let login = (h.ip.to_lowercase(), h.port, h.user.as_str());
         match seen.iter_mut().find(|(l, _)| *l == login) {
