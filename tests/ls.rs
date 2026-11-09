@@ -52,6 +52,7 @@ fn ls_json_is_one_versioned_document() {
             "group": "dev",
             "ip": "10.0.0.5",
             "user": "admin",
+            "port": 22,
             "access": "key",
             "title": "Box A",
         })
