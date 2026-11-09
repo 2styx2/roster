@@ -41,6 +41,10 @@ commands:
                  make the Mesh: the Hosts of a `mesh: true` group ssh to
                  each other; --dry-run prints the plan (SOURCE -> PEER, and
                  each Host's changes) and changes nothing
+  setup --undo [--dry-run]
+                 remove what setup put on the Hosts (this Box's Mesh, then
+                 its key line) and the Box (ssh config, Include, known_hosts,
+                 ROSTER.md and Claude entries); the Box key is kept
   ssh HOST [ARGS]
                  ssh to a Host by name; ARGS go to ssh unchanged; a Password
                  Host's auth password goes to ssh through askpass

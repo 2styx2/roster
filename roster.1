@@ -17,6 +17,7 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .RB [ \-c
 .IR FILE ]
 .B setup
+.RB [ \-\-undo ]
 .RB [ \-\-dry\-run ]
 .br
 .B roster
@@ -521,6 +522,69 @@ After
 .BI "ssh " HOST
 and anything that speaks ssh (rsync, an editor's remote mode)
 reach a Host by its name.
+.PP
+.B setup \-\-undo
+removes what
+.B setup
+put on the Hosts and the Box, for a user leaving or uninstalling roster,
+and nothing else.
+Each Enrolled, reviewed, POSIX Host is visited in turn with
+.BR "ssh \-o BatchMode=yes" ,
+using the Box key.
+First its Mesh goes, as if no Host were in it: every authorized_keys line
+tagged
+.BI roster\-mesh: SRC @ BOX\fR,
+the Mesh keys whose
+.I .pub
+carries that tag, and the Mesh config, known_hosts,
+.IR ~/ROSTER.md ,
+the Include and the import this Box wrote.
+Last, since it cuts off roster's own way in, the Box key's line goes:
+every authorized_keys line whose last field is exactly
+.BI roster\-managed: BOX
+or the legacy
+.BI fleet\-managed: BOX\fR,
+written to a copy beside the file and moved into place.
+Other Boxes' lines and keys and lines added by hand are never touched.
+A Host that refuses the Box key has nothing of this Box's roster can
+reach, and counts as done.
+A Host that is down, or whose Mesh cleanup fails, keeps its key line and
+is not done: roster says how many Hosts aren't done and exits 1, and
+.B setup \-\-undo
+again finishes them.
+.PP
+Once every Host is done, the Box's files go:
+.IR ~/.ssh/config.d/roster ,
+the exact
+.BI "Include \(dq" HOME /.ssh/config.d/roster\(dq
+line in
+.IR ~/.ssh/config ,
+.IR ~/.ssh/roster_known_hosts ,
+and, next to
+.IR roster.yml ,
+.IR ROSTER.md ,
+the
+.B @ROSTER.md
+line in
+.I CLAUDE.md
+and the two deny rules in
+.IR .claude/settings.json .
+A file is deleted only when nothing else is left in it; a
+.I ROSTER.md
+or ssh config whose first line isn't roster's is left alone with a
+warning.
+The Box key is kept, since it may still be needed elsewhere:
+roster prints
+.BI "kept the Box key " PATH
+and it is deleted by hand
+.RB ( "rm ~/.ssh/roster_ed25519 ~/.ssh/roster_ed25519.pub" ).
+.PP
+.B setup \-\-undo \-\-dry\-run
+reads each Host and lists what would go, as
+.IB HOST ": would remove " ...
+and
+.BI "would remove " PATH\fR,
+and changes nothing.
 .RE
 .TP
 .BI "ssh " HOST " \fR[\fPARGS\fR...]\fP"
@@ -1186,7 +1250,9 @@ got an HTTP status of 400 or more, or no response, or was given an unknown
 Host or service; a
 .B setup
 step failed, or a Host wasn't done (down, refused the password, or
-the install failed);
+the install failed), or with
+.B \-\-undo
+a Host wasn't done (down, or its Mesh cleanup failed);
 .B vault unlock
 or
 .B lock
