@@ -175,6 +175,12 @@ const DOCUMENTED: &[&str] = &[
     "left alone",
     " \\-> ",
     "would \" CHANGE",
+    // Mesh Links (ticket #16)
+    ".BR \"both: true\"",
+    "removes its lines",
+    ".B seen_as",
+    ".B mesh_dir",
+    "via isn't supported yet",
     // web (ticket #18)
     ".BI \"web \" \"HOST \"",
     "curl (1)",
