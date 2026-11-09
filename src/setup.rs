@@ -1,7 +1,7 @@
 //! `roster setup`: make this Box ready to reach the Hosts.
 
 use crate::inventory::Inventory;
-use crate::{Fail, atomic, sshconf};
+use crate::{Fail, atomic, claude, sshconf};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -10,6 +10,7 @@ use std::process::Command;
 pub fn run(inv: &Inventory) -> Result<(), Fail> {
     box_key(inv)?;
     ssh_config(inv)?;
+    claude_files(inv)?;
     Ok(())
 }
 
@@ -77,14 +78,45 @@ fn ssh_config(inv: &Inventory) -> Result<(), Fail> {
     let from = std::fs::canonicalize(&inv.path).unwrap_or(inv.path.clone());
     save(&path, &sshconf::render(inv, &from), 0o600)?;
     let config = home().join(".ssh/config");
-    let old = match std::fs::read_to_string(&config) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        r => r.map_err(|e| failed(format!("{}: {e}", config.display())))?,
-    };
+    let old = read(&config)?.unwrap_or_default();
     if let Some(new) = sshconf::with_include(&old, &path) {
         save(&config, &new, 0o600)?;
     }
     Ok(())
+}
+
+/// ROSTER.md, the CLAUDE.md import and the Claude settings, beside roster.yml.
+fn claude_files(inv: &Inventory) -> Result<(), Fail> {
+    let yml = std::fs::canonicalize(&inv.path).unwrap_or(inv.path.clone());
+    let dir = yml.parent().unwrap_or(std::path::Path::new("."));
+    save(&dir.join("ROSTER.md"), &claude::roster_md(inv), 0o644)?;
+    let md = dir.join("CLAUDE.md");
+    if let Some(text) = claude::with_import(&read(&md)?.unwrap_or_default()) {
+        save(&md, &text, 0o644)?;
+    }
+    let settings = dir.join(".claude/settings.json");
+    match claude::with_deny(read(&settings)?.as_deref()) {
+        Ok(None) => {}
+        Ok(Some(text)) => {
+            std::fs::create_dir_all(dir.join(".claude"))
+                .map_err(|e| failed(format!("{}: {e}", dir.display())))?;
+            save(&settings, &text, 0o644)?;
+        }
+        Err(()) => eprintln!(
+            "roster: warning: {} isn't valid JSON; left it alone",
+            settings.display()
+        ),
+    }
+    Ok(())
+}
+
+/// A file's text, or None when it's missing.
+fn read(path: &std::path::Path) -> Result<Option<String>, Fail> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(failed(format!("{}: {e}", path.display()))),
+    }
 }
 
 /// Atomically write `path` if its contents differ, and say so.
