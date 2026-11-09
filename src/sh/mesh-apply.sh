@@ -8,6 +8,8 @@
 set -eu
 umask 077
 cd
+# SELinux: a file moved into place keeps the label of where it was made.
+relabel() { if command -v restorecon >/dev/null 2>&1; then restorecon -F "$1" 2>/dev/null || true; fi; }
 P=$HOME/.ssh/roster-mesh
 INC="Include $P/config"
 IMP='@~/ROSTER.md'
@@ -25,6 +27,7 @@ put() {
 	if [ -f "$f" ]; then cp -p "$f" "$t"; else : >"$t" && chmod "$m" "$t"; fi
 	"$@" >"$t"
 	mv -f "$t" "$f"
+	relabel "$f"
 	t=
 }
 ours() {
@@ -94,6 +97,8 @@ if [ -n "$MAKE" ]; then
 	ssh-keygen -q $KEYGEN -N '' -C "roster-mesh:$NAME@$BOX" -f "$t/k" </dev/null >/dev/null
 	mv -f "$t/k" "$P/$MAKE"
 	mv -f "$t/k.pub" "$P/$MAKE.pub"
+	relabel "$P/$MAKE"
+	relabel "$P/$MAKE.pub"
 	rmdir "$t"
 	t=
 fi

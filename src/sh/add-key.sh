@@ -6,6 +6,8 @@
 set -eu
 umask 077
 cd
+# SELinux: a file moved into place keeps the label of where it was made.
+relabel() { if command -v restorecon >/dev/null 2>&1; then restorecon -F "$1" 2>/dev/null || true; fi; }
 [ -d .ssh ] || mkdir -m 700 .ssh
 f=.ssh/authorized_keys
 if [ -L "$f" ]; then f=$(readlink -f "$f"); fi # a symlink stays one
@@ -29,5 +31,6 @@ else
 fi
 printf '%s\n' "$LINE" >>"$t"
 mv -f "$t" "$f"
+relabel "$f"
 trap - EXIT
 echo added
