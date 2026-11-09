@@ -86,6 +86,45 @@ fn setup_installs_the_box_key_with_the_vault_password_once() {
     assert_eq!(read(s.home.join("ssh-keyscan.log")).lines().count(), 2);
 }
 
+/// A Windows Host labelled only `type: windows` (no `os: windows`) that
+/// already takes the key: the probe is `exit`, which PowerShell has, so it
+/// counts as done; nothing is installed.
+#[test]
+fn a_host_whose_shell_lacks_true_but_takes_the_key_is_done() {
+    let s = sandbox("hosts-powershell");
+    let b = host(&s, "box-b", "10.0.0.6");
+    let c = host(&s, "box-c", "10.0.0.7");
+    assert_eq!(s.roster(&["setup"]).code, 0, "first run installs");
+    s.write("hosts/box-b/powershell", "");
+    let out = s.roster(&["setup"]);
+    // The key step is done: no install was tried.
+    assert!(
+        !out.stderr.contains("installing the Box key"),
+        "{}",
+        out.stderr
+    );
+    assert!(!out.stdout.contains("box-b"), "{}", out.stdout);
+    assert_eq!(read(b.join(".ssh/authorized_keys")), BOX_LINE);
+    assert_eq!(read(c.join(".ssh/authorized_keys")), BOX_LINE);
+    // The Mesh's sh can't run there: it says why, and what to do.
+    assert!(
+        out.stderr.contains("box-b: Mesh: failed (1): ")
+            && out
+                .stderr
+                .contains("(a Windows Host? give it `os: windows`)"),
+        "{}",
+        out.stderr
+    );
+    // With `os: windows`, setup leaves it out, and the run is clean.
+    s.write(
+        "roster.yml",
+        &INVENTORY.replace("box-b: 10.0.0.6", "box-b: {ip: 10.0.0.6, os: windows}"),
+    );
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(!out.stderr.contains("Mesh: failed"), "{}", out.stderr);
+}
+
 #[test]
 fn unreviewed_windows_and_password_hosts_are_skipped_with_a_reason() {
     let s = sandbox("hosts-skips");
@@ -254,7 +293,7 @@ fn dry_run_prints_the_plan_and_changes_nothing() {
     assert!(out.stdout.ends_with(last), "{}", out.stdout);
     assert_eq!(
         read(s.home.join("ssh.log")),
-        "-o BatchMode=yes -o ControlMaster=no box-b true\n",
+        "-o BatchMode=yes -o ControlMaster=no box-b exit\n",
         "only the read-only probe, and only where the host key is known"
     );
     assert_eq!(read(s.home.join("ssh-keyscan.log")), "");
