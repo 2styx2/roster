@@ -13,6 +13,8 @@ use zeroize::{Zeroize, Zeroizing};
 const KEY: &str = "roster:bw-session";
 /// How long `vault unlock` lasts, in seconds (12 h).
 const TIMEOUT: &str = "43200";
+/// The session key's permissions: possessor all; user view, read, search.
+const PERM: &str = "0x3f0b0000";
 /// The variable that carries the master password into `bw unlock` only.
 const MASTER_VAR: &str = "ROSTER_BW_MASTER";
 /// roster v0.7.0's session file: never read, deleted by unlock and lock.
@@ -169,9 +171,15 @@ pub fn unlock() -> Result<(), Fail> {
     };
     let id = store(&["padd", "user", KEY, "@u"], session.as_bytes())?;
     let id = String::from_utf8_lossy(&id).trim().to_string();
-    if let Err(e) = store(&["timeout", &id, TIMEOUT], b"") {
-        let _ = keyctl(&["purge", "user", KEY], b"");
-        return Err(e);
+    // Possessor: all. The owner's other processes, such as `roster sync` from
+    // cron in its own keyring session: view, read, search, nothing more (no
+    // write, link or setattr, so they can't replace the key or extend its
+    // life). Group and other users: none.
+    for args in [["setperm", &id, PERM], ["timeout", &id, TIMEOUT]] {
+        if let Err(e) = store(&args, b"") {
+            let _ = keyctl(&["purge", "user", KEY], b"");
+            return Err(e);
+        }
     }
     println!("Bitwarden unlocked for 12 h (the session key is in the kernel keyring)");
     Ok(())
