@@ -108,3 +108,23 @@ fn setup_makes_one_key_per_type_and_installs_each_hosts_own() {
     assert_eq!(out.stdout, "", "a rerun changes nothing");
     assert_eq!(read(s.home.join("ssh-keygen.log")).lines().count(), 2);
 }
+
+#[test]
+fn undo_takes_every_types_line_off_and_keeps_every_key() {
+    let s = with_hosts("keytypes-undo");
+    assert_eq!(s.roster(&["setup"]).code, 0);
+    let fips = s.home.join("hosts/fips-01/.ssh/authorized_keys");
+    let hand = "ssh-ed25519 AAAAhand user@laptop\n";
+    let old = "ssh-rsa AAAAold roster-managed:box-a\n";
+    std::fs::write(&fips, read(&fips) + old + hand).unwrap();
+    let out = s.roster(&["setup", "--undo"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(read(&fips), hand);
+    assert_eq!(read(s.home.join("hosts/box-b/.ssh/authorized_keys")), "");
+    for key in ["roster_ed25519", "roster_ecdsa"] {
+        let key = s.home.join(".ssh").join(key);
+        assert!(key.exists(), "{} is kept", key.display());
+        let kept = format!("kept the Box key {}; delete it", key.display());
+        assert!(out.stdout.contains(&kept), "{}", out.stdout);
+    }
+}
