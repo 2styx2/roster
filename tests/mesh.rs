@@ -297,3 +297,45 @@ fn a_host_gone_from_the_inventory_loses_its_lines_on_the_next_run() {
         out.stdout
     );
 }
+
+#[test]
+fn a_down_host_is_pending_and_the_next_run_finishes_it() {
+    let s = sandbox("mesh-down", INVENTORY);
+    let [b, c, ..] = hosts_up(&s);
+    s.write("hosts/box-c/down", "");
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    let last = "roster: 1 Host not done; run `roster setup` again to finish\n";
+    assert!(out.stderr.ends_with(last), "{}", out.stderr);
+    assert!(b.join(".ssh/roster-mesh/id_ed25519").exists());
+    assert_eq!(read(b.join(".ssh/authorized_keys")), BOX_LINE);
+
+    std::fs::remove_file(c.join("down")).unwrap();
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        read(b.join(".ssh/authorized_keys")),
+        BOX_LINE.to_string() + &peer_line("box-c", "10.0.0.7")
+    );
+    assert_eq!(
+        read(c.join(".ssh/authorized_keys")),
+        BOX_LINE.to_string() + &peer_line("box-b", "10.0.0.6")
+    );
+    let out = s.roster(&["setup"]);
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+}
+
+#[test]
+fn a_down_source_keeps_its_lines_on_its_peers() {
+    let s = sandbox("mesh-down-source", INVENTORY);
+    let [b, c, ..] = hosts_up(&s);
+    assert_eq!(s.roster(&["setup"]).code, 0);
+    s.write("hosts/box-b/down", "");
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert_eq!(
+        read(c.join(".ssh/authorized_keys")),
+        BOX_LINE.to_string() + &peer_line("box-b", "10.0.0.6")
+    );
+    assert!(read(b.join(".ssh/authorized_keys")).contains("roster-mesh:box-c@box-a"));
+}
