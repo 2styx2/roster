@@ -492,3 +492,53 @@ fn no_ssh_inherits_a_secrets_variable() {
     assert!(!env.contains(PASSWORD), "{env}");
     assert!(!env.contains("session-made-up"), "{env}");
 }
+
+/// The `->` lines of a dry run.
+fn arrows(out: &str) -> String {
+    out.lines()
+        .filter(|l| l.contains(" -> "))
+        .map(|l| format!("{l}\n"))
+        .collect()
+}
+
+fn with_links(links: &str) -> String {
+    format!(
+        "{}links:\n{links}",
+        table_inventory("", "\n    mesh: true", "")
+    )
+}
+
+#[test]
+fn links_add_one_way_or_two_way_reach_across_groups() {
+    let cases = [
+        // Host to group: one way.
+        (
+            "  - {from: box-b, to: ops}\n",
+            "box-b -> box-c\nbox-b -> ops-01\nbox-b -> ops-02\nbox-c -> box-b\n",
+        ),
+        // Group to Host, both ways.
+        (
+            "  - {from: ops, to: box-c, both: true}\n",
+            "box-b -> box-c\nbox-c -> box-b\nbox-c -> ops-01\nbox-c -> ops-02\n\
+             ops-01 -> box-c\nops-02 -> box-c\n",
+        ),
+        // Inside a meshed group: no pair twice.
+        (
+            "  - {from: box-b, to: box-c, both: true}\n  - {from: box-c, to: box-b}\n",
+            "box-b -> box-c\nbox-c -> box-b\n",
+        ),
+        // Host to Host, in a group without `mesh:`.
+        (
+            "  - {from: ops-02, to: ops-01}\n",
+            "box-b -> box-c\nbox-c -> box-b\nops-02 -> ops-01\n",
+        ),
+    ];
+    for (n, (links, want)) in cases.iter().enumerate() {
+        let s = sandbox(&format!("mesh-links-{n}"), &with_links(links));
+        hosts_up(&s);
+        host(&s, "ops-02", "10.0.0.31");
+        let out = s.roster(&["setup", "--dry-run"]);
+        assert_eq!(out.code, 0, "case {n}: {}", out.stderr);
+        assert_eq!(arrows(&out.stdout), *want, "case {n}");
+    }
+}
