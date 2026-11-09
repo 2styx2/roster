@@ -32,7 +32,10 @@ pub fn run(inv: &Inventory, dry: bool) -> Result<(), Fail> {
         let at = known_as(h);
         if !is_known(&known, &at) {
             if dry {
-                println!("would record the host key of {} and install the Box key", h.name);
+                println!(
+                    "would record the host key of {} and install the Box key",
+                    h.name
+                );
                 continue;
             }
             let Some(lines) = keyscan(h) else {
@@ -126,7 +129,10 @@ fn install(inv: &Inventory, h: &Host) -> Result<(), String> {
             "{name}: the Box key is in authorized_keys but isn't taken; \
              check the modes of ~ and ~/.ssh there"
         )),
-        (255, _) => Err(format!("{name}: can't log in with the password: {}", ran.why())),
+        (255, _) => Err(format!(
+            "{name}: can't log in with the password: {}",
+            ran.why()
+        )),
         (code, _) => Err(format!(
             "{name}: installing the Box key failed ({code}): {}",
             ran.why()
