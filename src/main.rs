@@ -37,6 +37,9 @@ commands:
                  run CMD on Hosts in parallel, lines prefixed `host: `;
                  TARGET: Hosts and groups, comma-separated; exit 1 if any
                  Host failed
+  check [--json] [TARGET]
+                 per Host: DNS, port, then a BatchMode ssh login (a Password
+                 Host: its auth resolves); one line each; exit 1 on a failure
   help plugins   how `roster NAME` runs a roster-NAME plugin from PATH
 
 options:
