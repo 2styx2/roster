@@ -260,3 +260,47 @@ fn imported_and_added_hosts_are_reviewed_even_when_defaults_are_not() {
         .unwrap_or_default();
     assert!(b.contains("unreviewed"), "{b}");
 }
+
+#[test]
+fn an_item_for_a_login_already_in_the_inventory_is_skipped() {
+    let login = |id: &str, name: &str, user: &str, uri: &str| {
+        format!(
+            r#"{{"object":"item","type":1,"id":"{id}","name":"{name}","folderId":null,"login":{{"username":"{user}","password":"{CANARY}","uris":[{{"uri":"{uri}"}}]}}}}"#
+        )
+    };
+    let mut s = unlocked("import-duplicates");
+    s.set_env(
+        "FAKE_BW_ITEMS",
+        &[
+            // box-b is already 10.0.0.6:22 as admin.
+            login("d1", "box-b-new ssh", "admin", "10.0.0.6"),
+            // Two items for one new login: the first one wins.
+            login("d2", "box-e ssh", "ops", "10.0.0.20"),
+            login("d3", "box-e2 ssh", "ops", "10.0.0.20"),
+            // The same address as another user: another login, imported.
+            login("d4", "box-b-root ssh", "root", "10.0.0.6"),
+        ]
+        .join("\n"),
+    );
+    let out = s.roster(&["sync"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let yml = read(&s, "roster.yml");
+    assert!(yml.contains("box-e: "), "{yml}");
+    assert!(yml.contains("box-b-root: "), "{yml}");
+    assert!(!yml.contains("box-b-new"), "{yml}");
+    assert!(!yml.contains("box-e2"), "{yml}");
+    assert!(
+        out.stderr.contains(
+            "skipped vault item 'box-b-new ssh': can't add box-b-new: \
+             box-b is already 10.0.0.6:22 as admin"
+        ),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr
+            .contains("skipped vault item 'box-e2 ssh': can't add box-e2: box-e is already"),
+        "{}",
+        out.stderr
+    );
+}

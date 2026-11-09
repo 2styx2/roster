@@ -177,6 +177,8 @@ const DOCUMENTED: &[&str] = &[
     "contrib/roster.bash",
     "$PREFIX/share/bash\\-completion/completions/roster",
     ".B make install",
+    "is already the same login",
+    "duplicate Hosts:",
     ".B make uninstall",
     "nothing to regenerate",
     // Bitwarden (ticket #11)

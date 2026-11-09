@@ -70,6 +70,32 @@ fn add_inserts_after_the_groups_last_host_and_keeps_every_other_byte() {
 }
 
 #[test]
+fn the_same_address_and_user_as_another_host_is_refused() {
+    // box-b is 10.0.0.6:22 as admin (from defaults).
+    let s = Sandbox::new("add-duplicate");
+    s.write("roster.yml", INVENTORY);
+    let out = s.roster(&["add", "box-b2", "--ip", "10.0.0.6", "--group", "prod"]);
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert!(
+        out.stderr
+            .contains("can't add box-b2: box-b is already 10.0.0.6:22 as admin"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(read(&s, "roster.yml"), INVENTORY, "nothing written");
+    // Another user, or another port, is another login: allowed.
+    for (name, extra) in [
+        ("box-b-root", ["--user", "root"]),
+        ("box-b-alt", ["--port", "2222"]),
+    ] {
+        let mut args = vec!["add", name, "--ip", "10.0.0.6", "--group", "prod"];
+        args.extend(extra);
+        let out = s.roster(&args);
+        assert_eq!(out.code, 0, "{name}: {}", out.stderr);
+    }
+}
+
+#[test]
 fn a_missing_group_is_made_at_the_end_of_groups() {
     let s = Sandbox::new("add-new-group");
     s.write("roster.yml", INVENTORY);
