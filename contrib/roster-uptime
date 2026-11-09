@@ -1,0 +1,10 @@
+#!/bin/sh
+# roster-uptime: `roster uptime TARGET` runs uptime on Hosts and groups.
+#
+# UNSUPPORTED: an example plugin, not part of roster and not tested.
+# Install by copying it onto PATH and making it executable.
+# See `roster help plugins` for the contract: roster sets ROSTER_BIN and
+# ROSTER_CONFIG, so the plugin calls the same roster and Inventory.
+set -eu
+[ $# -ge 1 ] || { echo "usage: roster uptime TARGET" >&2; exit 2; }
+exec "$ROSTER_BIN" run "$1" -- uptime
