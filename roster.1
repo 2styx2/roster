@@ -25,6 +25,9 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .I HOST
 .RI [ ARGS ...]
 .br
+.B roster vault
+.BR unlock | lock
+.br
 .B roster
 .RB [ \-c
 .IR FILE ]
@@ -430,6 +433,39 @@ Skipped Hosts are not listed. The exit status is as without
 .BR \-\-json .
 .RE
 .TP
+.B vault unlock
+Unlock Bitwarden once for the day.
+roster runs
+.BR "bw unlock \-\-raw \-\-passwordenv ROSTER_BW_MASTER" ,
+with the master password from
+.B BW_PASSWORD
+or asked on
+.IR /dev/tty ,
+and set only in bw's environment, never in an argument.
+The session key goes into the kernel keyring with
+.BR keyctl (1):
+a
+.B user
+key
+.B roster:bw\-session
+in the user keyring
+.BR @u ,
+which expires after 12 hours.
+It is never written to a file.
+Without
+.B keyctl
+nothing can be kept: roster says to install keyutils, exits 1, and each
+.B bw:
+reference asks for the master password.
+.TP
+.B vault lock
+Purge the key from the keyring and run
+.BR "bw lock" .
+.IP
+Both delete roster 0.7's
+.I ~/.config/roster/bw\-session
+file if it is there, and say so; roster never reads it.
+.TP
 .B help plugins
 Print the plugin contract below, with an example.
 .B help
@@ -693,6 +729,42 @@ Ask on
 with echo off.
 The default.
 .TP
+.BI bw: ITEM\fR[\fB#\fIFIELD\fR]
+Bitwarden's item
+.IR ITEM ,
+through
+.BR "bw get item " \fIITEM\fP " \-\-nointeraction" ,
+with the session key from the keyring (see
+.BR "vault unlock" )
+as
+.B BW_SESSION
+in bw's environment only.
+Without
+.I FIELD
+it is the login password;
+.B #username
+is the login user name,
+.B #notes
+the notes, and any other
+.I FIELD
+a custom field, matched exactly, then ignoring case.
+A missing or expired key means Bitwarden is locked: roster says to run
+.B roster vault unlock
+and unlocks for this run only, with the master password from
+.B BW_PASSWORD
+or
+.IR /dev/tty ,
+storing nothing.
+roster keeps
+.B BW_PASSWORD
+out of ssh's environment.
+.IP
+Security: the session key is never on disk, in a backup or in a synced
+repo, and it expires on its own.
+But any process running as the same user can read it with
+.BR "keyctl print" ,
+just as it could read a file.
+.TP
 .BR agent ", " key ", " none
 No password.
 .PP
@@ -703,8 +775,6 @@ or
 is an error that says to use
 .B cmd:
 with that tool's CLI.
-.BI bw: ITEM
-(Bitwarden) is not built yet and fails the same way.
 .SH EXIT STATUS
 .TP
 .B 0
@@ -722,7 +792,11 @@ failed on a Host, was given an unknown
 .IR TARGET ,
 or had no reviewed Host to run on; a
 .B setup
-step failed; or the picker can't run fzf or tmux.
+step failed;
+.B vault unlock
+or
+.B lock
+failed, or found no keyctl; or the picker can't run fzf or tmux.
 .TP
 .B 2
 Usage error: an unknown command or option, or a missing value.
@@ -744,6 +818,17 @@ A plugin's exit status, and ssh's for
 .BR "roster ssh" ,
 is passed through unchanged.
 .SH ENVIRONMENT
+.TP
+.B BW_PASSWORD
+The Bitwarden master password, for
+.B vault unlock
+and a locked
+.B bw:
+reference; else it is asked on
+.IR /dev/tty .
+.TP
+.B BW_SESSION
+Set by roster in bw's environment only; roster ignores one you set.
 .TP
 .B ROSTER_CONFIG
 The Inventory path, when

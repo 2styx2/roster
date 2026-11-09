@@ -121,6 +121,20 @@ const DOCUMENTED: &[&str] = &[
     "\"stdout\"",
     "\"stderr\"",
     "\"host\"",
+    // Bitwarden (ticket #11)
+    ".B vault unlock",
+    ".B vault lock",
+    ".BI bw: ITEM",
+    "#username",
+    "\\-\\-passwordenv",
+    "BW_PASSWORD",
+    "BW_SESSION",
+    "roster:bw\\-session",
+    "12 hours",
+    "keyctl print",
+    "never on disk",
+    "install keyutils",
+    "~/.config/roster/bw\\-session",
 ];
 
 #[test]

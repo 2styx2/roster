@@ -1,5 +1,6 @@
 //! The vault: an `auth:` reference resolved to a password, only when needed.
-//! `cmd:`, `env:` and `prompt` are built in; anything else points at `cmd:`.
+//! `bw:`, `cmd:`, `env:` and `prompt` are built in; anything else points at
+//! `cmd:`.
 
 use crate::Fail;
 use std::fs::File;
@@ -11,8 +12,8 @@ use zeroize::Zeroizing;
 /// when debug-printed.
 pub struct Secret {
     value: Zeroizing<String>,
-    /// The environment variable it came from (`env:VAR`), which askpass
-    /// keeps out of ssh's environment.
+    /// The environment variable it came from (`env:VAR`, or `BW_PASSWORD`
+    /// for `bw:`), which askpass keeps out of ssh's environment.
     pub from_env: Option<String>,
 }
 
@@ -45,16 +46,13 @@ pub fn resolve(reference: &str, what: &str) -> Result<Option<Secret>, Fail> {
     };
     match reference.split_once(':') {
         _ if matches!(reference, "agent" | "key" | "none") => Ok(None),
-        _ if reference == "prompt" => secret(prompt(what)?, None),
+        _ if reference == "prompt" => secret(ask(&format!("password for {what}"), what)?, None),
         Some(("cmd", command)) => secret(command_line(command, what)?, None),
         Some(("env", var)) => match std::env::var(var) {
             Ok(v) => secret(Zeroizing::new(v), Some(var.to_string())),
             Err(_) => Err(failed(format!("{what}: auth env:{var}: {var} isn't set"))),
         },
-        // Bitwarden (ticket #11) goes here.
-        Some(("bw", _)) => Err(failed(format!(
-            "{what}: auth bw: isn't built yet; use cmd: with the bw CLI meanwhile"
-        ))),
+        Some(("bw", item)) => secret(crate::bw::get(item, what)?, Some("BW_PASSWORD".into())),
         _ => Err(failed(format!(
             "{what}: auth '{reference}' isn't supported: use cmd:COMMAND with your \
              password manager's CLI, or env:VAR or prompt"
@@ -83,8 +81,8 @@ fn command_line(command: &str, what: &str) -> Result<Zeroizing<String>, Fail> {
     }
 }
 
-/// Ask on /dev/tty with echo off.
-fn prompt(what: &str) -> Result<Zeroizing<String>, Fail> {
+/// Ask for `label` on /dev/tty with echo off.
+pub fn ask(label: &str, what: &str) -> Result<Zeroizing<String>, Fail> {
     let tty_err = |e: std::io::Error| failed(format!("{what}: auth prompt: /dev/tty: {e}"));
     let mut tty = File::options()
         .read(true)
@@ -99,7 +97,7 @@ fn prompt(what: &str) -> Result<Zeroizing<String>, Fail> {
             .status()
             .map(drop)
     };
-    write!(tty, "password for {what}: ").map_err(tty_err)?;
+    write!(tty, "{label}: ").map_err(tty_err)?;
     stty("-echo").map_err(tty_err)?;
     // Byte by byte, so no unwiped read buffer holds the password.
     let mut line = Zeroizing::new(Vec::with_capacity(256));

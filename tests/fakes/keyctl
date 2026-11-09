@@ -1,0 +1,26 @@
+#!/bin/sh
+# Fake keyctl: keeps `user` keys in @u as files under $HOME/.fake-keyring
+# (the only file a test session key may land in) and appends its argv to
+# $HOME/keyctl.log. A key's id is 7000; `timeout` is saved, not enforced.
+echo "$*" >>"$HOME/keyctl.log"
+ring="$HOME/.fake-keyring"
+mkdir -p "$ring"
+case "$1" in
+--version) echo "keyctl from fake keyutils" ;;
+padd)
+  [ "$2" = user ] && [ "$4" = @u ] || { echo "fake keyctl: bad padd: $*" >&2; exit 2; }
+  cat >"$ring/$3"
+  echo 7000
+  ;;
+timeout) echo "$2 $3" >"$ring/timeout" ;;
+pipe | print)
+  name=${2#%user:}
+  [ -f "$ring/$name" ] || { echo "keyctl_read_alloc: Required key not available" >&2; exit 1; }
+  cat "$ring/$name"
+  ;;
+purge)
+  [ "$2" = user ] || { echo "fake keyctl: bad purge: $*" >&2; exit 2; }
+  if [ -f "$ring/$3" ]; then rm -f "$ring/$3"; echo "purged 1 keys"; else echo "purged 0 keys"; fi
+  ;;
+*) echo "fake keyctl: unexpected: $*" >&2; exit 2 ;;
+esac
