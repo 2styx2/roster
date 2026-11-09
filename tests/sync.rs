@@ -77,3 +77,26 @@ fn sync_picks_up_a_host_added_to_roster_yml() {
     assert!(read(&s, ".ssh/config.d/roster").contains("Host esx-02\n"));
     assert!(out.stdout.contains("wrote "), "{}", out.stdout);
 }
+
+#[test]
+fn sync_warns_about_hosts_that_are_the_same_login() {
+    let s = Sandbox::new("sync-duplicates");
+    s.write(
+        "roster.yml",
+        &INVENTORY.replace(
+            "      win-01:",
+            "      box-b-old: 10.0.0.6\n      \
+             box-b-root: {ip: 10.0.0.6, user: root}\n      win-01:",
+        ),
+    );
+    let out = s.roster(&["sync"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("roster: duplicate Hosts: box-b, box-b-old are all 10.0.0.6:22 as admin"),
+        "{}",
+        out.stderr
+    );
+    // Another user on the same address is another login: no warning.
+    assert!(!out.stderr.contains("box-b-root"), "{}", out.stderr);
+}

@@ -655,6 +655,10 @@ steps 2 to 6 of
 and the Claude settings), and nothing else.
 It never contacts a Host and never makes a key: no ssh, ssh\-keygen or
 ssh\-keyscan runs.
+Hosts that are one login (the same address, port and user), say from a
+hand edit, get a warning on stderr,
+.IR "duplicate Hosts: A, B are all ADDRESS:PORT as USER; keep one" ,
+and sync carries on.
 When the Box key doesn't exist yet, the ssh config still names it in
 .BR IdentityFile ,
 where
@@ -725,12 +729,20 @@ say
 .BR "reviewed: false" ,
 which keeps Hosts found other ways hands\-off.
 roster refuses, writing nothing, when the name is taken, when
+another Host is already the same login (the same address, port and user,
+through
+.B defaults
+and the group:
+.IR "box\-b is already 10.0.0.6:22 as admin" ;
+the same address as another user, or on another port, is another login
+and allowed), when
 .BR groups: ,
 the group or its
 .B hosts:
 is written in flow style
 .RB ( "dev: {hosts: {...}}" ),
 or when the result won't load.
+The vault import skips such an item with the same reason.
 A symlinked
 .I roster.yml
 is written through to its target.
