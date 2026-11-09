@@ -51,6 +51,29 @@ fn no_inventory_leaves_roster_config_unset() {
 }
 
 #[test]
+fn help_plugins_explains_the_contract() {
+    let s = Sandbox::new("plugin-help");
+    let out = s.roster(&["help", "plugins"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    for needle in [
+        "roster-NAME",
+        "ROSTER_CONFIG",
+        "ROSTER_BIN",
+        "ls --json",
+        "\"v\"",
+        "exit",
+        "secret",
+        "#!/bin/sh",
+    ] {
+        assert!(
+            out.stdout.contains(needle),
+            "lacks {needle}: {}",
+            out.stdout
+        );
+    }
+}
+
+#[test]
 fn a_name_not_built_in_nor_on_path_is_a_usage_error() {
     let s = Sandbox::new("plugin-missing");
     let out = s.roster(&["nosuch", "arg"]);
