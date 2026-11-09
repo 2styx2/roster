@@ -1,0 +1,4 @@
+#!/bin/sh
+# Fake ssh: appends its argv to $HOME/ssh.log and exits $FAKE_SSH_EXIT (0).
+echo "$*" >>"$HOME/ssh.log"
+exit "${FAKE_SSH_EXIT:-0}"
