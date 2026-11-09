@@ -102,6 +102,15 @@ fn run() -> Result<(), Fail> {
             }
             Long("json") if matches!(command.as_deref(), Some("ls" | "run")) => json = true,
             Long("long") if command.as_deref() == Some("ls") => long = true,
+            Short(flag @ ('d' | 'H')) if command.as_deref() == Some("web") => {
+                let v = parser.value().map_err(|e| usage_error(e.to_string()))?;
+                let v = v.string().map_err(|e| usage_error(e.to_string()))?;
+                match flag {
+                    'd' => web.body = Some(v),
+                    _ => web.headers.push(v),
+                }
+            }
+            Short('k') if command.as_deref() == Some("web") => web.insecure = true,
             Value(v) if command.as_deref() == Some("ls") && filter.is_none() => {
                 filter = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }

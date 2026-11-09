@@ -191,6 +191,64 @@ fn unknown_hosts_services_and_bad_words_stop_before_curl() {
 }
 
 #[test]
+fn a_body_headers_and_insecure_tls_reach_curl() {
+    let s = sandbox("web-body");
+    let out = s.roster(&[
+        "web",
+        "-H",
+        "Accept: application/json",
+        "box-a",
+        "api",
+        "PUT",
+        "/v1/x",
+        "-d",
+        "{\"name\": \"a\\\"b\"}",
+        "-k",
+        "-H",
+        "X-Trace: 1",
+    ]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        calls(&s),
+        [argv(&[
+            "-k",
+            "-H",
+            "Accept: application/json",
+            "-H",
+            "X-Trace: 1",
+            "-X",
+            "PUT",
+            "https://10.0.0.5:8443/v1/x"
+        ])]
+    );
+    assert_eq!(
+        read(&s, "curl.stdin"),
+        format!("user = \"ops:{PASSWORD}\"\ndata-raw = \"{{\\\"name\\\": \\\"a\\\\\\\"b\\\"}}\"\n"),
+        "a literal body goes in the config, so @ in it is never a file"
+    );
+}
+
+#[test]
+fn a_body_from_a_file_and_verify_false() {
+    let s = sandbox("web-file");
+    let out = s.roster(&["web", "box-a", "self", "POST", "/", "-d", "@body.json"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        calls(&s),
+        [argv(&[
+            "-k",
+            "--data-binary",
+            "@body.json",
+            "-X",
+            "POST",
+            "https://10.0.0.5:9443/"
+        ])]
+    );
+    let out = s.roster(&["web", "box-a", "self", "POST", "/", "-d", "@-"]);
+    assert_eq!(out.code, 2, "stdin carries the config: {}", out.stderr);
+}
+
+#[test]
 fn a_failed_connection_shows_curls_error_and_exits_1() {
     let mut s = sandbox("web-down");
     s.set_env("FAKE_CURL_EXIT", "7");
