@@ -1,0 +1,28 @@
+#!/bin/sh
+# Fake curl: appends its argv to $HOME/curl.log, one argument per line then
+# a blank line; saves its stdin to $HOME/curl.stdin (the only file a test
+# credential may land in) and its environment to curl.env. Prints
+# $FAKE_CURL_BODY, then the -w format as curl would with the status
+# $FAKE_CURL_STATUS (200); $FAKE_CURL_EXIT (0) fails as curl does, with
+# status 000.
+for a in "$@"; do printf '%s\n' "$a"; done >>"$HOME/curl.log"
+echo >>"$HOME/curl.log"
+cat >"$HOME/curl.stdin"
+env >"$HOME/curl.env"
+fmt=
+while [ $# -gt 0 ]; do
+  [ "$1" = -w ] && fmt=$2
+  shift
+done
+printf '%s' "$FAKE_CURL_BODY"
+status=${FAKE_CURL_STATUS:-200}
+if [ "${FAKE_CURL_EXIT:-0}" != 0 ]; then
+  echo "curl: (7) Failed to connect to 10.0.0.5 port 8443" >&2
+  status=000
+fi
+out=$(printf '%s' "$fmt" | sed "s/%{http_code}/$status/")
+case $out in
+'%{stderr}'*) printf "${out#'%{stderr}'}" >&2 ;;
+*) printf "$out" ;;
+esac
+exit "${FAKE_CURL_EXIT:-0}"
