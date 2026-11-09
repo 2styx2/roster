@@ -153,6 +153,11 @@ const DOCUMENTED: &[&str] = &[
     "never contacts a Host and never makes a key",
     "*/15 * * * * roster sync",
     "bash-completion's",
+    // completion (ticket #21)
+    ".SH COMPLETION",
+    "contrib/roster.bash",
+    "~/.local/share/bash\\-completion/completions/roster",
+    "nothing to regenerate",
     // Bitwarden (ticket #11)
     ".B vault unlock",
     ".B vault lock",
