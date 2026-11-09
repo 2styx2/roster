@@ -37,7 +37,24 @@ fn a_reachable_host_checks_ok() {
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(out.stdout, "box-a: ok\n1 Host: 1 ok, 0 failed\n");
     let log = std::fs::read_to_string(s.home.join("ssh.log")).unwrap();
-    assert_eq!(log, "-o BatchMode=yes -o ConnectTimeout=10 box-a true\n");
+    assert_eq!(log, "-o BatchMode=yes -o ConnectTimeout=10 box-a exit\n");
+}
+
+/// PowerShell and cmd have no `true`; `exit` works in every shell.
+#[test]
+fn a_windows_host_logs_in_with_exit_which_every_shell_has() {
+    let (_open, port, _) = ports();
+    let s = sandbox(
+        "check-windows",
+        &[format!(
+            "win-01: {{ip: 127.0.0.1, port: {port}, os: windows}}"
+        )],
+    );
+    let out = s.roster(&["check", "win-01"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout, "win-01: ok\n1 Host: 1 ok, 0 failed\n");
+    let log = std::fs::read_to_string(s.home.join("ssh.log")).unwrap();
+    assert_eq!(log, "-o BatchMode=yes -o ConnectTimeout=10 win-01 exit\n");
 }
 
 #[test]

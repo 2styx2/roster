@@ -17,7 +17,7 @@ const PROMPT: &str = "auth prompt: not checked here";
 
 /// How a Host's login is checked.
 enum Auth {
-    /// `ssh -o BatchMode=yes HOST true`.
+    /// `ssh -o BatchMode=yes HOST exit`.
     Login,
     /// A Password Host's vault reference, already resolved (or not).
     Vault(Result<(), String>),
@@ -73,12 +73,13 @@ fn one(host: &Host, auth: &Auth) -> Report {
     Report { failed, note }
 }
 
-/// Log in with no prompt and run `true`; on failure, ssh's own words.
+/// Log in with no prompt and run `exit`, which sh, cmd and PowerShell all
+/// have; on failure, ssh's own words.
 fn login(host: &Host) -> Result<(), String> {
     let out = crate::remote::command("ssh")
         .args(["-o", "BatchMode=yes"])
         .args(["-o", &format!("ConnectTimeout={CONNECT_TIMEOUT}")])
-        .args([&host.name, "true"])
+        .args([&host.name, "exit"])
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("can't run ssh: {e}"))?;
