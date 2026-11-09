@@ -15,6 +15,14 @@ const DOCUMENTED: &[&str] = &[
     ".SH EXIT STATUS",
     "Usage error",
     "won't load",
+    // plugins
+    ".SH PLUGINS",
+    ".BI roster\\- NAME",
+    ".B help plugins",
+    "ROSTER_BIN",
+    "shadow",
+    "126",
+    "never get secret",
     // ls --json fields
     "\"v\": 1",
     "name",
