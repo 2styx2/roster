@@ -58,6 +58,23 @@ fn key_path_names_the_default_types_key_and_the_others_sit_beside_it() {
     );
 }
 
+#[test]
+fn a_key_path_naming_another_types_key_is_refused() {
+    let s = Sandbox::new("keytypes-clash");
+    s.write(
+        "roster.yml",
+        &format!("key_path: ~/.ssh/roster_ecdsa\n{INVENTORY}"),
+    );
+    let out = s.roster(&["sync"]);
+    assert_eq!(out.code, 3, "{}", out.stderr);
+    assert_eq!(
+        out.stderr,
+        "roster: roster.yml:1: key_path: ~/.ssh/roster_ecdsa is the ecdsa key fips-01 uses; \
+         remove key_path or point it at another file\n"
+    );
+    assert!(!s.home.join(".ssh/config.d/roster").exists());
+}
+
 const PASSWORD: &str = "pw-7d02-made-up";
 
 /// A sandbox with INVENTORY, the fake Hosts box-b and fips-01 up and taking
