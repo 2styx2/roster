@@ -44,22 +44,31 @@ fn login(host: &Host) -> Result<(), String> {
     }
 }
 
-pub fn run(inv: &Inventory, target: Option<&str>, _json: bool) -> Result<(), Fail> {
+pub fn run(inv: &Inventory, target: Option<&str>, json: bool) -> Result<(), Fail> {
     let hosts = match target {
         Some(target) => inv.targets(target)?,
         None => inv.hosts.iter().collect(),
     };
     let results = crate::run::parallel(&hosts, |h| one(h));
-    for (h, r) in hosts.iter().zip(&results) {
-        match r {
-            None => println!("{}: ok", h.name),
-            Some((stage, why)) => println!("{}: {stage}: {why}", h.name),
-        }
-    }
     let failed = results.iter().filter(|r| r.is_some()).count();
-    let n = hosts.len();
-    let s = if n == 1 { "" } else { "s" };
-    println!("{n} Host{s}: {} ok, {failed} failed", n - failed);
+    if json {
+        let docs = hosts.iter().zip(&results).map(|(h, r)| {
+            let (stage, error) = r.as_ref().map(|(s, e)| (s, e)).unzip();
+            serde_json::json!({"host": h.name, "ok": r.is_none(), "failed": stage, "error": error})
+        });
+        let docs: Vec<_> = docs.collect();
+        println!("{}", serde_json::json!({"v": 1, "hosts": docs}));
+    } else {
+        for (h, r) in hosts.iter().zip(&results) {
+            match r {
+                None => println!("{}: ok", h.name),
+                Some((stage, why)) => println!("{}: {stage}: {why}", h.name),
+            }
+        }
+        let n = hosts.len();
+        let s = if n == 1 { "" } else { "s" };
+        println!("{n} Host{s}: {} ok, {failed} failed", n - failed);
+    }
     match failed {
         0 => Ok(()),
         _ => Err(Fail {

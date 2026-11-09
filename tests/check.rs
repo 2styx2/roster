@@ -72,9 +72,68 @@ fn a_name_that_does_not_resolve_fails_at_dns() {
 }
 
 #[test]
+fn with_no_argument_or_a_group_every_host_gets_a_line() {
+    let (_open, port, closed) = ports();
+    let s = sandbox("check-fleet", &[]);
+    s.write(
+        "roster.yml",
+        &format!(
+            "defaults: {{user: admin}}\ngroups:\n  dev:\n    hosts:\n      \
+             box-a: {{ip: 127.0.0.1, port: {port}}}\n      \
+             box-b: {{ip: 127.0.0.1, port: {closed}}}\n  lab:\n    hosts:\n      \
+             box-c: {{ip: 127.0.0.1, port: {port}}}\n"
+        ),
+    );
+    let all = s.roster(&["check"]);
+    assert_eq!(all.code, 1, "{}", all.stderr);
+    let lines: Vec<_> = all.stdout.lines().collect();
+    assert_eq!(lines.len(), 4, "{}", all.stdout);
+    assert_eq!(lines[0], "box-a: ok");
+    assert!(lines[1].starts_with("box-b: port: "), "{}", all.stdout);
+    assert_eq!(lines[2], "box-c: ok");
+    assert_eq!(lines[3], "3 Hosts: 2 ok, 1 failed");
+    let lab = s.roster(&["check", "lab"]);
+    assert_eq!(lab.code, 0, "{}", lab.stderr);
+    assert_eq!(lab.stdout, "box-c: ok\n1 Host: 1 ok, 0 failed\n");
+}
+
+#[test]
+fn json_gives_each_host_its_failed_stage_and_error() {
+    let (_open, port, closed) = ports();
+    let s = sandbox(
+        "check-json",
+        &[
+            format!("box-a: {{ip: 127.0.0.1, port: {port}}}"),
+            format!("box-b: {{ip: 127.0.0.1, port: {closed}}}"),
+        ],
+    );
+    let out = s.roster(&["check", "--json"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    let doc: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(doc["v"], 1);
+    let a = &doc["hosts"][0];
+    assert_eq!(
+        *a,
+        serde_json::json!({"host": "box-a", "ok": true, "failed": null, "error": null})
+    );
+    let b = &doc["hosts"][1];
+    assert_eq!(
+        (&b["host"], &b["ok"], &b["failed"]),
+        (&"box-b".into(), &false.into(), &"port".into())
+    );
+    assert!(
+        b["error"].as_str().unwrap().starts_with("127.0.0.1:"),
+        "{b}"
+    );
+}
+
+#[test]
 fn a_failed_login_shows_what_ssh_said() {
     let (_open, port, _) = ports();
-    let mut s = sandbox("check-login", &[format!("box-a: {{ip: 127.0.0.1, port: {port}}}")]);
+    let mut s = sandbox(
+        "check-login",
+        &[format!("box-a: {{ip: 127.0.0.1, port: {port}}}")],
+    );
     s.set_env("FAKE_SSH_DOWN", "box-a");
     let out = s.roster(&["check", "box-a"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
