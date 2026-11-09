@@ -60,9 +60,12 @@ fn unlock_keeps_the_session_key_in_the_keyring_with_a_timeout() {
     );
     assert_eq!(
         read(&s, "keyctl.log"),
-        "--version\npadd user roster:bw-session @u\ntimeout 7000 43200\n"
+        "--version\npadd user roster:bw-session @u\nsetperm 7000 0x3f0b0000\ntimeout 7000 43200\n"
     );
     assert_eq!(read(&s, ".fake-keyring/roster:bw-session"), SESSION);
+    // Possessor: all; the owner's other processes (cron): view, read and
+    // search only, so `roster sync` from cron can import; group, other: none.
+    assert_eq!(read(&s, ".fake-keyring/perm"), "7000 0x3f0b0000\n");
 }
 
 #[test]
@@ -168,6 +171,22 @@ fn a_wrong_master_password_fails_and_stores_nothing() {
         "{}",
         out.stderr
     );
+    assert!(!read(&s, "keyctl.log").contains("padd"));
+}
+
+#[test]
+fn an_empty_master_password_is_refused_before_bw_runs() {
+    let mut s = sandbox("bw-empty", "bw:sw-01");
+    s.set_env("BW_PASSWORD", "");
+    let out = s.roster(&["vault", "unlock"]);
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr
+            .contains("roster: vault unlock: no master password given"),
+        "{}",
+        out.stderr
+    );
+    assert!(!read(&s, "bw.log").contains("unlock"), "bw unlock ran");
     assert!(!read(&s, "keyctl.log").contains("padd"));
 }
 
