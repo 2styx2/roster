@@ -542,3 +542,39 @@ fn links_add_one_way_or_two_way_reach_across_groups() {
         assert_eq!(arrows(&out.stdout), *want, "case {n}");
     }
 }
+
+#[test]
+fn a_link_reaches_one_way_and_removing_it_removes_its_lines() {
+    let linked = format!("{INVENTORY}links:\n  - {{from: box-b, to: ops-01}}\n");
+    let s = sandbox("mesh-link-apply", &linked);
+    let [b, c, _, ops] = hosts_up(&s);
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 0, "{}\n{}", out.stdout, out.stderr);
+    assert_eq!(
+        read(ops.join(".ssh/authorized_keys")),
+        BOX_LINE.to_string() + &peer_line("box-b", "10.0.0.6")
+    );
+    assert!(read(b.join(".ssh/roster-mesh/config")).contains("Host ops-01\n"));
+    assert!(read(b.join("ROSTER.md")).contains("| ops-01 |"));
+    // One way: ops-01 is no source, and box-c doesn't reach it.
+    assert!(!ops.join(".ssh/roster-mesh").exists());
+    assert!(!read(c.join(".ssh/roster-mesh/config")).contains("ops-01"));
+    let out = s.roster(&["setup"]);
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+
+    s.write("roster.yml", INVENTORY);
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(
+        out.stdout.contains("ops-01: removed box-b's key\n"),
+        "{}",
+        out.stdout
+    );
+    assert_eq!(read(ops.join(".ssh/authorized_keys")), BOX_LINE);
+    assert!(!read(b.join(".ssh/roster-mesh/config")).contains("ops-01"));
+    assert!(!read(b.join("ROSTER.md")).contains("ops-01"));
+    assert_eq!(
+        read(c.join(".ssh/authorized_keys")),
+        BOX_LINE.to_string() + &peer_line("box-b", "10.0.0.6")
+    );
+}
