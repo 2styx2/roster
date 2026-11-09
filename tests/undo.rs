@@ -243,6 +243,67 @@ fn files_roster_did_not_write_are_left_alone() {
     );
 }
 
+/// Every file under `dir`, with its contents, for "nothing changed" checks.
+fn snapshot(dir: &Path) -> Vec<(PathBuf, String)> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).unwrap() {
+        let p = e.unwrap().path();
+        if p.is_dir() {
+            out.extend(snapshot(&p));
+        } else if !p.ends_with("ssh.log") && !p.ends_with("ssh-hosts.env") {
+            out.push((p.clone(), read(&p)));
+        }
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn dry_run_lists_what_would_go_and_touches_nothing() {
+    let s = sandbox("undo-dry");
+    let [b, ..] = hosts_up(&s);
+    std::fs::create_dir_all(b.join(".claude")).unwrap();
+    assert_eq!(s.roster(&["setup"]).code, 0);
+    let before = snapshot(&s.home);
+    let out = s.roster(&["setup", "--undo", "--dry-run"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(snapshot(&s.home), before, "a dry run changes nothing");
+    let home = s.home.display();
+    for line in [
+        "box-b: would remove the Mesh key ~/.ssh/roster-mesh/id_ed25519\n",
+        "box-b: would remove the import from ~/.claude/CLAUDE.md\n",
+        "box-c: would remove box-b's key\n",
+        "box-b: would remove the Box key\n",
+        "ops-01: would remove the Box key\n",
+        &format!("would remove {home}/.ssh/config.d/roster\n"),
+        &format!("would remove {home}/.ssh/config\n"),
+        &format!("would remove {home}/.ssh/roster_known_hosts\n"),
+        &format!("would remove {home}/ROSTER.md\n"),
+        &format!("would remove {home}/CLAUDE.md\n"),
+        &format!("would remove {home}/.claude/settings.json\n"),
+        &format!("would keep the Box key {home}/.ssh/roster_ed25519;"),
+    ] {
+        assert!(out.stdout.contains(line), "{line}\n{}", out.stdout);
+    }
+    // The Mesh is listed before the Box key line on each Host.
+    let mesh = out.stdout.find("box-b: would remove the Mesh key").unwrap();
+    let key = out.stdout.find("box-b: would remove the Box key").unwrap();
+    assert!(mesh < key, "{}", out.stdout);
+}
+
+#[test]
+fn box_files_stay_while_a_host_is_not_done() {
+    let s = sandbox("undo-box-waits");
+    hosts_up(&s);
+    assert_eq!(s.roster(&["setup"]).code, 0);
+    s.write("hosts/box-c/down", "");
+    let out = s.roster(&["setup", "--undo"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    for f in [".ssh/config.d/roster", ".ssh/roster_known_hosts", "ROSTER.md"] {
+        assert!(s.home.join(f).exists(), "{f} is needed by the rerun");
+    }
+}
+
 const OTHER_KEY: &str = "ssh-rsa AAAAother roster-mesh:box-c@box-z\n";
 
 #[test]
