@@ -6,6 +6,7 @@ use crate::{Fail, vault};
 use serde_json::Value;
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
+use std::sync::Mutex;
 use zeroize::{Zeroize, Zeroizing};
 
 /// The keyring entry: a `user` key in the user keyring `@u`.
@@ -83,20 +84,24 @@ fn unlock_now(what: &str) -> Result<Zeroizing<String>, Fail> {
 /// custom field (exact name, then case-insensitive).
 pub fn get(reference: &str, what: &str) -> Result<Zeroizing<String>, Fail> {
     let (item, field) = reference.split_once('#').unwrap_or((reference, "password"));
-    let session = match stored() {
-        Ok(Some(session)) => session,
-        Ok(None) => {
+    // A session unlocked for this run only is unlocked once.
+    static RUN: Mutex<Option<Zeroizing<String>>> = Mutex::new(None);
+    let mut run = RUN.lock().unwrap_or_else(|e| e.into_inner());
+    let session = match (run.clone(), stored()) {
+        (Some(session), _) | (None, Ok(Some(session))) => session,
+        (None, Ok(None)) => {
             eprintln!(
                 "roster: Bitwarden is locked; `roster vault unlock` unlocks it for 12 h. \
                  Unlocking for this run only."
             );
-            unlock_now(what)?
+            run.insert(unlock_now(what)?).clone()
         }
-        Err(_) => {
+        (None, Err(_)) => {
             eprintln!("roster: {NO_KEYCTL}");
-            unlock_now(what)?
+            run.insert(unlock_now(what)?).clone()
         }
     };
+    drop(run);
     let fail = |e: String| failed(format!("{what}: auth bw:{reference}: {e}"));
     let json = bw(&["get", "item", item], &[("BW_SESSION", &session)]).map_err(|e| {
         fail(format!(

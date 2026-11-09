@@ -16,7 +16,7 @@ pub fn run(inv: &Inventory, dry: bool) -> Result<(Vec<&Host>, usize), Fail> {
     let mut ready = Vec::new();
     let known_hosts = home().join(".ssh/roster_known_hosts");
     let mut known = std::fs::read_to_string(&known_hosts).unwrap_or_default();
-    let mut undone = 0;
+    let (mut undone, mut memo) = (0, vault::Memo::default());
     for h in &inv.hosts {
         let skip = |why: &str| eprintln!("roster: {}: skipped: {why}", h.name);
         if !h.reviewed {
@@ -58,7 +58,7 @@ pub fn run(inv: &Inventory, dry: bool) -> Result<(Vec<&Host>, usize), Fail> {
             println!("would install the Box key on {}", h.name);
             continue;
         }
-        match install(inv, h) {
+        match install(inv, h, &mut memo) {
             Ok(()) => {
                 println!("installed the Box key on {}", h.name);
                 ready.push(h);
@@ -110,10 +110,10 @@ fn keyscan(h: &Host) -> Option<String> {
 
 /// Log in with the Host's vault password and append the Box key's line.
 /// Err is a one-line message naming the Host.
-fn install(inv: &Inventory, h: &Host) -> Result<(), String> {
+fn install(inv: &Inventory, h: &Host, memo: &mut vault::Memo) -> Result<(), String> {
     let name = &h.name;
     let line = box_line(inv)?;
-    let Some(secret) = vault::resolve(&h.auth, name).map_err(|f| f.msg)? else {
+    let Some(secret) = memo.resolve(&h.auth, name).map_err(|f| f.msg)? else {
         return Err(format!(
             "{name}: doesn't take the Box key, and auth: {} gives no password to install it with",
             h.auth

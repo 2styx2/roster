@@ -266,6 +266,32 @@ fn files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 }
 
 #[test]
+fn hosts_sharing_a_reference_resolve_it_once_per_run() {
+    let mut s = sandbox("bw-once", "bw:sw-01");
+    let shared = "{ip: 127.0.0.1, port: 1, enroll: false, auth: \"bw:sw-01\"}";
+    s.write(
+        "roster.yml",
+        &format!(
+            "defaults: {{user: netops}}\ngroups:\n  net:\n    hosts:\n      \
+             sw-01: {shared}\n      sw-02: {shared}\n      sw-03: {shared}\n"
+        ),
+    );
+    s.set_env("BW_PASSWORD", MASTER);
+    s.set_env("FAKE_SSH_RUN", "1");
+    for args in [&["run", "net", "--", "true"][..], &["check", "net"]] {
+        let _ = std::fs::remove_file(s.home.join("bw.log"));
+        let out = s.roster(args);
+        assert_eq!(
+            read(&s, "bw.log"),
+            "unlock --raw --passwordenv ROSTER_BW_MASTER --nointeraction\n\
+             get item sw-01 --nointeraction\n",
+            "{args:?}: {}",
+            out.stderr
+        );
+    }
+}
+
+#[test]
 fn the_session_key_and_master_password_never_leak() {
     let mut s = sandbox("bw-secrets", "bw:sw-01");
     s.set_env("BW_PASSWORD", MASTER);
