@@ -1,0 +1,50 @@
+# cargo-deny: advisories, licenses, sources, and the crate allowlist.
+# Direct dependencies allowed: lexopt, serde (derive), serde_norway,
+# serde_json, zeroize. A new crate needs the owner's yes in its PR.
+
+[graph]
+all-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+allow = ["Apache-2.0", "MIT", "Unicode-3.0"]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Only these crates may appear anywhere in the graph. The allowlisted
+# crates first, then what they pull in.
+allow = [
+    "roster",
+    # allowlisted
+    "lexopt",
+    "serde",
+    "serde_json",
+    "serde_norway",
+    "zeroize",
+    # serde
+    "serde_core",
+    "serde_derive",
+    "proc-macro2",
+    "quote",
+    "syn",
+    "unicode-ident",
+    # serde_json
+    "itoa",
+    "memchr",
+    "zmij",
+    # serde_norway
+    "indexmap",
+    "equivalent",
+    "hashbrown",
+    "ryu",
+    "unsafe-libyaml-norway",
+]
