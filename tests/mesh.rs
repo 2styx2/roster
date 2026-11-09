@@ -186,3 +186,114 @@ fn setup_forms_the_web_with_v070_files_and_a_rerun_changes_nothing() {
     let out = s.roster(&["setup", "--dry-run"]);
     assert_eq!(out.stdout, "box-b -> box-c\nbox-c -> box-b\n");
 }
+
+/// Lines and files that aren't this Box's Mesh: they must survive anything.
+const HAND_LINE: &str = "ssh-ed25519 AAAAhand user@laptop\n";
+const OTHER_BOX: &str = "from=\"10.0.0.6\",no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAAother roster-mesh:box-b@box-z\n";
+const OTHER_KEY: &str = "ssh-rsa AAAAother roster-mesh:box-c@box-z\n";
+
+#[test]
+fn leaving_the_web_removes_only_this_boxs_lines_and_files() {
+    let s = sandbox("mesh-remove", INVENTORY);
+    let [b, c, ..] = hosts_up(&s);
+    s.write(
+        "hosts/box-c/.ssh/config",
+        "Host *\n    ServerAliveInterval 5\n",
+    );
+    assert_eq!(s.roster(&["setup"]).code, 0);
+    let keys = c.join(".ssh/authorized_keys");
+    std::fs::write(&keys, read(&keys) + HAND_LINE + OTHER_BOX).unwrap();
+    s.write(
+        "hosts/box-c/.ssh/roster-mesh/roster_mesh_rsa.pub",
+        OTHER_KEY,
+    );
+    s.write(
+        "hosts/box-c/.ssh/roster-mesh/roster_mesh_rsa",
+        "THEIR KEY\n",
+    );
+
+    // box-c opts out: the group's web is box-b alone, so both leave it.
+    s.write(
+        "roster.yml",
+        &INVENTORY.replace(
+            "{ip: 10.0.0.7, port: 2222}",
+            "{ip: 10.0.0.7, port: 2222, mesh: false}",
+        ),
+    );
+    let out = s.roster(&["setup", "--dry-run"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(!out.stdout.contains("->"), "{}", out.stdout);
+    assert!(
+        out.stdout.contains("box-c: would remove box-b's key\n"),
+        "{}",
+        out.stdout
+    );
+    assert!(
+        out.stdout
+            .contains("box-b: would remove the Mesh key ~/.ssh/roster-mesh/id_ed25519\n"),
+        "{}",
+        out.stdout
+    );
+    assert!(
+        b.join(".ssh/roster-mesh/id_ed25519").exists(),
+        "a dry run changes nothing"
+    );
+
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(read(&keys), BOX_LINE.to_string() + HAND_LINE + OTHER_BOX);
+    assert_eq!(read(b.join(".ssh/authorized_keys")), BOX_LINE);
+    assert!(!b.join(".ssh/roster-mesh").exists());
+    assert!(!b.join("ROSTER.md").exists());
+    assert!(
+        !b.join(".ssh/config").exists(),
+        "only the Mesh's lines were in it"
+    );
+    assert_eq!(read(b.join(".claude/CLAUDE.md")), "");
+    // Another Box's key on box-c stays, and so does the folder holding it.
+    let mesh = c.join(".ssh/roster-mesh");
+    let mut left: Vec<_> = std::fs::read_dir(&mesh)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    left.sort();
+    assert_eq!(left, ["roster_mesh_rsa", "roster_mesh_rsa.pub"]);
+    assert_eq!(read(mesh.join("roster_mesh_rsa.pub")), OTHER_KEY);
+    assert_eq!(
+        read(c.join(".ssh/config")),
+        "Host *\n    ServerAliveInterval 5\n"
+    );
+    assert!(!c.join("ROSTER.md").exists());
+
+    let out = s.roster(&["setup"]);
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+}
+
+#[test]
+fn a_host_gone_from_the_inventory_loses_its_lines_on_the_next_run() {
+    let s = sandbox("mesh-gone", INVENTORY);
+    let [b, c, ..] = hosts_up(&s);
+    host(&s, "box-e", "10.0.0.9");
+    let three = INVENTORY.replace("      box-d:", "      box-e: 10.0.0.9\n      box-d:");
+    s.write("roster.yml", &three);
+    assert_eq!(s.roster(&["setup"]).code, 0);
+    assert!(read(b.join(".ssh/authorized_keys")).contains("roster-mesh:box-e@box-a"));
+
+    s.write("roster.yml", INVENTORY);
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    for h in [&b, &c] {
+        assert!(
+            !read(h.join(".ssh/authorized_keys")).contains("box-e"),
+            "{}",
+            h.display()
+        );
+        assert!(!read(h.join(".ssh/roster-mesh/config")).contains("box-e"));
+        assert!(!read(h.join("ROSTER.md")).contains("box-e"));
+    }
+    assert!(
+        out.stdout.contains("box-b: removed box-e's key\n"),
+        "{}",
+        out.stdout
+    );
+}

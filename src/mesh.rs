@@ -335,7 +335,7 @@ pub fn plan(
             }
         }
         let t = &mut todo[p];
-        for line in &s.lines {
+        for line in s.lines.iter().filter(|l| ours(l, bx)) {
             let src = source_of(line);
             let wanted = want.iter().any(|(_, l)| l.as_deref() == Some(line));
             if !wanted && !keep.contains(&src) {
