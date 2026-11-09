@@ -2,6 +2,7 @@
 
 mod askpass;
 mod atomic;
+mod check;
 mod claude;
 mod inventory;
 mod ls;
@@ -14,7 +15,7 @@ mod sshconf;
 mod vault;
 
 /// Commands roster runs itself; any other name is a plugin.
-const BUILTINS: &[&str] = &["ls", "run", "setup", "ssh", "help"];
+const BUILTINS: &[&str] = &["check", "ls", "run", "setup", "ssh", "help"];
 
 use std::process::ExitCode;
 
@@ -85,6 +86,7 @@ fn run() -> Result<(), Fail> {
     let mut long = false; // `ls --long`
     let mut filter = None;
     let mut topic = false; // `help plugins`
+    let mut target = None; // `check [TARGET]`
     while let Some(arg) = parser.next().map_err(|e| usage_error(e.to_string()))? {
         match arg {
             Short('h') | Long("help") => {
@@ -94,7 +96,9 @@ fn run() -> Result<(), Fail> {
             Short('c') | Long("config") => {
                 config = Some(parser.value().map_err(|e| usage_error(e.to_string()))?);
             }
-            Long("json") if matches!(command.as_deref(), Some("ls" | "run")) => json = true,
+            Long("json") if matches!(command.as_deref(), Some("ls" | "run" | "check")) => {
+                json = true
+            }
             Long("long") if command.as_deref() == Some("ls") => long = true,
             Value(v) if command.as_deref() == Some("ls") && filter.is_none() => {
                 filter = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
@@ -108,6 +112,9 @@ fn run() -> Result<(), Fail> {
                 };
                 let inventory = inventory::Inventory::open(config.map(Into::into))?;
                 return run::run(&inventory, &target, cmd, json);
+            }
+            Value(v) if command.as_deref() == Some("check") && target.is_none() => {
+                target = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }
             Value(v) if command.as_deref() == Some("help") && v == "plugins" && !topic => {
                 topic = true
@@ -153,6 +160,10 @@ fn run() -> Result<(), Fail> {
             };
             print!("{}", render(&inventory.hosts));
             Ok(())
+        }
+        Some("check") => {
+            let inventory = inventory::Inventory::open(config.map(Into::into))?;
+            check::run(&inventory, target.as_deref(), json)
         }
         Some("setup") => setup::run(&inventory::Inventory::open(config.map(Into::into))?),
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
