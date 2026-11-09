@@ -19,6 +19,15 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
       - run: sh scripts/line-budget.sh
+      - name: make install and uninstall
+        run: |
+          p="$RUNNER_TEMP/prefix"
+          make install PREFIX="$p"
+          test -x "$p/bin/roster" && "$p/bin/roster" --version
+          test -f "$p/share/bash-completion/completions/roster"
+          test -f "$p/share/man/man1/roster.1"
+          make uninstall PREFIX="$p"
+          test -z "$(find "$p" -type f)"
 
   side-by-side:
     runs-on: ubuntu-latest
