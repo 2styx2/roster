@@ -148,6 +148,20 @@ const DOCUMENTED: &[&str] = &[
     "never on disk",
     "install keyutils",
     "~/.config/roster/bw\\-session",
+    // the Mesh (ticket #15)
+    "mesh: true",
+    "mesh: false",
+    "left out of the Mesh",
+    "~/.ssh/roster\\-mesh/",
+    "roster_mesh_<key_type>",
+    "roster\\-mesh:",
+    "StrictHostKeyChecking yes",
+    "# roster\\-mesh: the Mesh's ssh config",
+    "@~/ROSTER.md",
+    "no\\-agent\\-forwarding,no\\-X11\\-forwarding",
+    "left alone",
+    " \\-> ",
+    "would \" CHANGE",
 ];
 
 #[test]

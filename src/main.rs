@@ -35,7 +35,9 @@ commands:
                  make this Box's key; write the ssh config for the Hosts and,
                  next to roster.yml, ROSTER.md and the Claude files; install
                  the Box key on each Enrolled Host (vault password, once);
-                 --dry-run prints the plan and changes nothing
+                 make the Mesh: the Hosts of a `mesh: true` group ssh to
+                 each other; --dry-run prints the plan (SOURCE -> PEER, and
+                 each Host's changes) and changes nothing
   ssh HOST [ARGS]
                  ssh to a Host by name; ARGS go to ssh unchanged; a Password
                  Host's auth password goes to ssh through askpass
