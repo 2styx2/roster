@@ -113,6 +113,15 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
             "-K",
             "-",
         ]);
+    // curl inherits no variable a Login of this Host's comes from.
+    let auths = host.services.iter().filter_map(|s| s.auth.as_deref());
+    let vars = auths
+        .chain([host.auth.as_str()])
+        .filter_map(|a| a.strip_prefix("env:"));
+    let from = secret.as_ref().and_then(|s| s.from_env.as_deref());
+    for var in vars.chain(from) {
+        curl.env_remove(var);
+    }
     if args.insecure || !svc.verify {
         curl.arg("-k");
     }

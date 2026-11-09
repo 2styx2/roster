@@ -248,6 +248,51 @@ fn a_body_from_a_file_and_verify_false() {
     assert_eq!(out.code, 2, "stdin carries the config: {}", out.stderr);
 }
 
+/// Every file under `dir`, recursively.
+fn files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut all = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            all.extend(files(&path));
+        } else {
+            all.push(path);
+        }
+    }
+    all
+}
+
+#[test]
+fn the_credential_never_leaks() {
+    let mut s = sandbox("web-secrets");
+    let token = "tok-31f7-made-up";
+    s.set_env("API_TOKEN", token);
+    s.set_env("FAKE_CURL_STATUS", "500");
+    for service in ["api", "token"] {
+        let out = s.roster(&["web", "box-a", service, "POST", "/x", "-d", "{}"]);
+        assert_eq!(out.code, 1, "{}", out.stderr);
+        for secret in [PASSWORD, token] {
+            assert!(!out.stdout.contains(secret) && !out.stderr.contains(secret));
+        }
+    }
+    let stdin = read(&s, "curl.stdin");
+    assert!(stdin.contains(token), "the fake got the last one: {stdin}");
+    let env = read(&s, "curl.env");
+    assert!(env.contains("HOME="), "the fake saved its environment");
+    for secret in [PASSWORD, token] {
+        assert!(!read(&s, "curl.log").contains(secret), "argv");
+        assert!(!env.contains(secret), "curl's environment");
+        for file in files(&s.home) {
+            if file.ends_with("curl.stdin") {
+                continue;
+            }
+            let bytes = std::fs::read(&file).unwrap();
+            let hit = bytes.windows(secret.len()).any(|w| w == secret.as_bytes());
+            assert!(!hit, "a credential is in {}", file.display());
+        }
+    }
+}
+
 #[test]
 fn a_failed_connection_shows_curls_error_and_exits_1() {
     let mut s = sandbox("web-down");
