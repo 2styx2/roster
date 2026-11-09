@@ -21,6 +21,17 @@ fn unknown_flag_is_a_usage_error() {
 }
 
 #[test]
+fn version_prints_the_version_and_exits_0() {
+    // The rewrite carries on the Python roster's numbering (v0.7.0).
+    let s = Sandbox::new("usage-version");
+    for args in [&["--version"][..], &["-V"], &["version"]] {
+        let out = s.roster(args);
+        assert_eq!(out.code, 0, "{args:?}: {}", out.stderr);
+        assert_eq!(out.stdout, "roster 0.7.0\n", "{args:?}");
+    }
+}
+
+#[test]
 fn unknown_command_is_a_usage_error() {
     let s = Sandbox::new("usage-bad-cmd");
     let out = s.roster(&["frobnicate"]);

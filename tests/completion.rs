@@ -59,7 +59,7 @@ fn the_first_word_completes_commands_hosts_and_groups() {
     s.write("roster.yml", INVENTORY);
     assert_eq!(complete(&s, "roster s"), ["setup", "ssh", "sync"]);
     assert_eq!(complete(&s, "roster b"), ["box-a", "box-b"]);
-    assert_eq!(complete(&s, "roster -"), ["-c", "-h"]);
+    assert_eq!(complete(&s, "roster -"), ["-V", "-c", "-h"]);
 }
 
 #[test]
