@@ -65,7 +65,7 @@ Print one JSON document:
   "access": "key", "title": "Box A", "description": "",
   "type": "", "product": "", "os": "posix",
   "key_type": "ed25519", "mesh": null,
-  "web": "https://10.0.0.5",
+  "web": null,
   "services": [{"name": "web", "port": 443,
     "url": "https://10.0.0.5", "scheme": "https",
     "user": "admin", "login": "basic", "verify": true}]}]}
@@ -82,7 +82,7 @@ are empty when unset;
 .B mesh
 is null when unset;
 .B web
-is null when no service has a URL;
+is null unless the Inventory gives a service a URL;
 .B scheme
 and
 .B url
