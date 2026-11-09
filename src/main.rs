@@ -13,9 +13,10 @@ mod setup;
 mod ssh;
 mod sshconf;
 mod vault;
+mod web;
 
 /// Commands roster runs itself; any other name is a plugin.
-const BUILTINS: &[&str] = &["ls", "run", "setup", "ssh", "vault", "help"];
+const BUILTINS: &[&str] = &["ls", "run", "setup", "ssh", "vault", "web", "help"];
 
 use std::process::ExitCode;
 
@@ -89,6 +90,7 @@ fn run() -> Result<(), Fail> {
     let mut filter = None;
     let mut topic = false; // `help plugins`
     let mut action = None; // `vault unlock|lock`
+    let mut web = web::Args::default();
     while let Some(arg) = parser.next().map_err(|e| usage_error(e.to_string()))? {
         match arg {
             Short('h') | Long("help") => {
@@ -119,6 +121,9 @@ fn run() -> Result<(), Fail> {
             Value(v) if command.as_deref() == Some("vault") && action.is_none() => {
                 action = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
             }
+            Value(v) if command.as_deref() == Some("web") => web
+                .words
+                .push(v.string().map_err(|e| usage_error(e.to_string()))?),
             Value(v) if command.as_deref() == Some("ssh") => {
                 let host = v.string().map_err(|e| usage_error(e.to_string()))?;
                 let args = parser.raw_args().map_err(|e| usage_error(e.to_string()))?;
@@ -164,6 +169,7 @@ fn run() -> Result<(), Fail> {
         Some("setup") => setup::run(&inventory::Inventory::open(config.map(Into::into))?),
         Some("ssh") => Err(usage_error("ssh needs a HOST")),
         Some("run") => Err(usage_error("run needs a TARGET and -- CMD")),
+        Some("web") => web::run(&inventory::Inventory::open(config.map(Into::into))?, web),
         Some("vault") => match action.as_deref() {
             Some("unlock") => bw::unlock(),
             Some("lock") => bw::lock(),
