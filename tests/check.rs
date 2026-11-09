@@ -114,7 +114,7 @@ fn json_gives_each_host_its_failed_stage_and_error() {
     let a = &doc["hosts"][0];
     assert_eq!(
         *a,
-        serde_json::json!({"host": "box-a", "ok": true, "failed": null, "error": null})
+        serde_json::json!({"host": "box-a", "ok": true, "failed": null, "error": null, "note": null})
     );
     let b = &doc["hosts"][1];
     assert_eq!(
@@ -141,4 +141,53 @@ fn a_failed_login_shows_what_ssh_said() {
         out.stdout.lines().next().unwrap(),
         "box-a: login: ssh: connect to host box-a port 22: Connection timed out"
     );
+}
+
+const PASSWORD: &str = "pw-check-4b7d-made-up";
+
+#[test]
+fn a_password_host_checks_its_vault_reference_and_never_shows_it() {
+    let (_open, port, _) = ports();
+    let mut s = sandbox(
+        "check-vault",
+        &[
+            format!("sw-01: {{ip: 127.0.0.1, port: {port}, enroll: false, auth: env:SW_PASS}}"),
+            format!("sw-02: {{ip: 127.0.0.1, port: {port}, enroll: false, auth: env:NOT_SET}}"),
+            format!("sw-03: {{ip: 127.0.0.1, port: {port}, enroll: false}}"),
+        ],
+    );
+    s.set_env("SW_PASS", PASSWORD);
+    let out = s.roster(&["check"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert_eq!(
+        out.stdout,
+        "sw-01: ok\n\
+         sw-02: vault: auth env:NOT_SET: NOT_SET isn't set\n\
+         sw-03: ok (auth prompt: not checked here)\n\
+         3 Hosts: 2 ok, 1 failed\n"
+    );
+    assert!(!s.home.join("ssh.log").exists(), "a Password Host ran ssh");
+    let json = s.roster(&["check", "--json", "sw-03"]);
+    assert!(!json.stdout.contains(PASSWORD) && !json.stderr.contains(PASSWORD));
+    let doc: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    assert_eq!(doc["hosts"][0]["note"], "auth prompt: not checked here");
+    assert!(!out.stdout.contains(PASSWORD) && !out.stderr.contains(PASSWORD));
+}
+
+#[test]
+fn a_key_hosts_ssh_never_inherits_a_password_variable() {
+    let (_open, port, _) = ports();
+    let mut s = sandbox(
+        "check-scrub",
+        &[
+            format!("sw-01: {{ip: 127.0.0.1, port: {port}, enroll: false, auth: env:SW_PASS}}"),
+            format!("box-a: {{ip: 127.0.0.1, port: {port}}}"),
+        ],
+    );
+    s.set_env("SW_PASS", PASSWORD);
+    s.set_env("FAKE_SSH_ASKPASS", "unused"); // fake ssh saves its environment
+    let out = s.roster(&["check"]);
+    assert_eq!(out.code, 0, "{}{}", out.stdout, out.stderr);
+    let env = std::fs::read_to_string(s.home.join("ssh.env")).unwrap();
+    assert!(!env.contains(PASSWORD), "ssh got the password variable");
 }
