@@ -8,6 +8,7 @@ umask 077
 cd
 [ -d .ssh ] || mkdir -m 700 .ssh
 f=.ssh/authorized_keys
+if [ -L "$f" ]; then f=$(readlink -f "$f"); fi # a symlink stays one
 key=${LINE#* }
 key=${key%% *}
 if [ -f "$f" ] && grep -qF -- " $key" "$f"; then

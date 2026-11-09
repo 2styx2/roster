@@ -6,8 +6,14 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 /// Replace `path` with `contents`. An existing file keeps its mode; a new one
-/// gets `mode`. The parent directory must exist.
+/// gets `mode`. The parent directory must exist. A symlink stays one: its
+/// target is written.
 pub fn write(path: &Path, contents: &[u8], mode: u32) -> std::io::Result<()> {
+    let target = match path.is_symlink() {
+        true => Some(std::fs::canonicalize(path)?),
+        false => None,
+    };
+    let path = target.as_deref().unwrap_or(path);
     let mode = match std::fs::metadata(path) {
         Ok(m) => m.permissions().mode() & 0o7777,
         Err(_) => mode,

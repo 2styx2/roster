@@ -8,6 +8,7 @@ set -eu
 umask 077
 cd
 f=.ssh/authorized_keys
+if [ -L "$f" ]; then f=$(readlink -f "$f"); fi # a symlink stays one
 # BOX is letters, digits, _ and -: nothing awk -v would unescape.
 pick() { awk -v a="roster-managed:$BOX" -v b="fleet-managed:$BOX" "$1" "$f"; }
 if [ ! -f "$f" ] || [ -z "$(pick '$NF == a || $NF == b')" ]; then
