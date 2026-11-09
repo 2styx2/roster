@@ -9,6 +9,7 @@ use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use zeroize::Zeroizing;
 
@@ -32,7 +33,9 @@ fn private_dir() -> io::Result<Dir> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos());
-    let path = base.join(format!("roster-{}-{nanos:x}", std::process::id()));
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    let path = base.join(format!("roster-{}-{n}-{nanos:x}", std::process::id()));
     // Fails if the path exists, so nothing planted there is reused.
     std::fs::DirBuilder::new().mode(0o700).create(&path)?;
     Ok(Dir(path))
