@@ -50,27 +50,29 @@ sudo apt install openssh-client keyutils fzf curl tmux bash-completion
 
 ## 2. Install
 
-roster ships as source only. You build it yourself, from code you can read:
-
-```sh
-cargo install --locked --git https://github.com/2styx2/roster --root ~/.local
-roster --version            # roster 0.7.0
-```
-
-`~/.local/bin` must be on your `PATH` (it is on most systems).
-
-To install a specific release instead, add `--tag v0.7.0`. To update later, run the same command with `--force`.
-
-Tab completion and the man page come from the repo:
+roster ships as source only. You build it yourself, from code you can read. One command installs the binary, Tab completion and the man page:
 
 ```sh
 git clone https://github.com/2styx2/roster ~/src/roster
-mkdir -p ~/.local/share/bash-completion/completions ~/.local/share/man/man1
-cp ~/src/roster/contrib/roster.bash ~/.local/share/bash-completion/completions/roster
-cp ~/src/roster/roster.1 ~/.local/share/man/man1/
+cd ~/src/roster
+make install                # into ~/.local, no sudo
+roster --version            # roster 0.7.0
 ```
 
-Open a new terminal, then try `roster <Tab>` and `man roster`.
+`make install` puts three files under `~/.local`:
+
+- `bin/roster`;
+- `share/bash-completion/completions/roster`;
+- `share/man/man1/roster.1`.
+
+`~/.local/bin` must be on your `PATH` (it is on most systems). Open a new terminal, then try `roster <Tab>` and `man roster`.
+
+- **For every user on the machine:** `sudo make install PREFIX=/usr/local`.
+- **A specific release:** `git checkout vX.Y.Z` first. `make install` exists from the first release after v0.7.0; for v0.7.0 itself, use the `cargo install` line below.
+- **To update:** `git pull`, then `make install` again.
+- **To remove all three:** `make uninstall`, with the same `PREFIX`.
+
+Without a clone, `cargo install --locked --git https://github.com/2styx2/roster --root ~/.local` installs only the binary.
 
 For tmux, add this to `~/.tmux.conf`. It makes `prefix` then `g` open the picker in a popup:
 
