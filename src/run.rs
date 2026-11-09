@@ -46,6 +46,12 @@ pub fn run(inv: &Inventory, target: &str, cmd: Vec<OsString>, json: bool) -> Res
             false => vault::resolve(&h.auth, &h.name)?,
         });
     }
+    // No ssh, a key Host's included, inherits a variable a password came from.
+    let scrub: Vec<&str> = secrets
+        .iter()
+        .flatten()
+        .filter_map(|s| s.from_env.as_deref())
+        .collect();
     let jobs: Vec<_> = hosts.iter().zip(&secrets).collect();
     let results: Vec<Mutex<Option<Outcome>>> = jobs.iter().map(|_| Mutex::new(None)).collect();
     let next = AtomicUsize::new(0);
@@ -57,7 +63,7 @@ pub fn run(inv: &Inventory, target: &str, cmd: Vec<OsString>, json: bool) -> Res
                     let Some((host, secret)) = jobs.get(i) else {
                         break;
                     };
-                    let outcome = one(host, secret.as_ref(), &cmd, json);
+                    let outcome = one(host, secret.as_ref(), &scrub, &cmd, json);
                     *results[i].lock().unwrap() = Some(outcome);
                 }
             });
@@ -74,7 +80,10 @@ pub fn run(inv: &Inventory, target: &str, cmd: Vec<OsString>, json: bool) -> Res
         let docs: Vec<_> = docs.collect();
         println!("{}", serde_json::json!({"v": 1, "hosts": docs}));
     }
-    let failed = hosts.iter().zip(&outcomes).filter(|(_, o)| o.exit != Some(0));
+    let failed = hosts
+        .iter()
+        .zip(&outcomes)
+        .filter(|(_, o)| o.exit != Some(0));
     let failed: Vec<_> = failed.map(|(h, _)| h.name.as_str()).collect();
     match failed.is_empty() {
         true => Ok(()),
@@ -86,8 +95,17 @@ pub fn run(inv: &Inventory, target: &str, cmd: Vec<OsString>, json: bool) -> Res
 }
 
 /// Run CMD on one Host, streaming its lines (or collecting them for JSON).
-fn one(host: &Host, secret: Option<&Secret>, cmd: &[OsString], json: bool) -> Outcome {
+fn one(
+    host: &Host,
+    secret: Option<&Secret>,
+    scrub: &[&str],
+    cmd: &[OsString],
+    json: bool,
+) -> Outcome {
     let mut ssh = Command::new("ssh");
+    for var in scrub {
+        ssh.env_remove(var);
+    }
     if secret.is_none() {
         ssh.args(["-o", "BatchMode=yes"]);
     }
