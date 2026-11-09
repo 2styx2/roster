@@ -208,6 +208,9 @@ const DOCUMENTED: &[&str] = &[
     ".B \\-k",
     "verify: false",
     "curl can't be started",
+    // side by side with the Python roster (ticket #19)
+    "Side by side with the Python roster v0.7.0",
+    ".B \"mesh cut \\-\\-all\"",
 ];
 
 #[test]
