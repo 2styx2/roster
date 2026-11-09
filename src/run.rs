@@ -53,26 +53,9 @@ pub fn run(inv: &Inventory, target: &str, cmd: Vec<OsString>, json: bool) -> Res
         .filter_map(|s| s.from_env.as_deref())
         .collect();
     let jobs: Vec<_> = hosts.iter().zip(&secrets).collect();
-    let results: Vec<Mutex<Option<Outcome>>> = jobs.iter().map(|_| Mutex::new(None)).collect();
-    let next = AtomicUsize::new(0);
-    std::thread::scope(|s| {
-        for _ in 0..WORKERS.min(jobs.len()) {
-            s.spawn(|| {
-                loop {
-                    let i = next.fetch_add(1, Ordering::Relaxed);
-                    let Some((host, secret)) = jobs.get(i) else {
-                        break;
-                    };
-                    let outcome = one(host, secret.as_ref(), &scrub, &cmd, json);
-                    *results[i].lock().unwrap() = Some(outcome);
-                }
-            });
-        }
+    let outcomes = parallel(&jobs, |(host, secret)| {
+        one(host, secret.as_ref(), &scrub, &cmd, json)
     });
-    let outcomes: Vec<Outcome> = results
-        .into_iter()
-        .map(|m| m.into_inner().unwrap().expect("every job ran"))
-        .collect();
     if json {
         let docs = hosts.iter().zip(&outcomes).map(|(h, o)| {
             serde_json::json!({"host": h.name, "exit": o.exit, "stdout": o.stdout, "stderr": o.stderr})
@@ -92,6 +75,25 @@ pub fn run(inv: &Inventory, target: &str, cmd: Vec<OsString>, json: bool) -> Res
             msg: format!("failed on {}", failed.join(", ")),
         }),
     }
+}
+
+/// `f` on every item, at most WORKERS at once; the results in item order.
+pub fn parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let results: Vec<Mutex<Option<R>>> = items.iter().map(|_| Mutex::new(None)).collect();
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|s| {
+        for _ in 0..WORKERS.min(items.len()) {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(i) else { break };
+                    *results[i].lock().unwrap() = Some(f(item));
+                }
+            });
+        }
+    });
+    let results = results.into_iter().map(|m| m.into_inner().unwrap());
+    results.map(|r| r.expect("every item ran")).collect()
 }
 
 /// Run CMD on one Host, streaming its lines (or collecting them for JSON).
