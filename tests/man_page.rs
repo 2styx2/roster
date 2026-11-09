@@ -8,6 +8,8 @@ const DOCUMENTED: &[&str] = &[
     "\\-\\-json",
     "\\-c ",
     "\\-h",
+    "\\-\\-version",
+    ".B version",
     // Inventory lookup
     "ROSTER_CONFIG",
     "~/.config/roster/roster.yml",

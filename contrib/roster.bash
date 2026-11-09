@@ -14,7 +14,7 @@ _roster() {
 	done
 	[[ ${COMP_WORDS[COMP_CWORD - 1]} == -c ]] && { mapfile -t COMPREPLY < <(compgen -f -- "$cur"); return; }
 	case $cmd in
-	'') words='-c -h ls setup sync add ssh run check web vault help' ;;
+	'') words='-c -h -V ls setup sync add ssh run check web vault help version' ;;
 	add) words='--ip --group --user --port --auth --enroll=false --from-vault --name' ;;
 	ls) words='--json --long' ;;
 	setup) words='--dry-run --undo' ;;
