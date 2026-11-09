@@ -11,7 +11,9 @@ f=.ssh/authorized_keys
 if [ -L "$f" ]; then f=$(readlink -f "$f"); fi # a symlink stays one
 key=${LINE#* }
 key=${key%% *}
-if [ -f "$f" ] && grep -qF -- " $key" "$f"; then
+# Present: KEY is a field of a line that isn't a comment.
+has() { awk -v k="$key" '!/^[[:space:]]*#/ { for (i = 1; i <= NF; i++) if ($i == k) f = 1 } END { exit !f }' "$f"; }
+if [ -f "$f" ] && has; then
 	echo present
 	exit 0
 fi
