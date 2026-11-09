@@ -108,6 +108,19 @@ const DOCUMENTED: &[&str] = &[
     "exactly one connection",
     "passphrase",
     "won't resolve",
+    // run (ticket #12)
+    ".BI \"run \" \"TARGET \" \"\\-\\- \" CMD",
+    ".B run \\-\\-json",
+    "no Host or group named",
+    ": unreviewed",
+    "BatchMode=yes",
+    "ConnectTimeout=10",
+    "At most 32 Hosts",
+    "roster: failed on",
+    "\"exit\"",
+    "\"stdout\"",
+    "\"stderr\"",
+    "\"host\"",
 ];
 
 #[test]
