@@ -125,6 +125,19 @@ impl Inventory {
         Ok(Inventory { path, ..inventory })
     }
 
+    /// The Box key `h` logs in with (`~` not expanded), the one of its own
+    /// `key_type`: `key_path` for the Inventory's type, else `roster_<type>`
+    /// beside it, as v0.7.0.
+    pub fn key_of(&self, h: &Host) -> String {
+        if h.key_type == self.key_type {
+            return self.key_path.clone();
+        }
+        match self.key_path.rsplit_once('/') {
+            Some((dir, _)) => format!("{dir}/roster_{}", h.key_type),
+            None => format!("roster_{}", h.key_type),
+        }
+    }
+
     /// Every variable a secret may come from: each `env:VAR` the Hosts and
     /// services name, and Bitwarden's.
     pub fn secret_vars(&self) -> Vec<String> {
