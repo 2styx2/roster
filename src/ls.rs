@@ -8,9 +8,22 @@ pub fn json(hosts: &[Host]) -> String {
     let hosts: Vec<_> = hosts
         .iter()
         .map(|h| {
+            let services: Vec<_> = h
+                .services
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "name": s.name, "port": s.port, "url": s.url, "scheme": s.scheme,
+                        "user": s.user, "login": s.login, "verify": s.verify,
+                    })
+                })
+                .collect();
             serde_json::json!({
                 "name": h.name, "group": h.group, "ip": h.ip, "user": h.user,
                 "port": h.port, "access": h.access(), "title": h.title,
+                "description": h.description, "type": h.r#type, "product": h.product,
+                "os": h.os, "key_type": h.key_type, "mesh": h.mesh, "web": h.web,
+                "services": services,
             })
         })
         .collect();

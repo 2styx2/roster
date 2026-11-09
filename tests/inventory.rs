@@ -119,3 +119,176 @@ fn a_host_in_two_groups_is_refused() {
     assert!(err.contains(":8: groups.ops.hosts.box-a:"), "{err}");
     assert!(err.contains("dev"), "{err}");
 }
+
+/// Made up, and uses every feature a v0.7.0 roster.yml can.
+const FULL: &str = r#"
+box_name: lab.box-01
+key_path: ~/.ssh/lab_key
+key_type: ecdsa
+key_max_age: 365d
+workers: 8
+claude_inline_limit: 40
+rate_limited: [10.0.0.0/8]
+providers: {bw: {}}
+provider_dirs: [providers]
+bitwarden: {sync: true}
+resources:
+  guest-wifi: {type: wifi, ssid: Guest, auth: "bw:guest wifi"}
+web_login_names: {portal: basic}
+defaults:
+  user: admin
+  enroll: true
+  sudo: {auth: "bw:sudo"}
+  shell_hooks: false
+  mac: ""
+  services:
+    node-exporter: 9100
+groups:
+  hypervisors:
+    title: Hypervisors
+    description: The VM hosts
+    ssh: {user: root, auth: "bw:hv root"}
+    os: posix
+    mesh: true
+    hosts:
+      hv-01: 198.51.100.11
+      hv-02:
+        ip: 198.51.100.12
+        key_type: rsa-4096
+        type: hypervisor
+        product: Hyper 8
+        title: Second hypervisor
+        notes: old-style description
+        web: https://198.51.100.12/ui
+        mesh_dir: /opt/roster-mesh
+        seen_as: [10.9.0.12]
+        services:
+          node-exporter: {port: 9200}
+          api: {url: "https://198.51.100.12:8443/api", user: api, auth: "bw:api", verify: false, login: bearer}
+          admin: 8443
+          portal: {port: 9443, login: portal}
+  windows:
+    os: Windows
+    key_type: ecdsa-521
+    hosts:
+      win-01:
+        ip: fe80::1%eth0
+        ssh: {port: 2222, user: Administrator}
+        enroll: false
+        description: A Windows box
+  scanned:
+    reviewed: false
+    mesh: null
+    hosts:
+      found-01: {ip: 10.0.0.9, mesh: false, type: printer}
+links:
+  - {from: hypervisors, to: win-01}
+  - {from: hv-01, to: found-01, both: true, via: hv-02}
+"#;
+
+#[test]
+fn a_full_v0_7_0_inventory_loads_and_resolves() {
+    let h = hosts("inv-full", FULL);
+    assert_eq!(
+        h["hv-02"],
+        serde_json::json!({
+            "name": "hv-02", "group": "hypervisors", "ip": "198.51.100.12",
+            "user": "root", "port": 22, "access": "key", "title": "Second hypervisor",
+            "description": "old-style description", "type": "hypervisor", "product": "Hyper 8",
+            "os": "posix", "key_type": "rsa-4096", "mesh": true,
+            "web": "https://198.51.100.12/ui",
+            "services": [
+                {"name": "web", "port": 443, "scheme": "https", "url": "https://198.51.100.12/ui",
+                 "user": "admin", "login": "basic", "verify": true},
+                {"name": "node-exporter", "port": 9200, "scheme": null, "url": null,
+                 "user": "admin", "login": "basic", "verify": true},
+                {"name": "api", "port": 8443, "scheme": "https",
+                 "url": "https://198.51.100.12:8443/api", "user": "api", "login": "bearer",
+                 "verify": false},
+                {"name": "admin", "port": 8443, "scheme": "https",
+                 "url": "https://198.51.100.12:8443", "user": "admin", "login": "basic",
+                 "verify": true},
+            ],
+        })
+    );
+    let win = &h["win-01"];
+    assert_eq!(win["ip"], "fe80::1%eth0");
+    assert_eq!(
+        (&win["user"], &win["port"]),
+        (&"Administrator".into(), &2222.into())
+    );
+    assert_eq!(
+        (&win["os"], &win["key_type"]),
+        (&"windows".into(), &"ecdsa-521".into())
+    );
+    assert_eq!(
+        (&win["access"], &win["mesh"]),
+        (&"password".into(), &Value::Null)
+    );
+    assert_eq!(win["description"], "A Windows box");
+    assert_eq!(h["hv-01"]["key_type"], "ecdsa");
+    assert_eq!(h["hv-01"]["title"], "");
+    assert_eq!(h["hv-01"]["web"], Value::Null);
+    let found = &h["found-01"];
+    assert_eq!(
+        (&found["access"], &found["mesh"]),
+        (&"unreviewed".into(), &false.into())
+    );
+}
+
+#[test]
+fn ls_shows_key_password_and_unreviewed_access() {
+    let s = Sandbox::new("inv-access");
+    s.write("roster.yml", FULL);
+    let out = s.roster(&["ls"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let access: Vec<_> = out
+        .stdout
+        .lines()
+        .map(|l| l.split_whitespace().nth(3).unwrap())
+        .collect();
+    assert_eq!(access, ["key", "key", "password", "unreviewed"]);
+}
+
+#[test]
+fn bad_settings_are_refused_naming_the_field() {
+    let cases = [
+        (
+            "key-type",
+            "      box-a: {ip: 10.0.0.5, key_type: dsa}\n",
+            "box-a.key_type:",
+        ),
+        (
+            "rsa-short",
+            "      box-a: {ip: 10.0.0.5, key_type: rsa-1024}\n",
+            "box-a.key_type:",
+        ),
+        (
+            "os",
+            "      box-a: {ip: 10.0.0.5, os: plan9}\n",
+            "box-a.os:",
+        ),
+        (
+            "mesh",
+            "      box-a: {ip: 10.0.0.5, mesh: sometimes}\n",
+            "box-a.mesh:",
+        ),
+        (
+            "ssh-key",
+            "      box-a: {ip: 10.0.0.5, ssh: {host: x}}\n",
+            "box-a.ssh:",
+        ),
+    ];
+    for (name, hosts, want) in cases {
+        let err = refused(&format!("inv-set-{name}"), &format!("{HEAD}{hosts}"));
+        assert!(
+            err.contains(&format!(":5: groups.dev.hosts.{want}")),
+            "{name}: {err}"
+        );
+    }
+    let err = refused(
+        "inv-set-top",
+        &format!("key_type: dsa\n{HEAD}      box-a: 10.0.0.5\n"),
+    );
+    assert!(err.contains("roster.yml:1: key_type:"), "{err}");
+}
