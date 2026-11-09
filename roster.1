@@ -636,6 +636,8 @@ When ssh asks, roster runs again as the askpass helper, reads the password
 from the socket and prints it to ssh.
 roster answers exactly one connection and then removes the directory
 (also when something fails), so a wrong password isn't retried.
+If ssh hasn't asked within 60 seconds, roster stops listening, removes the
+directory and just waits for ssh.
 The helper answers only a prompt that mentions a password or passphrase;
 it refuses anything else, such as ssh's yes/no question about a new host
 key.
