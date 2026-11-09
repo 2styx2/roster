@@ -7,6 +7,7 @@
 #   claude / import   ~/.claude is there / CLAUDE.md imports @~/ROSTER.md
 #   file NAME         the Mesh's config, known_hosts or ~/ROSTER.md, its
 #   |LINE             lines following, each after a |
+#   nonl              the file's last line had no newline
 #   line TEXT         an authorized_keys line tagged roster-mesh:SRC@BOX
 #   end               all of it was said
 cd
@@ -28,6 +29,7 @@ for f in "$P/config" "$P/known_hosts" ROSTER.md; do
 	if [ -f "$f" ]; then
 		echo "file ${f##*/}"
 		sed 's/^/|/' "$f"
+		if [ -n "$(tail -c 1 "$f")" ]; then printf '\nnonl\n'; fi
 	fi
 done
 if [ -f .ssh/authorized_keys ]; then
