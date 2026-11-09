@@ -17,7 +17,8 @@
 # unless -o PubkeyAuthentication=no is given or a
 # `nokey` file is there. Without BatchMode=yes, the Host's `password` file
 # logs in when $SSH_ASKPASS prints it. Then the remote command runs with sh
-# in that HOME (after a `--`), stdin passed through.
+# in that HOME (after a `--`), stdin passed through, with FAKE_SSH_HOST set to
+# NAME; ssh's own environment is appended to $HOME/ssh-hosts.env first.
 echo "$*" >>"$HOME/ssh.log"
 if [ -n "$FAKE_HOSTS" ]; then
   batch= pubkey=1
@@ -59,7 +60,8 @@ if [ -n "$FAKE_HOSTS" ]; then
     exit 255
   fi
   cd "$dir" || exit 255
-  HOME=$dir exec sh -c "$*"
+  env >>"$HOME/ssh-hosts.env"
+  HOME=$dir FAKE_SSH_HOST=$name exec sh -c "$*"
 fi
 if [ -n "$FAKE_SSH_ASKPASS" ]; then
   env >"$HOME/ssh.env"

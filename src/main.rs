@@ -7,6 +7,7 @@ mod claude;
 mod hosts;
 mod inventory;
 mod ls;
+mod mesh;
 mod pick;
 mod plugin;
 mod remote;
