@@ -292,3 +292,46 @@ fn bad_settings_are_refused_naming_the_field() {
     );
     assert!(err.contains("roster.yml:1: key_type:"), "{err}");
 }
+
+#[test]
+fn bad_links_are_refused_naming_the_entry() {
+    let two = format!("{HEAD}      box-a: 10.0.0.5\n      box-b: 10.0.0.6\n");
+    let cases = [
+        ("unknown-end", "{from: box-a, to: box-z}", "links.2.to:"),
+        (
+            "via-group",
+            "{from: box-a, to: box-b, via: dev}",
+            "links.2.via:",
+        ),
+        (
+            "via-missing",
+            "{from: box-a, to: box-b, via: box-z}",
+            "links.2.via:",
+        ),
+        (
+            "extra-key",
+            "{from: box-a, to: box-b, over: box-a}",
+            "links.2:",
+        ),
+        ("no-to", "{from: box-a}", "links.2:"),
+        (
+            "both",
+            "{from: box-a, to: box-b, both: maybe}",
+            "links.2.both:",
+        ),
+    ];
+    for (name, entry, want) in cases {
+        let inv = format!("{two}links:\n  - {{from: box-a, to: dev}}\n  - {entry}\n");
+        let err = refused(&format!("inv-link-{name}"), &inv);
+        assert!(
+            err.contains(&format!("roster.yml:9: {want}")),
+            "{name}: {err}"
+        );
+    }
+    let clash = format!(
+        "{two}  box-a:\n    hosts: {{box-c: 10.0.0.7}}\nlinks:\n  - {{from: box-a, to: dev}}\n"
+    );
+    let err = refused("inv-link-clash", &clash);
+    assert!(err.contains("roster.yml:10: links.1.from:"), "{err}");
+    assert!(err.contains("both a Host and a group"), "{err}");
+}

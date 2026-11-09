@@ -18,6 +18,18 @@ pub struct Inventory {
     /// The canonical key type: `ed25519`, `ecdsa`, `ecdsa-256`, `rsa-4096`, ...
     pub key_type: String,
     pub hosts: Vec<Host>,
+    pub links: Vec<Link>,
+}
+
+/// One `links:` entry. Each end names a Host or a group.
+#[allow(dead_code)]
+pub struct Link {
+    pub from: String,
+    pub to: String,
+    /// true: two-way.
+    pub both: bool,
+    /// The Host the source reaches the peer through.
+    pub via: Option<String>,
 }
 
 /// A Host with the cascade resolved: built-in < `defaults` < group < Host,
@@ -138,30 +150,39 @@ fn bad<T>(at: &[&str], why: impl Into<String>) -> Result<T, Bad> {
 }
 
 /// The line (from 1) of the deepest key of AT found in TEXT, by indentation.
+/// A number in AT is a list item, counted from 1.
 fn line_of(text: &str, at: &[String]) -> Option<usize> {
     let lines: Vec<&str> = text.lines().collect();
     let (mut found, mut from, mut parent) = (None, 0, None::<usize>);
     for key in at {
-        let hit = (from..lines.len())
+        let mut block = (from..lines.len())
             .map(|n| {
-                (
-                    n,
-                    lines[n].trim_start(),
-                    lines[n].len() - lines[n].trim_start().len(),
-                )
+                let t = lines[n].trim_start();
+                (n, t, lines[n].len() - t.len())
             })
             .filter(|(_, t, _)| !t.is_empty() && !t.starts_with('#'))
-            .take_while(|&(_, _, i)| parent.is_none_or(|p| i > p))
-            .find(|(_, t, _)| {
-                let t = t.trim_start_matches("- ");
-                [
-                    format!("{key}:"),
-                    format!("\"{key}\":"),
-                    format!("'{key}':"),
-                ]
-                .iter()
-                .any(|k| t.starts_with(k.as_str()))
+            .take_while(|&(_, t, i)| {
+                parent.is_none_or(|p| i > p || (i == p && t.starts_with("- ")))
             });
+        let hit = if let Ok(item) = key.parse::<usize>() {
+            let mut items = block.filter(|(_, t, _)| t.starts_with("- "));
+            let first = items.next();
+            let indent = first.map(|(_, _, i)| i);
+            first
+                .into_iter()
+                .chain(items.filter(|&(_, _, i)| Some(i) == indent))
+                .nth(item.wrapping_sub(1))
+        } else {
+            let keys = [
+                format!("{key}:"),
+                format!("\"{key}\":"),
+                format!("'{key}':"),
+            ];
+            block.find(|(_, t, _)| {
+                keys.iter()
+                    .any(|k| t.trim_start_matches("- ").starts_with(k.as_str()))
+            })
+        };
         let Some((n, _, i)) = hit else { break };
         (found, from, parent) = (Some(n + 1), n + 1, Some(i));
     }
@@ -307,13 +328,89 @@ fn parse(doc: &Value) -> Result<Inventory, Bad> {
             hosts.push(host(&at, [own, &inherited, defaults], &key_type)?);
         }
     }
+    let groups: Vec<String> = groups.keys().filter_map(text).collect();
     Ok(Inventory {
         path: PathBuf::new(),
         box_name: box_name(text(&doc["box_name"])),
         key_path,
         key_type,
+        links: links(&doc["links"], &hosts, &groups)?,
         hosts,
     })
+}
+
+/// `links: [{from, to, both, via}]`: each end a Host or a group, `via` a
+/// Host that isn't an end, and nothing else in an entry.
+fn links(v: &Value, hosts: &[Host], groups: &[String]) -> Result<Vec<Link>, Bad> {
+    let entries = match v {
+        Value::Null => return Ok(Vec::new()),
+        Value::Sequence(s) => s,
+        _ => return bad(&["links"], "must be a list of {from, to, both, via}"),
+    };
+    let is_host = |n: &str| hosts.iter().any(|h| h.name == n);
+    let is_group = |n: &str| groups.iter().any(|g| g == n);
+    let mut out = Vec::new();
+    for (n, entry) in entries.iter().enumerate() {
+        let n = (n + 1).to_string();
+        let at = |key: &'static str| {
+            if key.is_empty() {
+                vec!["links", &n]
+            } else {
+                vec!["links", &n, key]
+            }
+        };
+        let ok = entry.as_mapping().is_some_and(|m| {
+            m.contains_key("from")
+                && m.contains_key("to")
+                && m.keys()
+                    .all(|k| matches!(k.as_str(), Some("from" | "to" | "both" | "via")))
+        });
+        if !ok {
+            return bad(
+                &at(""),
+                "must be {from: HOST-OR-GROUP, to: HOST-OR-GROUP, both: true, via: HOST}, nothing else",
+            );
+        }
+        let mut ends = Vec::new();
+        for key in ["from", "to"] {
+            let name = text(&entry[key]).unwrap_or_default();
+            if is_host(&name) && is_group(&name) {
+                return bad(
+                    &at(key),
+                    format!("{name} is both a Host and a group: rename one"),
+                );
+            }
+            if !is_host(&name) && !is_group(&name) {
+                return bad(&at(key), format!("{name:?} isn't a Host or a group"));
+            }
+            ends.push(name);
+        }
+        if ends[0] == ends[1] {
+            return bad(&at(""), format!("links {} to itself", ends[0]));
+        }
+        let both = match &entry["both"] {
+            Value::Null => false,
+            Value::Bool(b) => *b,
+            _ => return bad(&at("both"), "must be true or false"),
+        };
+        let via = text(&entry["via"]);
+        if let Some(via) = &via {
+            if !is_host(via) || ends.contains(via) {
+                return bad(
+                    &at("via"),
+                    format!("{via:?} must be a Host that isn't an end of the Link"),
+                );
+            }
+        }
+        let [from, to] = <[String; 2]>::try_from(ends).unwrap_or_default();
+        out.push(Link {
+            from,
+            to,
+            both,
+            via,
+        });
+    }
+    Ok(out)
 }
 
 fn ssh_block<'a>(layer: &'a Mapping, at: &[&str]) -> Result<Option<&'a Mapping>, Bad> {
