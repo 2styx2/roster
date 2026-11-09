@@ -1630,9 +1630,20 @@ completes at once, with nothing to regenerate.
 When
 .I roster.yml
 won't load, no names complete and nothing is printed.
-Install it by copying it to
-.I ~/.local/share/bash\-completion/completions/roster
-or by adding
+.B make install
+in the source tree installs it as
+.IR $PREFIX/share/bash\-completion/completions/roster ,
+next to the binary and this page
+.RI ( $PREFIX/share/man/man1/roster.1 ),
+with
+.I PREFIX
+.I ~/.local
+by default;
+.B make uninstall
+removes all three.
+Without
+.BR make ,
+copy it there by hand, or add
 .B source /path/to/roster.bash
 to
 .IR ~/.bashrc .
