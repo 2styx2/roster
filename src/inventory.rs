@@ -31,19 +31,26 @@ impl Inventory {
     }
 }
 
-fn find(flag: Option<PathBuf>) -> Result<PathBuf, Fail> {
-    if let Some(path) = flag.or_else(|| std::env::var_os("ROSTER_CONFIG").map(PathBuf::from)) {
-        return Ok(path);
-    }
+/// The Inventory path by the lookup order, or None when no file is found.
+pub fn locate(flag: Option<PathBuf>) -> Option<PathBuf> {
+    flag.or_else(|| std::env::var_os("ROSTER_CONFIG").map(PathBuf::from))
+        .or_else(|| candidates().into_iter().find(|p| p.is_file()))
+}
+
+fn candidates() -> [PathBuf; 2] {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_default();
-    let candidates = [
+    [
         PathBuf::from("roster.yml"),
         home.join(".config/roster/roster.yml"),
-    ];
-    match candidates.iter().find(|p| p.is_file()) {
-        Some(path) => Ok(path.clone()),
+    ]
+}
+
+fn find(flag: Option<PathBuf>) -> Result<PathBuf, Fail> {
+    let candidates = candidates();
+    match locate(flag) {
+        Some(path) => Ok(path),
         None => Err(Fail {
             code: 3,
             msg: format!(

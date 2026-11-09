@@ -2,6 +2,10 @@
 
 mod inventory;
 mod ls;
+mod plugin;
+
+/// Commands roster runs itself; any other name is a plugin.
+const BUILTINS: &[&str] = &["ls"];
 
 use std::process::ExitCode;
 
@@ -60,7 +64,12 @@ fn run() -> Result<(), Fail> {
             }
             Long("json") if command.as_deref() == Some("ls") => json = true,
             Value(v) if command.is_none() => {
-                command = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
+                let name = v.string().map_err(|e| usage_error(e.to_string()))?;
+                if !BUILTINS.contains(&name.as_str()) {
+                    let rest = parser.raw_args().map_err(|e| usage_error(e.to_string()))?;
+                    return Err(plugin::exec(&name, config.map(Into::into), rest.collect()));
+                }
+                command = Some(name)
             }
             _ => return Err(usage_error(arg.unexpected().to_string())),
         }
