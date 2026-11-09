@@ -19,7 +19,8 @@ Your password manager knows the secrets. roster knows your network: the team's H
 
 | Command | What it does |
 |---|---|
-| `roster` | fzf picker over every Host; opens the pick in a new tmux window (Ctrl-Enter: a split), or right here outside tmux |
+| `roster pick` | fzf picker over every Host: Enter opens a new tmux window, ctrl-v a split, Tab-marked Hosts synchronized panes; outside tmux, connects right here |
+| `roster` | prints usage |
 | `roster ls [filter]` | list Hosts (`--json` for scripts and Claude) |
 | `roster ssh HOST` | interactive ssh; password-only gear gets its password from the vault, never shown |
 | `roster run <host\|group> -- CMD` | run a command on one Host or a whole group, output labelled by Host |

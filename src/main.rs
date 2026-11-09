@@ -24,16 +24,16 @@ mod web;
 
 /// Commands roster runs itself; any other name is a plugin.
 const BUILTINS: &[&str] = &[
-    "add", "check", "ls", "run", "setup", "ssh", "sync", "vault", "web", "help", "version",
+    "add", "check", "ls", "pick", "run", "setup", "ssh", "sync", "vault", "web", "help", "version",
 ];
 
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-usage: roster [-c FILE] [COMMAND [ARGS]]
+usage: roster [-c FILE] COMMAND [ARGS]
 
 commands:
-  (none)         pick Hosts with fzf and ssh to them: in tmux, Enter opens a
+  pick           pick Hosts with fzf and ssh to them: in tmux, Enter opens a
                  window, ctrl-v a split, Tab-marked Hosts synchronized panes
   ls [--json] [--long] [FILTER]
                  list Hosts: name, group, address, access, title;
@@ -278,7 +278,11 @@ fn run() -> Result<(), Fail> {
             println!("roster {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
+        Some("pick") => pick::run(&open(config)?),
         Some(other) => Err(usage_error(format!("unknown command '{other}'"))),
-        None => pick::run(&open(config)?),
+        None => {
+            print!("{USAGE}");
+            Ok(())
+        }
     }
 }

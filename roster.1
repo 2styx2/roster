@@ -1,10 +1,11 @@
-.TH ROSTER 1 2026-11-09 "roster 0.0.0" "User Commands"
+.TH ROSTER 1 2026-11-09 "roster 0.7.2" "User Commands"
 .SH NAME
 roster \- know your network: list and reach the Hosts in roster.yml
 .SH SYNOPSIS
 .B roster
 .RB [ \-c
 .IR FILE ]
+.B pick
 .br
 .B roster
 .RB [ \-c
@@ -127,7 +128,12 @@ The rewrite carries on the Python roster's numbering: the first is 0.7.0.
 .SH COMMANDS
 .TP
 .B roster
-With no command, open the picker: the
+With no command, print usage and exit 0, as
+.B \-h
+does.
+.TP
+.B pick
+Open the picker: the
 .B ls
 lines in
 .BR fzf (1),
@@ -1639,9 +1645,7 @@ and Host and group names for
 .BR run ,
 .BR check ,
 .BR web ,
-.B ls
-and a bare
-.BR roster .
+.BR ls .
 The names come from
 .B roster ls
 at each Tab (honouring

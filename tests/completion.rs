@@ -54,11 +54,13 @@ fn complete(s: &Sandbox, line: &str) -> Vec<String> {
 }
 
 #[test]
-fn the_first_word_completes_commands_hosts_and_groups() {
+fn the_first_word_completes_commands_only() {
     let s = sandbox("complete-first");
     s.write("roster.yml", INVENTORY);
     assert_eq!(complete(&s, "roster s"), ["setup", "ssh", "sync"]);
-    assert_eq!(complete(&s, "roster b"), ["box-a", "box-b"]);
+    assert_eq!(complete(&s, "roster p"), ["pick"]);
+    // Bare `roster` takes no Host: names complete after a command.
+    assert!(complete(&s, "roster b").is_empty());
     assert_eq!(complete(&s, "roster -"), ["-V", "-c", "-h"]);
 }
 
