@@ -38,6 +38,10 @@ commands:
                  run CMD on Hosts in parallel, lines prefixed `host: `;
                  TARGET: Hosts and groups, comma-separated; exit 1 if any
                  Host failed
+  web [-k] [-d BODY] [-H HEADER]... HOST [SERVICE] METHOD PATH
+                 call a Host's web API with curl and the service's Login,
+                 which goes to curl on stdin; exit 1 if the HTTP status is
+                 400 or more
   vault unlock   unlock Bitwarden for 12 h (session key in the kernel keyring)
   vault lock     lock Bitwarden and forget the session key
   help plugins   how `roster NAME` runs a roster-NAME plugin from PATH
