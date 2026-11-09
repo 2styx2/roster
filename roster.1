@@ -28,6 +28,16 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .B roster
 .RB [ \-c
 .IR FILE ]
+.B run
+.RB [ \-\-json ]
+.I TARGET
+.B \-\-
+.I CMD
+.RI [ ARG ...]
+.br
+.B roster
+.RB [ \-c
+.IR FILE ]
 .I NAME
 .RI [ ARGS ...]
 .br
@@ -347,6 +357,79 @@ No
 .I HOST
 is a usage error.
 .TP
+.BI "run " "TARGET " "\-\- " CMD
+Run
+.I CMD
+on every Host
+.I TARGET
+names, in parallel:
+.BR "roster run dev,esx\-02 \-\- uptime" .
+.I TARGET
+is Host and group names, comma-separated, in any mix; each Host runs once.
+A name that is neither exits 1 with
+.BI "no Host or group named '" NAME "' in the Inventory"
+before anything runs.
+Unreviewed Hosts are skipped, each with
+.BI "roster: skipped " HOST ": unreviewed"
+on stderr; nothing left to run exits 1.
+.I CMD
+and its arguments go to the Host's shell as
+.B ssh
+joins them, so quote what the local shell shouldn't expand.
+.IP
+Each Host gets
+.BI "ssh \-o BatchMode=yes \-o ConnectTimeout=10 " "HOST " "\-\- " CMD
+(a Password Host without
+.BR BatchMode ,
+which would stop ssh asking askpass), with stdin from
+.IR /dev/null .
+At most 32 Hosts run at once (a constant in the source).
+The connect timeout means a down or unreachable Host fails after 10 seconds
+instead of holding up the others; a command that hangs on a Host still
+does.
+Each line a Host prints goes out as it arrives, prefixed
+.BI "" HOST ": "
+\(em stdout lines to stdout, stderr lines to stderr; lines from different
+Hosts don't mix within a line, but their order across Hosts is arrival order.
+.IP
+Password Hosts get their passwords through askpass, as for
+.BR ssh .
+Every Password Host's
+.B auth
+is resolved before any Host starts, so prompts come one at a time and a
+reference that won't resolve exits 1 before any ssh runs.
+No ssh, a key Host's included, inherits an
+.B env:
+variable a password came from.
+.IP
+roster exits 1 if any Host failed (a non-zero exit, a signal, or ssh that
+couldn't start), after
+.BI "roster: failed on " "HOST" ", ..."
+on stderr; else 0.
+.TP
+.B run \-\-json
+Print nothing until every Host is done, then one JSON document, Hosts in
+.I TARGET
+order:
+.RS
+.PP
+.nf
+{"v": 1, "hosts": [
+  {"host": "box\-a", "exit": 0, "stdout": "...", "stderr": ""}
+]}
+.fi
+.PP
+.B exit
+is the Host's ssh exit status (255 when ssh itself failed, such as a
+connect timeout), or null when ssh was killed by a signal or couldn't start.
+.B stdout
+and
+.B stderr
+are the whole output, unprefixed; bytes that aren't UTF\-8 are replaced.
+Skipped Hosts are not listed. The exit status is as without
+.BR \-\-json .
+.RE
+.TP
 .B help plugins
 Print the plugin contract below, with an example.
 .B help
@@ -633,7 +716,11 @@ Nothing matched the
 .B ssh
 was given a Host it can't reach, or a Password Host whose
 .B auth
-won't resolve; a
+won't resolve;
+.B run
+failed on a Host, was given an unknown
+.IR TARGET ,
+or had no reviewed Host to run on; a
 .B setup
 step failed; or the picker can't run fzf or tmux.
 .TP

@@ -32,6 +32,10 @@ commands:
   ssh HOST [ARGS]
                  ssh to a Host by name; ARGS go to ssh unchanged; a Password
                  Host's auth password goes to ssh through askpass
+  run [--json] TARGET -- CMD
+                 run CMD on Hosts in parallel, lines prefixed `host: `;
+                 TARGET: Hosts and groups, comma-separated; exit 1 if any
+                 Host failed
   help plugins   how `roster NAME` runs a roster-NAME plugin from PATH
 
 options:
