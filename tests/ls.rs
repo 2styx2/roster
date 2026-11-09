@@ -55,6 +55,14 @@ fn ls_json_is_one_versioned_document() {
             "port": 22,
             "access": "key",
             "title": "Box A",
+            "description": "",
+            "type": "",
+            "product": "",
+            "os": "posix",
+            "key_type": "ed25519",
+            "mesh": null,
+            "web": null,
+            "services": [],
         })
     );
 }
