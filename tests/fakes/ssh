@@ -13,8 +13,8 @@
 #
 # With $FAKE_HOSTS set it acts as a Host instead: $FAKE_HOSTS/NAME is Host
 # NAME's HOME (NAME is the first argument that isn't an option). A `down`
-# file there makes it exit 255. The Box key (the key field of any
-# $HOME/.ssh/*.pub) logs in when the Host's .ssh/authorized_keys has it,
+# file there makes it exit 255. The Box key (the key field of the .pub of the
+# IdentityFile roster's ssh config gives NAME, else of any $HOME/.ssh/*.pub) logs in when the Host's .ssh/authorized_keys has it,
 # unless -o PubkeyAuthentication=no is given or a
 # `nokey` file is there. Without BatchMode=yes, the Host's `password` file
 # logs in when $SSH_ASKPASS prints it. A `mute` file there makes it exit 0
@@ -47,7 +47,9 @@ if [ -n "$FAKE_HOSTS" ]; then
   fi
   ok=
   if [ -n "$pubkey" ] && [ ! -e "$dir/nokey" ] && [ -f "$dir/.ssh/authorized_keys" ]; then
-    for pub in "$HOME"/.ssh/*.pub; do
+    pubs=$(awk -v h="$name" '$1 == "Host" { on = $2 == h } on && $1 == "IdentityFile" { gsub(/"/, "", $2); print $2 ".pub" }' \
+      "$HOME/.ssh/config.d/roster" 2>/dev/null | sed "s|^~/|$HOME/|")
+    for pub in ${pubs:-"$HOME"/.ssh/*.pub}; do
       [ -f "$pub" ] || continue
       key=$(cut -d' ' -f2 "$pub")
       grep -v '^[[:space:]]*#' "$dir/.ssh/authorized_keys" | grep -qF -- " $key" && ok=1
