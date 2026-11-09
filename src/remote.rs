@@ -4,8 +4,10 @@
 
 use crate::askpass;
 use crate::vault::Secret;
-use std::io::{self, Read, Write};
+use std::fs::File;
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// What a remote script did. `code` is ssh's exit status: the script's, or
 /// 255 when ssh itself failed (down, refused).
@@ -36,45 +38,52 @@ pub fn script(vars: &[(&str, &str)], body: &str) -> String {
 }
 
 /// Run `script` on `host` (an ssh config name) with `opts` before the name.
-/// It never starts a ControlMaster: a lingering master would hold stderr
-/// open; an existing one is used.
+/// It never starts a ControlMaster, which would linger; an existing one is
+/// used. stdin, stdout and stderr are unlinked scratch files, so no pipe
+/// can fill up and stall ssh.
 pub fn run(host: &str, opts: &[&str], script: &str, secret: Option<&Secret>) -> io::Result<Ran> {
-    let (stdin, mut feed) = io::pipe()?;
-    let (out_r, out_w) = io::pipe()?;
-    let (err_r, err_w) = io::pipe()?;
+    let mut stdin = scratch()?;
+    stdin.write_all(script.as_bytes())?;
+    stdin.seek(SeekFrom::Start(0))?;
+    let (mut out, mut err) = (scratch()?, scratch()?);
     let mut ssh = Command::new("ssh");
     ssh.args(["-o", "ControlMaster=no"])
         .args(opts)
         .args([host, "sh", "-s"])
         .stdin(stdin)
-        .stdout(out_w)
-        .stderr(err_w);
-    let script = script.to_string();
-    let writer = std::thread::spawn(move || {
-        let _ = feed.write_all(script.as_bytes());
-    });
-    let drain = |mut r: io::PipeReader| {
-        std::thread::spawn(move || {
-            let mut s = String::new();
-            let _ = r.read_to_string(&mut s);
-            s
-        })
-    };
-    let (out, err) = (drain(out_r), drain(err_r));
+        .stdout(out.try_clone()?)
+        .stderr(err.try_clone()?);
     let status = match secret {
-        Some(secret) => askpass::run(ssh, secret),
-        None => {
-            let status = ssh.status();
-            drop(ssh); // close our ends of the pipes, so the readers finish
-            status
-        }
-    }?;
-    let _ = writer.join();
+        Some(secret) => askpass::run(ssh, secret)?,
+        None => ssh.status()?,
+    };
+    let text = |f: &mut File| -> io::Result<String> {
+        let mut bytes = Vec::new();
+        f.seek(SeekFrom::Start(0))?;
+        f.read_to_end(&mut bytes)?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    };
     Ok(Ran {
         code: status.code().unwrap_or(255),
-        stdout: out.join().unwrap_or_default(),
-        stderr: err.join().unwrap_or_default(),
+        stdout: text(&mut out)?,
+        stderr: text(&mut err)?,
     })
+}
+
+/// A new file only this user can open, already unlinked.
+fn scratch() -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("roster-{}-{n}", std::process::id()));
+    let file = File::options()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)?;
+    std::fs::remove_file(&path)?;
+    Ok(file)
 }
 
 /// Does `host` take the Box key? `ssh -o BatchMode=yes HOST true`: no
