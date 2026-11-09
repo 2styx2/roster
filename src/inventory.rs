@@ -136,7 +136,7 @@ impl Inventory {
                 "key_path: {} is the {} key {} uses; remove key_path or point it at another file",
                 inv.key_path, h.key_type, h.name
             );
-            return Err(broken(&inv.path, line_of(&text, &["key_path".into()]), why));
+            return Err(broken(&inv.path, line_of(text, &["key_path".into()]), why));
         }
         Ok(inv)
     }
