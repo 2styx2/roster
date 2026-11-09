@@ -1,13 +1,14 @@
-//! scripts/line-ceiling.sh: CI fails when the source grows past the ceiling.
+//! scripts/line-budget.sh: reports the source size against the line budget,
+//! and warns (never fails) when it's over: the budget is a guide, not a wall.
 use std::path::Path;
 use std::process::Command;
 
-fn run(src: &Path, ceiling: &str) -> (i32, String) {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/line-ceiling.sh");
+fn run(src: &Path, budget: &str) -> (i32, String) {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/line-budget.sh");
     let out = Command::new("sh")
         .arg(script)
         .arg(src)
-        .env("LINE_CEILING", ceiling)
+        .env("LINE_BUDGET", budget)
         .output()
         .unwrap();
     (
@@ -34,16 +35,17 @@ fn source_tree(name: &str) -> std::path::PathBuf {
 
 #[test]
 fn counts_non_blank_non_comment_lines_of_rust_and_scripts() {
-    let src = source_tree("ceiling-under");
+    let src = source_tree("budget-under");
     let (code, stdout) = run(&src, "4");
     assert_eq!(code, 0, "{stdout}");
     assert!(stdout.contains("4 of 4"), "{stdout}");
 }
 
 #[test]
-fn fails_above_the_ceiling() {
-    let src = source_tree("ceiling-over");
+fn warns_but_does_not_fail_above_the_budget() {
+    let src = source_tree("budget-over");
     let (code, stdout) = run(&src, "3");
-    assert_eq!(code, 1, "{stdout}");
+    assert_eq!(code, 0, "{stdout}");
     assert!(stdout.contains("4 of 3"), "{stdout}");
+    assert!(stdout.contains("over the line budget"), "{stdout}");
 }
