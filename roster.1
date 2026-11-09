@@ -1156,6 +1156,22 @@ or
 .BR workers ,
 are loaded and ignored.
 .PP
+A true-or-false setting
+.RB ( enroll ,
+.BR reviewed ,
+.BR mesh ,
+.BR verify ,
+.BR both )
+also takes
+.BR yes / no ,
+.BR on / off
+and
+.BR y / n ,
+in any case, as v0.7.0 reads them; anything else is an error
+(a service with a bad
+.B verify
+is left out).
+.PP
 An invalid Inventory stops every command with exit 3 and one message
 .RI "in the form " "FILE:LINE: KEY: why" ,
 for example
