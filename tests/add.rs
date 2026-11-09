@@ -53,7 +53,7 @@ fn add_inserts_after_the_groups_last_host_and_keeps_every_other_byte() {
     let want = INVENTORY.replace(
         "               os: windows}\n",
         "               os: windows}\n      box-c: {ip: \"10.0.0.9\", port: 2222, user: \"ops\", \
-         auth: \"bw:box-c ssh\", enroll: false}\n",
+         auth: \"bw:box-c ssh\", enroll: false, reviewed: true}\n",
     );
     assert_eq!(read(&s, "roster.yml"), want);
     assert!(out.stdout.contains("added box-c to "), "{}", out.stdout);
@@ -77,7 +77,7 @@ fn a_missing_group_is_made_at_the_end_of_groups() {
     assert_eq!(out.code, 0, "{}", out.stderr);
     let want = INVENTORY.replace(
         "      esx-02: 10.0.0.8\n",
-        "      esx-02: 10.0.0.8\n  vault:\n    hosts:\n      box-d: {ip: \"fe80::1%eth0\"}\n",
+        "      esx-02: 10.0.0.8\n  vault:\n    hosts:\n      box-d: {ip: \"fe80::1%eth0\", reviewed: true}\n",
     );
     assert_eq!(read(&s, "roster.yml"), want);
 }
@@ -94,7 +94,7 @@ fn a_group_without_hosts_gets_a_hosts_block() {
     assert_eq!(
         read(&s, "roster.yml"),
         "groups:\n    lab:\n        user: root\n        hosts:\n            \
-         box-e: {ip: \"10.0.0.5\"}\n# end\n"
+         box-e: {ip: \"10.0.0.5\", reviewed: true}\n# end\n"
     );
 }
 
@@ -144,5 +144,5 @@ fn a_symlinked_roster_yml_is_written_through_to_its_target() {
     let out = s.roster(&["add", "box-c", "--ip", "10.0.0.9"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert!(s.home.join("roster.yml").is_symlink());
-    assert!(read(&s, "repo/roster.yml").contains("box-c: {ip: \"10.0.0.9\"}"));
+    assert!(read(&s, "repo/roster.yml").contains("box-c: {ip: \"10.0.0.9\", reviewed: true}"));
 }

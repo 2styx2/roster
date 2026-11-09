@@ -711,10 +711,19 @@ The Host goes after the last one under its group's
 as one line,
 .IP
 .nf
-      box\-c: {ip: "10.0.0.9", port: 2222, user: "ops", auth: "bw:box\-c ssh"}
+      box\-c: {ip: "10.0.0.9", port: 2222, user: "ops", auth: "bw:box\-c ssh", reviewed: true}
 .fi
 .IP
 and every other line of the file stays as it was, comments included.
+.B reviewed: true
+is always written: adding a Host, or putting its login in the vault, is
+its review, so
+.B setup
+takes it on even when
+.B defaults
+say
+.BR "reviewed: false" ,
+which keeps Hosts found other ways hands\-off.
 roster refuses, writing nothing, when the name is taken, when
 .BR groups: ,
 the group or its
