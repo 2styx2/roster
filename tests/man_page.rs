@@ -76,7 +76,7 @@ const DOCUMENTED: &[&str] = &[
     "a Password Host",
     "ssh's exit status",
     // the picker (ticket #9)
-    "With no command, open the picker",
+    "Open the picker",
     "fzf (1)",
     "ls \\-\\-long",
     "ctrl\\-v",
@@ -177,6 +177,8 @@ const DOCUMENTED: &[&str] = &[
     "contrib/roster.bash",
     "$PREFIX/share/bash\\-completion/completions/roster",
     ".B make install",
+    ".B pick",
+    "print usage and exit 0",
     "is already the same login",
     "duplicate Hosts:",
     ".B make uninstall",

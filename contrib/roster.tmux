@@ -1,4 +1,4 @@
-# roster.tmux: prefix+g ("go") opens the roster picker in a popup.
+# roster.tmux: prefix+g ("go") opens the roster picker (`roster pick`) in a popup.
 #
 # UNSUPPORTED: an example, not part of roster and not tested.
 # Load it from ~/.tmux.conf with:
@@ -8,4 +8,4 @@
 # ./roster.yml there is found; Enter, ctrl-v and Tab then behave as in
 # roster(1), and Tab marks several Hosts for synchronized panes.
 
-bind-key g display-popup -E -w 80% -h 60% -d '#{pane_current_path}' roster
+bind-key g display-popup -E -w 80% -h 60% -d '#{pane_current_path}' roster pick
