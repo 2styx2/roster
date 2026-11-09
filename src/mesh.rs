@@ -620,16 +620,21 @@ pub fn run(inv: &Inventory, ready: &[&Host], dry: bool) -> usize {
         return undone;
     }
     // Hosts that make a key go first, so the rest get its line in one visit;
-    // a second pass adds the keys made after a peer was visited.
+    // a second pass adds the keys made after a peer was visited. The plan is
+    // made again only after a Host changed.
+    let (mut todo, mut stale) = (Vec::new(), true);
     for _pass in 0..2 {
         let mut order: Vec<usize> = (0..seen.len()).collect();
         order.sort_by_key(|&i| first[i].make.is_none());
         for i in order {
-            let todo = plan(inv, &pairs, &seen, &known);
+            if stale {
+                (todo, stale) = (plan(inv, &pairs, &seen, &known), false);
+            }
             let (h, t) = (&inv.hosts[i], &todo[i]);
             if seen[i].is_none() || t.is_empty() {
                 continue;
             }
+            stale = true;
             match apply(inv, h, t) {
                 Ok(s) => {
                     seen[i] = Some(s);
