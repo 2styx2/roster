@@ -1,0 +1,16 @@
+#!/bin/sh
+# Fake ssh-keygen: appends its argv to $HOME/ssh-keygen.log and writes a
+# made-up key pair to the -f FILE, tagged with the -C comment.
+echo "$*" >>"$HOME/ssh-keygen.log"
+file= comment=
+while [ $# -gt 0 ]; do
+	case $1 in
+	-f) file=$2; shift ;;
+	-C) comment=$2; shift ;;
+	esac
+	shift
+done
+[ -n "$file" ] || { echo "fake ssh-keygen: no -f" >&2; exit 1; }
+echo "FAKE PRIVATE KEY" >"$file"
+chmod 600 "$file"
+echo "ssh-ed25519 AAAAfake $comment" >"$file.pub"
