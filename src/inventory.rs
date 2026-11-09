@@ -388,7 +388,8 @@ fn parse(doc: &Value) -> Result<Inventory, Bad> {
             title: oneline(body.get("title")),
             description: oneline(body.get("description")),
         });
-        let members = as_map(&body["hosts"], &["groups", &group, "hosts"], "a mapping")?;
+        let hosts_v = body.get("hosts").unwrap_or(&Value::Null);
+        let members = as_map(hosts_v, &["groups", &group, "hosts"], "a mapping")?;
         // `hosts`, `title` and `description` describe the group; the rest is inherited.
         let inherited: Mapping = body
             .iter()
