@@ -1,5 +1,35 @@
 #!/bin/sh
-# Tripwire: shadows any real bw on PATH, so no test can reach a real vault.
-# The ticket that adds the Vault turns this into a configurable fake.
-echo "fake bw: no fake vault configured: $*" >&2
-exit 99
+# Fake bw. A tripwire unless $FAKE_BW_ITEMS is set, so no test can reach a
+# real vault. $FAKE_BW_ITEMS holds the items, one JSON object per line.
+# Appends its argv to $HOME/bw.log. `unlock --raw --passwordenv VAR` takes
+# the master password below and prints the session key below; `get item
+# NAME` needs that key in BW_SESSION; `lock` always works. Every call needs
+# --nointeraction.
+if [ -z "$FAKE_BW_ITEMS" ]; then
+  echo "fake bw: no fake vault configured: $*" >&2
+  exit 99
+fi
+master=master-made-up-41c9
+session=session-made-up-77e2
+echo "$*" >>"$HOME/bw.log"
+case " $* " in
+*" --nointeraction "*) ;;
+*) echo "fake bw: missing --nointeraction" >&2; exit 98 ;;
+esac
+case "$1 $2" in
+"unlock --raw")
+  [ "$3" = --passwordenv ] || { echo "fake bw: no --passwordenv" >&2; exit 98; }
+  eval "pw=\${$4}"
+  [ "$pw" = "$master" ] || { echo "Invalid master password." >&2; exit 1; }
+  printf %s "$session"
+  ;;
+"get item")
+  [ "$BW_SESSION" = "$session" ] || { echo "Vault is locked." >&2; exit 1; }
+  printf '%s\n' "$FAKE_BW_ITEMS" | grep -F "\"name\":\"$3\"" || {
+    echo "Not found." >&2
+    exit 1
+  }
+  ;;
+"lock "*) echo "Your vault is locked." ;;
+*) echo "fake bw: unexpected: $*" >&2; exit 98 ;;
+esac
