@@ -335,3 +335,37 @@ fn bad_links_are_refused_naming_the_entry() {
     assert!(err.contains("roster.yml:10: links.1.from:"), "{err}");
     assert!(err.contains("both a Host and a group"), "{err}");
 }
+
+#[test]
+fn ls_filter_matches_name_group_type_or_product() {
+    let s = Sandbox::new("inv-filter");
+    s.write("roster.yml", FULL);
+    let names = |args: &[&str]| {
+        let out = s.roster(args);
+        assert_eq!(out.code, 0, "{}", out.stderr);
+        let names: Vec<String> = out
+            .stdout
+            .lines()
+            .map(|l| l.split_whitespace().next().unwrap().into())
+            .collect();
+        names
+    };
+    assert_eq!(names(&["ls", "win-01"]), ["win-01"]);
+    assert_eq!(names(&["ls", "hypervisors"]), ["hv-01", "hv-02"]);
+    assert_eq!(names(&["ls", "printer"]), ["found-01"]);
+    assert_eq!(names(&["ls", "Hyper 8"]), ["hv-02"]);
+    assert_eq!(names(&["ls", "printer,win-01"]), ["win-01", "found-01"]);
+    let out = s.roster(&["ls", "--json", "printer"]);
+    let doc: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(doc["hosts"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn ls_filter_matching_nothing_exits_1() {
+    let s = Sandbox::new("inv-filter-none");
+    s.write("roster.yml", FULL);
+    let out = s.roster(&["ls", "hv"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(out.stdout, "");
+    assert!(out.stderr.contains("hv"), "{}", out.stderr);
+}
