@@ -79,6 +79,16 @@ pub struct Service {
 }
 
 impl Host {
+    /// FILTER is comma-separated words; one equal to the Host's name, group,
+    /// `type` or `product` is a match.
+    pub fn matches(&self, filter: &str) -> bool {
+        let mine = [&self.name, &self.group, &self.r#type, &self.product];
+        filter
+            .split(',')
+            .map(str::trim)
+            .any(|w| !w.is_empty() && mine.iter().any(|m| *m == w))
+    }
+
     /// How roster reaches it: `unreviewed`, `key` or `password`.
     pub fn access(&self) -> &'static str {
         match (self.reviewed, self.enroll) {
