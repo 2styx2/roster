@@ -199,7 +199,10 @@ impl Inventory {
                 false => hosts,
             };
             if hosts.is_empty() {
-                let msg = format!("no Host or group named '{word}' in the Inventory");
+                let msg = crate::errors::hint(
+                    format!("no Host or group named '{word}' in the Inventory"),
+                    "`roster ls` lists the Hosts and groups",
+                );
                 return Err(Fail { code: 1, msg });
             }
             for h in hosts {

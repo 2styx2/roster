@@ -6,6 +6,7 @@ mod atomic;
 mod bw;
 mod check;
 mod claude;
+mod errors;
 mod hosts;
 mod import;
 mod inventory;

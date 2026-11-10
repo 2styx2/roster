@@ -23,6 +23,7 @@ session)
   ;;
 padd)
   [ "$2" = user ] || { echo "fake keyctl: bad padd: $*" >&2; exit 2; }
+  [ -z "$FAKE_KEYCTL_FULL" ] || { echo "keyctl_add_key: Disk quota exceeded" >&2; exit 1; }
   cat >"$ring/$3"
   rm -f "$ring/$3.s" "$ring/$3.u"
   case $4 in
