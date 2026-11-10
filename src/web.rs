@@ -77,7 +77,10 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
         ));
     }
     let host = inv.hosts.iter().find(|h| &h.name == name);
-    let host = host.ok_or_else(|| failed(format!("no Host named '{name}' in the Inventory")))?;
+    let host = host.ok_or_else(|| {
+        let msg = format!("no Host named '{name}' in the Inventory");
+        failed(errors::hint(msg, "`roster ls` lists the Hosts"))
+    })?;
     // Without SERVICE: the one `ls` shows as the Host's web UI.
     let svc = host.services.iter().find(|s| match service {
         Some(n) => &s.name == n,

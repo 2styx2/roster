@@ -256,7 +256,12 @@ pub fn unlock() -> Result<(), Fail> {
 pub fn list() -> Result<[Zeroizing<Vec<u8>>; 2], String> {
     let session = match stored() {
         Ok(Some(session)) => session,
-        Ok(None) => return Err("Bitwarden is locked (`roster vault unlock`)".into()),
+        Ok(None) => {
+            return Err(errors::hint(
+                "Bitwarden is locked",
+                "run `roster vault unlock`",
+            ));
+        }
         Err(_) => return Err("keyctl isn't installed, so there's no Bitwarden session".into()),
     };
     let env = [("BW_SESSION", session.as_str())];

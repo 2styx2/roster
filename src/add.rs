@@ -152,7 +152,8 @@ pub fn save(inv: &Inventory, h: &NewHost) -> Result<(), Fail> {
         )));
     }
     let path = &inv.path;
-    let text = std::fs::read_to_string(path).map_err(|e| fail(e.to_string()))?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| fail(format!("{}: {}", path.display(), crate::errors::io(&e))))?;
     let text = insert(&text, &h.group, &h.line()).map_err(fail)?;
     let new = Inventory::load(path.clone(), &text)
         .map_err(|e| fail(format!("the result won't load: {}", e.msg)))?;
@@ -172,7 +173,8 @@ pub fn save(inv: &Inventory, h: &NewHost) -> Result<(), Fail> {
             )));
         }
     }
-    atomic::write(path, text.as_bytes(), 0o600).map_err(|e| fail(e.to_string()))
+    atomic::write(path, text.as_bytes(), 0o600)
+        .map_err(|e| fail(format!("{}: {}", path.display(), crate::errors::io(&e))))
 }
 
 /// `roster add` flags as given: `(flag, value)`.

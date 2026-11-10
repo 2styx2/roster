@@ -2,14 +2,14 @@
 //! in tmux as a new window, a split (ctrl-v), or synchronized panes (several
 //! marked with Tab); outside tmux in place.
 
-use crate::Fail;
 use crate::inventory::Inventory;
+use crate::{Fail, errors};
 use std::ffi::OsString;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-fn fail(code: u8, msg: impl Into<String>) -> Fail {
-    let msg = msg.into();
+fn fail(code: u8, msg: impl std::fmt::Display) -> Fail {
+    let msg = format!("pick: {msg}");
     Fail { code, msg }
 }
 
@@ -19,8 +19,10 @@ fn quote(s: &OsString) -> String {
 }
 
 pub fn run(inv: &Inventory) -> Result<(), Fail> {
-    let exe = std::env::current_exe().map_err(|e| fail(1, format!("can't find roster: {e}")))?;
-    let config = std::path::absolute(&inv.path).map_err(|e| fail(1, e.to_string()))?;
+    let exe = std::env::current_exe()
+        .map_err(|e| fail(1, format!("can't find roster itself: {}", errors::io(&e))))?;
+    let config = std::path::absolute(&inv.path)
+        .map_err(|e| fail(1, format!("{}: {}", inv.path.display(), errors::io(&e))))?;
     let (exe, config) = (exe.into_os_string(), config.into_os_string());
     let preview = format!("{} -c {} ls --long {{1}}", quote(&exe), quote(&config));
     let mut fzf = Command::new("fzf")
@@ -32,16 +34,24 @@ pub fn run(inv: &Inventory) -> Result<(), Fail> {
         .map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => fail(
                 1,
-                "the picker needs fzf: install fzf from your package manager, or use roster ls",
+                errors::hint(
+                    "fzf isn't installed",
+                    "install fzf (apt install fzf, dnf install fzf), or list the Hosts with `roster ls`",
+                ),
             ),
-            _ => fail(1, format!("can't run fzf: {e}")),
+            _ => fail(1, errors::spawn("fzf", &e)),
         })?;
     let list = crate::ls::text(&inv.hosts);
     // fzf may quit before reading it all; that is not an error.
     let _ = fzf.stdin.take().unwrap().write_all(list.as_bytes());
     let out = fzf
         .wait_with_output()
-        .map_err(|e| fail(1, format!("fzf: {e}")))?;
+        .map_err(|e| fail(1, format!("fzf: {}", errors::io(&e))))?;
+    // 1: nothing matched, 130: cancelled; 2 is an error, which fzf, owning
+    // the terminal, has shown.
+    if out.status.code() == Some(2) {
+        return Err(fail(1, "fzf stopped with an error"));
+    }
     let text = String::from_utf8_lossy(&out.stdout);
     let mut lines = text.lines();
     let key = lines.next().unwrap_or("");
@@ -51,7 +61,13 @@ pub fn run(inv: &Inventory) -> Result<(), Fail> {
     };
     if std::env::var_os("TMUX").is_none() {
         if hosts.len() > 1 {
-            return Err(fail(1, "several Hosts open as panes only inside tmux"));
+            return Err(fail(
+                1,
+                errors::hint(
+                    "several Hosts open as panes only inside tmux",
+                    "start tmux first, or pick one Host",
+                ),
+            ));
         }
         return Err(crate::ssh::exec(inv, first, Vec::new()));
     }
@@ -82,11 +98,16 @@ fn tmux(args: &[&str], command: Vec<OsString>) -> Result<String, Fail> {
     let out = Command::new("tmux")
         .args(args)
         .args(command)
-        .stderr(Stdio::inherit())
         .output()
-        .map_err(|e| fail(1, format!("can't run tmux: {e}")))?;
+        .map_err(|e| fail(1, errors::spawn("tmux", &e)))?;
     if !out.status.success() {
-        return Err(fail(1, format!("tmux {} failed", args[0])));
+        let what = match args[0] {
+            "new-window" => "open a window",
+            "split-window" => "split the window",
+            _ => "arrange the panes",
+        };
+        let why = errors::last_line(&String::from_utf8_lossy(&out.stderr));
+        return Err(fail(1, format!("tmux couldn't {what}: {why}")));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }

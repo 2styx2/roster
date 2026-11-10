@@ -120,8 +120,40 @@ fn without_fzf_roster_says_how_to_install_it() {
     s.set_env("PATH", &empty);
     let out = s.roster(&["pick"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
-    assert!(out.stderr.contains("install fzf"), "{}", out.stderr);
+    assert_eq!(
+        out.stderr,
+        "roster: pick: fzf isn't installed\n  \
+         hint: install fzf (apt install fzf, dnf install fzf), or list the Hosts with `roster ls`\n"
+    );
     assert_eq!(read(&s, "ssh.log"), "");
+}
+
+#[test]
+fn a_failing_fzf_or_tmux_is_said_plainly() {
+    let mut s = sandbox("pick-fzf-fails", "");
+    s.set_env("FAKE_FZF_EXIT", "2");
+    let out = s.roster(&["pick"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(out.stderr, "roster: pick: fzf stopped with an error\n");
+    let mut s = in_tmux("pick-tmux-fails", "box-b", "");
+    s.set_env(
+        "FAKE_TMUX_ERROR",
+        "no server running on /tmp/tmux-1000/default",
+    );
+    let out = s.roster(&["pick"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "roster: pick: tmux couldn't open a window: no server running on /tmp/tmux-1000/default\n"
+    );
+    let s = sandbox("pick-panes-outside", "box-a box-b");
+    let out = s.roster(&["pick"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "roster: pick: several Hosts open as panes only inside tmux\n  \
+         hint: start tmux first, or pick one Host\n"
+    );
 }
 
 #[test]

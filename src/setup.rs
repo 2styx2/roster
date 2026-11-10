@@ -185,7 +185,7 @@ fn box_key(key: &std::path::Path, key_type: &str, box_name: &str) -> Result<(), 
     cmd.arg("-q").args(keygen_args(key_type));
     let comment = format!("roster-managed:{box_name}");
     cmd.args(["-N", "", "-C", &comment, "-f"]).arg(key);
-    match cmd.stdin(std::process::Stdio::null()).output() {
+    match cmd.output() {
         Ok(out) if out.status.success() => {
             println!("made the Box key {}", key.display());
             Ok(())

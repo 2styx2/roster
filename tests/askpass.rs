@@ -157,7 +157,10 @@ fn auth_cmd_that_fails_stops_before_ssh() {
         out.stderr
     );
     assert!(
-        out.stderr.contains("roster: sw-01: auth cmd: failed"),
+        out.stderr.ends_with(
+            "roster: sw-01: the auth: cmd: command failed\n  \
+             hint: run it in a shell to see why\n"
+        ),
         "{}",
         out.stderr
     );
@@ -215,6 +218,6 @@ fn askpass_removes_its_directory_when_ssh_cannot_start() {
     s.set_env("PATH", "/nonexistent");
     let out = s.roster(&["ssh", "sw-01"]);
     assert_eq!(out.code, 126, "{}", out.stderr);
-    assert!(out.stderr.contains("can't run ssh"), "{}", out.stderr);
+    assert_eq!(out.stderr, "roster: sw-01: ssh isn't installed\n");
     assert_removed(&run);
 }
