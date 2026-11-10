@@ -14,6 +14,10 @@ set -eu
 BW_VERSION=2026.9.1
 BW_SHA256_x86_64=84289eaf59d691f04242605112f21b00e8dba65acdedbc60dde001a2860f2097
 BW_SHA256_aarch64=c451c773378a6f1f041ea26568a897b285a8656bee16a16e4914ce9e40fb7c79
+# fzf, for distros whose repositories lack it (RHEL-family without EPEL).
+FZF_VERSION=0.75.0
+FZF_SHA256_x86_64=0d6640f83582d991cf429754baad64b07e3a4e439a6019670f4b91da1314141c
+FZF_SHA256_aarch64=bd0717badb6a5620387e014bb94209aac4d9eab6ab77b5348eabb0833aeb4d59
 
 say() { echo "deps: $*"; }
 as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi; }
@@ -30,10 +34,16 @@ if command -v apt-get >/dev/null; then
 	fi
 elif command -v dnf >/dev/null; then
 	pkgs="openssh-clients keyutils fzf curl tmux bash-completion git unzip make gcc"
-	missing=$(for p in $pkgs; do rpm -q "$p" >/dev/null 2>&1 || echo "$p"; done)
+	# A command of that name counts (curl-minimal gives `curl`; full curl conflicts).
+	missing=$(for p in $pkgs; do command -v "$p" >/dev/null || rpm -q "$p" >/dev/null 2>&1 || echo "$p"; done)
 	if [ -n "$missing" ]; then
 		say "dnf: installing" $missing
-		as_root dnf install -y -q --allowerasing $missing
+		# RHEL, Oracle, Rocky and Alma have no fzf without EPEL: install what the
+		# enabled repositories have, and fetch the rest below (dnf 5 and dnf 4
+		# spell "skip what isn't there" differently).
+		skip=--setopt=strict=0
+		dnf --version 2>/dev/null | head -1 | grep -qi dnf5 && skip=--skip-unavailable
+		as_root dnf install -y -q --allowerasing "$skip" $missing
 	fi
 elif command -v pacman >/dev/null; then
 	pkgs="openssh keyutils fzf curl tmux bash-completion git unzip make gcc"
@@ -47,7 +57,28 @@ else
 	exit 1
 fi
 
-# 2. The Bitwarden CLI, when no `bw` is on PATH.
+# 2. fzf, when the distro has none (RHEL-family without EPEL): fzf's own
+#    release build into ~/.local/bin, pinned and checked against its SHA-256.
+if ! command -v fzf >/dev/null && [ ! -x "$HOME/.local/bin/fzf" ]; then
+	case $(uname -m) in
+	x86_64) tgz=fzf-$FZF_VERSION-linux_amd64.tar.gz sum=$FZF_SHA256_x86_64 ;;
+	aarch64 | arm64) tgz=fzf-$FZF_VERSION-linux_arm64.tar.gz sum=$FZF_SHA256_aarch64 ;;
+	*) say "no fzf build for $(uname -m): install fzf by hand"; exit 1 ;;
+	esac
+	ftmp=$(mktemp -d)
+	say "fzf: not in the package repositories; downloading $tgz"
+	curl -fsSL -o "$ftmp/$tgz" \
+		"https://github.com/junegunn/fzf/releases/download/v$FZF_VERSION/$tgz"
+	echo "$sum  $ftmp/$tgz" | sha256sum -c --quiet - ||
+		{ say "fzf: $tgz doesn't match its SHA-256; not installed"; rm -rf "$ftmp"; exit 1; }
+	tar -xzf "$ftmp/$tgz" -C "$ftmp" fzf
+	mkdir -p "$HOME/.local/bin"
+	install -m 755 "$ftmp/fzf" "$HOME/.local/bin/fzf"
+	rm -rf "$ftmp"
+	say "fzf $FZF_VERSION installed in ~/.local/bin"
+fi
+
+# 3. The Bitwarden CLI, when no `bw` is on PATH.
 if command -v bw >/dev/null; then
 	say "bw $(bw --version 2>/dev/null) is already installed"
 else
@@ -69,7 +100,7 @@ else
 	say "bw $BW_VERSION installed in ~/.local/bin; run \`bw login\` once"
 fi
 
-# 3. The Rust toolchain builds roster; it isn't a distro package here.
+# 4. The Rust toolchain builds roster; it isn't a distro package here.
 command -v cargo >/dev/null ||
 	say "no cargo: install Rust with rustup (https://rustup.rs), then \`make install\`"
 say "done"
