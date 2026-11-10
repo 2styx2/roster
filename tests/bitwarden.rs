@@ -58,12 +58,20 @@ fn unlock_keeps_the_session_key_in_the_keyring_with_a_timeout() {
         read(&s, "bw.log"),
         "unlock --raw --passwordenv ROSTER_BW_MASTER --nointeraction\n"
     );
-    assert_eq!(
-        read(&s, "keyctl.log"),
-        // Added to the session keyring (always possessed, even after `su`),
-        // set up there, then moved into the user keyring.
-        "--version\nsearch @u user roster:bw-session\npadd user roster:bw-session @s\n\
-         setperm 7000 0x3f0b0000\ntimeout 7000 43200\nlink 7000 @u\nunlink 7000 @s\n"
+    // In a new session keyring (whose keys the process always possesses: not
+    // so for WSL's default user-session keyring, nor for @u after `su`), the
+    // key is added, set up, then moved into the user keyring.
+    let log = read(&s, "keyctl.log");
+    assert!(
+        log.starts_with("--version\nsearch @u user roster:bw-session\nsession - sh -c "),
+        "{log}"
+    );
+    assert!(
+        log.ends_with(
+            " store roster:bw-session 0x3f0b0000 43200\npadd user roster:bw-session @s\n\
+             setperm 7000 0x3f0b0000\ntimeout 7000 43200\nlink 7000 @u\nunlink 7000 @s\n"
+        ),
+        "{log}"
     );
     assert_eq!(read(&s, ".fake-keyring/roster:bw-session"), SESSION);
     // Possessor: all; the owner's other processes (cron): view, read and

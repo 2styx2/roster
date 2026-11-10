@@ -15,6 +15,10 @@ const KEY: &str = "roster:bw-session";
 const TIMEOUT: &str = "43200";
 /// The session key's permissions: possessor all; user view, read, search.
 const PERM: &str = "0x3f0b0000";
+/// Stores the key (stdin) as $1 with permissions $2 and timeout $3, in the
+/// new session keyring keyctl runs it in, then moves it into @u. Any failure
+/// invalidates the key and exits non-zero.
+const STORE: &str = "id=$(keyctl padd user \"$1\" @s) && if keyctl setperm \"$id\" \"$2\" && keyctl timeout \"$id\" \"$3\" && keyctl link \"$id\" @u && keyctl unlink \"$id\" @s; then :; else keyctl invalidate \"$id\"; exit 1; fi";
 /// The variable that carries the master password into `bw unlock` only.
 const MASTER_VAR: &str = "ROSTER_BW_MASTER";
 /// roster v0.7.0's session file: never read, deleted by unlock and lock.
@@ -201,30 +205,25 @@ pub fn unlock() -> Result<(), Fail> {
     let session = unlock_now("vault unlock")?;
     let store = |args: &[&str], input: &[u8]| match keyctl(args, input) {
         Ok(out) if out.status.success() => Ok(out.stdout),
-        _ => Err(failed(format!("vault unlock: keyctl {} failed", args[0]))),
+        _ => Err(failed(
+            "vault unlock: keyctl couldn't store the session key".into(),
+        )),
     };
     forget();
-    // Added to the session keyring, which the process always possesses (a key
-    // added straight to @u isn't possessed after `su`, and its permissions
-    // can't be set); set up there, then moved into the user keyring.
-    let id = store(&["padd", "user", KEY, "@s"], session.as_bytes())?;
-    let id = String::from_utf8_lossy(&id).trim().to_string();
-    // Possessor: all. The owner's other processes, such as `roster sync` from
-    // cron in its own keyring session: view, read, search, nothing more (no
-    // write, link or setattr, so they can't replace the key or extend its
-    // life). Group and other users: none.
-    let steps = [
-        ["setperm", id.as_str(), PERM],
-        ["timeout", id.as_str(), TIMEOUT],
-        ["link", id.as_str(), "@u"],
-        ["unlink", id.as_str(), "@s"],
-    ];
-    for args in steps {
-        if let Err(e) = store(&args, b"") {
-            let _ = keyctl(&["invalidate", &id], b"");
-            return Err(e);
-        }
-    }
+    // In a new session keyring: its keys are always possessed, so their
+    // permissions can be set. Not so for a key added to @u after `su`, nor
+    // to WSL's default user-session keyring. Added there, set up, then moved
+    // into the user keyring; the key stays on stdin. Possessor: all. The
+    // owner's other processes, such as `roster sync` from cron in its own
+    // keyring session: view, read, search, nothing more (no write, link or
+    // setattr, so they can't replace the key or extend its life). Group and
+    // other users: none.
+    store(
+        &[
+            "session", "-", "sh", "-c", STORE, "store", KEY, PERM, TIMEOUT,
+        ],
+        session.as_bytes(),
+    )?;
     println!("Bitwarden unlocked for 12 h (the session key is in the kernel keyring)");
     Ok(())
 }
