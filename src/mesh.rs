@@ -42,6 +42,9 @@ pub struct Seen {
 #[derive(Default)]
 pub struct Todo {
     problem: Option<String>,
+    /// The Host's Mesh files are another Box's: left alone, and not a
+    /// failure (two Boxes may share an Inventory; one of them runs its Mesh).
+    foreign: bool,
     warn: Option<String>,
     make: Option<String>,
     drop_keys: Vec<String>,
@@ -312,6 +315,7 @@ pub fn plan(
         };
         if s.files.get("config").is_some_and(|c| !config_ours(c)) {
             t.problem = Some("~/.ssh/roster-mesh/config isn't this Box's; left alone".into());
+            t.foreign = true;
             continue;
         }
         match s.keys.get(&want) {
@@ -593,9 +597,14 @@ pub fn undo(inv: &Inventory, i: usize, dry: bool) -> Result<bool, String> {
 /// Returns how many Hosts aren't done; the next run finishes them.
 pub fn run(inv: &Inventory, ready: &[&Host], dry: bool) -> usize {
     let (pairs, skipped) = pairs(inv);
-    for line in skipped {
-        eprintln!("{line}");
+    let mut tally = crate::setup::Tally::default();
+    for line in &skipped {
+        let why = line
+            .split_once(": left out of the Mesh: ")
+            .map_or("", |(_, w)| w);
+        tally.note(why, line);
     }
+    tally.summary("left out of the Mesh:");
     if dry {
         for &(a, b) in &pairs {
             println!("{} -> {}", inv.hosts[a].name, inv.hosts[b].name);
@@ -618,14 +627,23 @@ pub fn run(inv: &Inventory, ready: &[&Host], dry: bool) -> usize {
         }
     }
     let first = plan(inv, &pairs, &seen, &known);
+    let mut foreign = Vec::new();
     for (h, t) in inv.hosts.iter().zip(&first) {
         if let Some(why) = &t.warn {
             eprintln!("roster: {}: warning: {why}", h.name);
         }
-        if let Some(why) = &t.problem {
+        if t.foreign {
+            foreign.push(h.name.as_str());
+        } else if let Some(why) = &t.problem {
             eprintln!("roster: {}: Mesh: {why}", h.name);
             undone += usize::from(!dry);
         }
+    }
+    if !foreign.is_empty() {
+        eprintln!(
+            "roster: the Mesh on {} is another Box's; left alone (run `roster setup` there)",
+            foreign.join(", ")
+        );
     }
     if dry {
         for (h, t) in inv.hosts.iter().zip(&first) {
