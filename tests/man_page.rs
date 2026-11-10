@@ -177,6 +177,8 @@ const DOCUMENTED: &[&str] = &[
     "contrib/roster.bash",
     "$PREFIX/share/bash\\-completion/completions/roster",
     ".B make install",
+    ".B make deps",
+    "scripts/bootstrap.sh",
     ".B pick",
     "print usage and exit 0",
     "is already the same login",

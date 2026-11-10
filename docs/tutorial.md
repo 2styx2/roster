@@ -33,30 +33,46 @@ This guide takes a new person from nothing to daily use in about 20 minutes. The
 
 ## 1. What you need
 
-- Linux or WSL.
-- A stable Rust toolchain, to build roster. Install it once with [rustup](https://rustup.rs).
-- `ssh`, `ssh-keygen` and `ssh-keyscan` (OpenSSH).
-- The Bitwarden CLI, `bw`, logged in once with `bw login`.
-- `keyctl`, from the keyutils package, which keeps the unlocked vault in kernel memory.
-- `fzf`, for the picker, and `curl`, for `roster web`.
-- `tmux`, if you want windows and panes (optional).
-- bash-completion, for Tab (optional).
+Linux or WSL with apt (Debian, Ubuntu), dnf (Fedora, RHEL) or pacman (Arch). The installer brings everything else:
 
-On Debian or Ubuntu:
-
-```sh
-sudo apt install openssh-client keyutils fzf curl tmux bash-completion
-```
+- **OpenSSH:** `ssh`, `ssh-keygen` and `ssh-keyscan`.
+- **`keyctl`** (keyutils), which keeps the unlocked vault in kernel memory.
+- **`fzf`**, for the picker, and **`curl`**, for `roster web`.
+- **`tmux`**, for windows and panes, and **bash-completion**, for Tab.
+- **git, make and a C compiler**, to build roster.
+- **The Bitwarden CLI, `bw`:** Bitwarden's own build, pinned and checked against its SHA-256. Log in once with `bw login`.
+- **A Rust toolchain**, installed with [rustup](https://rustup.rs) if you don't have one.
 
 ## 2. Install
 
-roster ships as source only. You build it yourself, from code you can read. One command installs the binary, Tab completion and the man page:
+roster ships as source only: you build it yourself, from code you can read.
+
+### A fresh machine: one script
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/2styx2/roster/main/scripts/bootstrap.sh -o bootstrap.sh
+less bootstrap.sh           # read it first
+sh bootstrap.sh
+```
+
+It runs these steps:
+
+1. installs git and curl;
+2. clones roster into `~/src/roster` at the latest release;
+3. installs every dependency (`make deps`; it uses sudo for the system packages);
+4. installs Rust with rustup if `cargo` is missing;
+5. runs `make install`.
+
+Run it again at any time: it only adds what's missing.
+
+### By hand
 
 ```sh
 git clone https://github.com/2styx2/roster ~/src/roster
 cd ~/src/roster
+make deps                   # system packages (apt, dnf or pacman) and bw
 make install                # into ~/.local, no sudo
-roster --version            # roster 0.7.3
+roster --version            # roster 0.7.4
 ```
 
 `make install` puts three files under `~/.local`:
