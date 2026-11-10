@@ -1,4 +1,4 @@
-.TH ROSTER 1 2026-11-09 "roster 0.7.6" "User Commands"
+.TH ROSTER 1 2026-11-09 "roster 0.7.7" "User Commands"
 .SH NAME
 roster \- know your network: list and reach the Hosts in roster.yml
 .SH SYNOPSIS
@@ -20,6 +20,7 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .B setup
 .RB [ \-\-undo ]
 .RB [ \-\-dry\-run ]
+.RB [ \-v ]
 .br
 .B roster
 .RB [ \-c
@@ -371,8 +372,20 @@ A Host that is unreviewed, has
 .BR "os: windows" ,
 or is a Password Host
 .RB ( "enroll: false" )
-is skipped, with one line on stderr giving the reason, and is never
-contacted.
+is skipped and never contacted.
+These routine skips, and the same Hosts left out of the Mesh, are one
+summary line on stderr
+.RI ( "skipped 71 unreviewed, 7 Password Hosts (\-\-verbose lists them)" );
+.B \-v
+or
+.B \-\-verbose
+gives one line per Host with its reason.
+Unusual reasons (an unsupported
+.BR seen_as ,
+.B mesh_dir
+or
+.BR via )
+are always shown.
 Mark a Windows Host
 .B "os: windows"
 (a
@@ -551,9 +564,13 @@ are added or removed, only keys whose
 .I .pub
 carries that tag are deleted, and only files whose first line names this
 Box as owner are rewritten or deleted.
-A Mesh key roster didn't make, or another Box's Mesh config, is
+A Mesh key roster didn't make is
 .BR "left alone" :
 that Host's own part is skipped and counts as not done.
+Another Box's Mesh config (two Boxes sharing an Inventory, where the first
+one made the Mesh) is left alone too, without failing the run: one line
+names those Hosts,
+.IR "the Mesh on HOSTS is another Box's; left alone" .
 A Host that is down is not done either; the lines of a source that
 couldn't be read stay as they are on its peers until a run reaches it.
 A rerun with nothing to change prints nothing.

@@ -38,13 +38,15 @@ commands:
   ls [--json] [--long] [FILTER]
                  list Hosts: name, group, address, access, title;
                  FILTER: names, groups, types or products, comma-separated
-  setup [--dry-run]
+  setup [--dry-run] [-v]
                  make this Box's key; write the ssh config for the Hosts and,
                  next to roster.yml, ROSTER.md and the Claude files; install
                  the Box key on each Enrolled Host (vault password, once);
                  make the Mesh: the Hosts of a `mesh: true` group ssh to
                  each other; --dry-run prints the plan (SOURCE -> PEER, and
-                 each Host's changes) and changes nothing
+                 each Host's changes) and changes nothing; routine skips
+                 (unreviewed, Password, Windows) are one summary line, -v
+                 lists each
   setup --undo [--dry-run]
                  remove what setup put on the Hosts (this Box's Mesh, then
                  its key line) and the Box (ssh config, Include, known_hosts,
@@ -167,6 +169,9 @@ fn run() -> Result<(), Fail> {
             Short('k') if command.as_deref() == Some("web") => web.insecure = true,
             Long("dry-run") if command.as_deref() == Some("setup") => dry_run = true,
             Long("undo") if command.as_deref() == Some("setup") => undo = true,
+            Short('v') | Long("verbose") if command.as_deref() == Some("setup") => {
+                setup::set_verbose(true)
+            }
             Long(
                 f @ ("ip" | "group" | "user" | "port" | "auth" | "enroll" | "from-vault" | "name"),
             ) if command.as_deref() == Some("add") => {
