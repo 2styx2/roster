@@ -27,8 +27,11 @@ fn unknown_flag_is_a_usage_error() {
     let s = Sandbox::new("usage-bad-flag");
     let out = s.roster(&["ls", "--bogus"]);
     assert_eq!(out.code, 2);
-    assert!(out.stderr.contains("--bogus"), "{}", out.stderr);
-    assert!(out.stderr.contains("roster -h"), "{}", out.stderr);
+    assert_eq!(
+        out.stderr,
+        "roster: invalid option '--bogus'\n  \
+         hint: `roster -h` lists the commands and their options\n"
+    );
     assert_eq!(out.stdout, "");
 }
 
@@ -48,5 +51,9 @@ fn unknown_command_is_a_usage_error() {
     let s = Sandbox::new("usage-bad-cmd");
     let out = s.roster(&["frobnicate"]);
     assert_eq!(out.code, 2);
-    assert!(out.stderr.contains("frobnicate"), "{}", out.stderr);
+    assert_eq!(
+        out.stderr,
+        "roster: unknown command 'frobnicate'\n  hint: `roster -h` lists the commands; \
+         `roster help plugins` says how roster-frobnicate would run\n"
+    );
 }

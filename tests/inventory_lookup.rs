@@ -40,11 +40,13 @@ fn no_inventory_exits_3_naming_the_files_tried() {
     let s = Sandbox::new("lookup-none");
     let out = s.roster(&["ls"]);
     assert_eq!(out.code, 3);
-    assert!(out.stderr.contains("roster.yml"), "{}", out.stderr);
-    assert!(
-        out.stderr.contains(".config/roster/roster.yml"),
-        "{}",
-        out.stderr
+    assert_eq!(
+        out.stderr,
+        format!(
+            "roster: no Inventory: there's no ./roster.yml or {}/.config/roster/roster.yml\n  \
+             hint: write one there, or name one with -c FILE or ROSTER_CONFIG=FILE\n",
+            s.home.display()
+        )
     );
 }
 
@@ -53,7 +55,12 @@ fn missing_dash_c_file_exits_3_naming_it() {
     let s = Sandbox::new("lookup-missing");
     let out = s.roster(&["-c", "nope.yml", "ls"]);
     assert_eq!(out.code, 3);
-    assert!(out.stderr.contains("nope.yml"), "{}", out.stderr);
+    assert_eq!(
+        out.stderr,
+        "roster: nope.yml: no such file or directory\n  hint: -c FILE or \
+         ROSTER_CONFIG=FILE names the Inventory; without them, roster reads ./roster.yml, \
+         else ~/.config/roster/roster.yml\n"
+    );
 }
 
 #[test]
@@ -62,8 +69,11 @@ fn broken_yaml_exits_3_naming_the_file_and_line() {
     s.write("roster.yml", "groups:\n  dev:\n    hosts: [unclosed\n");
     let out = s.roster(&["ls"]);
     assert_eq!(out.code, 3);
-    assert!(out.stderr.contains("roster.yml"), "{}", out.stderr);
-    assert!(out.stderr.contains("line"), "{}", out.stderr);
+    assert_eq!(
+        out.stderr,
+        "roster: roster.yml:4: not valid YAML: did not find expected ',' or ']', \
+         while parsing a flow sequence\n"
+    );
     assert_eq!(out.stdout, "");
 }
 
