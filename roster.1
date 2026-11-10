@@ -1,4 +1,4 @@
-.TH ROSTER 1 2026-11-09 "roster 0.7.3" "User Commands"
+.TH ROSTER 1 2026-11-09 "roster 0.7.4" "User Commands"
 .SH NAME
 roster \- know your network: list and reach the Hosts in roster.yml
 .SH SYNOPSIS
@@ -1679,6 +1679,18 @@ with
 by default;
 .B make uninstall
 removes all three.
+.B make deps
+(the script
+.IR scripts/deps.sh )
+installs what roster needs first: OpenSSH, keyutils, fzf, curl, tmux,
+bash\-completion, git, unzip, make and gcc through apt, dnf or pacman, and
+the Bitwarden CLI, pinned and checked against its SHA\-256, into
+.IR ~/.local/bin .
+On a fresh machine,
+.I scripts/bootstrap.sh
+also installs Rust with rustup, clones the source at its latest release and
+runs
+.B make deps install .
 Without
 .BR make ,
 copy it there by hand, or add
