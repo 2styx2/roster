@@ -130,6 +130,26 @@ fn a_read_only_claude_dir_skips_the_import_and_the_mesh_still_forms() {
     assert!(read(b.join("ROSTER.md")).contains("box-c"));
 }
 
+/// Two Boxes share one Inventory: the Mesh on a Host is the first Box's.
+/// The second Box leaves it alone, says so in one line, and isn't failing.
+#[test]
+fn a_mesh_another_box_made_is_left_alone_and_not_a_failure() {
+    let s = sandbox("mesh-foreign", INVENTORY);
+    let [b, _, _, _] = hosts_up(&s);
+    let theirs = "# Written by roster mesh for box-b (owner box-z) - don't edit\n";
+    s.write("hosts/box-b/.ssh/roster-mesh/config", theirs);
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 0, "{}\n{}", out.stdout, out.stderr);
+    assert!(
+        out.stderr
+            .contains("roster: the Mesh on box-b is another Box's; left alone"),
+        "{}",
+        out.stderr
+    );
+    assert!(!out.stderr.contains("not done"), "{}", out.stderr);
+    assert_eq!(read(b.join(".ssh/roster-mesh/config")), theirs);
+}
+
 #[test]
 fn setup_forms_the_web_with_v070_files_and_a_rerun_changes_nothing() {
     let s = sandbox("mesh-apply", INVENTORY);
@@ -416,7 +436,7 @@ fn dry_run_plans_follow_the_inventory() {
         let s = sandbox(&format!("mesh-table-{n}"), inventory);
         hosts_up(&s);
         host(&s, "ops-02", "10.0.0.31");
-        let out = s.roster(&["setup", "--dry-run"]);
+        let out = s.roster(&["setup", "--dry-run", "-v"]);
         assert_eq!(out.code, 0, "case {n}: {}", out.stderr);
         let plan: String = out
             .stdout
@@ -607,7 +627,7 @@ fn links_v1_cannot_follow_are_skipped_with_a_reason_in_plan_and_apply() {
         hosts_up(&s);
         host(&s, "ops-02", "10.0.0.31");
         // Only the group's own web: the Link adds nothing.
-        let out = s.roster(&["setup", "--dry-run"]);
+        let out = s.roster(&["setup", "--dry-run", "-v"]);
         assert_eq!(out.code, 0, "case {n}: {}", out.stderr);
         assert_eq!(
             arrows(&out.stdout),
@@ -620,7 +640,7 @@ fn links_v1_cannot_follow_are_skipped_with_a_reason_in_plan_and_apply() {
             "case {n}: {}",
             out.stderr
         );
-        let out = s.roster(&["setup"]);
+        let out = s.roster(&["setup", "-v"]);
         assert_eq!(out.code, 0, "case {n}: {}", out.stderr);
         assert_eq!(
             out.stderr.matches(why).count(),

@@ -13,6 +13,64 @@ pub fn dry() -> bool {
     DRY.load(Ordering::Relaxed)
 }
 
+/// `--verbose`: one line per skipped Host, not a summary.
+static VERBOSE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_verbose(on: bool) {
+    VERBOSE.store(on, Ordering::Relaxed);
+}
+
+/// Routine skips (unreviewed, Password and Windows Hosts) counted for one
+/// summary line, unless `--verbose` asks for one line each.
+#[derive(Default)]
+pub struct Tally(Vec<(&'static str, usize)>);
+
+/// The kind of a routine skip reason, or None for one that's always shown.
+fn routine(why: &str) -> Option<&'static str> {
+    if why.starts_with("unreviewed") {
+        Some("unreviewed")
+    } else if why.starts_with("a Password Host") {
+        Some("Password Host")
+    } else if why.starts_with("os: windows") {
+        Some("Windows Host")
+    } else {
+        None
+    }
+}
+
+impl Tally {
+    /// Print `line` now when it's unusual or `--verbose`; else count it.
+    pub fn note(&mut self, why: &str, line: &str) {
+        match routine(why).filter(|_| !VERBOSE.load(Ordering::Relaxed)) {
+            Some(kind) => match self.0.iter_mut().find(|(k, _)| *k == kind) {
+                Some((_, n)) => *n += 1,
+                None => self.0.push((kind, 1)),
+            },
+            None => eprintln!("{line}"),
+        }
+    }
+
+    /// `roster: WHAT 71 unreviewed, 7 Password Hosts (--verbose lists them)`.
+    pub fn summary(&self, what: &str) {
+        if self.0.is_empty() {
+            return;
+        }
+        let parts: Vec<String> = self
+            .0
+            .iter()
+            .map(|(kind, n)| {
+                let plural = if *n == 1 || kind.ends_with("reviewed") {
+                    ""
+                } else {
+                    "s"
+                };
+                format!("{n} {kind}{plural}")
+            })
+            .collect();
+        eprintln!("roster: {what} {} (--verbose lists them)", parts.join(", "));
+    }
+}
+
 /// Run every setup step in order; each is idempotent and prints what it changed.
 /// A new step is one more line here.
 /// With `undo`, remove what these steps made instead (`undo::run`).
