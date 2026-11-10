@@ -110,6 +110,27 @@ fn peer_line(src: &str, ip: &str) -> String {
 }
 
 #[test]
+fn a_read_only_claude_dir_skips_the_import_and_the_mesh_still_forms() {
+    // Seen on a real Host: ~/.claude owned by root (from `sudo claude`), so
+    // the login user can't write CLAUDE.md there. The import is a nicety;
+    // the Mesh must not fail over it.
+    use std::os::unix::fs::PermissionsExt;
+    let s = sandbox("mesh-claude-ro", INVENTORY);
+    let [b, c, _, _] = hosts_up(&s);
+    std::fs::create_dir_all(b.join(".claude")).unwrap();
+    std::fs::set_permissions(b.join(".claude"), std::fs::Permissions::from_mode(0o555)).unwrap();
+    let out = s.roster(&["setup"]);
+    std::fs::set_permissions(b.join(".claude"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(out.code, 0, "{}\n{}", out.stdout, out.stderr);
+    assert!(!out.stderr.contains("Mesh: failed"), "{}", out.stderr);
+    assert!(!b.join(".claude/CLAUDE.md").exists(), "no import written");
+    // box-b is a full member: its key is on its peers, and theirs on it.
+    assert!(read(c.join(".ssh/authorized_keys")).contains("roster-mesh:box-b@box-a"));
+    assert!(read(b.join(".ssh/authorized_keys")).contains("roster-mesh:box-c@box-a"));
+    assert!(read(b.join("ROSTER.md")).contains("box-c"));
+}
+
+#[test]
 fn setup_forms_the_web_with_v070_files_and_a_rerun_changes_nothing() {
     let s = sandbox("mesh-apply", INVENTORY);
     let [b, c, d, ops] = hosts_up(&s);
