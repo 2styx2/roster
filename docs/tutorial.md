@@ -72,7 +72,7 @@ git clone https://github.com/2styx2/roster ~/src/roster
 cd ~/src/roster
 make deps                   # system packages (apt, dnf or pacman) and bw
 make install                # into ~/.local, no sudo
-roster --version            # roster 0.7.5
+roster --version            # roster 0.7.6
 ```
 
 `make install` puts three files under `~/.local`:

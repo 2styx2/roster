@@ -1,27 +1,58 @@
 #!/bin/sh
-# Fake keyctl: keeps `user` keys in @u as files under $HOME/.fake-keyring
-# (the only file a test session key may land in) and appends its argv to
-# $HOME/keyctl.log. A key's id is 7000; `timeout` is saved, not enforced.
+# Fake keyctl: `user` keys as files under $HOME/.fake-keyring (the only file a
+# test session key may land in); appends its argv to $HOME/keyctl.log. The
+# one key's id is 7000; `timeout` is saved, not enforced.
+#
+# It keeps the kernel's possession rule as it is after `su`: a key added to
+# @u isn't possessed through the session, so setperm and timeout on it fail.
+# A key added to @s is possessed (NAME.s); `link ID @u` puts it in @u
+# (NAME.u). A key file with neither marker (a test's seed) is in @u.
 echo "$*" >>"$HOME/keyctl.log"
 ring="$HOME/.fake-keyring"
 mkdir -p "$ring"
+name() { cat "$ring/id-$1" 2>/dev/null || { echo "fake keyctl: no key $1" >&2; exit 1; }; }
+in_u() { [ -f "$ring/$1" ] && { [ -e "$ring/$1.u" ] || [ ! -e "$ring/$1.s" ]; }; }
 case "$1" in
 --version) echo "keyctl from fake keyutils" ;;
 padd)
-  [ "$2" = user ] && [ "$4" = @u ] || { echo "fake keyctl: bad padd: $*" >&2; exit 2; }
+  [ "$2" = user ] || { echo "fake keyctl: bad padd: $*" >&2; exit 2; }
   cat >"$ring/$3"
+  rm -f "$ring/$3.s" "$ring/$3.u"
+  case $4 in
+  @s) : >"$ring/$3.s" ;;
+  @u) : >"$ring/$3.u" ;;
+  *) echo "fake keyctl: bad keyring: $*" >&2; exit 2 ;;
+  esac
+  echo "$3" >"$ring/id-7000"
   echo 7000
   ;;
-timeout) echo "$2 $3" >"$ring/timeout" ;;
-setperm) echo "$2 $3" >"$ring/perm" ;;
-pipe | print)
-  name=${2#%user:}
-  [ -f "$ring/$name" ] || { echo "keyctl_read_alloc: Required key not available" >&2; exit 1; }
-  cat "$ring/$name"
+setperm | timeout)
+  n=$(name "$2")
+  [ -e "$ring/$n.s" ] || { echo "keyctl_$1: Permission denied" >&2; exit 1; }
+  if [ "$1" = setperm ]; then echo "$2 $3" >"$ring/perm"; else echo "$2 $3" >"$ring/timeout"; fi
   ;;
-purge)
-  [ "$2" = user ] || { echo "fake keyctl: bad purge: $*" >&2; exit 2; }
-  if [ -f "$ring/$3" ]; then rm -f "$ring/$3"; echo "purged 1 keys"; else echo "purged 0 keys"; fi
+link)
+  n=$(name "$2")
+  [ "$3" = @u ] && : >"$ring/$n.u"
+  ;;
+unlink)
+  n=$(name "$2")
+  [ "$3" = @s ] && rm -f "$ring/$n.s"
+  ;;
+search)
+  [ "$2" = @u ] && [ "$3" = user ] || { echo "fake keyctl: bad search: $*" >&2; exit 2; }
+  in_u "$4" || { echo "keyctl_search: Required key not available" >&2; exit 1; }
+  echo "$4" >"$ring/id-7000"
+  echo 7000
+  ;;
+pipe | print)
+  n=$(name "$2")
+  [ -f "$ring/$n" ] || { echo "keyctl_read_alloc: Required key not available" >&2; exit 1; }
+  cat "$ring/$n"
+  ;;
+invalidate)
+  n=$(name "$2")
+  rm -f "$ring/$n" "$ring/$n.s" "$ring/$n.u" "$ring/perm" "$ring/timeout"
   ;;
 *) echo "fake keyctl: unexpected: $*" >&2; exit 2 ;;
 esac

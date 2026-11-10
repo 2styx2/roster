@@ -60,7 +60,10 @@ fn unlock_keeps_the_session_key_in_the_keyring_with_a_timeout() {
     );
     assert_eq!(
         read(&s, "keyctl.log"),
-        "--version\npadd user roster:bw-session @u\nsetperm 7000 0x3f0b0000\ntimeout 7000 43200\n"
+        // Added to the session keyring (always possessed, even after `su`),
+        // set up there, then moved into the user keyring.
+        "--version\nsearch @u user roster:bw-session\npadd user roster:bw-session @s\n\
+         setperm 7000 0x3f0b0000\ntimeout 7000 43200\nlink 7000 @u\nunlink 7000 @s\n"
     );
     assert_eq!(read(&s, ".fake-keyring/roster:bw-session"), SESSION);
     // Possessor: all; the owner's other processes (cron): view, read and
@@ -80,7 +83,7 @@ fn a_bw_reference_gives_the_login_password_through_askpass() {
         "{}",
         read(&s, "bw.log")
     );
-    assert!(read(&s, "keyctl.log").ends_with("pipe %user:roster:bw-session\n"));
+    assert!(read(&s, "keyctl.log").ends_with("search @u user roster:bw-session\npipe 7000\n"));
 }
 
 #[test]
@@ -149,7 +152,7 @@ fn locked_without_a_key_says_to_unlock_and_unlocks_for_this_run_only() {
     assert_eq!(read(&s, "askpass.got"), format!("{PASSWORD}\n"));
     assert_eq!(
         read(&s, "keyctl.log"),
-        "pipe %user:roster:bw-session\n",
+        "search @u user roster:bw-session\n",
         "nothing stored"
     );
 }
@@ -191,12 +194,14 @@ fn an_empty_master_password_is_refused_before_bw_runs() {
 }
 
 #[test]
-fn lock_purges_the_key_and_locks_bw() {
+fn lock_invalidates_the_key_and_locks_bw() {
     let s = sandbox("bw-lock", "bw:sw-01");
     unlock(&s);
     let out = s.roster(&["vault", "lock"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
-    assert!(read(&s, "keyctl.log").ends_with("purge user roster:bw-session\n"));
+    assert!(
+        read(&s, "keyctl.log").ends_with("search @u user roster:bw-session\ninvalidate 7000\n")
+    );
     assert!(read(&s, "bw.log").ends_with("lock --nointeraction\n"));
     assert!(!s.home.join(".fake-keyring/roster:bw-session").exists());
 }
