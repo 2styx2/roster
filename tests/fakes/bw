@@ -10,8 +10,8 @@ if [ -z "$FAKE_BW_ITEMS" ]; then
   echo "fake bw: no fake vault configured: $*" >&2
   exit 99
 fi
-master=master-made-up-41c9
-session=session-made-up-77e2
+master='master-made-up-41c9'
+session='session-made-up-77e2'
 echo "$*" >>"$HOME/bw.log"
 case " $* " in
 *" --nointeraction "*) ;;
@@ -20,22 +20,35 @@ esac
 case "$1 $2" in
 "unlock --raw")
   [ "$3" = --passwordenv ] || { echo "fake bw: no --passwordenv" >&2; exit 98; }
-  eval "pw=\${$4}"
+  eval "pw=\${$4}" # sets pw from the variable named by $4
+  # shellcheck disable=SC2154
   [ "$pw" = "$master" ] || { echo "Invalid master password." >&2; exit 1; }
   printf %s "$session"
   ;;
 "get item")
   [ "$BW_SESSION" = "$session" ] || { echo "Vault is locked." >&2; exit 1; }
-  printf '%s\n' "$FAKE_BW_ITEMS" | grep -F "\"name\":\"$3\"" || {
-    echo "Not found." >&2
-    exit 1
-  }
+  # As the real bw: an exact id, else a search on names (a substring match),
+  # which fails when more than one item matches.
+  found=$(printf '%s\n' "$FAKE_BW_ITEMS" | grep -F "\"id\":\"$3\"")
+  [ -n "$found" ] || found=$(printf '%s\n' "$FAKE_BW_ITEMS" | awk -v t="$3" '
+    { n = ""; if (match($0, /"name":"[^"]*"/)) n = substr($0, RSTART + 8, RLENGTH - 9); if (index(n, t)) print }')
+  case $(printf '%s' "$found" | grep -c .) in
+  0) echo "Not found." >&2; exit 1 ;;
+  1) printf '%s\n' "$found" ;;
+  *) echo "More than one result was found. Try getting a specific object by \`id\` instead." >&2; exit 1 ;;
+  esac
   ;;
 "sync "* | "list items" | "list folders")
   [ "$BW_SESSION" = "$session" ] || { echo "Vault is locked." >&2; exit 1; }
   case "$1 $2" in
   "sync "*) echo "Syncing complete." ;;
-  "list items") printf '%s\n' "$FAKE_BW_ITEMS" | paste -sd, - | sed 's/^/[/; s/$/]/' ;;
+  "list items")
+    # `--search TERM` keeps the items whose name holds TERM, as the real bw.
+    term=; [ "$3" = --search ] && term=$4
+    printf '%s\n' "$FAKE_BW_ITEMS" | awk -v t="$term" '
+      { n = ""; if (match($0, /"name":"[^"]*"/)) n = substr($0, RSTART + 8, RLENGTH - 9); if (t == "" || index(n, t)) print }' |
+      paste -sd, - | sed 's/^/[/; s/$/]/'
+    ;;
   *) printf '%s\n' "${FAKE_BW_FOLDERS:-[]}" ;;
   esac
   ;;

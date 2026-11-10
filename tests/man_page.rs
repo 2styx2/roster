@@ -177,6 +177,7 @@ const DOCUMENTED: &[&str] = &[
     "contrib/roster.bash",
     "$PREFIX/share/bash\\-completion/completions/roster",
     ".B make install",
+    "named exactly",
     "\\-\\-verbose",
     "is another Box's; left alone",
     ".B make deps",

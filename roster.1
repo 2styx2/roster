@@ -1,4 +1,4 @@
-.TH ROSTER 1 2026-11-09 "roster 0.7.8" "User Commands"
+.TH ROSTER 1 2026-11-09 "roster 0.7.9" "User Commands"
 .SH NAME
 roster \- know your network: list and reach the Hosts in roster.yml
 .SH SYNOPSIS
@@ -1583,9 +1583,23 @@ The default.
 .TP
 .BI bw: ITEM\fR[\fB#\fIFIELD\fR]
 Bitwarden's item
-.IR ITEM ,
-through
-.BR "bw get item " \fIITEM\fP " \-\-nointeraction" ,
+.IR ITEM :
+the one named exactly
+.I ITEM
+among
+.BR "bw list items \-\-search " \fIITEM\fP
+(bw's own lookup is a search, so
+.B box\-b ssh
+would also find
+.BR "lab\-box\-b ssh" ),
+else
+.BR "bw get item " \fIITEM\fP
+(an item id works there).
+Two items with the very same name are refused, naming their ids: use
+.BI bw: ID
+then.
+Every bw call has
+.BR \-\-nointeraction ,
 with the session key from the keyring (see
 .BR "vault unlock" )
 as
