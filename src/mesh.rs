@@ -8,7 +8,7 @@
 //! `@BOX` are ever changed or deleted.
 
 use crate::inventory::{Host, Inventory};
-use crate::{hosts, remote};
+use crate::{errors, hosts, remote};
 use std::collections::{BTreeMap, BTreeSet};
 
 const READ: &str = include_str!("sh/mesh-read.sh");
@@ -507,27 +507,18 @@ fn visit(inv: &Inventory, h: &Host, vars: &[(&str, &str)], script: &str) -> Resu
         &remote::script(&all, &format!("{script}{READ}")),
         None,
     )
-    .map_err(|e| format!("can't run ssh: {e}"))?;
+    .map_err(|e| errors::spawn("ssh", &e))?;
+    let why = format!("the Mesh script failed: {}", errors::last_line(&ran.stderr));
+    // PowerShell and cmd say so in their own words: the likely fix is
+    // `os: windows`, which the Mesh leaves out.
+    let windows = ["CommandNotFoundException", "is not recognized as"];
     match ran.code {
         0 => parse(&ran.stdout).ok_or_else(|| "its report was cut short".into()),
-        255 => Err(format!("down: {}", ran.why())),
-        code => Err(format!(
-            "failed ({code}): {}{}",
-            ran.why(),
-            windows_hint(&ran.stderr)
-        )),
-    }
-}
-
-/// When a Host's shell isn't sh (PowerShell or cmd say so in their own
-/// words), the likely fix: mark it `os: windows`, which the Mesh leaves out.
-fn windows_hint(stderr: &str) -> &'static str {
-    let windows =
-        stderr.contains("CommandNotFoundException") || stderr.contains("is not recognized as");
-    if windows {
-        " (a Windows Host? give it `os: windows`)"
-    } else {
-        ""
+        255 => Err(errors::ssh(h, None, &ran.stderr)),
+        _ if windows.iter().any(|w| ran.stderr.contains(w)) => {
+            Err(errors::hint(why, "a Windows Host? give it `os: windows`"))
+        }
+        _ => Err(why),
     }
 }
 
@@ -577,7 +568,7 @@ pub fn undo(inv: &Inventory, i: usize, dry: bool) -> Result<bool, String> {
     let mut seen = vec![None; inv.hosts.len()];
     match visit(inv, h, &[], "") {
         Ok(s) => seen[i] = Some(s),
-        Err(why) if why.contains("Permission denied") => return Ok(false),
+        Err(why) if why.contains("the Box key isn't accepted") => return Ok(false),
         Err(why) => return Err(why),
     }
     let t = &plan(inv, &BTreeSet::new(), &seen, "")[i];

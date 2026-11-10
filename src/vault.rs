@@ -89,22 +89,36 @@ fn command_line(command: &str, what: &str) -> Result<Zeroizing<String>, Fail> {
         .stdin(Stdio::inherit())
         .stderr(Stdio::inherit())
         .output()
-        .map_err(|e| failed(format!("{what}: auth cmd: can't run sh: {e}")))?;
+        .map_err(|e| failed(format!("{what}: {}", crate::errors::spawn("sh", &e))))?;
     let stdout = Zeroizing::new(out.stdout);
     if !out.status.success() {
-        return Err(failed(format!("{what}: auth cmd: failed ({})", out.status)));
+        let msg = format!("{what}: the auth: cmd: command failed");
+        return Err(failed(crate::errors::hint(
+            msg,
+            "run it in a shell to see why",
+        )));
     }
     let line = stdout.split(|&b| b == b'\n').next().unwrap_or_default();
     let line = line.strip_suffix(b"\r").unwrap_or(line);
     match std::str::from_utf8(line) {
         Ok(s) => Ok(Zeroizing::new(s.to_string())),
-        Err(_) => Err(failed(format!("{what}: auth cmd: printed non-UTF-8"))),
+        Err(_) => Err(failed(format!(
+            "{what}: the auth: cmd: command printed non-text"
+        ))),
     }
 }
 
 /// Ask for `label` on /dev/tty with echo off.
 pub fn ask(label: &str, what: &str) -> Result<Zeroizing<String>, Fail> {
-    let tty_err = |e: std::io::Error| failed(format!("{what}: auth prompt: /dev/tty: {e}"));
+    let tty_err = |e: std::io::Error| {
+        failed(crate::errors::hint(
+            format!(
+                "{what}: can't ask for the password: no terminal ({})",
+                crate::errors::io(&e)
+            ),
+            "run it in a terminal, or use auth: env:VAR or BW_PASSWORD=… in a script",
+        ))
+    };
     let mut tty = File::options()
         .read(true)
         .write(true)
@@ -135,6 +149,6 @@ pub fn ask(label: &str, what: &str) -> Result<Zeroizing<String>, Fail> {
     read.map_err(tty_err)?;
     match std::str::from_utf8(&line) {
         Ok(s) => Ok(Zeroizing::new(s.to_string())),
-        Err(_) => Err(failed(format!("{what}: auth prompt: not UTF-8"))),
+        Err(_) => Err(failed(format!("{what}: the password typed isn't UTF-8"))),
     }
 }

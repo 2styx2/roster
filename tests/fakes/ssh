@@ -9,7 +9,8 @@
 # time, saving that status to askpass.again.
 # With $FAKE_SSH_RUN set, it skips `-o OPT` pairs, takes the Host and runs
 # the command after `--` with sh (FAKE_SSH_HOST set to the Host), unless the
-# Host is in $FAKE_SSH_DOWN (comma-separated): then it fails as ssh does.
+# Host is in $FAKE_SSH_DOWN (comma-separated): then it fails as ssh does,
+# printing $FAKE_SSH_ERROR (default: a connect timeout).
 #
 # With $FAKE_HOSTS set it acts as a Host instead: $FAKE_HOSTS/NAME is Host
 # NAME's HOME (NAME is the first argument that isn't an option). A `down`
@@ -23,7 +24,7 @@
 # NAME; ssh's own environment is appended to $HOME/ssh-hosts.env first.
 echo "$*" >>"$HOME/ssh.log"
 if [ -n "$FAKE_HOSTS" ]; then
-  batch= pubkey=1
+  batch='' pubkey=1
   while [ $# -gt 0 ]; do
     case $1 in
     -o)
@@ -92,7 +93,7 @@ if [ -n "$FAKE_SSH_RUN" ]; then
   FAKE_SSH_HOST=$1 && shift && export FAKE_SSH_HOST
   [ "$1" = -- ] && shift
   case ",$FAKE_SSH_DOWN," in *",$FAKE_SSH_HOST,"*)
-    echo "ssh: connect to host $FAKE_SSH_HOST port 22: Connection timed out" >&2
+    printf '%b\n' "${FAKE_SSH_ERROR:-ssh: connect to host $FAKE_SSH_HOST port 22: Connection timed out}" >&2
     exit 255 ;;
   esac
   exec sh -c "$*"

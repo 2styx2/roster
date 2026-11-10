@@ -1,6 +1,6 @@
 //! Plugins: `roster NAME ARGS` runs `roster-NAME ARGS` from PATH, git style.
 
-use crate::{Fail, usage_error};
+use crate::Fail;
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
@@ -42,9 +42,11 @@ pub fn find(name: &str) -> Option<PathBuf> {
 /// Replace roster with the plugin. Returns only when that fails.
 pub fn exec(name: &str, config: Option<PathBuf>, args: Vec<OsString>) -> Fail {
     let Some(program) = find(name) else {
-        return usage_error(format!(
-            "unknown command '{name}': no roster-{name} on PATH"
-        ));
+        let hint = format!(
+            "`roster -h` lists the commands; `roster help plugins` says how roster-{name} would run"
+        );
+        let msg = crate::errors::hint(format!("unknown command '{name}'"), &hint);
+        return Fail { code: 2, msg };
     };
     let mut cmd = std::process::Command::new(&program);
     cmd.arg0(format!("roster-{name}")).args(args);
@@ -58,6 +60,6 @@ pub fn exec(name: &str, config: Option<PathBuf>, args: Vec<OsString>) -> Fail {
     let e = cmd.exec();
     Fail {
         code: 126,
-        msg: format!("{}: {e}", program.display()),
+        msg: format!("can't run {}: {}", program.display(), crate::errors::io(&e)),
     }
 }

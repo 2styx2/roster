@@ -22,7 +22,12 @@ case "$1 $2" in
   [ "$3" = --passwordenv ] || { echo "fake bw: no --passwordenv" >&2; exit 98; }
   eval "pw=\${$4}" # sets pw from the variable named by $4
   # shellcheck disable=SC2154
-  [ "$pw" = "$master" ] || { echo "Invalid master password." >&2; exit 1; }
+  [ "$pw" = "$master" ] || {
+    # As the real bw: its library's log line first, in colour.
+    printf '\033[31mERROR\033[0m bitwarden_crypto::keys::master_key: error=The decryption operation failed\n' >&2
+    echo "Invalid master password." >&2
+    exit 1
+  }
   printf %s "$session"
   ;;
 "get item")

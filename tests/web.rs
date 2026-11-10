@@ -112,6 +112,13 @@ fn an_http_error_status_exits_1() {
     assert_eq!(out.code, 1);
     assert_eq!(out.stdout, "not found\n", "the body still shows");
     assert_eq!(out.stderr, "roster: box-a api: HTTP 404\n");
+    s.set_env("FAKE_CURL_STATUS", "403");
+    let out = s.roster(&["web", "box-a", "api", "GET", "/nope"]);
+    assert_eq!(
+        out.stderr,
+        "roster: box-a api: login refused (HTTP 403)\n  \
+         hint: check the service's user: and auth: in roster.yml\n"
+    );
     s.set_env("FAKE_CURL_STATUS", "399");
     assert_eq!(s.roster(&["web", "box-a", "api", "GET", "/"]).code, 0);
 }
@@ -293,17 +300,64 @@ fn the_credential_never_leaks() {
     }
 }
 
+/// curl's own words never show: each failure is one line of roster's.
 #[test]
-fn a_failed_connection_shows_curls_error_and_exits_1() {
-    let mut s = sandbox("web-down");
-    s.set_env("FAKE_CURL_EXIT", "7");
-    let out = s.roster(&["web", "box-a", "api", "GET", "/"]);
-    assert_eq!(out.code, 1);
-    assert_eq!(
-        out.stderr,
-        "curl: (7) Failed to connect to 10.0.0.5 port 8443\n\
-         roster: box-a api: no HTTP response\n"
-    );
+fn a_failed_connection_is_said_plainly_and_exits_1() {
+    let verify = "  hint: if you trust it, give the service `verify: false` in roster.yml, \
+                  or pass -k\n";
+    for (exit, curl_says, want) in [
+        (
+            "7",
+            "curl: (7) Failed to connect to 10.0.0.5 port 8443 after 0 ms: Connection refused",
+            "nothing is listening on 10.0.0.5:8443\n".to_string(),
+        ),
+        (
+            "28",
+            "curl: (28) Connection timed out after 10002 milliseconds",
+            "can't reach 10.0.0.5:8443 (timed out)\n".into(),
+        ),
+        (
+            "7",
+            "curl: (7) Failed to connect to 10.0.0.5 port 8443 after 3 ms: No route to host",
+            "can't reach 10.0.0.5:8443 (no route)\n".into(),
+        ),
+        (
+            "6",
+            "curl: (6) Could not resolve host: 10.0.0.5",
+            "can't resolve 10.0.0.5\n  hint: check the service's url: in roster.yml\n".into(),
+        ),
+        (
+            "60",
+            "curl: (60) SSL certificate problem: self-signed certificate\n\
+             More details here: https://curl.se/docs/sslcerts.html\n\n\
+             curl failed to verify the legitimacy of the server and therefore could not\n\
+             establish a secure connection to it.",
+            format!(
+                "the certificate of https://10.0.0.5:8443 isn't trusted (self-signed certificate)\n{verify}"
+            ),
+        ),
+        (
+            "52",
+            "curl: (52) Empty reply from server",
+            "10.0.0.5:8443 closed the connection without a reply\n".into(),
+        ),
+        (
+            "35",
+            "\x1b[1mcurl: (35) TLS connect error: error:0A00010B:SSL routines::wrong version number\x1b[0m",
+            "curl: TLS connect error: error:0A00010B:SSL routines::wrong version number\n".into(),
+        ),
+    ] {
+        let mut s = sandbox("web-down");
+        s.set_env("FAKE_CURL_EXIT", exit);
+        s.set_env("FAKE_CURL_ERROR", curl_says);
+        let out = s.roster(&["web", "box-a", "api", "GET", "/"]);
+        assert_eq!(out.code, 1);
+        assert_eq!(
+            out.stderr,
+            format!("roster: box-a api: {want}"),
+            "{curl_says}"
+        );
+    }
 }
 
 const TOKEN: &str = "tok-7a3e-made-up";
@@ -425,7 +479,8 @@ fn a_refused_login_or_a_reply_without_a_token_stops_before_the_request() {
     assert_eq!(out.code, 1);
     assert_eq!(
         out.stderr,
-        "roster: box-t web: token login to /api/auth/login: HTTP 401\n"
+        "roster: box-t web: token login to /api/auth/login: login refused (HTTP 401)\n  \
+         hint: check the service's user: and auth: in roster.yml\n"
     );
     assert_eq!(out.stdout, "", "the login reply isn't printed");
     assert_eq!(calls(&s).len(), 1, "only the login ran");

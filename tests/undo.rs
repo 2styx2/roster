@@ -125,11 +125,13 @@ fn the_key_line_stays_until_the_mesh_is_gone_and_a_rerun_finishes() {
     chmod(&mesh, 0o700);
     assert_eq!(out.code, 1, "{}", out.stderr);
     assert!(
-        out.stderr.contains("roster: box-b: Mesh: failed"),
+        out.stderr
+            .contains("roster: box-b: Mesh: the Mesh script failed: "),
         "{}",
         out.stderr
     );
-    let last = "roster: 1 Host not done; run `roster setup --undo` again to finish\n";
+    let last = "roster: setup --undo: 1 Host not done\n  \
+                hint: run `roster setup --undo` again to finish\n";
     assert!(out.stderr.ends_with(last), "{}", out.stderr);
     assert!(read(b.join(".ssh/authorized_keys")).contains("roster-managed:box-a"));
     assert!(!read(c.join(".ssh/authorized_keys")).contains("box-a"));
@@ -159,7 +161,10 @@ fn a_down_host_is_reported_and_a_rerun_finishes_it() {
     let out = s.roster(&["setup", "--undo"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
     assert!(
-        out.stderr.contains("roster: box-c: Mesh: down: "),
+        out.stderr.contains(
+            "roster: box-c: Mesh: can't reach 10.0.0.7:2222 (timed out)\n  \
+             hint: `roster check box-c` shows each step\n"
+        ),
         "{}",
         out.stderr
     );

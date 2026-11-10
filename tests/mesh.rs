@@ -122,7 +122,11 @@ fn a_read_only_claude_dir_skips_the_import_and_the_mesh_still_forms() {
     let out = s.roster(&["setup"]);
     std::fs::set_permissions(b.join(".claude"), std::fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(out.code, 0, "{}\n{}", out.stdout, out.stderr);
-    assert!(!out.stderr.contains("Mesh: failed"), "{}", out.stderr);
+    assert!(
+        !out.stderr.contains("Mesh: the Mesh script failed"),
+        "{}",
+        out.stderr
+    );
     assert!(!b.join(".claude/CLAUDE.md").exists(), "no import written");
     // box-b is a full member: its key is on its peers, and theirs on it.
     assert!(read(c.join(".ssh/authorized_keys")).contains("roster-mesh:box-b@box-a"));
@@ -346,7 +350,7 @@ fn a_down_host_is_pending_and_the_next_run_finishes_it() {
     s.write("hosts/box-c/down", "");
     let out = s.roster(&["setup"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
-    let last = "roster: 1 Host not done; run `roster setup` again to finish\n";
+    let last = "roster: setup: 1 Host not done\n  hint: run `roster setup` again to finish\n";
     assert!(out.stderr.ends_with(last), "{}", out.stderr);
     assert!(b.join(".ssh/roster-mesh/id_ed25519").exists());
     assert_eq!(read(b.join(".ssh/authorized_keys")), BOX_LINE);

@@ -1,4 +1,4 @@
-.TH ROSTER 1 2026-11-09 "roster 0.7.10" "User Commands"
+.TH ROSTER 1 2026-11-10 "roster 0.7.11" "User Commands"
 .SH NAME
 roster \- know your network: list and reach the Hosts in roster.yml
 .SH SYNOPSIS
@@ -392,8 +392,8 @@ Mark a Windows Host
 (a
 .B type:
 is only a label): its shell has no sh, so the Mesh's scripts fail there
-with
-.IR "(a Windows Host? give it \`os: windows\`)" .
+with the hint
+.IR "a Windows Host? give it \`os: windows\`" .
 The probe that asks whether a Host takes the Box key runs
 .BR exit ,
 which every shell has.
@@ -872,7 +872,7 @@ A name that is neither exits 1 with
 .BI "no Host or group named '" NAME "' in the Inventory"
 before anything runs.
 Unreviewed Hosts are skipped, each with
-.BI "roster: skipped " HOST ": unreviewed"
+.BI "roster: " HOST ": skipped: unreviewed"
 on stderr; nothing left to run exits 1.
 .I CMD
 and its arguments go to the Host's shell as
@@ -893,6 +893,10 @@ Each line a Host prints goes out as it arrives, prefixed
 .BI "" HOST ": "
 \(em stdout lines to stdout, stderr lines to stderr; lines from different
 Hosts don't mix within a line, but their order across Hosts is arrival order.
+A Host's stderr is held back until its stdout starts, or it ends: when ssh
+or sudo failed, roster says why in one line of its own (see
+.BR DIAGNOSTICS )
+instead of their words; else the held lines show as they were.
 .IP
 Password Hosts get their passwords through askpass, as for
 .BR ssh .
@@ -906,7 +910,7 @@ variable a password came from.
 .IP
 roster exits 1 if any Host failed (a non-zero exit, a signal, or ssh that
 couldn't start), after
-.BI "roster: failed on " "HOST" ", ..."
+.BI "roster: run: failed on " "HOST" ", ..."
 on stderr; else 0.
 .TP
 .B run \-\-sudo
@@ -1232,12 +1236,15 @@ and no
 .B env:
 variable of the Host's reaches curl's environment.
 .IP
-The response body goes to stdout and curl's errors to stderr.
+The response body goes to stdout.
+curl's own errors aren't shown: roster says what failed (see
+.BR DIAGNOSTICS ).
 roster exits 0 when the HTTP status is below 400, else prints
 .BI "roster: " "HOST SERVICE" ": HTTP " STATUS
-(or
+.RB ( "login refused (HTTP 401)"
+for 401 and 403, or
 .B no HTTP response
-when curl failed) and exits 1.
+when there was none) and exits 1.
 .RS
 .TP
 .BI \-d " BODY"
@@ -1716,6 +1723,173 @@ writes one.
 .PP
 Only item names, ids, folders, URIs and user names are read: an item's
 password is never parsed, printed or written.
+.SH DIAGNOSTICS
+Every error is one line on stderr,
+.BI "roster: " SUBJECT ": " "what happened" ,
+where
+.I SUBJECT
+is the Host, or the command
+.RB ( "vault unlock" ,
+.BR pick ,
+.BR setup ,
+\&...).
+When there is a clear next step, a second line follows:
+.BI "  hint: " "what to do" .
+Another program's output (bw, keyctl, ssh, sudo, curl, ssh\-keygen, tmux)
+never reaches the terminal as it is: a known failure becomes one of the
+messages below, anything else the last line the program printed, trimmed,
+without colour codes.
+The exceptions are the terminal's own users:
+.BR "roster ssh" ,
+fzf in the picker, an
+.B auth: cmd:
+command, and the command's own output in
+.BR run .
+.PP
+Reaching a Host, from
+.BR run ,
+.BR setup ,
+the Mesh and
+.B check
+.RB ( check
+prints only the first line, as its line for the Host):
+.TP
+.BI "can't reach " ADDR:PORT " (timed out)" "\fR, \fP" "(no route)"
+Nothing answered.
+Hint:
+.BI "`roster check " HOST "` shows each step" .
+.B setup
+says
+.B (no answer to ssh\-keyscan)
+when it hasn't recorded the host key yet.
+.TP
+.BI "ssh isn't listening on " ADDR:PORT
+The connection was refused.
+.TP
+.BI "can't resolve " NAME
+The Host's
+.B ip
+is a name that doesn't resolve.
+.TP
+.BI "the Box key isn't accepted for " USER
+Hint: run
+.BR "roster setup" ,
+or check the Host's
+.BR user: .
+.TP
+.BI "the password from " REF " isn't accepted for " USER
+A Password Host, or
+.B setup
+installing the Box key with the vault password.
+.TP
+.BI "the host key of " ADDR:PORT " has changed since roster recorded it"
+Hint: if the Host was rebuilt, remove the old key with
+.BI "ssh\-keygen \-R '" ADDR "' \-f ~/.ssh/roster_known_hosts" ,
+then run
+.BR "roster setup" .
+roster never removes it itself.
+.TP
+.BI "the host key of " ADDR:PORT " isn't known"
+Hint:
+.B roster setup
+records it.
+.PP
+.BR "run \-\-sudo" :
+.TP
+.BI "sudo rejected the password from " REF
+Hint: update that vault item (or password), or give the Host its own
+.BR "sudo: {auth: \&...}" .
+.TP
+.B sudo needs a password
+.B sudo \-n
+was refused: the Host's
+.B auth
+gives no password.
+Hint: give the Host
+.BR "sudo: {auth: bw:ITEM}" .
+.PP
+The vault:
+.TP
+.B wrong master password
+From
+.B vault unlock
+or an unlock for one run.
+.TP
+.BI "no vault item named """ ITEM """"
+Hint: check the item's name in Bitwarden, or use
+.BI auth: " bw:ID" .
+.TP
+.BI "several vault items match """ ITEM """"
+No item has that exact name and bw's search found several.
+.TP
+.B Bitwarden is locked
+Hint:
+.BR "roster vault unlock" .
+.TP
+.B bw isn't logged in
+Hint: run
+.B bw login
+once.
+.TP
+.B keyctl isn't installed, so the session can't be kept
+Hint: install keyutils.
+.TP
+.BI "can't keep the session key in the kernel keyring (" why )
+keyctl refused the key; hint:
+.B keyctl show @u
+lists the keys the keyring holds.
+.TP
+.B the auth: cmd: command failed
+Its own stderr shows above; hint: run it in a shell.
+.TP
+.B can't ask for the password: no terminal
+A
+.B prompt
+or master password with no terminal to ask on.
+.PP
+.BR web :
+.TP
+.BI "nothing is listening on " ADDR:PORT
+.TQ
+.BI "can't reach " ADDR:PORT " (timed out)"
+.TQ
+.BI "can't resolve " NAME
+.TQ
+.BI ADDR:PORT " closed the connection without a reply"
+.TP
+.BI "the certificate of " URL " isn't trusted (" why )
+Hint: if you trust it, give the service
+.B verify: false
+or pass
+.BR \-k .
+.TP
+.BI "login refused (HTTP " STATUS )
+401 or 403, from the request or the token login.
+.PP
+The picker:
+.BR "fzf isn't installed" ,
+.BR "fzf stopped with an error" ,
+.BI "tmux couldn't open a window: " why ,
+.BR "several Hosts open as panes only inside tmux" .
+.PP
+The Inventory (exit 3):
+.BI "no Inventory: there's no ./roster.yml or " ~/.config/roster/roster.yml ,
+with a hint to name one with
+.B \-c
+or
+.BR ROSTER_CONFIG ;
+.IB FILE ": no such file or directory" ,
+with the lookup order as a hint;
+.IB FILE : LINE ": not valid YAML: " why ;
+and the
+.IB FILE : LINE ": " KEY ": " why
+messages of
+.BR INVENTORY .
+.PP
+A usage error (exit 2) says what's wrong, with the hint
+.BR "`roster \-h` lists the commands and their options" ;
+an unknown command also points at
+.BR "roster help plugins" .
 .SH EXIT STATUS
 .TP
 .B 0
