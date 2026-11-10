@@ -208,6 +208,9 @@ fn a_full_v0_7_0_inventory_loads_and_resolves() {
                 {"name": "admin", "port": 8443, "scheme": "https",
                  "url": "https://198.51.100.12:8443", "user": "admin", "login": "basic",
                  "verify": true},
+                // `portal` is `basic` through web_login_names.
+                {"name": "portal", "port": 9443, "scheme": null, "url": null,
+                 "user": "admin", "login": "basic", "verify": true},
             ],
         })
     );
