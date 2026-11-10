@@ -3,12 +3,12 @@
 
 use crate::inventory::{Host, Inventory};
 use crate::vault::{self, Secret};
-use crate::{Fail, askpass};
+use crate::{Fail, askpass, errors};
 use std::ffi::OsString;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::process::{Child, ExitStatus, Stdio};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// At most this many Hosts run at once.
 const WORKERS: usize = 32;
@@ -36,7 +36,7 @@ pub fn run(
     hosts.retain(|h| {
         let keep = h.reviewed;
         if !keep {
-            eprintln!("roster: skipped {}: unreviewed", h.name);
+            eprintln!("roster: {}: skipped: unreviewed", h.name);
         }
         keep
     });
@@ -63,7 +63,7 @@ pub fn run(
             None => cmd.clone(),
         };
         let password = root.as_ref().and_then(Option::as_deref);
-        one(host, login.as_deref(), &remote, password, json)
+        one(host, login.as_deref(), &remote, password, json, sudo)
     });
     if json {
         let docs = hosts.iter().zip(&outcomes).map(|(h, o)| {
@@ -81,7 +81,7 @@ pub fn run(
         true => Ok(()),
         false => Err(Fail {
             code: 1,
-            msg: format!("failed on {}", failed.join(", ")),
+            msg: format!("run: failed on {}", failed.join(", ")),
         }),
     }
 }
@@ -125,13 +125,16 @@ fn as_root(cmd: &[OsString], password: bool) -> Vec<OsString> {
 }
 
 /// Run CMD on one Host, streaming its lines (or collecting them for JSON).
-/// A sudo `password` goes to ssh's stdin and is masked in every line.
+/// A sudo `password` goes to ssh's stdin and is masked in every line. Its
+/// stderr is held back until its stdout starts, or it ends: what ssh or
+/// sudo say when they fail is then told in roster's words.
 fn one(
     host: &Host,
     secret: Option<&Secret>,
     cmd: &[OsString],
     password: Option<&Secret>,
     json: bool,
+    sudo: bool,
 ) -> Outcome {
     let mut ssh = crate::remote::command("ssh");
     if secret.is_none() {
@@ -149,18 +152,28 @@ fn one(
         .stderr(Stdio::piped());
     let name = host.name.as_str();
     let mask = password.map(Secret::expose);
-    let (mut stdout, mut stderr) = (String::new(), String::new());
-    let (keep_out, keep_err) = (&mut stdout, &mut stderr);
+    let (mut stdout, mut stderr, mut held) = (String::new(), String::new(), Vec::new());
+    let (keep_out, keep_err, hold) = (&mut stdout, &mut stderr, &mut held);
+    let begun = &AtomicBool::new(false);
     let status = std::thread::scope(|s| {
         let started = move |child: &mut Child| {
             if let (Some(mut i), Some(p)) = (child.stdin.take(), mask) {
                 let _ = i.write_all(p.as_bytes()).and_then(|()| i.write_all(b"\n"));
             }
+            let copy = |hold| Lines {
+                host: name,
+                json,
+                mask,
+                begun,
+                hold,
+            };
             if let Some(o) = child.stdout.take() {
-                s.spawn(move || lines(o, name, json, mask, keep_out, &mut io::stdout()));
+                let mut out = copy(None);
+                s.spawn(move || out.copy(o, keep_out, &mut io::stdout()));
             }
             if let Some(e) = child.stderr.take() {
-                s.spawn(move || lines(e, name, json, mask, keep_err, &mut io::stderr()));
+                let mut err = copy(Some(hold));
+                s.spawn(move || err.copy(e, keep_err, &mut io::stderr()));
             }
         };
         match secret {
@@ -172,16 +185,17 @@ fn one(
         }
     });
     let exit = status.as_ref().ok().and_then(ExitStatus::code);
-    if let Err(e) = status {
-        let msg = format!("can't run ssh: {e}");
-        lines(
-            msg.as_bytes(),
-            name,
-            json,
-            None,
-            &mut stderr,
-            &mut io::stderr(),
-        );
+    let auth = secret.map(|_| host.auth.as_str());
+    let why = match (&status, exit) {
+        (Err(e), _) => Some(errors::spawn("ssh", e)),
+        (_, Some(255)) => Some(errors::ssh(host, auth, &held.join("\n"))),
+        (_, Some(c)) if sudo && c != 0 => errors::sudo(host, &held.join("\n")),
+        _ => None,
+    };
+    match why {
+        _ if json => {}
+        Some(why) => eprintln!("roster: {name}: {why}"),
+        None => held.iter().for_each(|l| eprintln!("{name}: {l}")),
     }
     Outcome {
         exit,
@@ -190,30 +204,46 @@ fn one(
     }
 }
 
-/// Copy `from` line by line: into `keep` for JSON, else to `to` as
-/// `host: line`, a whole line per write so Hosts never interleave mid-line;
-/// `mask` shows as `********`.
-fn lines(
-    from: impl Read,
-    host: &str,
+/// How one of a Host's streams is copied: labelled `host: `, `mask` shown
+/// as `********`; stderr is held back (`hold`) until stdout has `begun`.
+struct Lines<'a> {
+    host: &'a str,
     json: bool,
-    mask: Option<&str>,
-    keep: &mut String,
-    to: &mut impl Write,
-) {
-    let mut from = BufReader::new(from);
-    let mut line = Vec::new();
-    while matches!(from.read_until(b'\n', &mut line), Ok(n) if n > 0) {
-        let mut text = String::from_utf8_lossy(&line);
-        if let Some(m) = mask.filter(|m| text.contains(m)) {
-            text = text.replace(m, "********").into();
+    mask: Option<&'a str>,
+    begun: &'a AtomicBool,
+    hold: Option<&'a mut Vec<String>>,
+}
+
+impl Lines<'_> {
+    /// Copy `from` line by line: into `keep` for JSON, else to `to`, a whole
+    /// line per write so Hosts never interleave mid-line.
+    fn copy(&mut self, from: impl Read, keep: &mut String, to: &mut impl Write) {
+        let mut from = BufReader::new(from);
+        let mut line = Vec::new();
+        while matches!(from.read_until(b'\n', &mut line), Ok(n) if n > 0) {
+            let mut text = String::from_utf8_lossy(&line).into_owned();
+            if let Some(m) = self.mask.filter(|m| text.contains(m)) {
+                text = text.replace(m, "********");
+            }
+            line.clear();
+            if self.json {
+                keep.push_str(&text);
+            }
+            let text = text.strip_suffix('\n').unwrap_or(&text).to_string();
+            match self.hold.as_mut() {
+                Some(hold) if self.json || !self.begun.load(Ordering::Relaxed) => {
+                    hold.push(text);
+                    continue;
+                }
+                Some(hold) => {
+                    for held in hold.drain(..) {
+                        let _ = writeln!(to, "{}: {held}", self.host);
+                    }
+                }
+                None if self.json => continue,
+                None => self.begun.store(true, Ordering::Relaxed),
+            }
+            let _ = writeln!(to, "{}: {text}", self.host);
         }
-        if json {
-            keep.push_str(&text);
-        } else {
-            let text = text.strip_suffix('\n').unwrap_or(&text);
-            let _ = writeln!(to, "{host}: {text}");
-        }
-        line.clear();
     }
 }

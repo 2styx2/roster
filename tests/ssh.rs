@@ -41,7 +41,7 @@ fn ssh_to_an_unknown_host_exits_1_without_running_ssh() {
     assert_eq!(out.code, 1);
     assert_eq!(
         out.stderr,
-        "roster: no Host named 'nope' in the Inventory\n"
+        "roster: no Host named 'nope' in the Inventory\n  hint: `roster ls` lists the Hosts\n"
     );
     assert_eq!(log(&s), "");
 }

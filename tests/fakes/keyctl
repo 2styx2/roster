@@ -14,8 +14,16 @@ name() { cat "$ring/id-$1" 2>/dev/null || { echo "fake keyctl: no key $1" >&2; e
 in_u() { [ -f "$ring/$1" ] && { [ -e "$ring/$1.u" ] || [ ! -e "$ring/$1.s" ]; }; }
 case "$1" in
 --version) echo "keyctl from fake keyutils" ;;
+session)
+  # `session - CMD...`: run CMD in a new session keyring (here: just run it).
+  [ "$2" = - ] || { echo "fake keyctl: bad session: $*" >&2; exit 2; }
+  shift 2
+  echo "Joined session keyring: 9000" >&2
+  exec "$@"
+  ;;
 padd)
   [ "$2" = user ] || { echo "fake keyctl: bad padd: $*" >&2; exit 2; }
+  [ -z "$FAKE_KEYCTL_FULL" ] || { echo "keyctl_add_key: Disk quota exceeded" >&2; exit 1; }
   cat >"$ring/$3"
   rm -f "$ring/$3.s" "$ring/$3.u"
   case $4 in

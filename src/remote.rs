@@ -41,17 +41,6 @@ pub struct Ran {
     pub stderr: String,
 }
 
-impl Ran {
-    /// The last line of stderr, for a one-line report.
-    pub fn why(&self) -> &str {
-        self.stderr
-            .lines()
-            .rev()
-            .find(|l| !l.trim().is_empty())
-            .unwrap_or("")
-    }
-}
-
 /// `body` with each `NAME=value` set first, single-quoted for sh.
 pub fn script(vars: &[(&str, &str)], body: &str) -> String {
     let mut out = String::new();

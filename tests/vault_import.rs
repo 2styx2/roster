@@ -149,7 +149,8 @@ fn a_locked_vault_skips_the_import_with_one_line_and_sync_runs_on() {
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(
         out.stderr,
-        "roster: vault import skipped: Bitwarden is locked (`roster vault unlock`)\n"
+        "roster: sync: vault import skipped: Bitwarden is locked\n  \
+         hint: run `roster vault unlock`\n"
     );
     assert_eq!(read(&s, "roster.yml"), INVENTORY);
     assert!(!s.home.join("bw.log").exists(), "sync ran bw while locked");

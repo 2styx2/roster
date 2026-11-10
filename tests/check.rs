@@ -67,9 +67,10 @@ fn a_closed_port_fails_and_ssh_is_not_tried() {
     let out = s.roster(&["check", "box-b"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
     let first = out.stdout.lines().next().unwrap();
-    let want = format!("box-b: port: 127.0.0.1:{closed}: ");
-    assert!(first.starts_with(&want), "{}", out.stdout);
-    assert!(first.to_lowercase().contains("refused"), "{first}");
+    assert_eq!(
+        first,
+        format!("box-b: port: ssh isn't listening on 127.0.0.1:{closed}")
+    );
     assert!(
         out.stdout.ends_with("1 Host: 0 ok, 1 failed\n"),
         "{}",
@@ -96,7 +97,7 @@ fn a_name_that_does_not_resolve_fails_at_dns() {
     let s = sandbox("check-dns", &["box-z: {ip: box-z.invalid}".into()]);
     let out = s.roster(&["check", "box-z"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
-    let want = "box-z: dns: box-z.invalid: ";
+    let want = "box-z: dns: can't resolve box-z.invalid\n";
     assert!(out.stdout.starts_with(want), "{}", out.stdout);
     assert!(!s.home.join("ssh.log").exists());
 }
@@ -151,9 +152,9 @@ fn json_gives_each_host_its_failed_stage_and_error() {
         (&b["host"], &b["ok"], &b["failed"]),
         (&"box-b".into(), &false.into(), &"port".into())
     );
-    assert!(
-        b["error"].as_str().unwrap().starts_with("127.0.0.1:"),
-        "{b}"
+    assert_eq!(
+        b["error"],
+        format!("ssh isn't listening on 127.0.0.1:{closed}")
     );
 }
 
@@ -169,7 +170,17 @@ fn a_failed_login_shows_what_ssh_said() {
     assert_eq!(out.code, 1, "{}", out.stderr);
     assert_eq!(
         out.stdout.lines().next().unwrap(),
-        "box-a: login: ssh: connect to host box-a port 22: Connection timed out"
+        format!("box-a: login: can't reach 127.0.0.1:{port} (timed out)")
+    );
+    s.set_env(
+        "FAKE_SSH_ERROR",
+        "admin@127.0.0.1: Permission denied (publickey).",
+    );
+    let out = s.roster(&["check", "box-a"]);
+    assert_eq!(
+        out.stdout.lines().next().unwrap(),
+        "box-a: login: the Box key isn't accepted for admin",
+        "one line per Host: no hint"
     );
 }
 

@@ -3,7 +3,7 @@
 //! reference resolve)? One line per Host, or one JSON document.
 
 use crate::inventory::{Host, Inventory};
-use crate::{Fail, vault};
+use crate::{Fail, errors, vault};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::process::Stdio;
 use std::time::Duration;
@@ -45,7 +45,7 @@ fn auth(host: &Host, memo: &mut vault::Memo) -> Auth {
         Err(fail) => {
             let prefix = format!("{}: ", host.name);
             let msg = fail.msg.strip_prefix(&prefix).unwrap_or(&fail.msg);
-            Auth::Vault(Err(msg.to_string()))
+            Auth::Vault(Err(first_line(msg)))
         }
     }
 }
@@ -57,13 +57,13 @@ fn one(host: &Host, auth: &Auth) -> Report {
     };
     let addr = match (host.ip.as_str(), host.port).to_socket_addrs() {
         Ok(mut addrs) => addrs.next(),
-        Err(e) => return fail("dns", format!("{}: {e}", host.ip)),
+        Err(_) => return fail("dns", format!("can't resolve {}", host.ip)),
     };
     let Some(addr) = addr else {
-        return fail("dns", format!("{}: no address", host.ip));
+        return fail("dns", format!("{} has no address", host.ip));
     };
     if let Err(e) = TcpStream::connect_timeout(&addr, PORT_TIMEOUT) {
-        return fail("port", format!("{addr}: {e}"));
+        return fail("port", errors::connect(host, &e));
     }
     let (failed, note) = match auth {
         Auth::Login => (login(host).err().map(|e| ("login", e)), None),
@@ -73,8 +73,13 @@ fn one(host: &Host, auth: &Auth) -> Report {
     Report { failed, note }
 }
 
+/// The first line of a message: `check` gives one line per Host, no hint.
+fn first_line(msg: &str) -> String {
+    msg.lines().next().unwrap_or_default().to_string()
+}
+
 /// Log in with no prompt and run `exit`, which sh, cmd and PowerShell all
-/// have; on failure, ssh's own words.
+/// have; on failure, why, in one line.
 fn login(host: &Host) -> Result<(), String> {
     let out = crate::remote::command("ssh")
         .args(["-o", "BatchMode=yes"])
@@ -82,10 +87,14 @@ fn login(host: &Host) -> Result<(), String> {
         .args([&host.name, "exit"])
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| format!("can't run ssh: {e}"))?;
+        .map_err(|e| errors::spawn("ssh", &e))?;
     match out.status.success() {
         true => Ok(()),
-        false => Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+        false => Err(first_line(&errors::ssh(
+            host,
+            None,
+            &String::from_utf8_lossy(&out.stderr),
+        ))),
     }
 }
 

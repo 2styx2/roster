@@ -3,7 +3,7 @@
 //! Password Host's password goes to a child ssh through askpass instead.
 
 use crate::inventory::Inventory;
-use crate::{Fail, askpass, vault};
+use crate::{Fail, askpass, errors, vault};
 use std::ffi::OsString;
 use std::os::unix::process::CommandExt;
 
@@ -12,7 +12,8 @@ use std::os::unix::process::CommandExt;
 pub fn exec(inv: &Inventory, name: &str, args: Vec<OsString>) -> Fail {
     let fail = |code, msg| Fail { code, msg };
     let Some(host) = inv.hosts.iter().find(|h| h.name == name) else {
-        return fail(1, format!("no Host named '{name}' in the Inventory"));
+        let msg = format!("no Host named '{name}' in the Inventory");
+        return fail(1, errors::hint(msg, "`roster ls` lists the Hosts"));
     };
     let mut ssh = crate::remote::command("ssh");
     ssh.arg(name).args(args);
@@ -25,10 +26,13 @@ pub fn exec(inv: &Inventory, name: &str, args: Vec<OsString>) -> Fail {
         }
     };
     let Some(secret) = secret else {
-        return fail(126, format!("can't run ssh: {}", ssh.exec()));
+        return fail(
+            126,
+            format!("{name}: {}", errors::spawn("ssh", &ssh.exec())),
+        );
     };
     match askpass::run(ssh, &secret) {
         Ok(status) => fail(status.code().map_or(255, |c| c as u8), String::new()),
-        Err(e) => fail(126, format!("can't run ssh with askpass: {e}")),
+        Err(e) => fail(126, format!("{name}: {}", errors::spawn("ssh", &e))),
     }
 }

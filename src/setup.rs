@@ -1,7 +1,7 @@
 //! `roster setup`: make this Box ready to reach the Hosts.
 
 use crate::inventory::Inventory;
-use crate::{Fail, atomic, claude, hosts, mesh, sshconf, undo};
+use crate::{Fail, atomic, claude, errors, hosts, mesh, sshconf, undo};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -84,9 +84,9 @@ pub fn run(inv: &Inventory, dry_run: bool, undo: bool) -> Result<(), Fail> {
     let (ready, undone) = hosts::run(inv, dry_run)?;
     match undone + mesh::run(inv, &ready, dry_run) {
         0 => Ok(()),
-        n => Err(failed(format!(
-            "{n} Host{} not done; run `roster setup` again to finish",
-            if n == 1 { "" } else { "s" }
+        n => Err(failed(crate::errors::hint(
+            format!("setup: {n} Host{} not done", if n == 1 { "" } else { "s" }),
+            "run `roster setup` again to finish",
         ))),
     }
 }
@@ -185,16 +185,20 @@ fn box_key(key: &std::path::Path, key_type: &str, box_name: &str) -> Result<(), 
     cmd.arg("-q").args(keygen_args(key_type));
     let comment = format!("roster-managed:{box_name}");
     cmd.args(["-N", "", "-C", &comment, "-f"]).arg(key);
-    match cmd.status() {
-        Ok(s) if s.success() => {
+    match cmd.output() {
+        Ok(out) if out.status.success() => {
             println!("made the Box key {}", key.display());
             Ok(())
         }
-        Ok(s) => Err(failed(format!(
-            "ssh-keygen failed ({s}) making {}",
-            key.display()
+        Ok(out) => Err(failed(format!(
+            "setup: can't make the Box key {}: {}",
+            key.display(),
+            errors::last_line(&String::from_utf8_lossy(&out.stderr))
         ))),
-        Err(e) => Err(failed(format!("can't run ssh-keygen: {e}"))),
+        Err(e) => Err(failed(format!(
+            "setup: {}",
+            errors::hint(errors::spawn("ssh-keygen", &e), "install OpenSSH's client")
+        ))),
     }
 }
 
@@ -227,7 +231,7 @@ fn claude_files(inv: &Inventory) -> Result<(), Fail> {
         Ok(Some(_)) if dry() => println!("would write {}", settings.display()),
         Ok(Some(text)) => {
             std::fs::create_dir_all(dir.join(".claude"))
-                .map_err(|e| failed(format!("{}: {e}", dir.display())))?;
+                .map_err(|e| failed(format!("{}: {}", dir.display(), errors::io(&e))))?;
             save(&settings, &text, 0o644)?;
         }
         Err(()) => eprintln!(
@@ -251,7 +255,7 @@ pub fn read(path: &std::path::Path) -> Result<Option<String>, Fail> {
     match std::fs::read_to_string(path) {
         Ok(text) => Ok(Some(text)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(failed(format!("{}: {e}", path.display()))),
+        Err(e) => Err(failed(format!("{}: {}", path.display(), errors::io(&e)))),
     }
 }
 
@@ -269,7 +273,7 @@ pub fn save(path: &std::path::Path, contents: &str, mode: u32) -> Result<(), Fai
             Ok(())
         }
         Ok(false) => Ok(()),
-        Err(e) => Err(failed(format!("{}: {e}", path.display()))),
+        Err(e) => Err(failed(format!("{}: {}", path.display(), errors::io(&e)))),
     }
 }
 
@@ -283,5 +287,5 @@ fn mkdir_private(dir: &std::path::Path) -> Result<(), Fail> {
         .recursive(true)
         .mode(0o700)
         .create(dir)
-        .map_err(|e| failed(format!("{}: {e}", dir.display())))
+        .map_err(|e| failed(format!("{}: {}", dir.display(), errors::io(&e))))
 }

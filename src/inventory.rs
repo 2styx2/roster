@@ -133,13 +133,29 @@ impl Inventory {
     /// else `~/.config/roster/roster.yml`.
     pub fn open(flag: Option<PathBuf>) -> Result<Inventory, Fail> {
         let path = find(flag)?;
-        let text = std::fs::read_to_string(&path).map_err(|e| broken(&path, None, e))?;
+        let text = std::fs::read_to_string(&path).map_err(|e| {
+            let why = crate::errors::io(&e);
+            let mut fail = broken(&path, None, why);
+            if e.kind() == std::io::ErrorKind::NotFound {
+                fail.msg = crate::errors::hint(fail.msg, LOOKUP);
+            }
+            fail
+        })?;
         Inventory::load(path, &text)
     }
 
     /// Parse and check `text` as the Inventory at `path`.
     pub fn load(path: PathBuf, text: &str) -> Result<Inventory, Fail> {
-        let doc: Value = serde_norway::from_str(text).map_err(|e| broken(&path, None, e))?;
+        let doc: Value = serde_norway::from_str(text).map_err(|e| {
+            // The line goes up front, as for every other Inventory error.
+            let mut why = e.to_string();
+            while let Some(at) = why.find(" at line ") {
+                let end = why[at..].find(',').map_or(why.len(), |n| at + n);
+                why.replace_range(at..end, "");
+            }
+            let line = e.location().map(|l| l.line());
+            broken(&path, line, format!("not valid YAML: {why}"))
+        })?;
         let inventory = parse(&doc).map_err(|b| {
             let line = line_of(text, &b.at);
             broken(&path, line, format!("{}: {}", b.at.join("."), b.why))
@@ -199,7 +215,10 @@ impl Inventory {
                 false => hosts,
             };
             if hosts.is_empty() {
-                let msg = format!("no Host or group named '{word}' in the Inventory");
+                let msg = crate::errors::hint(
+                    format!("no Host or group named '{word}' in the Inventory"),
+                    "`roster ls` lists the Hosts and groups",
+                );
                 return Err(Fail { code: 1, msg });
             }
             for h in hosts {
@@ -231,16 +250,19 @@ fn candidates() -> [PathBuf; 2] {
     ]
 }
 
+/// Where roster looks, for a hint.
+const LOOKUP: &str = "-c FILE or ROSTER_CONFIG=FILE names the Inventory; \
+     without them, roster reads ./roster.yml, else ~/.config/roster/roster.yml";
+
 fn find(flag: Option<PathBuf>) -> Result<PathBuf, Fail> {
-    let candidates = candidates();
+    let home = candidates()[1].display().to_string();
     match locate(flag) {
         Some(path) => Ok(path),
         None => Err(Fail {
             code: 3,
-            msg: format!(
-                "no Inventory: tried {} and {} (use -c FILE or $ROSTER_CONFIG)",
-                candidates[0].display(),
-                candidates[1].display()
+            msg: crate::errors::hint(
+                format!("no Inventory: there's no ./roster.yml or {home}"),
+                "write one there, or name one with -c FILE or ROSTER_CONFIG=FILE",
             ),
         }),
     }

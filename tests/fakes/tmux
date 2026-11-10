@@ -1,5 +1,10 @@
 #!/bin/sh
 # Fake tmux: appends its argv to $HOME/tmux.log, and prints a window id for -P.
+# $FAKE_TMUX_ERROR makes it fail with that message, as tmux does.
 echo "$*" >>"$HOME/tmux.log"
+if [ -n "$FAKE_TMUX_ERROR" ]; then
+  echo "$FAKE_TMUX_ERROR" >&2
+  exit 1
+fi
 for a in "$@"; do [ "$a" = -P ] && echo @7; done
 exit 0

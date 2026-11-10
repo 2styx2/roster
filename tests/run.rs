@@ -127,7 +127,7 @@ fn a_mixed_target_runs_each_host_once_and_skips_unreviewed_ones() {
     let s = sandbox("run-mixed");
     let out = s.roster(&["run", "box-a,lab,dev", "--", "true"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
-    assert_eq!(out.stderr, "roster: skipped box-c: unreviewed\n");
+    assert_eq!(out.stderr, "roster: box-c: skipped: unreviewed\n");
     assert_eq!(ran(&s), ["box-a", "box-b", "esx-02"]);
 }
 
@@ -138,7 +138,8 @@ fn an_unknown_name_in_the_target_exits_1_before_any_ssh() {
     assert_eq!(out.code, 1);
     assert_eq!(
         out.stderr,
-        "roster: no Host or group named 'nope' in the Inventory\n"
+        "roster: no Host or group named 'nope' in the Inventory\n  \
+         hint: `roster ls` lists the Hosts and groups\n"
     );
     assert!(ran(&s).is_empty());
 }
@@ -161,9 +162,76 @@ fn a_down_host_fails_alone_and_run_exits_1() {
     assert_eq!(out.stdout, "box-a: hi\n");
     assert_eq!(
         out.stderr,
-        "box-b: ssh: connect to host box-b port 22: Connection timed out\n\
-         roster: failed on box-b\n"
+        "roster: box-b: can't reach 10.0.0.6:22 (timed out)\n  \
+         hint: `roster check box-b` shows each step\n\
+         roster: run: failed on box-b\n"
     );
+}
+
+/// ssh's own failures are told in plain words, ssh's text never shown.
+#[test]
+fn each_ssh_failure_is_one_plain_line_and_a_hint() {
+    let check = "  hint: `roster check box-b` shows each step\n";
+    let changed = "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n\
+        @    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n\
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n\
+        IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!\n\
+        Offending ED25519 key in ~/.ssh/roster_known_hosts:3\n\
+        Host key verification failed.";
+    for (ssh_says, want) in [
+        (
+            "ssh: connect to host 10.0.0.6 port 22: No route to host",
+            format!("can't reach 10.0.0.6:22 (no route)\n{check}"),
+        ),
+        (
+            "ssh: connect to host 10.0.0.6 port 22: Connection refused",
+            format!("ssh isn't listening on 10.0.0.6:22\n{check}"),
+        ),
+        (
+            "ssh: Could not resolve hostname 10.0.0.6: Name or service not known",
+            format!("can't resolve 10.0.0.6\n{check}"),
+        ),
+        (
+            "admin@10.0.0.6: Permission denied (publickey,password).",
+            "the Box key isn't accepted for admin\n  \
+             hint: run `roster setup`, or check the Host's user: in roster.yml\n"
+                .into(),
+        ),
+        (
+            changed,
+            "the host key of 10.0.0.6:22 has changed since roster recorded it\n  \
+             hint: if box-b was rebuilt, remove the old key with `ssh-keygen -R '10.0.0.6' \
+             -f ~/.ssh/roster_known_hosts`, then run `roster setup`\n"
+                .into(),
+        ),
+        (
+            "Host key verification failed.",
+            "the host key of 10.0.0.6:22 isn't known\n  hint: `roster setup` records it\n".into(),
+        ),
+        (
+            "\x1b[1mkex_exchange_identification: read: Connection reset by peer\x1b[0m\n",
+            "kex_exchange_identification: read: Connection reset by peer\n".into(),
+        ),
+    ] {
+        let mut s = sandbox("run-ssh-fails");
+        s.set_env("FAKE_SSH_DOWN", "box-b");
+        s.set_env("FAKE_SSH_ERROR", ssh_says);
+        let out = s.roster(&["run", "box-b", "--", "echo", "hi"]);
+        assert_eq!(out.code, 1);
+        assert_eq!(
+            out.stderr,
+            format!("roster: box-b: {want}roster: run: failed on box-b\n")
+        );
+    }
+}
+
+/// The command's own stderr is the user's: shown, labelled, as it was.
+#[test]
+fn a_commands_own_stderr_is_shown_labelled() {
+    let s = sandbox("run-own-stderr");
+    let out = s.roster(&["run", "box-a", "--", "echo oops >&2; exit 3"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(out.stderr, "box-a: oops\nroster: run: failed on box-a\n");
 }
 
 #[test]
@@ -217,7 +285,7 @@ fn json_gives_each_hosts_exit_stdout_and_stderr_in_target_order() {
             {"host": "box-a", "exit": 3, "stdout": "out\n", "stderr": "err\n"},
         ]})
     );
-    assert_eq!(out.stderr, "roster: failed on box-b, esx-02, box-a\n");
+    assert_eq!(out.stderr, "roster: run: failed on box-b, esx-02, box-a\n");
 }
 
 #[test]
@@ -290,7 +358,9 @@ fn the_sudo_auth_cascades_and_a_wrong_password_fails_that_host() {
     assert_eq!(out.stdout, "box-b: root\n", "box-b's own beats lab's");
     assert_eq!(
         out.stderr,
-        "box-a: sudo: 1 incorrect password attempt\nroster: failed on box-a\n"
+        "roster: box-a: sudo rejected the password from env:LAB_SUDO\n  \
+         hint: update that password, or give box-a its own `sudo: {auth: …}` in roster.yml\n\
+         roster: run: failed on box-a\n"
     );
     s.set_env("OWN_SUDO", "pw-wrong-made-up");
     s.set_env("DEFAULT_SUDO", SUDO_PASSWORD);
@@ -331,7 +401,9 @@ fn a_key_auth_runs_sudo_n_for_nopasswd() {
     assert_eq!(out.code, 1);
     assert_eq!(
         out.stderr,
-        "box-a: sudo: a password is required\nroster: failed on box-a\n"
+        "roster: box-a: sudo needs a password\n  \
+         hint: give box-a one in roster.yml: `sudo: {auth: bw:ITEM}`\n\
+         roster: run: failed on box-a\n"
     );
     s.set_env("FAKE_SUDO_NOPASSWD", "1");
     let out = s.roster(&["run", "--sudo", "box-a", "--", "echo", "$USER"]);

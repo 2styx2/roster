@@ -108,10 +108,11 @@ fn a_host_whose_shell_lacks_true_but_takes_the_key_is_done() {
     assert_eq!(read(c.join(".ssh/authorized_keys")), BOX_LINE);
     // The Mesh's sh can't run there: it says why, and what to do.
     assert!(
-        out.stderr.contains("box-b: Mesh: failed (1): ")
-            && out
-                .stderr
-                .contains("(a Windows Host? give it `os: windows`)"),
+        out.stderr.contains(
+            "roster: box-b: Mesh: the Mesh script failed: \
+             + FullyQualifiedErrorId : CommandNotFoundException\n  \
+             hint: a Windows Host? give it `os: windows`\n"
+        ),
         "{}",
         out.stderr
     );
@@ -122,7 +123,7 @@ fn a_host_whose_shell_lacks_true_but_takes_the_key_is_done() {
     );
     let out = s.roster(&["setup"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
-    assert!(!out.stderr.contains("Mesh: failed"), "{}", out.stderr);
+    assert!(!out.stderr.contains("Mesh: "), "{}", out.stderr);
 }
 
 #[test]
@@ -161,9 +162,10 @@ fn a_down_host_does_not_stop_the_run_and_the_next_run_finishes_it() {
     s.write("hosts/box-b/down", "");
     let out = s.roster(&["setup"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
-    let down = "roster: box-b: down: no answer to ssh-keyscan at 10.0.0.6\n";
+    let down = "roster: box-b: can't reach 10.0.0.6:22 (no answer to ssh-keyscan)\n  \
+                hint: `roster check box-b` shows each step\n";
     assert!(out.stderr.contains(down), "{}", out.stderr);
-    let last = "roster: 1 Host not done; run `roster setup` again to finish\n";
+    let last = "roster: setup: 1 Host not done\n  hint: run `roster setup` again to finish\n";
     assert!(out.stderr.ends_with(last), "{}", out.stderr);
     assert_eq!(read(c.join(".ssh/authorized_keys")), BOX_LINE);
     assert!(!b.join(".ssh").exists());
@@ -190,8 +192,8 @@ fn a_host_down_after_its_key_was_recorded_is_reported_too() {
     s.write("hosts/box-b/down", "");
     let out = s.roster(&["setup"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
-    let msg = "roster: box-b: can't log in with the password: \
-               ssh: connect to host box-b port 22: Connection timed out\n";
+    let msg = "roster: box-b: can't reach 10.0.0.6:22 (timed out)\n  \
+               hint: `roster check box-b` shows each step\n";
     assert!(out.stderr.contains(msg), "{}", out.stderr);
 }
 
@@ -223,8 +225,8 @@ fn a_key_already_there_but_not_taken_is_not_added_twice() {
     let out = s.roster(&["setup"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
     assert_eq!(read(&ak), legacy);
-    let msg = "roster: box-b: the Box key is in authorized_keys but isn't taken; \
-               check the modes of ~ and ~/.ssh there\n";
+    let msg = "roster: box-b: the Box key is in authorized_keys but isn't taken\n  \
+               hint: check the modes of ~ and ~/.ssh on box-b: no write for group or others\n";
     assert!(out.stderr.contains(msg), "{}", out.stderr);
 }
 
@@ -249,8 +251,8 @@ fn a_wrong_password_is_reported_and_no_password_leaks() {
     s.write("hosts/box-b/password", "pw-something-else");
     let out = s.roster(&["setup"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
-    let msg = "roster: box-b: can't log in with the password: \
-               admin@box-b: Permission denied (publickey,password).\n";
+    let msg = "roster: box-b: the password from env:HOST_PW isn't accepted for admin\n  \
+               hint: update that password, or the Host's user: or auth: in roster.yml\n";
     assert!(out.stderr.contains(msg), "{}", out.stderr);
     assert!(!b.join(".ssh").exists());
     let ssh_args = read(s.home.join("ssh.log"));

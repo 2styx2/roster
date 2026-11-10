@@ -2,7 +2,7 @@
 //! unlock|lock`. The session key lives in the kernel keyring (keyctl), never
 //! in a file or argv, and reaches bw only as BW_SESSION in bw's environment.
 
-use crate::{Fail, vault};
+use crate::{Fail, errors, vault};
 use serde_json::Value;
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
@@ -15,19 +15,22 @@ const KEY: &str = "roster:bw-session";
 const TIMEOUT: &str = "43200";
 /// The session key's permissions: possessor all; user view, read, search.
 const PERM: &str = "0x3f0b0000";
+/// Stores the key (stdin) as $1 with permissions $2 and timeout $3, in the
+/// new session keyring keyctl runs it in, then moves it into @u. Any failure
+/// invalidates the key and exits non-zero.
+const STORE: &str = "id=$(keyctl padd user \"$1\" @s) && if keyctl setperm \"$id\" \"$2\" && keyctl timeout \"$id\" \"$3\" && keyctl link \"$id\" @u && keyctl unlink \"$id\" @s; then :; else keyctl invalidate \"$id\"; exit 1; fi";
 /// The variable that carries the master password into `bw unlock` only.
 const MASTER_VAR: &str = "ROSTER_BW_MASTER";
 /// roster v0.7.0's session file: never read, deleted by unlock and lock.
 const LEGACY: &str = ".config/roster/bw-session";
-const NO_KEYCTL: &str = "keyctl isn't installed, so the Bitwarden session can't be kept \
-     and the master password is asked for on each run; install keyutils \
-     (apt install keyutils, dnf install keyutils)";
+const KEYUTILS: &str = "install keyutils (apt install keyutils, dnf install keyutils)";
 
 fn failed(msg: String) -> Fail {
     Fail { code: 1, msg }
 }
 
 /// `bw ARGS --nointeraction` with `env` added; its stdout, wiped after use.
+/// An error is in plain words: bw's own output never reaches the terminal.
 fn bw(args: &[&str], env: &[(&str, &str)]) -> Result<Zeroizing<Vec<u8>>, String> {
     let out = Command::new("bw")
         .args(args)
@@ -35,13 +38,22 @@ fn bw(args: &[&str], env: &[(&str, &str)]) -> Result<Zeroizing<Vec<u8>>, String>
         .env_remove("BW_SESSION")
         .envs(env.iter().copied())
         .stdin(Stdio::null())
-        .stderr(Stdio::inherit())
         .output()
-        .map_err(|e| format!("can't run bw: {e}"))?;
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => errors::hint(
+                "bw isn't installed",
+                "install the Bitwarden CLI, then run `bw login` once",
+            ),
+            _ => errors::spawn("bw", &e),
+        })?;
     let stdout = Zeroizing::new(out.stdout);
+    let item = match args {
+        ["get", "item", item] | ["list", "items", "--search", item] => item,
+        _ => "",
+    };
     match out.status.success() {
         true => Ok(stdout),
-        false => Err(format!("bw {} failed ({})", args[0], out.status)),
+        false => Err(errors::bw(&String::from_utf8_lossy(&out.stderr), item)),
     }
 }
 
@@ -51,7 +63,7 @@ fn keyctl(args: &[&str], input: &[u8]) -> std::io::Result<Output> {
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()?;
     let written = child.stdin.take().map(|mut i| i.write_all(input));
     let out = child.wait_with_output()?;
@@ -105,21 +117,22 @@ fn unlock_now(what: &str) -> Result<Zeroizing<String>, Fail> {
 /// same name are refused with their ids.
 fn item_named(item: &str, session: &str) -> Result<Value, String> {
     let env = [("BW_SESSION", session)];
-    let locked = |e: String| format!("{e}; if Bitwarden is locked, run `roster vault unlock`");
-    let list = bw(&["list", "items", "--search", item], &env).map_err(locked)?;
-    let all: Vec<Value> = serde_json::from_slice(&list).map_err(|_| "bad JSON".to_string())?;
+    let list = bw(&["list", "items", "--search", item], &env)?;
+    let all: Vec<Value> = serde_json::from_slice(&list)
+        .map_err(|_| "bw printed something that isn't JSON".to_string())?;
     let mut exact: Vec<Value> = all.into_iter().filter(|i| i["name"] == item).collect();
     match exact.len() {
         1 => Ok(exact.remove(0)),
         0 => {
-            let json = bw(&["get", "item", item], &env).map_err(locked)?;
-            serde_json::from_slice(&json).map_err(|_| "bad JSON".to_string())
+            let json = bw(&["get", "item", item], &env)?;
+            serde_json::from_slice(&json)
+                .map_err(|_| "bw printed something that isn't JSON".to_string())
         }
         n => {
             let ids: Vec<&str> = exact.iter().filter_map(|i| i["id"].as_str()).collect();
-            Err(format!(
-                "{n} vault items are named '{item}' ({}); use auth: bw:ID with one of those ids",
-                ids.join(", ")
+            Err(errors::hint(
+                format!("{n} vault items are named \"{item}\" ({})", ids.join(", ")),
+                "use `auth: bw:ID` with one of those ids",
             ))
         }
     }
@@ -142,12 +155,13 @@ pub fn get(reference: &str, what: &str) -> Result<Zeroizing<String>, Fail> {
             run.insert(unlock_now(what)?).clone()
         }
         (None, Err(_)) => {
-            eprintln!("roster: {NO_KEYCTL}");
+            let why = "keyctl isn't installed, so the master password is asked for on each run";
+            eprintln!("roster: vault: {}", errors::hint(why, KEYUTILS));
             run.insert(unlock_now(what)?).clone()
         }
     };
     drop(run);
-    let fail = |e: String| failed(format!("{what}: auth bw:{reference}: {e}"));
+    let fail = |e: String| failed(format!("{what}: {e}"));
     let mut doc = item_named(item, &session).map_err(fail)?;
     let fields = doc["fields"]
         .as_array()
@@ -168,7 +182,12 @@ pub fn get(reference: &str, what: &str) -> Result<Zeroizing<String>, Fail> {
     };
     let value = value.as_str().map(|v| Zeroizing::new(v.to_string()));
     scrub(&mut doc);
-    value.ok_or_else(|| fail(format!("item {item} has no {field}")))
+    value.ok_or_else(|| {
+        fail(errors::hint(
+            format!("vault item \"{item}\" has no {field}"),
+            &format!("add it in Bitwarden, or change auth: bw:{reference} in roster.yml"),
+        ))
+    })
 }
 
 /// Wipe every string in a parsed item.
@@ -196,35 +215,38 @@ fn drop_legacy() {
 pub fn unlock() -> Result<(), Fail> {
     drop_legacy();
     if keyctl(&["--version"], b"").is_err() {
-        return Err(failed(NO_KEYCTL.into()));
+        let why = "vault unlock: keyctl isn't installed, so the session can't be kept";
+        return Err(failed(errors::hint(why, KEYUTILS)));
     }
     let session = unlock_now("vault unlock")?;
     let store = |args: &[&str], input: &[u8]| match keyctl(args, input) {
         Ok(out) if out.status.success() => Ok(out.stdout),
-        _ => Err(failed(format!("vault unlock: keyctl {} failed", args[0]))),
+        out => {
+            let why = out.map_or_else(
+                |e| errors::io(&e),
+                |o| errors::reason(&errors::last_line(&String::from_utf8_lossy(&o.stderr))),
+            );
+            Err(failed(errors::hint(
+                format!("vault unlock: can't keep the session key in the kernel keyring ({why})"),
+                "`keyctl show @u` lists the keys it holds",
+            )))
+        }
     };
     forget();
-    // Added to the session keyring, which the process always possesses (a key
-    // added straight to @u isn't possessed after `su`, and its permissions
-    // can't be set); set up there, then moved into the user keyring.
-    let id = store(&["padd", "user", KEY, "@s"], session.as_bytes())?;
-    let id = String::from_utf8_lossy(&id).trim().to_string();
-    // Possessor: all. The owner's other processes, such as `roster sync` from
-    // cron in its own keyring session: view, read, search, nothing more (no
-    // write, link or setattr, so they can't replace the key or extend its
-    // life). Group and other users: none.
-    let steps = [
-        ["setperm", id.as_str(), PERM],
-        ["timeout", id.as_str(), TIMEOUT],
-        ["link", id.as_str(), "@u"],
-        ["unlink", id.as_str(), "@s"],
-    ];
-    for args in steps {
-        if let Err(e) = store(&args, b"") {
-            let _ = keyctl(&["invalidate", &id], b"");
-            return Err(e);
-        }
-    }
+    // In a new session keyring: its keys are always possessed, so their
+    // permissions can be set. Not so for a key added to @u after `su`, nor
+    // to WSL's default user-session keyring. Added there, set up, then moved
+    // into the user keyring; the key stays on stdin. Possessor: all. The
+    // owner's other processes, such as `roster sync` from cron in its own
+    // keyring session: view, read, search, nothing more (no write, link or
+    // setattr, so they can't replace the key or extend its life). Group and
+    // other users: none.
+    store(
+        &[
+            "session", "-", "sh", "-c", STORE, "store", KEY, PERM, TIMEOUT,
+        ],
+        session.as_bytes(),
+    )?;
     println!("Bitwarden unlocked for 12 h (the session key is in the kernel keyring)");
     Ok(())
 }
@@ -234,7 +256,12 @@ pub fn unlock() -> Result<(), Fail> {
 pub fn list() -> Result<[Zeroizing<Vec<u8>>; 2], String> {
     let session = match stored() {
         Ok(Some(session)) => session,
-        Ok(None) => return Err("Bitwarden is locked (`roster vault unlock`)".into()),
+        Ok(None) => {
+            return Err(errors::hint(
+                "Bitwarden is locked",
+                "run `roster vault unlock`",
+            ));
+        }
         Err(_) => return Err("keyctl isn't installed, so there's no Bitwarden session".into()),
     };
     let env = [("BW_SESSION", session.as_str())];

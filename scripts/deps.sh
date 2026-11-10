@@ -50,7 +50,8 @@ elif command -v pacman >/dev/null; then
 	missing=$(for p in $pkgs; do pacman -Q "$p" >/dev/null 2>&1 || echo "$p"; done)
 	if [ -n "$missing" ]; then
 		say "pacman: installing" $missing
-		as_root pacman -S --needed --noconfirm $missing
+		# Arch supports no partial upgrades: refresh and upgrade together.
+		as_root pacman -Syu --needed --noconfirm $missing
 	fi
 else
 	say "no apt-get, dnf or pacman: install by hand: ssh, keyutils, fzf, curl, tmux, bash-completion, git, unzip, make, gcc"
@@ -67,7 +68,7 @@ if ! command -v fzf >/dev/null && [ ! -x "$HOME/.local/bin/fzf" ]; then
 	esac
 	ftmp=$(mktemp -d)
 	say "fzf: not in the package repositories; downloading $tgz"
-	curl -fsSL -o "$ftmp/$tgz" \
+	curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors -o "$ftmp/$tgz" \
 		"https://github.com/junegunn/fzf/releases/download/v$FZF_VERSION/$tgz"
 	echo "$sum  $ftmp/$tgz" | sha256sum -c --quiet - ||
 		{ say "fzf: $tgz doesn't match its SHA-256; not installed"; rm -rf "$ftmp"; exit 1; }
@@ -90,7 +91,7 @@ else
 	tmp=$(mktemp -d)
 	trap 'rm -rf "$tmp"' EXIT
 	say "bw: downloading $zip"
-	curl -fsSL -o "$tmp/$zip" \
+	curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors -o "$tmp/$zip" \
 		"https://github.com/bitwarden/clients/releases/download/cli-v$BW_VERSION/$zip"
 	echo "$sum  $tmp/$zip" | sha256sum -c --quiet - ||
 		{ say "bw: $zip doesn't match its SHA-256; not installed"; exit 1; }

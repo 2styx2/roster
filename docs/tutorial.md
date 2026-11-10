@@ -72,7 +72,7 @@ git clone https://github.com/2styx2/roster ~/src/roster
 cd ~/src/roster
 make deps                   # system packages (apt, dnf or pacman) and bw
 make install                # into ~/.local, no sudo
-roster --version            # roster 0.7.9
+roster --version            # roster 0.7.11
 ```
 
 `make install` puts three files under `~/.local`:
@@ -329,17 +329,25 @@ links:
 
 | You see | It means | Do |
 |---|---|---|
-| `vault unlock: auth prompt: /dev/tty: …` | No terminal to ask on (a script, or an editor's command box). | Run `roster vault unlock` in a real terminal. |
-| `vault unlock: no master password given` | Enter came before the password. | Run it again. |
-| `vault import skipped: Bitwarden is locked` | The 12-hour unlock ran out, or was never done. | `roster vault unlock`. |
+| `roster: vault unlock: wrong master password` | Bitwarden refused the master password. | Run it again; `bw login` again if the account changed. |
+| `roster: vault unlock: can't ask for the password: no terminal` | No terminal to ask on (a script, or an editor's command box). | Run `roster vault unlock` in a real terminal. |
+| `roster: vault unlock: no master password given` | Enter came before the password. | Run it again. |
+| `roster: vault unlock: keyctl isn't installed, …` | keyutils is missing, so the unlock can't be kept. | `sudo apt install keyutils`. |
+| `roster: HOST: no vault item named "X"` | No Bitwarden item has that name. | Fix the `auth: bw:X` name, or use `bw:ID` with the item's id. |
+| `roster: sync: vault import skipped: Bitwarden is locked` | The 12-hour unlock ran out, or was never done. | `roster vault unlock`. |
 | `skipped vault item 'X ssh': its first URI has no address` | The item's URI is empty or unusable. | Put the address in the item's URI. |
 | A Host shows `unreviewed` | `defaults` say `reviewed: false`, and nobody has reviewed it. | Set `reviewed: true` on it once you trust it. |
-| `roster check HOST` fails at `port` | Network, firewall or VPN. | Fix the route. roster can't. |
-| `roster check HOST` fails at `login` | The key isn't installed, or the account changed. | `roster setup`, then read ssh's own error, which `check` prints. |
-| `token login to /api/auth/login: HTTP 401` | The app refused the user name or password. | Check the service's `user` and `auth` item; if the app names its fields differently, set `user_field`, `password_field` or `login_path`. |
+| `roster: HOST: can't reach 10.0.0.5:22 (timed out)` | Network, firewall or VPN. | `roster check HOST` shows each step; fix the route. roster can't. |
+| `roster: HOST: ssh isn't listening on 10.0.0.5:22` | The Host is up but refuses ssh on that port. | Check the Host's `port`, and that sshd runs there. |
+| `roster: HOST: the Box key isn't accepted for admin` | The key isn't installed, or the account changed. | `roster setup`, or fix the Host's `user`. |
+| `roster: HOST: the host key of 10.0.0.5:22 has changed since roster recorded it` | The Host was rebuilt, or something sits in between. | If it was rebuilt: the `ssh-keygen -R` line in the hint, then `roster setup`. |
+| `roster: HOST: sudo rejected the password from bw:ITEM` | The sudo password in that item is wrong. | Update the item, or give the Host its own `sudo: {auth: "bw:ITEM"}`. |
+| `roster: HOST: sudo needs a password` | The Host's `auth` is a key, and sudoers wants a password. | Give the Host `sudo: {auth: "bw:ITEM"}`. |
+| `token login to /api/auth/login: login refused (HTTP 401)` | The app refused the user name or password. | Check the service's `user` and `auth` item; if the app names its fields differently, set `user_field`, `password_field` or `login_path`. |
 | `token login to …: no access_token in the reply` | The app logged in but keeps its token under another name. | Set `token_field`, such as `token` or `data.token`. |
-| `run --sudo`: `sudo: a password is required` | The Host's `auth` is a key, and sudoers wants a password. | Give the Host `sudo: {auth: "bw:ITEM"}`. |
-| `no fzf on PATH` | The picker needs fzf. | `sudo apt install fzf`. |
+| `the certificate of https://… isn't trusted` | A self-signed or private certificate. | If you trust it: `verify: false` on the service, or `roster web -k`. |
+| `roster: pick: fzf isn't installed` | The picker needs fzf. | `sudo apt install fzf`. |
+| `roster: no Inventory: …` | No `./roster.yml` or `~/.config/roster/roster.yml`. | Write one, or name it with `-c FILE` or `ROSTER_CONFIG=FILE`. |
 
 ## 12. Leaving
 

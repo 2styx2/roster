@@ -58,12 +58,20 @@ fn unlock_keeps_the_session_key_in_the_keyring_with_a_timeout() {
         read(&s, "bw.log"),
         "unlock --raw --passwordenv ROSTER_BW_MASTER --nointeraction\n"
     );
-    assert_eq!(
-        read(&s, "keyctl.log"),
-        // Added to the session keyring (always possessed, even after `su`),
-        // set up there, then moved into the user keyring.
-        "--version\nsearch @u user roster:bw-session\npadd user roster:bw-session @s\n\
-         setperm 7000 0x3f0b0000\ntimeout 7000 43200\nlink 7000 @u\nunlink 7000 @s\n"
+    // In a new session keyring (whose keys the process always possesses: not
+    // so for WSL's default user-session keyring, nor for @u after `su`), the
+    // key is added, set up, then moved into the user keyring.
+    let log = read(&s, "keyctl.log");
+    assert!(
+        log.starts_with("--version\nsearch @u user roster:bw-session\nsession - sh -c "),
+        "{log}"
+    );
+    assert!(
+        log.ends_with(
+            " store roster:bw-session 0x3f0b0000 43200\npadd user roster:bw-session @s\n\
+             setperm 7000 0x3f0b0000\ntimeout 7000 43200\nlink 7000 @u\nunlink 7000 @s\n"
+        ),
+        "{log}"
     );
     assert_eq!(read(&s, ".fake-keyring/roster:bw-session"), SESSION);
     // Possessor: all; the owner's other processes (cron): view, read and
@@ -100,6 +108,23 @@ fn a_name_inside_another_items_name_resolves_to_the_exact_one() {
     assert!(!out.stderr.contains("More than one"), "{}", out.stderr);
 }
 
+/// No item has the exact name and bw's own search finds several: bw's "More
+/// than one result" dump never shows; roster says so in its own words.
+#[test]
+fn a_name_that_only_part_matches_several_items_says_so_plainly() {
+    let mut s = sandbox("bw-several", "bw:sw-0");
+    let other = r#"{"object":"item","id":"id-lab","name":"lab-sw-01","login":{"username":"other","password":"pw-lab-made-up"},"fields":[]}"#;
+    s.set_env("FAKE_BW_ITEMS", &format!("{ITEMS}\n{other}"));
+    unlock(&s);
+    let out = s.roster(&["ssh", "sw-01"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "roster: sw-01: several vault items match \"sw-0\"\n  \
+         hint: use `auth: bw:ID` with the item's id\n"
+    );
+}
+
 /// Two items with the very same name: roster can't choose, and says to use
 /// the item's id (bw:ID), listing them.
 #[test]
@@ -116,7 +141,7 @@ fn two_items_with_the_same_name_are_refused_with_their_ids() {
     let out = s.roster(&["ssh", "sw-01"]);
     assert_eq!(out.code, 1, "{}", out.stderr);
     assert!(
-        out.stderr.contains("2 vault items are named 'sw-01'")
+        out.stderr.contains("2 vault items are named \"sw-01\"")
             && out.stderr.contains("id-first")
             && out.stderr.contains("id-twin"),
         "{}",
@@ -152,12 +177,14 @@ fn a_missing_field_or_item_stops_before_ssh() {
         (
             "bw-no-field",
             "bw:sw-01#pin",
-            "roster: sw-01: auth bw:sw-01#pin: item sw-01 has no pin\n",
+            "roster: sw-01: vault item \"sw-01\" has no pin\n  \
+             hint: add it in Bitwarden, or change auth: bw:sw-01#pin in roster.yml\n",
         ),
         (
             "bw-no-pass",
             "bw:empty",
-            "roster: sw-01: auth bw:empty: item empty has no password\n",
+            "roster: sw-01: vault item \"empty\" has no password\n  \
+             hint: add it in Bitwarden, or change auth: bw:empty in roster.yml\n",
         ),
     ] {
         let s = sandbox(name, auth);
@@ -171,16 +198,11 @@ fn a_missing_field_or_item_stops_before_ssh() {
     unlock(&s);
     let out = s.roster(&["ssh", "sw-01"]);
     assert_eq!(out.code, 1);
-    assert!(
-        out.stderr.contains("Not found.\n"),
-        "bw's own: {}",
-        out.stderr
-    );
-    assert!(
-        out.stderr
-            .contains("roster: sw-01: auth bw:sw-99: bw get failed"),
-        "{}",
-        out.stderr
+    assert_eq!(
+        out.stderr,
+        "roster: sw-01: no vault item named \"sw-99\"\n  hint: check the item's name in \
+         Bitwarden, or use `auth: bw:ID` with the item's id\n",
+        "none of bw's own words"
     );
     assert_eq!(read(&s, "ssh.log"), "");
 }
@@ -206,17 +228,7 @@ fn a_wrong_master_password_fails_and_stores_nothing() {
     s.set_env("BW_PASSWORD", "not-the-master");
     let out = s.roster(&["vault", "unlock"]);
     assert_eq!(out.code, 1);
-    assert!(
-        out.stderr.contains("Invalid master password."),
-        "{}",
-        out.stderr
-    );
-    assert!(
-        out.stderr
-            .contains("roster: vault unlock: bw unlock failed"),
-        "{}",
-        out.stderr
-    );
+    assert_eq!(out.stderr, "roster: vault unlock: wrong master password\n");
     assert!(!read(&s, "keyctl.log").contains("padd"));
 }
 
@@ -297,13 +309,41 @@ fn without_keyctl_nothing_is_stored_and_each_run_asks() {
     s.set_env("BW_PASSWORD", MASTER);
     let out = s.roster(&["vault", "unlock"]);
     assert_eq!(out.code, 1);
-    assert!(out.stderr.contains("install keyutils"), "{}", out.stderr);
+    let hint = "  hint: install keyutils (apt install keyutils, dnf install keyutils)\n";
+    assert_eq!(
+        out.stderr,
+        format!(
+            "roster: vault unlock: keyctl isn't installed, so the session can't be kept\n{hint}"
+        )
+    );
     assert_eq!(read(&s, "bw.log"), "", "no point unlocking");
     let out = s.roster(&["ssh", "sw-01"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
-    assert!(out.stderr.contains("install keyutils"), "{}", out.stderr);
+    assert_eq!(
+        out.stderr,
+        format!(
+            "roster: vault: keyctl isn't installed, so the master password is asked for on each run\n{hint}"
+        )
+    );
     assert_eq!(read(&s, "askpass.got"), format!("{PASSWORD}\n"));
     assert!(!s.home.join(".fake-keyring").exists());
+}
+
+/// keyctl runs but the keyring won't take the key: plain words, keyctl's
+/// own reason in brackets, nothing stored.
+#[test]
+fn a_keyring_that_refuses_the_key_is_said_plainly() {
+    let mut s = sandbox("bw-keyring-full", "bw:sw-01");
+    s.set_env("BW_PASSWORD", MASTER);
+    s.set_env("FAKE_KEYCTL_FULL", "1");
+    let out = s.roster(&["vault", "unlock"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "roster: vault unlock: can't keep the session key in the kernel keyring \
+         (disk quota exceeded)\n  hint: `keyctl show @u` lists the keys it holds\n"
+    );
+    assert!(!s.home.join(".fake-keyring/roster:bw-session").exists());
 }
 
 #[test]

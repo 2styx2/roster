@@ -6,6 +6,7 @@ mod atomic;
 mod bw;
 mod check;
 mod claude;
+mod errors;
 mod hosts;
 mod import;
 mod inventory;
@@ -99,9 +100,10 @@ pub struct Fail {
 }
 
 pub fn usage_error(msg: impl Into<String>) -> Fail {
+    let hint = "`roster -h` lists the commands and their options";
     Fail {
         code: 2,
-        msg: format!("{} (see roster -h)", msg.into()),
+        msg: errors::hint(msg.into(), hint),
     }
 }
 

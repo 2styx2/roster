@@ -48,7 +48,7 @@ pub struct Vault {
 /// The vault as it is now, or why it can't be read without a prompt.
 pub fn open() -> Result<Vault, String> {
     let [items, folders] = bw::list()?;
-    let bad = |e: serde_json::Error| format!("bw gave bad JSON: {e}");
+    let bad = |_| "bw printed something that isn't JSON".to_string();
     Ok(Vault {
         items: serde_json::from_slice(&items).map_err(bad)?,
         folders: serde_json::from_slice(&folders).map_err(bad)?,
@@ -131,7 +131,7 @@ pub fn sync(inv: &Inventory) -> bool {
     let vault = match open() {
         Ok(vault) => vault,
         Err(e) => {
-            eprintln!("roster: vault import skipped: {e}");
+            eprintln!("roster: sync: vault import skipped: {e}");
             return false;
         }
     };
