@@ -54,6 +54,9 @@ pub struct Host {
     pub auth: String,
     /// false: a Password Host, reached with `auth`.
     pub enroll: bool,
+    /// `sudo: {auth: REF}`: the vault reference of the sudo password, for
+    /// `run --sudo`; without it, `auth`.
+    pub sudo: Option<String>,
     /// false: found by a scan, not set up yet.
     pub reviewed: bool,
     /// `posix` or `windows`.
@@ -86,8 +89,22 @@ pub struct Service {
     /// A vault reference, as `Host::auth`.
     pub auth: Option<String>,
     pub verify: bool,
-    /// `basic`, `bearer` or `none`.
+    /// `basic`, `bearer`, `token` or `none`; `web_login_names` and the
+    /// built-in `hub` (a `token`) already resolved.
     pub login: String,
+    /// How a `token` login asks for its token.
+    pub token: Token,
+}
+
+/// A `token` login: POST `{user_field: USER, password_field: PASSWORD}` as
+/// JSON to `login_path`, take `token_field` (dotted for a nested one) from
+/// the reply and send it in `token_header`.
+pub struct Token {
+    pub login_path: String,
+    pub token_field: String,
+    pub user_field: String,
+    pub password_field: String,
+    pub token_header: String,
 }
 
 impl Host {
@@ -160,7 +177,8 @@ impl Inventory {
         let mut vars = vec!["BW_PASSWORD".to_string(), "BW_SESSION".to_string()];
         for h in &self.hosts {
             let services = h.services.iter().filter_map(|s| s.auth.as_deref());
-            for auth in std::iter::once(h.auth.as_str()).chain(services) {
+            let own = [Some(h.auth.as_str()), h.sudo.as_deref()];
+            for auth in own.into_iter().flatten().chain(services) {
                 if let Some(var) = auth.strip_prefix("env:") {
                     vars.push(var.to_string());
                 }
@@ -401,6 +419,8 @@ fn parse(doc: &Value) -> Result<Inventory, Bad> {
             );
         }
     };
+    let login_names = as_map(&doc["web_login_names"], &["web_login_names"], "a mapping")?;
+    let login_names = login_names.unwrap_or(&empty);
     let mut hosts = Vec::new();
     let mut described = Vec::new();
     for (group, body) in groups {
@@ -438,7 +458,8 @@ fn parse(doc: &Value) -> Result<Inventory, Bad> {
                 }
                 _ => as_map(fields, &at, "an address or a mapping")?.unwrap_or(&empty),
             };
-            hosts.push(host(&at, [own, &inherited, defaults], &key_type)?);
+            let layers = [own, &inherited, defaults];
+            hosts.push(host(&at, layers, &key_type, login_names)?);
         }
     }
     let groups: Vec<String> = groups.keys().filter_map(text).collect();
@@ -566,7 +587,12 @@ fn is_zoned_ipv6(ip: &str) -> bool {
 }
 
 /// LAYERS: the Host's own fields, its group's, then `defaults`.
-fn host(at: &[&str; 4], layers: [&Mapping; 3], box_key: &str) -> Result<Host, Bad> {
+fn host(
+    at: &[&str; 4],
+    layers: [&Mapping; 3],
+    box_key: &str,
+    login_names: &Mapping,
+) -> Result<Host, Bad> {
     let mut flat = Vec::new();
     for layer in layers {
         flat.extend(ssh_block(layer, at)?);
@@ -631,6 +657,14 @@ fn host(at: &[&str; 4], layers: [&Mapping; 3], box_key: &str) -> Result<Host, Ba
         Some(v) => flag(v).map_or_else(|| bad(&field(key), BOOL), Ok),
     };
     let (enroll, reviewed) = (boolean("enroll", true)?, boolean("reviewed", true)?);
+    let mut sudo = None; // defaults first, so the Host's own wins
+    for layer in layers.iter().rev() {
+        let v = layer.get("sudo").unwrap_or(&Value::Null);
+        let block = as_map(v, &field("sudo"), "a mapping: {auth: REF}")?;
+        if let Some(auth) = block.and_then(|b| b.get("auth")) {
+            sudo = text(auth);
+        }
+    }
     let mesh = match first(&layers, "mesh") {
         None | Some(Value::Null) => None,
         Some(_) => Some(boolean("mesh", false)?),
@@ -645,6 +679,7 @@ fn host(at: &[&str; 4], layers: [&Mapping; 3], box_key: &str) -> Result<Host, Ba
             .and_then(text)
             .unwrap_or("prompt".into()),
         enroll,
+        sudo,
         reviewed,
         os,
         key_type,
@@ -664,11 +699,24 @@ fn host(at: &[&str; 4], layers: [&Mapping; 3], box_key: &str) -> Result<Host, Ba
     if host.description.is_empty() {
         host.description = oneline(first(&layers, "notes"));
     }
-    (host.services, host.web) = services(&host, &field("services"), &layers)?;
+    (host.services, host.web) = services(&host, &field("services"), &layers, login_names)?;
     Ok(host)
 }
 
-const SERVICE_KEYS: [&str; 7] = ["port", "url", "scheme", "user", "auth", "verify", "login"];
+const SERVICE_KEYS: [&str; 12] = [
+    "port",
+    "url",
+    "scheme",
+    "user",
+    "auth",
+    "verify",
+    "login",
+    "login_path",
+    "token_field",
+    "user_field",
+    "password_field",
+    "token_header",
+];
 
 /// Services merge per name, field by field: defaults < group < Host. An
 /// entry roster can't use is left out; the rest of the Host still loads.
@@ -676,6 +724,7 @@ fn services(
     h: &Host,
     at: &[&str],
     layers: &[&Mapping; 3],
+    login_names: &Mapping,
 ) -> Result<(Vec<Service>, Option<String>), Bad> {
     let mut merged: Vec<(String, Mapping)> = Vec::new();
     let mut broken = Vec::new();
@@ -722,7 +771,7 @@ fn services(
     let services: Vec<Service> = merged
         .iter()
         .filter(|(name, _)| !broken.contains(name))
-        .filter_map(|(name, e)| service(name, e, &h.ip, &login))
+        .filter_map(|(name, e)| service(name, e, &h.ip, &login, login_names))
         .collect();
     let has_url = |n: &str| merged.iter().any(|(m, e)| m == n && e.contains_key("url"));
     let web = ["web"]
@@ -739,6 +788,7 @@ fn service(
     e: &Mapping,
     ip: &str,
     login: &(Option<String>, Option<String>),
+    login_names: &Mapping,
 ) -> Option<Service> {
     let given_port = e.get("port").filter(|v| !v.is_null());
     let mut scheme = e.get("scheme").and_then(text);
@@ -779,9 +829,29 @@ fn service(
         }
     };
     let login_type = e.get("login").map_or(Some("basic".into()), text)?;
-    if !["basic", "bearer", "none"].contains(&login_type.as_str()) {
+    let login_type = login_names
+        .get(&login_type)
+        .and_then(text)
+        .unwrap_or(login_type);
+    let login_type = if login_type == "hub" {
+        "token".into()
+    } else {
+        login_type
+    };
+    if !["basic", "bearer", "token", "none"].contains(&login_type.as_str()) {
         return None;
     }
+    let field = |key: &str, default: &str| match e.get(key) {
+        None => Some(default.to_string()),
+        Some(v) => text(v).filter(|s| !s.trim().is_empty()),
+    };
+    let token = Token {
+        login_path: field("login_path", "/api/auth/login").filter(|p| p.starts_with('/'))?,
+        token_field: field("token_field", "access_token")?,
+        user_field: field("user_field", "username")?,
+        password_field: field("password_field", "password")?,
+        token_header: field("token_header", "Authorization")?,
+    };
     let or_host = |key: &str, host: &Option<String>| match e.get(key) {
         Some(v) => text(v).map(|s| s.trim().to_string()),
         None => host.clone(),
@@ -796,6 +866,7 @@ fn service(
         auth: or_host("auth", &login.1),
         verify,
         login: login_type,
+        token,
     })
 }
 

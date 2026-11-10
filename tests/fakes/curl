@@ -5,24 +5,34 @@
 # $FAKE_CURL_BODY, then the -w format as curl would with the status
 # $FAKE_CURL_STATUS (200); $FAKE_CURL_EXIT (0) fails as curl does, with
 # status 000.
+# A POST to a URL ending in $FAKE_CURL_LOGIN_PATH (/api/auth/login) is a token
+# login when $FAKE_CURL_TOKEN_BODY is set: its stdin goes to
+# $HOME/curl.login.stdin instead, and it prints that body with the status
+# $FAKE_CURL_LOGIN_STATUS (200).
 for a in "$@"; do printf '%s\n' "$a"; done >>"$HOME/curl.log"
 echo >>"$HOME/curl.log"
-cat >"$HOME/curl.stdin"
-env >"$HOME/curl.env"
-fmt=
+fmt='' url=''
 while [ $# -gt 0 ]; do
   [ "$1" = -w ] && fmt=$2
+  url=$1
   shift
 done
-printf '%s' "$FAKE_CURL_BODY"
-status=${FAKE_CURL_STATUS:-200}
+body=$FAKE_CURL_BODY status=${FAKE_CURL_STATUS:-200} save=curl.stdin
+case $url in *"${FAKE_CURL_LOGIN_PATH:-/api/auth/login}")
+  if [ -n "$FAKE_CURL_TOKEN_BODY" ]; then
+    body=$FAKE_CURL_TOKEN_BODY status=${FAKE_CURL_LOGIN_STATUS:-200} save=curl.login.stdin
+  fi ;;
+esac
+cat >"$HOME/$save"
+env >"$HOME/curl.env"
+printf '%s' "$body"
 if [ "${FAKE_CURL_EXIT:-0}" != 0 ]; then
   echo "curl: (7) Failed to connect to 10.0.0.5 port 8443" >&2
   status=000
 fi
 out=$(printf '%s' "$fmt" | sed "s/%{http_code}/$status/")
 case $out in
-'%{stderr}'*) printf "${out#'%{stderr}'}" >&2 ;;
-*) printf "$out" ;;
+'%{stderr}'*) printf '%b' "${out#'%{stderr}'}" >&2 ;;
+*) printf '%b' "$out" ;;
 esac
 exit "${FAKE_CURL_EXIT:-0}"

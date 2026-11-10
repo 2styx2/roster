@@ -1,4 +1,4 @@
-.TH ROSTER 1 2026-11-09 "roster 0.7.6" "User Commands"
+.TH ROSTER 1 2026-11-09 "roster 0.7.8" "User Commands"
 .SH NAME
 roster \- know your network: list and reach the Hosts in roster.yml
 .SH SYNOPSIS
@@ -20,6 +20,7 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .B setup
 .RB [ \-\-undo ]
 .RB [ \-\-dry\-run ]
+.RB [ \-v ]
 .br
 .B roster
 .RB [ \-c
@@ -68,6 +69,7 @@ roster \- know your network: list and reach the Hosts in roster.yml
 .IR FILE ]
 .B run
 .RB [ \-\-json ]
+.RB [ \-\-sudo ]
 .I TARGET
 .B \-\-
 .I CMD
@@ -371,8 +373,20 @@ A Host that is unreviewed, has
 .BR "os: windows" ,
 or is a Password Host
 .RB ( "enroll: false" )
-is skipped, with one line on stderr giving the reason, and is never
-contacted.
+is skipped and never contacted.
+These routine skips, and the same Hosts left out of the Mesh, are one
+summary line on stderr
+.RI ( "skipped 71 unreviewed, 7 Password Hosts (\-\-verbose lists them)" );
+.B \-v
+or
+.B \-\-verbose
+gives one line per Host with its reason.
+Unusual reasons (an unsupported
+.BR seen_as ,
+.B mesh_dir
+or
+.BR via )
+are always shown.
 Mark a Windows Host
 .B "os: windows"
 (a
@@ -551,9 +565,13 @@ are added or removed, only keys whose
 .I .pub
 carries that tag are deleted, and only files whose first line names this
 Box as owner are rewritten or deleted.
-A Mesh key roster didn't make, or another Box's Mesh config, is
+A Mesh key roster didn't make is
 .BR "left alone" :
 that Host's own part is skipped and counts as not done.
+Another Box's Mesh config (two Boxes sharing an Inventory, where the first
+one made the Mesh) is left alone too, without failing the run: one line
+names those Hosts,
+.IR "the Mesh on HOSTS is another Box's; left alone" .
 A Host that is down is not done either; the lines of a source that
 couldn't be read stay as they are on its peers until a run reaches it.
 A rerun with nothing to change prints nothing.
@@ -891,6 +909,47 @@ couldn't start), after
 .BI "roster: failed on " "HOST" ", ..."
 on stderr; else 0.
 .TP
+.B run \-\-sudo
+Run
+.I CMD
+as root.
+The command the Host gets is
+.B sudo \-S \-p '' \-\- sh \-c 'exec </dev/null; CMD'
+.RI ( CMD
+single-quoted, with each ' as '\e''), and the sudo password and a newline
+go to ssh's stdin, never argv; sudo reads that line and
+.I CMD
+runs with stdin from
+.IR /dev/null .
+The password comes from the Host's
+.B sudo: {auth: REF}
+(see
+.BR INVENTORY ),
+else its own
+.B auth
+(so a Host without either is asked for, as
+.BR prompt ).
+Each reference is resolved once per run, before any Host starts.
+When it is
+.BR agent ,
+.B key
+or
+.B none
+(no password), the Host gets
+.B sudo \-n \-\-
+instead, which works only where sudoers says NOPASSWD; elsewhere sudo
+fails that Host with
+.IR "a password is required" .
+The sudo password shows as
+.B ********
+in every output line, and in
+.BR \-\-json .
+A Password Host still logs in through askpass; its stdin carries only the
+sudo password.
+.B \-\-sudo
+goes before
+.IR TARGET .
+.TP
 .B run \-\-json
 Print nothing until every Host is done, then one JSON document, Hosts in
 .I TARGET
@@ -1093,6 +1152,68 @@ or
 .B header = """Authorization: Bearer TOKEN"""
 for
 .BR "login: bearer" .
+.IP
+.B login: token
+logs in first, for apps whose login is "POST a user name and password, get
+a token back":
+.B curl ... \-H \(dqContent\-Type: application/json\(dq \-X POST
+.IR ORIGIN/login_path ,
+with the JSON body
+.B {\(dqusername\(dq: USER, \(dqpassword\(dq: PASSWORD}
+as a
+.B data\-raw
+line of the stdin config, never argv (JSON, since some such servers echo a
+form body's password back).
+The token is taken from the JSON reply's
+.B token_field
+and the request then sends
+.B header = """Authorization: Bearer TOKEN"""
+in its stdin config.
+The login's reply is never printed.
+A login status outside 200 to 299, a reply that isn't JSON, or one without
+the token exits 1 with
+.BI "roster: " "HOST SERVICE" ": token login to " PATH ": HTTP " STATUS
+(or
+.BR "the reply isn't JSON" ,
+.BI "no " FIELD " in the reply" )
+before the request runs; neither the password nor the token is ever in a
+message.
+Its fields, all optional:
+.RS
+.TP
+.B login_path
+Where to POST (default
+.BR /api/auth/login );
+starts with /.
+.TP
+.B token_field
+The reply's field holding the token (default
+.BR access_token );
+a dotted path such as
+.B data.token
+reaches into nested objects.
+.TP
+.BR user_field ", " password_field
+The JSON body's names (default
+.B username
+and
+.BR password ).
+.TP
+.B token_header
+The request header for the token (default
+.BR Authorization ,
+sent as
+.BR "Bearer TOKEN" );
+any other header gets the bare token.
+.RE
+.IP
+.B login: hub
+is
+.B login: token
+with these defaults, and the top-level
+.B web_login_names
+maps other names to a login type (see
+.BR INVENTORY ).
 .B login: none
 sends no Login, and nor does an
 .B auth
@@ -1304,6 +1425,14 @@ A
 .B key_path
 that names another type's key is refused: remove it or point it at another file.
 .TP
+.B web_login_names
+Login names to login types, for a service's
+.BR login :
+.B {acme: hub}
+makes
+.B login: acme
+a token login with the default fields.
+.TP
 .B links
 A list of
 .BR "{from, to, both, via}" :
@@ -1331,6 +1460,16 @@ defaults to 22;
 .BR prompt )
 is a vault reference, only ever read when used (see
 .BR VAULT ).
+.TP
+.B sudo
+.BI "{auth: " REF }:
+the vault reference of the sudo password for
+.BR "run \-\-sudo" ,
+looked up through the layers like
+.BR auth ;
+without it, the Host's
+.B auth
+is used.
 .TP
 .BR enroll ", " reviewed
 Both default to true.
@@ -1364,20 +1503,24 @@ Name to a port
 a URL
 .RB ( "ui: https://10.0.0.5:8443" ),
 or
-.BR "{port, url, scheme, user, auth, verify, login}" .
+.B {port, url, scheme, user, auth, verify, login}
+and a token login's
+.BR "login_path, token_field, user_field, password_field, token_header" .
 Entries merge field by field down the layers.
 Ports 443 and 8443 mean https, and 80, 8000, 8008, 8080 and 8888 http.
 .B login
 is
-.BR basic " (default), " bearer " or " none ;
-an entry roster can't use is left out.
+.BR basic " (default), " bearer ", " token " (or " hub ") or " none ,
+or a name
+.B web_login_names
+maps to one of them;
+an entry roster can't use, such as one with an unknown login, is left out.
 The legacy
 .BI "web: " URL
 is a service named web.
 .PP
 Other keys, such as
 .BR resources ,
-.BR sudo ,
 .B shell_hooks
 or
 .BR workers ,

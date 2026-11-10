@@ -17,8 +17,9 @@ pub fn run(inv: &Inventory, dry: bool) -> Result<(Vec<&Host>, usize), Fail> {
     let known_hosts = home().join(".ssh/roster_known_hosts");
     let mut known = std::fs::read_to_string(&known_hosts).unwrap_or_default();
     let (mut undone, mut memo) = (0, vault::Memo::default());
+    let mut tally = crate::setup::Tally::default();
     for h in &inv.hosts {
-        let skip = |why: &str| eprintln!("roster: {}: skipped: {why}", h.name);
+        let mut skip = |why: &str| tally.note(why, &format!("roster: {}: skipped: {why}", h.name));
         if !h.reviewed {
             skip("unreviewed");
             continue;
@@ -69,6 +70,7 @@ pub fn run(inv: &Inventory, dry: bool) -> Result<(Vec<&Host>, usize), Fail> {
             }
         }
     }
+    tally.summary("skipped");
     Ok((ready, undone))
 }
 

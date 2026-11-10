@@ -177,6 +177,8 @@ const DOCUMENTED: &[&str] = &[
     "contrib/roster.bash",
     "$PREFIX/share/bash\\-completion/completions/roster",
     ".B make install",
+    "\\-\\-verbose",
+    "is another Box's; left alone",
     ".B make deps",
     "scripts/bootstrap.sh",
     ".B pick",
@@ -254,6 +256,29 @@ const DOCUMENTED: &[&str] = &[
     ".IR roster_<type> \" beside it\"",
     "the Box key of its own",
     "point it at another file",
+    // web token login
+    ".B login: token",
+    "Content\\-Type: application/json",
+    ".B login_path",
+    "/api/auth/login",
+    ".B token_field",
+    "data.token",
+    ".BR user_field \", \" password_field",
+    ".B token_header",
+    "any other header gets the bare token",
+    ".B login: hub",
+    ".B web_login_names",
+    "token login to",
+    "neither the password nor the token",
+    // run --sudo
+    ".B run \\-\\-sudo",
+    ".RB [ \\-\\-sudo ]",
+    ".B sudo \\-S \\-p '' \\-\\- sh \\-c 'exec </dev/null; CMD'",
+    ".B sudo \\-n \\-\\-",
+    "NOPASSWD",
+    "a password is required",
+    ".B ********",
+    ".BI \"{auth: \" REF }",
 ];
 
 #[test]
