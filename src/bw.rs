@@ -98,6 +98,33 @@ fn unlock_now(what: &str) -> Result<Zeroizing<String>, Fail> {
     }
 }
 
+/// The vault item named exactly `item`. bw's own lookup is a search (`box-b
+/// ssh` also finds `lab-box-b ssh`, and bw gives up on "More than one
+/// result"), so the search's matches are narrowed to the exact name first;
+/// with none, `bw get item` decides (an id, say). Several items of the very
+/// same name are refused with their ids.
+fn item_named(item: &str, session: &str) -> Result<Value, String> {
+    let env = [("BW_SESSION", session)];
+    let locked = |e: String| format!("{e}; if Bitwarden is locked, run `roster vault unlock`");
+    let list = bw(&["list", "items", "--search", item], &env).map_err(locked)?;
+    let all: Vec<Value> = serde_json::from_slice(&list).map_err(|_| "bad JSON".to_string())?;
+    let mut exact: Vec<Value> = all.into_iter().filter(|i| i["name"] == item).collect();
+    match exact.len() {
+        1 => Ok(exact.remove(0)),
+        0 => {
+            let json = bw(&["get", "item", item], &env).map_err(locked)?;
+            serde_json::from_slice(&json).map_err(|_| "bad JSON".to_string())
+        }
+        n => {
+            let ids: Vec<&str> = exact.iter().filter_map(|i| i["id"].as_str()).collect();
+            Err(format!(
+                "{n} vault items are named '{item}' ({}); use auth: bw:ID with one of those ids",
+                ids.join(", ")
+            ))
+        }
+    }
+}
+
 /// Resolve `ITEM[#FIELD]`: the login password, `#username`, `#notes`, or a
 /// custom field (exact name, then case-insensitive).
 pub fn get(reference: &str, what: &str) -> Result<Zeroizing<String>, Fail> {
@@ -121,12 +148,7 @@ pub fn get(reference: &str, what: &str) -> Result<Zeroizing<String>, Fail> {
     };
     drop(run);
     let fail = |e: String| failed(format!("{what}: auth bw:{reference}: {e}"));
-    let json = bw(&["get", "item", item], &[("BW_SESSION", &session)]).map_err(|e| {
-        fail(format!(
-            "{e}; if Bitwarden is locked, run `roster vault unlock`"
-        ))
-    })?;
-    let mut doc: Value = serde_json::from_slice(&json).map_err(|_| fail("bad JSON".into()))?;
+    let mut doc = item_named(item, &session).map_err(fail)?;
     let fields = doc["fields"]
         .as_array()
         .map(Vec::as_slice)
