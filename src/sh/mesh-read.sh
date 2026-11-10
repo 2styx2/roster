@@ -23,7 +23,9 @@ for f in "$P"/id_ed25519 "$P"/id_ed25519.pub "$P"/roster_mesh_*; do
 done
 if grep -qxF "Include $P/config" .ssh/config 2>/dev/null; then echo include; fi
 if grep -qxF "$MARK" .ssh/config 2>/dev/null; then echo mark; fi
-if [ -d .claude ]; then echo claude; fi
+# Only a ~/.claude this user can write (one owned by root, from `sudo claude`,
+# gets no import).
+if [ -d .claude ] && [ -w .claude ]; then echo claude; fi
 if grep -qxF '@~/ROSTER.md' .claude/CLAUDE.md 2>/dev/null; then echo import; fi
 for f in "$P/config" "$P/known_hosts" ROSTER.md; do
 	if [ -f "$f" ]; then

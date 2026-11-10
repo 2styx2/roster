@@ -65,7 +65,7 @@ keys() {
 }
 
 [ -d .ssh ] || mkdir -m 700 .ssh
-if [ "$IMPORT" = remove ] && [ -f .claude/CLAUDE.md ]; then
+if [ "$IMPORT" = remove ] && [ -f .claude/CLAUDE.md ] && [ -w .claude ]; then
 	put .claude/CLAUDE.md 644 claude_without
 fi
 if [ "$INCLUDE" = remove ] && [ -f .ssh/config ]; then
@@ -110,7 +110,7 @@ for f in $PUT; do
 	esac
 done
 if [ "$INCLUDE" = add ]; then put .ssh/config 600 config_with; fi
-if [ "$IMPORT" = add ]; then put .claude/CLAUDE.md 644 claude_with; fi
+if [ "$IMPORT" = add ] && [ -w .claude ]; then put .claude/CLAUDE.md 644 claude_with; fi
 if [ -n "$ADD$DEL" ]; then
 	d=.ssh/authorized_keys.roster-del-$$
 	printf '%s\n' "$DEL" >"$d"
