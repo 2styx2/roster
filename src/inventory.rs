@@ -54,6 +54,9 @@ pub struct Host {
     pub auth: String,
     /// false: a Password Host, reached with `auth`.
     pub enroll: bool,
+    /// `sudo: {auth: REF}`: the vault reference of the sudo password, for
+    /// `run --sudo`; without it, `auth`.
+    pub sudo: Option<String>,
     /// false: found by a scan, not set up yet.
     pub reviewed: bool,
     /// `posix` or `windows`.
@@ -174,7 +177,8 @@ impl Inventory {
         let mut vars = vec!["BW_PASSWORD".to_string(), "BW_SESSION".to_string()];
         for h in &self.hosts {
             let services = h.services.iter().filter_map(|s| s.auth.as_deref());
-            for auth in std::iter::once(h.auth.as_str()).chain(services) {
+            let own = [Some(h.auth.as_str()), h.sudo.as_deref()];
+            for auth in own.into_iter().flatten().chain(services) {
                 if let Some(var) = auth.strip_prefix("env:") {
                     vars.push(var.to_string());
                 }
@@ -653,6 +657,14 @@ fn host(
         Some(v) => flag(v).map_or_else(|| bad(&field(key), BOOL), Ok),
     };
     let (enroll, reviewed) = (boolean("enroll", true)?, boolean("reviewed", true)?);
+    let mut sudo = None; // defaults first, so the Host's own wins
+    for layer in layers.iter().rev() {
+        let v = layer.get("sudo").unwrap_or(&Value::Null);
+        let block = as_map(v, &field("sudo"), "a mapping: {auth: REF}")?;
+        if let Some(auth) = block.and_then(|b| b.get("auth")) {
+            sudo = text(auth);
+        }
+    }
     let mesh = match first(&layers, "mesh") {
         None | Some(Value::Null) => None,
         Some(_) => Some(boolean("mesh", false)?),
@@ -667,6 +679,7 @@ fn host(
             .and_then(text)
             .unwrap_or("prompt".into()),
         enroll,
+        sudo,
         reviewed,
         os,
         key_type,

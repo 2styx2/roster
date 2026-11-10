@@ -1,0 +1,39 @@
+#!/bin/sh
+# Fake sudo: appends its argv to $HOME/sudo.log. With -S it reads one line
+# from stdin and fails as sudo does unless it is $FAKE_SUDO_PASSWORD; with
+# -n it fails unless $FAKE_SUDO_NOPASSWD is set. Then it runs what follows
+# `--` with USER=root.
+echo "$*" >>"$HOME/sudo.log"
+mode=''
+while [ $# -gt 0 ]; do
+  case $1 in
+  -S) mode=S ;;
+  -n) mode=n ;;
+  -p) shift ;;
+  --)
+    shift
+    break
+    ;;
+  esac
+  shift
+done
+case $mode in
+S)
+  IFS= read -r got || got=''
+  if [ -z "$got" ] || [ "$got" != "$FAKE_SUDO_PASSWORD" ]; then
+    echo "sudo: 1 incorrect password attempt" >&2
+    exit 1
+  fi
+  ;;
+n)
+  if [ -z "$FAKE_SUDO_NOPASSWD" ]; then
+    echo "sudo: a password is required" >&2
+    exit 1
+  fi
+  ;;
+*)
+  echo "sudo: fake: needs -S or -n" >&2
+  exit 1
+  ;;
+esac
+USER=root exec "$@"

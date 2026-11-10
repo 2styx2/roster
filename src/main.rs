@@ -139,6 +139,7 @@ fn run() -> Result<(), Fail> {
     let mut action = None; // `vault unlock|lock`
     let mut dry_run = false; // `setup --dry-run`
     let mut undo = false; // `setup --undo`
+    let mut sudo = false; // `run --sudo`
     let mut web = web::Args::default();
     let mut add = add::Args::default();
     while let Some(arg) = parser.next().map_err(|e| usage_error(e.to_string()))? {
@@ -158,6 +159,7 @@ fn run() -> Result<(), Fail> {
                 json = true
             }
             Long("long") if command.as_deref() == Some("ls") => long = true,
+            Long("sudo") if command.as_deref() == Some("run") => sudo = true,
             Short(flag @ ('d' | 'H')) if command.as_deref() == Some("web") => {
                 let v = parser.value().map_err(|e| usage_error(e.to_string()))?;
                 let v = v.string().map_err(|e| usage_error(e.to_string()))?;
@@ -194,7 +196,7 @@ fn run() -> Result<(), Fail> {
                     _ => return Err(usage_error("run needs -- before the command")),
                 };
                 let inventory = open(config)?;
-                return run::run(&inventory, &target, cmd, json);
+                return run::run(&inventory, &target, cmd, json, sudo);
             }
             Value(v) if command.as_deref() == Some("check") && target.is_none() => {
                 target = Some(v.string().map_err(|e| usage_error(e.to_string()))?)
