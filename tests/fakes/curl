@@ -4,7 +4,7 @@
 # credential may land in) and its environment to curl.env. Prints
 # $FAKE_CURL_BODY, then the -w format as curl would with the status
 # $FAKE_CURL_STATUS (200); $FAKE_CURL_EXIT (0) fails as curl does, with
-# status 000.
+# status 000, printing $FAKE_CURL_ERROR (default: a refused connection).
 # A POST to a URL ending in $FAKE_CURL_LOGIN_PATH (/api/auth/login) is a token
 # login when $FAKE_CURL_TOKEN_BODY is set: its stdin goes to
 # $HOME/curl.login.stdin instead, and it prints that body with the status
@@ -27,7 +27,7 @@ cat >"$HOME/$save"
 env >"$HOME/curl.env"
 printf '%s' "$body"
 if [ "${FAKE_CURL_EXIT:-0}" != 0 ]; then
-  echo "curl: (7) Failed to connect to 10.0.0.5 port 8443" >&2
+  printf '%s\n' "${FAKE_CURL_ERROR:-curl: (7) Failed to connect to 10.0.0.5 port 8443: Connection refused}" >&2
   status=000
 fi
 out=$(printf '%s' "$fmt" | sed "s/%{http_code}/$status/")

@@ -175,3 +175,36 @@ pub fn sudo(h: &Host, stderr: &str) -> Option<String> {
         .contains("not in the sudoers")
         .then(|| format!("{} may not use sudo on {}", h.user, h.name))
 }
+
+/// What curl's exit `code` and stderr say went wrong calling `base`
+/// (`scheme://host[:port]`).
+pub fn curl(code: i32, stderr: &str, base: &str) -> String {
+    let (scheme, authority) = base.split_once("://").unwrap_or(("", base));
+    let at = match authority.rsplit_once(':') {
+        Some((_, port)) if port.bytes().all(|b| b.is_ascii_digit()) => authority.to_string(),
+        _ => format!("{authority}:{}", if scheme == "https" { 443 } else { 80 }),
+    };
+    let host = at.rsplit_once(':').map_or(authority, |(h, _)| h);
+    let text = plain(stderr);
+    let first = text
+        .lines()
+        .find(|l| l.starts_with("curl: ("))
+        .unwrap_or_default();
+    let why = first.split_once(") ").map_or(first, |(_, w)| w).trim();
+    match code {
+        6 => hint(
+            format!("can't resolve {host}"),
+            "check the service's url: in roster.yml",
+        ),
+        60 => hint(
+            format!("the certificate of {base} isn't trusted ({})", reason(why)),
+            "if you trust it, give the service `verify: false` in roster.yml, or pass -k",
+        ),
+        52 => format!("{at} closed the connection without a reply"),
+        _ if stderr.contains("refused") => format!("nothing is listening on {at}"),
+        _ => unreachable(&at, stderr).unwrap_or_else(|| match why.is_empty() {
+            true => last_line(stderr),
+            false => format!("curl: {why}"),
+        }),
+    }
+}

@@ -4,7 +4,7 @@
 
 use crate::inventory::{Inventory, Service};
 use crate::vault::{self, Secret};
-use crate::{Fail, usage_error};
+use crate::{Fail, errors, usage_error};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::Stdio;
@@ -100,7 +100,12 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
     if let Some(secret) = &secret {
         match svc.login.as_str() {
             "token" => {
-                let token = login(svc, &base, &what, user, secret, insecure)?;
+                let call = Call {
+                    what: &what,
+                    base: &base,
+                    insecure,
+                };
+                let token = login(svc, &call, user, secret)?;
                 let header = &svc.token.token_header;
                 let bearer = if header.eq_ignore_ascii_case("authorization") {
                     ": Bearer "
@@ -127,11 +132,26 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
         None => {}
     }
     let url = format!("{base}{path}");
-    let (status, ok, _) = curl(&extra, method, &url, &config, insecure, None)?;
+    let call = Call {
+        what: &what,
+        base: &base,
+        insecure,
+    };
+    match call.curl(&extra, method, &url, &config, None)?.0 {
+        100..400 => Ok(()),
+        status => Err(failed(format!("{what}: {}", http(status)))),
+    }
+}
+
+/// An HTTP status of 400 or more, or none, in words.
+fn http(status: u16) -> String {
     match status {
-        100..400 if ok => Ok(()),
-        0 => Err(failed(format!("{what}: no HTTP response"))),
-        _ => Err(failed(format!("{what}: HTTP {status}"))),
+        0 => "no HTTP response".into(),
+        401 | 403 => errors::hint(
+            format!("login refused (HTTP {status})"),
+            "check the service's user: and auth: in roster.yml",
+        ),
+        _ => format!("HTTP {status}"),
     }
 }
 
@@ -139,12 +159,11 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
 /// the reply. Its errors hold neither.
 fn login(
     svc: &Service,
-    base: &str,
-    what: &str,
+    call: &Call,
     user: &str,
     secret: &Secret,
-    insecure: bool,
 ) -> Result<Zeroizing<String>, Fail> {
+    let what = call.what;
     let t = &svc.token;
     let fields = BTreeMap::from([
         (t.user_field.as_str(), user),
@@ -158,15 +177,12 @@ fn login(
         "data-raw",
         &[std::str::from_utf8(&body).unwrap_or_default()],
     );
-    let url = format!("{base}{}", t.login_path);
+    let url = format!("{}{}", call.base, t.login_path);
     let json = ["-H", "Content-Type: application/json"];
-    let (status, ok, reply) = curl(&json, "POST", &url, &config, insecure, Some(secret))?;
+    let (status, reply) = call.curl(&json, "POST", &url, &config, Some(secret))?;
     let what = format!("{what}: token login to {}", t.login_path);
-    if !ok || !(200..300).contains(&status) {
-        return Err(failed(match status {
-            0 => format!("{what}: no HTTP response"),
-            _ => format!("{what}: HTTP {status}"),
-        }));
+    if !(200..300).contains(&status) {
+        return Err(failed(format!("{what}: {}", http(status))));
     }
     let mut reply: serde_json::Value = serde_json::from_slice(&reply)
         .map_err(|_| failed(format!("{what}: the reply isn't JSON")))?;
@@ -177,61 +193,80 @@ fn login(
     }
 }
 
-/// Run curl: METHOD URL, with `extra` arguments and `config` on stdin; its
-/// HTTP status (0: none), whether it exited 0 and, when `capture` is given, its stdout kept
-/// rather than printed, and `capture` masked in curl's errors.
-fn curl(
-    extra: &[&str],
-    method: &str,
-    url: &str,
-    config: &str,
+/// A service's calls: `what` names it in errors, `base` is its origin.
+struct Call<'a> {
+    what: &'a str,
+    base: &'a str,
     insecure: bool,
-    capture: Option<&Secret>,
-) -> Result<(u16, bool, Zeroizing<Vec<u8>>), Fail> {
-    let mut curl = crate::remote::command("curl");
-    curl.args(["-q", "-sS", "--proto", "=http,https", "--max-redirs", "0"])
-        .args([
-            "-w",
-            &format!("%{{stderr}}{MARK}%{{http_code}}\\n"),
-            "-K",
-            "-",
-        ]);
-    if insecure {
-        curl.arg("-k");
-    }
-    curl.args(extra)
-        .args(["-X", method, url])
-        .stdin(Stdio::piped())
-        .stderr(Stdio::piped());
-    if capture.is_some() {
-        curl.stdout(Stdio::piped());
-    }
-    let mut child = curl.spawn().map_err(|e| Fail {
-        code: 126,
-        msg: format!("can't run curl: {e}"),
-    })?;
-    let mut stdin = child.stdin.take().expect("piped");
-    let _ = stdin.write_all(config.as_bytes());
-    drop(stdin);
-    let mut out = Zeroizing::new(Vec::new());
-    let stdout = child.stdout.take();
-    let mut status = 0;
-    let keep = &mut out;
-    std::thread::scope(|s| {
-        if let Some(mut o) = stdout {
-            s.spawn(move || o.read_to_end(keep));
+}
+
+impl Call<'_> {
+    /// Run curl: METHOD URL, with `extra` arguments and `config` on stdin; its
+    /// HTTP status (0: none) and, when `capture` is given, its stdout kept
+    /// rather than printed, and `capture` masked in curl's errors. curl's own
+    /// errors are told in roster's words.
+    fn curl(
+        &self,
+        extra: &[&str],
+        method: &str,
+        url: &str,
+        config: &str,
+        capture: Option<&Secret>,
+    ) -> Result<(u16, Zeroizing<Vec<u8>>), Fail> {
+        let mut curl = crate::remote::command("curl");
+        curl.args(["-q", "-sS", "--proto", "=http,https", "--max-redirs", "0"])
+            .args([
+                "-w",
+                &format!("%{{stderr}}{MARK}%{{http_code}}\\n"),
+                "-K",
+                "-",
+            ]);
+        if self.insecure {
+            curl.arg("-k");
         }
-        for line in BufReader::new(child.stderr.take().expect("piped")).lines() {
-            let line = line.unwrap_or_default();
-            match line.strip_prefix(MARK) {
-                Some(code) => status = code.parse().unwrap_or(0),
-                None => match capture {
-                    Some(c) => eprintln!("{}", line.replace(c.expose(), "********")),
-                    None => eprintln!("{line}"),
-                },
+        curl.args(extra)
+            .args(["-X", method, url])
+            .stdin(Stdio::piped())
+            .stderr(Stdio::piped());
+        if capture.is_some() {
+            curl.stdout(Stdio::piped());
+        }
+        let mut child = curl.spawn().map_err(|e| Fail {
+            code: 126,
+            msg: format!("{}: {}", self.what, errors::spawn("curl", &e)),
+        })?;
+        let mut stdin = child.stdin.take().expect("piped");
+        let _ = stdin.write_all(config.as_bytes());
+        drop(stdin);
+        let mut out = Zeroizing::new(Vec::new());
+        let stdout = child.stdout.take();
+        let (mut status, mut said) = (0, String::new());
+        let keep = &mut out;
+        std::thread::scope(|s| {
+            if let Some(mut o) = stdout {
+                s.spawn(move || o.read_to_end(keep));
             }
+            for line in BufReader::new(child.stderr.take().expect("piped")).lines() {
+                let line = line.unwrap_or_default();
+                match line.strip_prefix(MARK) {
+                    Some(code) => status = code.parse().unwrap_or(0),
+                    None => match capture {
+                        Some(c) => said += &(line.replace(c.expose(), "********") + "\n"),
+                        None => said += &(line + "\n"),
+                    },
+                }
+            }
+        });
+        let exit = child
+            .wait()
+            .map_err(|e| failed(format!("{}: curl: {}", self.what, errors::io(&e))))?;
+        match exit.code() {
+            Some(0) => Ok((status, out)),
+            code => Err(failed(format!(
+                "{}: {}",
+                self.what,
+                errors::curl(code.unwrap_or(0), &said, self.base)
+            ))),
         }
-    });
-    let exit = child.wait().map_err(|e| failed(format!("curl: {e}")))?;
-    Ok((status, exit.success(), out))
+    }
 }
