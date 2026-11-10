@@ -72,7 +72,7 @@ git clone https://github.com/2styx2/roster ~/src/roster
 cd ~/src/roster
 make deps                   # system packages (apt, dnf or pacman) and bw
 make install                # into ~/.local, no sudo
-roster --version            # roster 0.7.7
+roster --version            # roster 0.7.8
 ```
 
 `make install` puts three files under `~/.local`:
@@ -187,10 +187,14 @@ roster ls lab                # filter by name, group, type or product
 roster ssh box-a             # connect (Password Hosts too: the password goes in for you)
 roster run lab -- uptime     # run on every Host in a group, in parallel
 roster run box-a,sw-01 -- hostname
+roster run --sudo lab -- systemctl restart nginx   # as root: roster gives sudo its password
 roster check                 # can I reach every Host? DNS, port, login
 roster check box-a           # why can't I reach this one?
 roster web box-a GET /api/health   # call a Host's web API with its stored login
+roster web box-a api POST /api/v1/jobs -d '{"name": "backup"}'   # name the service, send a body
 ```
+
+`run --sudo` takes the sudo password from the Host's `sudo: {auth: REF}` (set it on the Host, its group or `defaults`, like any other field), else from its `auth`. With `auth: key` (no password), it runs `sudo -n`, which works where sudoers says `NOPASSWD`.
 
 In the picker:
 
@@ -201,6 +205,35 @@ In the picker:
 Outside tmux, the picker connects right where you are.
 
 Scripts and Claude can read JSON instead: `roster ls --json`, `roster run --json` and `roster check --json`.
+
+### Web APIs with a token login
+
+Many web apps log in with "POST a user name and password, get a token back", then want that token on every request. `login: token` does that for any such app: roster POSTs `{"username": USER, "password": PASSWORD}` as JSON, takes the token from the reply, and sends it as `Authorization: Bearer TOKEN`. The fields, all optional, cover apps that name things differently:
+
+| Field | Default | What it is |
+|---|---|---|
+| `login_path` | `/api/auth/login` | where to POST the login |
+| `token_field` | `access_token` | the reply's token field; `data.token` reaches into a nested one |
+| `user_field` | `username` | the user name's key in the JSON body |
+| `password_field` | `password` | the password's key in the JSON body |
+| `token_header` | `Authorization` | the header for the token, sent as `Bearer TOKEN`; any other header gets the bare token |
+
+`login: hub` is `login: token` with all the defaults. `web_login_names`, at the top of `roster.yml`, gives a login type another name, so a group of alike apps can say what they are:
+
+```yaml
+web_login_names: {acme: hub}          # login: acme is a token login, default fields
+groups:
+  lab:
+    hosts:
+      box-a:
+        ip: 10.0.0.5
+        services:
+          web: {url: "https://10.0.0.5", verify: false, login: acme, user: admin, auth: "bw:acme web"}
+          api: {url: "https://10.0.0.5:8443", login: token, login_path: /v2/session,
+                token_field: data.token, token_header: X-Auth-Token, user: ops, auth: "bw:box-a api"}
+```
+
+Then `roster web box-a GET /api/v1/status` logs in and calls the API. The password and the token go to curl on its stdin and never show. A service whose `login` roster doesn't know is left out, so `roster web` says it has no such service.
 
 ## 7. Adding Hosts
 
@@ -287,7 +320,8 @@ links:
 
 - **Never shown or written down.** Passwords never appear on screen, in logs, in `--json`, in a file, or in a command line, where other users could see them with `ps`.
 - **ssh logins:** ssh gets the password from roster through a one-time socket (askpass).
-- **Web logins:** curl gets the login on its stdin.
+- **Web logins:** curl gets the login on its stdin, a token login's JSON body and token too.
+- **sudo passwords:** `run --sudo` writes the password to ssh's stdin, where sudo reads it, and shows it as `********` if a command prints it.
 - **The unlocked vault:** it lives in the kernel keyring, never on disk, and expires after 12 hours. Processes running as you can read it; other users can't. That access is what lets your cron import from the vault.
 - **Claude:** it gets `ROSTER.md` and may run roster commands, but its settings block it from reading `~/.ssh`, and roster never prints a secret.
 
@@ -302,6 +336,9 @@ links:
 | A Host shows `unreviewed` | `defaults` say `reviewed: false`, and nobody has reviewed it. | Set `reviewed: true` on it once you trust it. |
 | `roster check HOST` fails at `port` | Network, firewall or VPN. | Fix the route. roster can't. |
 | `roster check HOST` fails at `login` | The key isn't installed, or the account changed. | `roster setup`, then read ssh's own error, which `check` prints. |
+| `token login to /api/auth/login: HTTP 401` | The app refused the user name or password. | Check the service's `user` and `auth` item; if the app names its fields differently, set `user_field`, `password_field` or `login_path`. |
+| `token login to …: no access_token in the reply` | The app logged in but keeps its token under another name. | Set `token_field`, such as `token` or `data.token`. |
+| `run --sudo`: `sudo: a password is required` | The Host's `auth` is a key, and sudoers wants a password. | Give the Host `sudo: {auth: "bw:ITEM"}`. |
 | `no fzf on PATH` | The picker needs fzf. | `sudo apt install fzf`. |
 
 ## 12. Leaving

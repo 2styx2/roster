@@ -63,17 +63,19 @@ commands:
   ssh HOST [ARGS]
                  ssh to a Host by name; ARGS go to ssh unchanged; a Password
                  Host's auth password goes to ssh through askpass
-  run [--json] TARGET -- CMD
+  run [--json] [--sudo] TARGET -- CMD
                  run CMD on Hosts in parallel, lines prefixed `host: `;
                  TARGET: Hosts and groups, comma-separated; exit 1 if any
-                 Host failed
+                 Host failed; --sudo runs CMD as root, the sudo password
+                 (the Host's sudo: {auth}, else auth) on ssh's stdin
   check [--json] [TARGET]
                  per Host: DNS, port, then a BatchMode ssh login (a Password
                  Host: its auth resolves); one line each; exit 1 on a failure
   web [-k] [-d BODY] [-H HEADER]... HOST [SERVICE] METHOD PATH
                  call a Host's web API with curl and the service's Login,
-                 which goes to curl on stdin; exit 1 if the HTTP status is
-                 400 or more
+                 which goes to curl on stdin (login: token first POSTs it
+                 as JSON for a token); exit 1 if the HTTP status is 400 or
+                 more
   vault unlock   unlock Bitwarden for 12 h (session key in the kernel keyring)
   vault lock     lock Bitwarden and forget the session key
   help plugins   how `roster NAME` runs a roster-NAME plugin from PATH
