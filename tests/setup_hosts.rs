@@ -130,7 +130,16 @@ fn unreviewed_windows_and_password_hosts_are_skipped_with_a_reason() {
     let s = sandbox("hosts-skips");
     host(&s, "box-b", "10.0.0.6");
     host(&s, "box-c", "10.0.0.7");
+    // By default, routine skips are one summary line.
     let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        out.stderr,
+        "roster: skipped 1 unreviewed, 1 Windows Host, 1 Password Host \
+         (--verbose lists them)\n"
+    );
+    // -v lists each one, with its reason.
+    let out = s.roster(&["setup", "-v"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(
         out.stderr,
