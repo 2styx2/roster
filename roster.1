@@ -1,4 +1,4 @@
-.TH ROSTER 1 2026-11-09 "roster 0.7.2" "User Commands"
+.TH ROSTER 1 2026-11-09 "roster 0.7.3" "User Commands"
 .SH NAME
 roster \- know your network: list and reach the Hosts in roster.yml
 .SH SYNOPSIS
@@ -514,10 +514,15 @@ lists the peers for Claude there (first line
 .BI "<!\-\- roster\-mesh: written by roster for " SRC " (owner " BOX );\fR...),
 and when
 .I ~/.claude
-exists,
+exists and the login user can write it,
 .I ~/.claude/CLAUDE.md
 gets
 .BR @~/ROSTER.md .
+A
+.I ~/.claude
+owned by someone else (root, after
+.BR "sudo claude" )
+gets no import; the rest of the Mesh is set up as usual.
 Each peer's
 .I ~/.ssh/authorized_keys
 gets one line per source:
