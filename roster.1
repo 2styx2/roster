@@ -1,4 +1,4 @@
-.TH ROSTER 1 2026-11-09 "roster 0.7.2" "User Commands"
+.TH ROSTER 1 2026-11-09 "roster 0.7.3" "User Commands"
 .SH NAME
 roster \- know your network: list and reach the Hosts in roster.yml
 .SH SYNOPSIS
@@ -303,17 +303,22 @@ or
 .BR ControlPersist .
 A % in an address is written %%.
 .IP 3. 4
-The
-.B Include
-of that file goes on the first line of
+The line
+.B "Include ~/.ssh/config.d/roster"
+goes on the first line of
 .IR ~/.ssh/config ,
 above any
 .B Host
 block, unless an
 .B Include
-of
-.I ~/.ssh/config.d/roster
-is already there.
+of that file (in any form) is already there.
+It is unquoted on purpose: bash\-completion's
+.B ssh
+host list doesn't follow a quoted
+.B Include
+path, so
+.B ssh <Tab>
+wouldn't offer the Hosts.
 .IP 4. 4
 .IR ROSTER.md ,
 next to
@@ -514,10 +519,15 @@ lists the peers for Claude there (first line
 .BI "<!\-\- roster\-mesh: written by roster for " SRC " (owner " BOX );\fR...),
 and when
 .I ~/.claude
-exists,
+exists and the login user can write it,
 .I ~/.claude/CLAUDE.md
 gets
 .BR @~/ROSTER.md .
+A
+.I ~/.claude
+owned by someone else (root, after
+.BR "sudo claude" )
+gets no import; the rest of the Mesh is set up as usual.
 Each peer's
 .I ~/.ssh/authorized_keys
 gets one line per source:
@@ -612,8 +622,10 @@ again finishes them.
 Once every Host is done, the Box's files go:
 .IR ~/.ssh/config.d/roster ,
 the exact
-.BI "Include \(dq" HOME /.ssh/config.d/roster\(dq
-line in
+.B "Include ~/.ssh/config.d/roster"
+line (and an older roster's quoted
+.BI "Include \(dq" HOME /.ssh/config.d/roster\(dq )
+in
 .IR ~/.ssh/config ,
 .IR ~/.ssh/roster_known_hosts ,
 and, next to

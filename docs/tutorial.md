@@ -56,7 +56,7 @@ roster ships as source only. You build it yourself, from code you can read. One 
 git clone https://github.com/2styx2/roster ~/src/roster
 cd ~/src/roster
 make install                # into ~/.local, no sudo
-roster --version            # roster 0.7.2
+roster --version            # roster 0.7.3
 ```
 
 `make install` puts three files under `~/.local`:
