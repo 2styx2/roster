@@ -10,22 +10,26 @@
 # ROSTER_SRC: where the source goes (default ~/src/roster; an existing
 # checkout there is updated). ROSTER_REF: a tag or branch instead of the
 # latest release.
+# $need is a list of command names, split into words on purpose.
+# shellcheck disable=SC2086
 set -eu
 
 say() { echo "bootstrap: $*"; }
 as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi; }
 src=${ROSTER_SRC:-$HOME/src/roster}
 
-# 1. git and curl, to fetch the source and Rust.
-if ! command -v git >/dev/null || ! command -v curl >/dev/null; then
-	say "installing git and curl"
+# 1. git and curl, to fetch the source and Rust: only the ones missing (a
+#    RHEL-family curl-minimal already gives `curl`, and full curl conflicts).
+need=$(for c in git curl; do command -v "$c" >/dev/null || echo "$c"; done)
+if [ -n "$need" ]; then
+	say "installing" $need
 	if command -v apt-get >/dev/null; then
 		as_root apt-get update -qq
-		as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl ca-certificates
+		as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $need ca-certificates
 	elif command -v dnf >/dev/null; then
-		as_root dnf install -y -q git curl
+		as_root dnf install -y -q --allowerasing $need
 	elif command -v pacman >/dev/null; then
-		as_root pacman -Sy --needed --noconfirm git curl
+		as_root pacman -Sy --needed --noconfirm $need
 	else
 		say "install git and curl by hand, then run this again"
 		exit 1
