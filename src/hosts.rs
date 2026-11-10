@@ -5,7 +5,7 @@
 
 use crate::inventory::{Host, Inventory};
 use crate::setup::{expand, home};
-use crate::{Fail, atomic, remote, vault};
+use crate::{Fail, atomic, errors, remote, vault};
 
 const ADD_KEY: &str = include_str!("sh/add-key.sh");
 
@@ -42,13 +42,15 @@ pub fn run(inv: &Inventory, dry: bool) -> Result<(Vec<&Host>, usize), Fail> {
                 continue;
             }
             let Some(lines) = keyscan(h) else {
-                eprintln!("roster: {}: down: no answer to ssh-keyscan at {at}", h.name);
+                let why = format!("can't reach {}:{} (no answer to ssh-keyscan)", h.ip, h.port);
+                let hint = format!("`roster check {}` shows each step", h.name);
+                eprintln!("roster: {}: {}", h.name, crate::errors::hint(why, &hint));
                 undone += 1;
                 continue;
             };
             known += &lines;
             atomic::update(&known_hosts, &known, 0o600)
-                .map_err(|e| failed(format!("{}: {e}", known_hosts.display())))?;
+                .map_err(|e| failed(format!("{}: {}", known_hosts.display(), errors::io(&e))))?;
             println!("recorded the host key of {}", h.name);
         }
         if remote::accepts_key(&h.name) {
@@ -124,20 +126,23 @@ fn install(inv: &Inventory, h: &Host, memo: &mut vault::Memo) -> Result<(), Stri
     let script = remote::script(&[("LINE", &line)], ADD_KEY);
     let opts = ["-o", "PubkeyAuthentication=no"];
     let ran = remote::run(name, &opts, &script, Some(&secret))
-        .map_err(|e| format!("{name}: can't run ssh: {e}"))?;
+        .map_err(|e| format!("{name}: {}", errors::spawn("ssh", &e)))?;
     match (ran.code, ran.stdout.trim()) {
         (0, "added") => Ok(()),
         (0, "present") => Err(format!(
-            "{name}: the Box key is in authorized_keys but isn't taken; \
-             check the modes of ~ and ~/.ssh there"
+            "{name}: {}",
+            errors::hint(
+                "the Box key is in authorized_keys but isn't taken",
+                &format!("check the modes of ~ and ~/.ssh on {name}: no write for group or others"),
+            )
         )),
         (255, _) => Err(format!(
-            "{name}: can't log in with the password: {}",
-            ran.why()
+            "{name}: {}",
+            errors::ssh(h, Some(&h.auth), &ran.stderr)
         )),
-        (code, _) => Err(format!(
-            "{name}: installing the Box key failed ({code}): {}",
-            ran.why()
+        _ => Err(format!(
+            "{name}: couldn't install the Box key: {}",
+            errors::last_line(&ran.stderr)
         )),
     }
 }
@@ -145,7 +150,8 @@ fn install(inv: &Inventory, h: &Host, memo: &mut vault::Memo) -> Result<(), Stri
 /// `TYPE KEY roster-managed:BOX`, from the `.pub` of `h`'s Box key.
 fn box_line(inv: &Inventory, h: &Host) -> Result<String, String> {
     let path = expand(&format!("{}.pub", inv.key_of(h)));
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("{}: {}", path.display(), errors::io(&e)))?;
     let mut fields = text.split_whitespace();
     match (fields.next(), fields.next()) {
         (Some(alg), Some(key)) => Ok(format!("{alg} {key} roster-managed:{}", inv.box_name)),

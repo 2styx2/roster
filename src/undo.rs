@@ -5,7 +5,7 @@
 
 use crate::inventory::{Host, Inventory};
 use crate::setup::{beside_inventory, dry, expand, failed, home, read, save};
-use crate::{Fail, claude, mesh, remote, sshconf};
+use crate::{Fail, claude, errors, mesh, remote, sshconf};
 use std::path::Path;
 
 const REMOVE_KEY: &str = include_str!("sh/remove-key.sh");
@@ -28,9 +28,12 @@ pub fn run(inv: &Inventory) -> Result<(), Fail> {
         }
     }
     if undone > 0 {
-        return Err(failed(format!(
-            "{undone} Host{} not done; run `roster setup --undo` again to finish",
-            if undone == 1 { "" } else { "s" }
+        return Err(failed(crate::errors::hint(
+            format!(
+                "setup --undo: {undone} Host{} not done",
+                if undone == 1 { "" } else { "s" }
+            ),
+            "run `roster setup --undo` again to finish",
         )));
     }
     box_files(inv)
@@ -49,18 +52,16 @@ fn host(inv: &Inventory, i: usize) -> Result<(), String> {
         ("DRY", if dry() { "1" } else { "" }),
     ];
     let ran = remote::run(&h.name, &OPTS, &remote::script(&vars, REMOVE_KEY), None)
-        .map_err(|e| format!("can't run ssh: {e}"))?;
+        .map_err(|e| errors::spawn("ssh", &e))?;
     match (ran.code, ran.stdout.trim()) {
         (0, "removed") => println!("{}: removed the Box key", h.name),
         (0, "present") => println!("{}: would remove the Box key", h.name),
         (0, _) => {}
-        (255, _) if ran.why().contains("Permission denied") => {}
-        (255, _) => return Err(format!("down: {}", ran.why())),
-        (code, _) => {
-            return Err(format!(
-                "removing the Box key failed ({code}): {}",
-                ran.why()
-            ));
+        (255, _) if ran.stderr.contains("Permission denied") => {}
+        (255, _) => return Err(errors::ssh(h, None, &ran.stderr)),
+        _ => {
+            let why = errors::last_line(&ran.stderr);
+            return Err(format!("couldn't remove the Box key: {why}"));
         }
     }
     Ok(())
@@ -141,7 +142,8 @@ fn remove(path: &Path) -> Result<(), Fail> {
         println!("would remove {}", path.display());
         return Ok(());
     }
-    std::fs::remove_file(path).map_err(|e| failed(format!("{}: {e}", path.display())))?;
+    std::fs::remove_file(path)
+        .map_err(|e| failed(format!("{}: {}", path.display(), errors::io(&e))))?;
     println!("removed {}", path.display());
     Ok(())
 }
