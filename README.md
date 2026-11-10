@@ -20,16 +20,17 @@ Your password manager knows the secrets. roster knows your network: the team's H
 | Command | What it does |
 |---|---|
 | `roster pick` | fzf picker over every Host: Enter opens a new tmux window, ctrl-v a split, Tab-marked Hosts synchronized panes; outside tmux, connects right here |
-| `roster` | prints usage |
-| `roster ls [filter]` | list Hosts (`--json` for scripts and Claude) |
-| `roster ssh HOST` | interactive ssh; password-only gear gets its password from the vault, never shown |
-| `roster run <host\|group> -- CMD` | run a command on one Host or a whole group, output labelled by Host |
-| `roster web HOST …` | call a Host's web API with its stored login, without showing it |
-| `roster check HOST` | why a Host can't be reached, step by step |
-| `roster add HOST` / `roster scan CIDR` | add one Host, or sweep a network for new ones |
-| `roster setup [--undo]` | keys, ssh config and the Mesh (Hosts reach each other) in one idempotent step |
-| `roster vault unlock\|lock` | unlock the vault once a day |
-| `roster watch [group]` | live view: up/down, ping, load, RAM, disk, failed services |
+| `roster ls [--json] [--long] [FILTER]` | list Hosts; FILTER matches names, groups, types or products |
+| `roster ssh HOST [ARGS]` | ssh to a Host; password-only gear gets its password from the vault, never shown |
+| `roster run [--json] TARGET -- CMD` | run a command on Hosts and groups in parallel, each line labelled by Host |
+| `roster check [--json] [TARGET]` | can each Host be reached: DNS, port, then login, with ssh's own error |
+| `roster web HOST [SERVICE] METHOD PATH` | call a Host's web API with its stored login, which curl gets on stdin |
+| `roster sync` | import new `HOST ssh` logins from Bitwarden, then rewrite the ssh config, ROSTER.md and Claude files; touches no Host, quick enough for cron |
+| `roster add NAME --ip ADDR [...]` / `roster add --from-vault ITEM` | add a Host without hand-editing roster.yml (duplicates of an existing login are refused) |
+| `roster setup [--dry-run] [--undo]` | install your key on Hosts, record their host keys and build the Mesh (Hosts that reach each other); `--undo` takes it all back |
+| `roster vault unlock` / `lock` | unlock Bitwarden for 12 h (kept in the kernel keyring, never on disk) |
+| `roster NAME` | runs a `roster-NAME` plugin from PATH (`roster help plugins`) |
+| `roster`, `roster -h`, `roster --version` | usage and version |
 
 roster is its own tool; tmux is optional. `contrib/roster.tmux` binds `prefix + g` to the picker in a popup (Tab marks several Hosts for synchronized panes). Edit it to use another key.
 
