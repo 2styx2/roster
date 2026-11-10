@@ -34,7 +34,8 @@ if command -v apt-get >/dev/null; then
 	fi
 elif command -v dnf >/dev/null; then
 	pkgs="openssh-clients keyutils fzf curl tmux bash-completion git unzip make gcc"
-	missing=$(for p in $pkgs; do rpm -q "$p" >/dev/null 2>&1 || echo "$p"; done)
+	# A command of that name counts (curl-minimal gives `curl`; full curl conflicts).
+	missing=$(for p in $pkgs; do command -v "$p" >/dev/null || rpm -q "$p" >/dev/null 2>&1 || echo "$p"; done)
 	if [ -n "$missing" ]; then
 		say "dnf: installing" $missing
 		# RHEL, Oracle, Rocky and Alma have no fzf without EPEL: install what the
