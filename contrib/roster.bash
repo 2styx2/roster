@@ -18,7 +18,8 @@ _roster() {
 	add) words='--ip --group --user --port --auth --enroll=false --from-vault --name' ;;
 	ls) words='--json --long' ;;
 	setup) words='--dry-run --undo -v --verbose' ;;
-	run | check) words=--json ;;
+	run) words='--json --sudo' ;;
+	check) words=--json ;;
 	web) words='-k -d -H' ;;
 	vault) words='unlock lock' ;;
 	help) words=plugins ;;

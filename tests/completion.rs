@@ -90,6 +90,8 @@ fn flags_are_per_command() {
         ["--dry-run", "--undo", "--verbose"]
     );
     assert_eq!(complete(&s, "roster web -"), ["-H", "-d", "-k"]);
+    assert_eq!(complete(&s, "roster run --"), ["--json", "--sudo"]);
+    assert_eq!(complete(&s, "roster check --"), ["--json"]);
     assert_eq!(complete(&s, "roster vault "), ["lock", "unlock"]);
 }
 

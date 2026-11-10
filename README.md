@@ -27,9 +27,9 @@ Your password manager knows the secrets. roster knows your network: the team's H
 | `roster pick` | fzf picker over every Host: Enter opens a new tmux window, ctrl-v a split, Tab-marked Hosts synchronized panes; outside tmux, connects right here |
 | `roster ls [--json] [--long] [FILTER]` | list Hosts; FILTER matches names, groups, types or products |
 | `roster ssh HOST [ARGS]` | ssh to a Host; password-only gear gets its password from the vault, never shown |
-| `roster run [--json] TARGET -- CMD` | run a command on Hosts and groups in parallel, each line labelled by Host |
+| `roster run [--json] [--sudo] TARGET -- CMD` | run a command on Hosts and groups in parallel, each line labelled by Host; `--sudo` runs it as root |
 | `roster check [--json] [TARGET]` | can each Host be reached: DNS, port, then login, with ssh's own error |
-| `roster web HOST [SERVICE] METHOD PATH` | call a Host's web API with its stored login, which curl gets on stdin |
+| `roster web HOST [SERVICE] METHOD PATH` | call a Host's web API with its stored login (a password or a token login), which curl gets on stdin |
 | `roster sync` | import new `HOST ssh` logins from Bitwarden, then rewrite the ssh config, ROSTER.md and Claude files; touches no Host, quick enough for cron |
 | `roster add NAME --ip ADDR [...]` / `roster add --from-vault ITEM` | add a Host without hand-editing roster.yml (duplicates of an existing login are refused) |
 | `roster setup [--dry-run] [--undo]` | install your key on Hosts, record their host keys and build the Mesh (Hosts that reach each other); `--undo` takes it all back |
