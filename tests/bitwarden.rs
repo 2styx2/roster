@@ -79,11 +79,54 @@ fn a_bw_reference_gives_the_login_password_through_askpass() {
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(read(&s, "askpass.got"), format!("{PASSWORD}\n"));
     assert!(
-        read(&s, "bw.log").ends_with("get item sw-01 --nointeraction\n"),
+        read(&s, "bw.log").ends_with("list items --search sw-01 --nointeraction\n"),
         "{}",
         read(&s, "bw.log")
     );
     assert!(read(&s, "keyctl.log").ends_with("search @u user roster:bw-session\npipe 7000\n"));
+}
+
+/// bw's own lookup is a search: `bw:sw-01` also finds `lab-sw-01` and fails
+/// with "More than one result". The item named exactly sw-01 is the one.
+#[test]
+fn a_name_inside_another_items_name_resolves_to_the_exact_one() {
+    let mut s = sandbox("bw-exact", "bw:sw-01");
+    let other = r#"{"object":"item","id":"id-lab","name":"lab-sw-01","login":{"username":"other","password":"pw-lab-made-up"},"fields":[]}"#;
+    s.set_env("FAKE_BW_ITEMS", &format!("{ITEMS}\n{other}"));
+    unlock(&s);
+    let out = s.roster(&["ssh", "sw-01"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(read(&s, "askpass.got"), format!("{PASSWORD}\n"));
+    assert!(!out.stderr.contains("More than one"), "{}", out.stderr);
+}
+
+/// Two items with the very same name: roster can't choose, and says to use
+/// the item's id (bw:ID), listing them.
+#[test]
+fn two_items_with_the_same_name_are_refused_with_their_ids() {
+    let mut s = sandbox("bw-twins", "bw:sw-01");
+    let twin = r#"{"object":"item","id":"id-twin","name":"sw-01","login":{"username":"x","password":"pw-twin-made-up"},"fields":[]}"#;
+    let first = ITEMS.replacen(
+        r#"{"object":"item","name":"sw-01""#,
+        r#"{"object":"item","id":"id-first","name":"sw-01""#,
+        1,
+    );
+    s.set_env("FAKE_BW_ITEMS", &format!("{first}\n{twin}"));
+    unlock(&s);
+    let out = s.roster(&["ssh", "sw-01"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(
+        out.stderr.contains("2 vault items are named 'sw-01'")
+            && out.stderr.contains("id-first")
+            && out.stderr.contains("id-twin"),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        !out.stderr.contains("pw-"),
+        "no password in the error: {}",
+        out.stderr
+    );
 }
 
 #[test]
@@ -236,7 +279,9 @@ fn path_without_keyctl(s: &Sandbox) -> String {
     for fake in ["bw", "ssh"] {
         std::os::unix::fs::symlink(fakes.join(fake), bin.join(fake)).unwrap();
     }
-    for tool in ["sh", "grep", "env", "stat", "dirname"] {
+    for tool in [
+        "sh", "grep", "env", "stat", "dirname", "awk", "paste", "sed",
+    ] {
         let real = ["/usr/bin", "/bin"].map(|d| std::path::Path::new(d).join(tool));
         let real = real.iter().find(|p| p.exists()).unwrap();
         std::os::unix::fs::symlink(real, bin.join(tool)).unwrap();
@@ -308,7 +353,7 @@ fn hosts_sharing_a_reference_resolve_it_once_per_run() {
         assert_eq!(
             read(&s, "bw.log"),
             "unlock --raw --passwordenv ROSTER_BW_MASTER --nointeraction\n\
-             get item sw-01 --nointeraction\n",
+             list items --search sw-01 --nointeraction\n",
             "{args:?}: {}",
             out.stderr
         );
