@@ -2,9 +2,11 @@
 //! its stored Login. curl's argv holds nothing secret: the Login goes to it
 //! as a config on stdin (`-K -`).
 
-use crate::inventory::Inventory;
-use crate::{Fail, usage_error, vault};
-use std::io::{BufRead, BufReader, Write};
+use crate::inventory::{Inventory, Service};
+use crate::vault::{self, Secret};
+use crate::{Fail, usage_error};
+use std::collections::BTreeMap;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::Stdio;
 use zeroize::Zeroizing;
 
@@ -93,14 +95,99 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
         Some(auth) if svc.login != "none" => vault::resolve(auth, &what)?,
         _ => None,
     };
+    let insecure = args.insecure || !svc.verify;
+    let user = svc.user.as_deref().unwrap_or_default();
     if let Some(secret) = &secret {
-        let user = svc.user.as_deref().unwrap_or_default();
-        let (key, parts) = match svc.login.as_str() {
-            "bearer" => ("header", ["Authorization: Bearer ", "", secret.expose()]),
-            _ => ("user", [user, ":", secret.expose()]),
-        };
-        option(&mut config, key, &parts);
+        match svc.login.as_str() {
+            "token" => {
+                let token = login(svc, &base, &what, user, secret, insecure)?;
+                let header = &svc.token.token_header;
+                let bearer = if header.eq_ignore_ascii_case("authorization") {
+                    ": Bearer "
+                } else {
+                    ": "
+                };
+                option(&mut config, "header", &[header, bearer, &token]);
+            }
+            "bearer" => option(
+                &mut config,
+                "header",
+                &["Authorization: Bearer ", secret.expose()],
+            ),
+            _ => option(&mut config, "user", &[user, ":", secret.expose()]),
+        }
     }
+    let mut extra = Vec::new();
+    for header in &args.headers {
+        extra.extend(["-H", header]);
+    }
+    match args.body.as_deref() {
+        Some(file) if file.starts_with('@') => extra.extend(["--data-binary", file]),
+        Some(body) => option(&mut config, "data-raw", &[body]),
+        None => {}
+    }
+    let url = format!("{base}{path}");
+    let (status, ok, _) = curl(&extra, method, &url, &config, insecure, None)?;
+    match status {
+        100..400 if ok => Ok(()),
+        0 => Err(failed(format!("{what}: no HTTP response"))),
+        _ => Err(failed(format!("{what}: HTTP {status}"))),
+    }
+}
+
+/// A token login: POST the user and password as JSON, and the token from
+/// the reply. Its errors hold neither.
+fn login(
+    svc: &Service,
+    base: &str,
+    what: &str,
+    user: &str,
+    secret: &Secret,
+    insecure: bool,
+) -> Result<Zeroizing<String>, Fail> {
+    let t = &svc.token;
+    let fields = BTreeMap::from([
+        (t.user_field.as_str(), user),
+        (t.password_field.as_str(), secret.expose()),
+    ]);
+    let mut body = Zeroizing::new(Vec::new());
+    serde_json::to_writer(&mut *body, &fields).map_err(|e| failed(format!("{what}: {e}")))?;
+    let mut config = Zeroizing::new(String::new());
+    option(
+        &mut config,
+        "data-raw",
+        &[std::str::from_utf8(&body).unwrap_or_default()],
+    );
+    let url = format!("{base}{}", t.login_path);
+    let json = ["-H", "Content-Type: application/json"];
+    let (status, ok, reply) = curl(&json, "POST", &url, &config, insecure, Some(secret))?;
+    let what = format!("{what}: token login to {}", t.login_path);
+    if !ok || !(200..300).contains(&status) {
+        return Err(failed(match status {
+            0 => format!("{what}: no HTTP response"),
+            _ => format!("{what}: HTTP {status}"),
+        }));
+    }
+    let mut reply: serde_json::Value = serde_json::from_slice(&reply)
+        .map_err(|_| failed(format!("{what}: the reply isn't JSON")))?;
+    let pointer = format!("/{}", t.token_field.replace('.', "/"));
+    match reply.pointer_mut(&pointer).map(serde_json::Value::take) {
+        Some(serde_json::Value::String(token)) if !token.is_empty() => Ok(Zeroizing::new(token)),
+        _ => Err(failed(format!("{what}: no {} in the reply", t.token_field))),
+    }
+}
+
+/// Run curl: METHOD URL, with `extra` arguments and `config` on stdin; its
+/// HTTP status (0: none), whether it exited 0 and, when `capture` is given, its stdout kept
+/// rather than printed, and `capture` masked in curl's errors.
+fn curl(
+    extra: &[&str],
+    method: &str,
+    url: &str,
+    config: &str,
+    insecure: bool,
+    capture: Option<&Secret>,
+) -> Result<(u16, bool, Zeroizing<Vec<u8>>), Fail> {
     let mut curl = crate::remote::command("curl");
     curl.args(["-q", "-sS", "--proto", "=http,https", "--max-redirs", "0"])
         .args([
@@ -109,20 +196,16 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
             "-K",
             "-",
         ]);
-    if args.insecure || !svc.verify {
+    if insecure {
         curl.arg("-k");
     }
-    for header in &args.headers {
-        curl.args(["-H", header]);
-    }
-    match args.body.as_deref() {
-        Some(file) if file.starts_with('@') => drop(curl.args(["--data-binary", file])),
-        Some(body) => option(&mut config, "data-raw", &[body]),
-        None => {}
-    }
-    curl.args(["-X", method, &format!("{base}{path}")])
+    curl.args(extra)
+        .args(["-X", method, url])
         .stdin(Stdio::piped())
         .stderr(Stdio::piped());
+    if capture.is_some() {
+        curl.stdout(Stdio::piped());
+    }
     let mut child = curl.spawn().map_err(|e| Fail {
         code: 126,
         msg: format!("can't run curl: {e}"),
@@ -130,18 +213,25 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
     let mut stdin = child.stdin.take().expect("piped");
     let _ = stdin.write_all(config.as_bytes());
     drop(stdin);
+    let mut out = Zeroizing::new(Vec::new());
+    let stdout = child.stdout.take();
     let mut status = 0;
-    for line in BufReader::new(child.stderr.take().expect("piped")).lines() {
-        let line = line.unwrap_or_default();
-        match line.strip_prefix(MARK) {
-            Some(code) => status = code.parse().unwrap_or(0),
-            None => eprintln!("{line}"),
+    let keep = &mut out;
+    std::thread::scope(|s| {
+        if let Some(mut o) = stdout {
+            s.spawn(move || o.read_to_end(keep));
         }
-    }
+        for line in BufReader::new(child.stderr.take().expect("piped")).lines() {
+            let line = line.unwrap_or_default();
+            match line.strip_prefix(MARK) {
+                Some(code) => status = code.parse().unwrap_or(0),
+                None => match capture {
+                    Some(c) => eprintln!("{}", line.replace(c.expose(), "********")),
+                    None => eprintln!("{line}"),
+                },
+            }
+        }
+    });
     let exit = child.wait().map_err(|e| failed(format!("curl: {e}")))?;
-    match status {
-        100..400 if exit.success() => Ok(()),
-        0 => Err(failed(format!("{what}: no HTTP response"))),
-        _ => Err(failed(format!("{what}: HTTP {status}"))),
-    }
+    Ok((status, exit.success(), out))
 }

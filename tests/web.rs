@@ -305,3 +305,186 @@ fn a_failed_connection_shows_curls_error_and_exits_1() {
          roster: box-a api: no HTTP response\n"
     );
 }
+
+const TOKEN: &str = "tok-7a3e-made-up";
+
+/// box-t has a `web` service with a Login from env:API_PASS and FIELDS
+/// added to its entry; `acme` is `hub` (a token login with the default
+/// fields) through `web_login_names`.
+fn token_sandbox(name: &str, fields: &str) -> Sandbox {
+    let mut s = Sandbox::new(name);
+    s.write(
+        "roster.yml",
+        &format!(
+            "web_login_names: {{acme: hub}}\ndefaults: {{user: admin}}\ngroups:\n  lab:\n    \
+             hosts:\n      box-t:\n        ip: 10.0.0.9\n        services:\n          \
+             web: {{url: \"https://10.0.0.9\", verify: false, user: ops, auth: env:API_PASS{fields}}}\n"
+        ),
+    );
+    s.set_env("API_PASS", PASSWORD);
+    s.set_env(
+        "FAKE_CURL_TOKEN_BODY",
+        &format!("{{\"access_token\": \"{TOKEN}\"}}"),
+    );
+    s
+}
+
+/// The JSON body of the token login, from its curl config.
+fn login_body(s: &Sandbox) -> serde_json::Value {
+    let config = read(s, "curl.login.stdin");
+    let body = config
+        .strip_prefix("data-raw = \"")
+        .and_then(|b| b.strip_suffix("\"\n"))
+        .unwrap_or_else(|| panic!("{config}"))
+        .replace("\\\"", "\"");
+    serde_json::from_str(&body).unwrap()
+}
+
+#[test]
+fn a_hub_login_named_by_web_login_names_posts_json_then_sends_the_token() {
+    let mut s = token_sandbox("web-hub", ", login: acme");
+    s.set_env("FAKE_CURL_BODY", "[]\n");
+    let out = s.roster(&["web", "box-t", "GET", "/api/v1/things"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout, "[]\n", "the login reply isn't printed");
+    assert_eq!(out.stderr, "");
+    assert_eq!(
+        calls(&s),
+        [
+            argv(&[
+                "-k",
+                "-H",
+                "Content-Type: application/json",
+                "-X",
+                "POST",
+                "https://10.0.0.9/api/auth/login"
+            ]),
+            argv(&["-k", "-X", "GET", "https://10.0.0.9/api/v1/things"]),
+        ]
+    );
+    assert_eq!(
+        login_body(&s),
+        serde_json::json!({"username": "ops", "password": PASSWORD})
+    );
+    assert_eq!(
+        read(&s, "curl.stdin"),
+        format!("header = \"Authorization: Bearer {TOKEN}\"\n")
+    );
+}
+
+#[test]
+fn a_token_login_takes_its_path_fields_and_header_from_the_service() {
+    let mut s = token_sandbox(
+        "web-token-fields",
+        ", login: token, login_path: /v2/session, token_field: data.token, \
+         user_field: login, password_field: secret, token_header: X-Auth-Token",
+    );
+    s.set_env("FAKE_CURL_LOGIN_PATH", "/v2/session");
+    s.set_env(
+        "FAKE_CURL_TOKEN_BODY",
+        &format!("{{\"data\": {{\"token\": \"{TOKEN}\", \"ttl\": 600}}}}"),
+    );
+    let out = s.roster(&["web", "box-t", "web", "-k", "DELETE", "/v2/x"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(calls(&s)[0].last().unwrap(), "https://10.0.0.9/v2/session");
+    assert_eq!(
+        login_body(&s),
+        serde_json::json!({"login": "ops", "secret": PASSWORD})
+    );
+    assert_eq!(
+        read(&s, "curl.stdin"),
+        format!("header = \"X-Auth-Token: {TOKEN}\"\n"),
+        "a header other than Authorization gets the bare token"
+    );
+}
+
+#[test]
+fn login_hub_is_a_token_login_and_an_unknown_login_drops_the_service() {
+    let s = token_sandbox("web-hub-plain", ", login: hub");
+    let out = s.roster(&["web", "box-t", "GET", "/"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        read(&s, "curl.stdin"),
+        format!("header = \"Authorization: Bearer {TOKEN}\"\n")
+    );
+    let s = token_sandbox("web-login-unknown", ", login: sso");
+    let out = s.roster(&["web", "box-t", "web", "GET", "/"]);
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr.contains("box-t has no service 'web'"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn a_refused_login_or_a_reply_without_a_token_stops_before_the_request() {
+    let mut s = token_sandbox("web-token-refused", ", login: acme");
+    s.set_env("FAKE_CURL_LOGIN_STATUS", "401");
+    let out = s.roster(&["web", "box-t", "GET", "/x"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "roster: box-t web: token login to /api/auth/login: HTTP 401\n"
+    );
+    assert_eq!(out.stdout, "", "the login reply isn't printed");
+    assert_eq!(calls(&s).len(), 1, "only the login ran");
+    s.set_env("FAKE_CURL_LOGIN_STATUS", "200");
+    s.set_env("FAKE_CURL_TOKEN_BODY", "{\"error\": \"nope\"}");
+    let out = s.roster(&["web", "box-t", "GET", "/x"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "roster: box-t web: token login to /api/auth/login: no access_token in the reply\n"
+    );
+    s.set_env("FAKE_CURL_TOKEN_BODY", "<html>login</html>");
+    let out = s.roster(&["web", "box-t", "GET", "/x"]);
+    assert!(
+        out.stderr.contains("the reply isn't JSON"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(calls(&s).len(), 3, "never the request");
+}
+
+#[test]
+fn the_password_and_the_token_never_leak() {
+    let mut s = token_sandbox("web-token-secrets", ", login: acme");
+    // A server that echoes the password back in its reply.
+    s.set_env(
+        "FAKE_CURL_TOKEN_BODY",
+        &format!("{{\"access_token\": \"{TOKEN}\", \"echo\": \"{PASSWORD}\"}}"),
+    );
+    s.set_env("FAKE_CURL_STATUS", "500");
+    let out = s.roster(&["web", "box-t", "GET", "/x"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    s.set_env("FAKE_CURL_LOGIN_STATUS", "403");
+    let refused = s.roster(&["web", "box-t", "GET", "/x"]);
+    assert_eq!(refused.code, 1, "{}", refused.stderr);
+    for out in [out, refused] {
+        for secret in [PASSWORD, TOKEN] {
+            assert!(!out.stdout.contains(secret) && !out.stderr.contains(secret));
+        }
+    }
+    assert!(read(&s, "curl.login.stdin").contains(PASSWORD));
+    assert!(read(&s, "curl.stdin").contains(TOKEN));
+    // The scripted reply is the test's own variable, not roster's doing.
+    let env = read(&s, "curl.env");
+    let env: Vec<_> = env.lines().filter(|l| !l.starts_with("FAKE_")).collect();
+    for secret in [PASSWORD, TOKEN] {
+        assert!(!read(&s, "curl.log").contains(secret), "argv");
+        assert!(
+            !env.iter().any(|l| l.contains(secret)),
+            "curl's environment"
+        );
+        for file in files(&s.home) {
+            let own = ["curl.stdin", "curl.login.stdin", "curl.env"];
+            if own.iter().any(|f| file.ends_with(f)) {
+                continue;
+            }
+            let bytes = std::fs::read(&file).unwrap();
+            let hit = bytes.windows(secret.len()).any(|w| w == secret.as_bytes());
+            assert!(!hit, "a credential is in {}", file.display());
+        }
+    }
+}

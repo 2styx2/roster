@@ -237,3 +237,178 @@ fn a_password_that_wont_resolve_stops_run_before_any_ssh() {
     );
     assert!(ran(&s).is_empty());
 }
+
+const SUDO_PASSWORD: &str = "pw-sudo-4b8d-made-up";
+
+/// `sudo: {auth}` cascades: defaults < group < Host. box-a takes lab's,
+/// box-b its own, box-c the defaults'; box-d has none, so its `auth`.
+const SUDO_INVENTORY: &str = "\
+defaults: {user: admin, sudo: {auth: env:DEFAULT_SUDO}}
+groups:
+  lab:
+    sudo: {auth: env:LAB_SUDO}
+    hosts:
+      box-a: 10.0.0.5
+      box-b: {ip: 10.0.0.6, sudo: {auth: env:OWN_SUDO}}
+  other:
+    hosts:
+      box-c: 10.0.0.7
+";
+
+fn sudo_sandbox(name: &str) -> Sandbox {
+    let mut s = Sandbox::new(name);
+    s.write("roster.yml", SUDO_INVENTORY);
+    s.set_env("FAKE_SSH_RUN", "1");
+    s.set_env("FAKE_SUDO_PASSWORD", SUDO_PASSWORD);
+    for var in ["DEFAULT_SUDO", "LAB_SUDO", "OWN_SUDO"] {
+        s.set_env(var, "pw-wrong-made-up");
+    }
+    s
+}
+
+#[test]
+fn run_sudo_sends_the_sudo_password_on_stdin_and_runs_as_root() {
+    let mut s = sudo_sandbox("run-sudo");
+    s.set_env("LAB_SUDO", SUDO_PASSWORD);
+    let out = s.roster(&["run", "--sudo", "box-a", "--", "echo", "$USER", "\"it's\""]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout, "box-a: root it's\n");
+    let log = std::fs::read_to_string(s.home.join("ssh.log")).unwrap();
+    assert_eq!(
+        log,
+        "-o BatchMode=yes -o ConnectTimeout=10 box-a -- \
+         sudo -S -p '' -- sh -c 'exec </dev/null; echo $USER \"it'\\''s\"'\n"
+    );
+}
+
+#[test]
+fn the_sudo_auth_cascades_and_a_wrong_password_fails_that_host() {
+    let mut s = sudo_sandbox("run-sudo-cascade");
+    s.set_env("OWN_SUDO", SUDO_PASSWORD);
+    let out = s.roster(&["run", "--sudo", "lab", "--", "echo", "$USER"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(out.stdout, "box-b: root\n", "box-b's own beats lab's");
+    assert_eq!(
+        out.stderr,
+        "box-a: sudo: 1 incorrect password attempt\nroster: failed on box-a\n"
+    );
+    s.set_env("OWN_SUDO", "pw-wrong-made-up");
+    s.set_env("DEFAULT_SUDO", SUDO_PASSWORD);
+    let out = s.roster(&["run", "--sudo", "box-c", "--", "echo", "$USER"]);
+    assert_eq!((out.code, out.stdout.as_str()), (0, "box-c: root\n"));
+}
+
+#[test]
+fn without_sudo_auth_the_hosts_auth_is_used_and_each_reference_resolves_once() {
+    let mut s = Sandbox::new("run-sudo-auth");
+    let count = "cmd:echo x >>\"$HOME/resolved\"; echo pw-sudo-4b8d-made-up";
+    s.write(
+        "roster.yml",
+        &format!(
+            "defaults: {{user: admin, auth: '{count}'}}\ngroups:\n  lab:\n    hosts:\n      \
+             box-a: 10.0.0.5\n      box-b: 10.0.0.6\n"
+        ),
+    );
+    s.set_env("FAKE_SSH_RUN", "1");
+    s.set_env("FAKE_SUDO_PASSWORD", SUDO_PASSWORD);
+    let out = s.roster(&["run", "--sudo", "lab", "--", "echo", "$USER"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(sorted(&out.stdout), ["box-a: root", "box-b: root"]);
+    let resolved = std::fs::read_to_string(s.home.join("resolved")).unwrap();
+    assert_eq!(resolved, "x\n", "one resolve for both Hosts");
+}
+
+#[test]
+fn a_key_auth_runs_sudo_n_for_nopasswd() {
+    let mut s = Sandbox::new("run-sudo-n");
+    s.write(
+        "roster.yml",
+        "defaults: {user: admin}\ngroups:\n  lab:\n    hosts:\n      \
+         box-a: {ip: 10.0.0.5, auth: key}\n",
+    );
+    s.set_env("FAKE_SSH_RUN", "1");
+    let out = s.roster(&["run", "--sudo", "box-a", "--", "id"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "box-a: sudo: a password is required\nroster: failed on box-a\n"
+    );
+    s.set_env("FAKE_SUDO_NOPASSWD", "1");
+    let out = s.roster(&["run", "--sudo", "box-a", "--", "echo", "$USER"]);
+    assert_eq!((out.code, out.stdout.as_str()), (0, "box-a: root\n"));
+    let log = std::fs::read_to_string(s.home.join("sudo.log")).unwrap();
+    assert!(
+        log.ends_with("-n -- sh -c exec </dev/null; echo $USER\n"),
+        "{log}"
+    );
+}
+
+#[test]
+fn the_sudo_password_is_masked_in_text_and_json() {
+    let mut s = sudo_sandbox("run-sudo-mask");
+    s.set_env("LAB_SUDO", SUDO_PASSWORD);
+    let echo = [
+        "echo",
+        "got:$FAKE_SUDO_PASSWORD;",
+        "echo",
+        "$FAKE_SUDO_PASSWORD",
+        ">&2",
+    ];
+    let args = [&["run", "--sudo", "box-a", "--"][..], &echo].concat();
+    let out = s.roster(&args);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout, "box-a: got:********\n");
+    assert_eq!(out.stderr, "box-a: ********\n");
+    let args = [&["run", "--json", "--sudo", "box-a", "--"][..], &echo].concat();
+    let out = s.roster(&args);
+    let doc: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(doc["hosts"][0]["stdout"], "got:********\n");
+    assert_eq!(doc["hosts"][0]["stderr"], "********\n");
+}
+
+#[test]
+fn a_password_host_logs_in_through_askpass_and_sudo_never_leaks() {
+    let mut s = Sandbox::new("run-sudo-secrets");
+    s.write(
+        "roster.yml",
+        "defaults: {user: admin}\ngroups:\n  net:\n    hosts:\n      \
+         sw-01: {ip: 10.0.0.9, enroll: false, auth: env:SW_PASS, sudo: {auth: env:SW_SUDO}}\n",
+    );
+    let runtime = std::env::temp_dir().join("roster-t-run-sudo-secrets");
+    let _ = std::fs::remove_dir_all(&runtime);
+    std::fs::create_dir_all(&runtime).unwrap();
+    s.set_env("XDG_RUNTIME_DIR", runtime.to_str().unwrap());
+    s.set_env("SW_PASS", PASSWORD);
+    s.set_env("SW_SUDO", SUDO_PASSWORD);
+    s.set_env("FAKE_SSH_RUN", "1");
+    s.set_env("FAKE_SSH_ASKPASS", "admin@10.0.0.9's password: ");
+    s.set_env("FAKE_SUDO_PASSWORD", SUDO_PASSWORD);
+    let out = s.roster(&["run", "--sudo", "net", "--", "echo", "$USER"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout, "sw-01: root\n");
+    let got = std::fs::read_to_string(s.home.join("askpass.got")).unwrap();
+    assert_eq!(
+        got,
+        format!("{PASSWORD}\n"),
+        "the login went through askpass"
+    );
+    let log = std::fs::read_to_string(s.home.join("ssh.log")).unwrap();
+    assert!(
+        log.starts_with("-o ConnectTimeout=10 sw-01 -- sudo -S"),
+        "{log}"
+    );
+    for secret in [PASSWORD, SUDO_PASSWORD] {
+        assert!(!out.stdout.contains(secret) && !out.stderr.contains(secret));
+        for file in files(&s.home) {
+            if file.ends_with("askpass.got") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&file).unwrap();
+            // The fake ssh saves its environment, the test's FAKE_ ones too.
+            let hit = text
+                .lines()
+                .any(|l| l.contains(secret) && !l.starts_with("FAKE_"));
+            assert!(!hit, "a password is in {}", file.display());
+        }
+    }
+}

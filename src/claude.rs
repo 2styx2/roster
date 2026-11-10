@@ -21,10 +21,12 @@ This machine already has access to the Hosts below. Never ask the user for an ad
 - To find a Host by name, group, type or product: `roster ls <word>`. Add `--json` to read the data rather than show it.
 - If a Host doesn't respond, `roster check <name> --json` shows which step fails; report what you find.
 - Web UIs: open the URL in the browser. If it shows a login page, ask the user to sign in.
-- A service marked **(login)** has a stored login. For its web API use `roster web <name> [service] GET /path`: roster sends the credentials and you see only the response. Ask before any request that changes something (POST, PUT, PATCH, DELETE).
+- A service marked **(login)** has a stored login: a password, or a token login. To call its web API run `roster web <name> [service] METHOD /path`, with `-d '<body>'` and `-H 'Header: value'` as needed (for example `roster web box-a api POST /api/v1/jobs -d '{\"name\": \"backup\"}'`). roster logs in with the vault credentials and you see only the response. Ask before any request that changes something (POST, PUT, PATCH, DELETE).
+- To run a command as root: `roster run --sudo <name> -- <command>` (for example `roster run --sudo box-a -- systemctl restart nginx`). roster gives sudo its password itself.
 
 ## Rules
 - Never read, print or copy private keys (`~/.ssh/`), and never try to retrieve passwords: don't run `bw` or any other password-manager command yourself.
+- Never ask for or handle a password or token: never echo a password into `sudo` or use `sudo -S` yourself, and never call a web API with `curl` and credentials yourself. Use `roster run --sudo` and `roster web`.
 - If roster says the vault is locked, tell the user; they unlock it in their own terminal with `roster vault unlock`.
 - Ask before changing state on a Host: restarts, installs, deletes, config edits, writes to databases.
 
