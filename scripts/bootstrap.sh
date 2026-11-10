@@ -29,7 +29,8 @@ if [ -n "$need" ]; then
 	elif command -v dnf >/dev/null; then
 		as_root dnf install -y -q --allowerasing $need
 	elif command -v pacman >/dev/null; then
-		as_root pacman -Sy --needed --noconfirm $need
+		# Arch supports no partial upgrades: refresh and upgrade together.
+		as_root pacman -Syu --needed --noconfirm $need
 	else
 		say "install git and curl by hand, then run this again"
 		exit 1

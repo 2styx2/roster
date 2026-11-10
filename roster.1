@@ -1,4 +1,4 @@
-.TH ROSTER 1 2026-11-09 "roster 0.7.9" "User Commands"
+.TH ROSTER 1 2026-11-09 "roster 0.7.10" "User Commands"
 .SH NAME
 roster \- know your network: list and reach the Hosts in roster.yml
 .SH SYNOPSIS
@@ -1082,14 +1082,18 @@ key
 in the user keyring
 .BR @u ,
 which expires after 12 hours.
-It is added to the session keyring first, where it can be set up, then
-moved into
+It is added in a new session keyring
+.RB ( "keyctl session \-" ),
+where it can be set up, then moved into
 .BR @u ,
-and found there by name, so this also works after
+and found there by name.
+So this works wherever the login's own keyring wouldn't let roster set the
+key's permissions: after
 .B su
 or
 .B sudo \-i
-(whose session keyring leads to the first user's keyring, not root's).
+(whose session keyring leads to the first user's keyring, not root's), and
+on WSL (whose default session keyring doesn't count as the process's own).
 It is never written to a file.
 Without
 .B keyctl

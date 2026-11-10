@@ -39,7 +39,7 @@ fn version_prints_the_version_and_exits_0() {
     for args in [&["--version"][..], &["-V"], &["version"]] {
         let out = s.roster(args);
         assert_eq!(out.code, 0, "{args:?}: {}", out.stderr);
-        assert_eq!(out.stdout, "roster 0.7.9\n", "{args:?}");
+        assert_eq!(out.stdout, "roster 0.7.10\n", "{args:?}");
     }
 }
 
