@@ -34,11 +34,8 @@ fn sync_writes_the_box_files_and_runs_no_ssh_tool() {
         "{config}"
     );
     assert!(!s.home.join(".ssh/roster_ed25519").exists());
-    let include = format!(
-        "Include \"{}\"\n",
-        s.home.join(".ssh/config.d/roster").display()
-    );
-    assert!(read(&s, ".ssh/config").starts_with(&include));
+    // Unquoted, so bash-completion's `ssh <Tab>` follows it to the Hosts.
+    assert!(read(&s, ".ssh/config").starts_with("Include ~/.ssh/config.d/roster\n"));
     assert!(read(&s, "ROSTER.md").contains("box-b"));
     assert!(read(&s, "CLAUDE.md").contains("@ROSTER.md"));
     assert!(read(&s, ".claude/settings.json").contains("Read(~/.ssh/**)"));

@@ -137,10 +137,8 @@ fn setup_includes_the_config_once_on_top_and_a_rerun_changes_nothing() {
     std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o640)).unwrap();
     let out = s.roster(&["setup"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
-    let include = format!(
-        "Include \"{}\"\n",
-        s.home.join(".ssh/config.d/roster").display()
-    );
+    // Unquoted: bash-completion's ssh host list doesn't follow a quoted path.
+    let include = "Include ~/.ssh/config.d/roster\n";
     assert_eq!(read(&s, ".ssh/config"), format!("{include}{mine}"));
     let mode = std::fs::metadata(&config).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o640, "an existing file keeps its mode");
@@ -215,10 +213,8 @@ fn a_symlinked_ssh_config_stays_a_link_and_its_target_gets_the_include() {
     let out = s.roster(&["setup"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert!(link.symlink_metadata().unwrap().is_symlink());
-    let include = format!(
-        "Include \"{}\"\n",
-        s.home.join(".ssh/config.d/roster").display()
-    );
+    // Unquoted: bash-completion's ssh host list doesn't follow a quoted path.
+    let include = "Include ~/.ssh/config.d/roster\n";
     let now = std::fs::read_to_string(target).unwrap();
     assert_eq!(now, format!("{include}{mine}"));
 }

@@ -62,9 +62,25 @@ pub fn with_include(config: &str, path: &Path) -> Option<String> {
     (!included).then(|| format!("{line}\n{config}"))
 }
 
-/// The line `Include "<path>"` that `with_include` adds.
+/// The line `with_include` adds: `Include ~/.ssh/config.d/roster`, unquoted,
+/// because bash-completion's ssh host list doesn't follow a quoted path.
+/// A path outside `~/.ssh` (never roster's own) is quoted.
 pub fn include_line(path: &Path) -> String {
-    format!("Include \"{}\"", path.display())
+    match path.strip_prefix(crate::setup::home()) {
+        Ok(rel) if !rel.to_string_lossy().contains(char::is_whitespace) => {
+            format!("Include ~/{}", rel.display())
+        }
+        _ => format!("Include \"{}\"", path.display()),
+    }
+}
+
+/// Every form an Include of `path` was written in: this one, and older
+/// rosters' quoted absolute path. Undo removes them all.
+pub fn include_lines(path: &Path) -> [String; 2] {
+    [
+        include_line(path),
+        format!("Include \"{}\"", path.display()),
+    ]
 }
 
 /// `text` without the lines that are exactly `line`; None when there's none.

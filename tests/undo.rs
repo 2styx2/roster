@@ -392,3 +392,23 @@ fn undo_removes_this_boxs_mesh_and_leaves_other_boxes_alone() {
         out.stdout
     );
 }
+
+/// Older rosters wrote the Include quoted, `Include "/abs/.ssh/config.d/roster"`;
+/// undo takes that line out too, and leaves the user's own lines.
+#[test]
+fn undo_removes_a_legacy_quoted_include_too() {
+    let s = sandbox("undo-legacy-include");
+    hosts_up(&s);
+    assert_eq!(s.roster(&["setup"]).code, 0);
+    let legacy = format!(
+        "Include \"{}\"\n",
+        s.home.join(".ssh/config.d/roster").display()
+    );
+    let mine = "Host *\n    ServerAliveInterval 60\n";
+    s.write(
+        ".ssh/config",
+        &format!("{legacy}Include ~/.ssh/config.d/roster\n{mine}"),
+    );
+    assert_eq!(s.roster(&["setup", "--undo"]).code, 0);
+    assert_eq!(read(s.home.join(".ssh/config")), mine);
+}
