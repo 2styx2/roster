@@ -29,6 +29,30 @@ jobs:
           make uninstall PREFIX="$p"
           test -z "$(find "$p" -type f)"
 
+  # A fresh machine: scripts/bootstrap.sh from nothing, at this very commit.
+  fresh-install:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:24.04", "fedora:41", "archlinux:latest"]
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: bootstrap
+        env:
+          ROSTER_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: sh scripts/bootstrap.sh
+      - name: everything is in place
+        run: |
+          export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+          roster --version
+          bw --version
+          for c in ssh ssh-keygen ssh-keyscan keyctl fzf curl tmux; do command -v "$c"; done
+          test -f "$HOME/.local/share/bash-completion/completions/roster"
+          test -f "$HOME/.local/share/man/man1/roster.1"
+          sh scripts/deps.sh | tail -1   # a rerun has nothing to install
+
   side-by-side:
     runs-on: ubuntu-latest
     steps:

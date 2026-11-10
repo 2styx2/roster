@@ -4,12 +4,17 @@
 
 ## Install
 
-roster ships as source only. With a stable Rust toolchain, `make install` builds roster and installs the binary, bash completion and man page into `~/.local` (or `sudo make install PREFIX=/usr/local`):
+roster ships as source only. On a fresh machine, one script installs everything:
+- the dependencies, through apt, dnf or pacman, plus the Bitwarden CLI and Rust;
+- roster itself, at its latest release;
+- its bash completion and man page.
 
 ```sh
-git clone https://github.com/2styx2/roster && cd roster
-make install
+curl -fsSL https://raw.githubusercontent.com/2styx2/roster/main/scripts/bootstrap.sh -o bootstrap.sh
+less bootstrap.sh && sh bootstrap.sh
 ```
+
+From a clone: `make deps` installs the dependencies, and `make install` installs roster, its completion and its man page into `~/.local` (or `sudo make install PREFIX=/usr/local`).
 
 Then follow the **[tutorial](docs/tutorial.md)**: install, first setup, daily use, adding Hosts from Bitwarden, and a 30-minute outline for teaching it. `roster.1` (`man ./roster.1`) is the reference for every command and flag.
 

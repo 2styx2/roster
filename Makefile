@@ -20,4 +20,8 @@ install: all
 uninstall:
 	rm -f $(BINDIR)/roster $(COMPDIR)/roster $(MANDIR)/roster.1
 
-.PHONY: all install uninstall
+# What roster needs: system packages (apt, dnf or pacman) and the Bitwarden CLI.
+deps:
+	sh scripts/deps.sh
+
+.PHONY: all install uninstall deps
