@@ -22,7 +22,13 @@ struct Outcome {
     stderr: String,
 }
 
-pub fn run(inv: &Inventory, target: &str, cmd: Vec<OsString>, json: bool) -> Result<(), Fail> {
+pub fn run(
+    inv: &Inventory,
+    target: &str,
+    cmd: Vec<OsString>,
+    json: bool,
+    sudo: bool,
+) -> Result<(), Fail> {
     if cmd.is_empty() {
         return Err(crate::usage_error("run needs a command after TARGET"));
     }
@@ -39,16 +45,25 @@ pub fn run(inv: &Inventory, target: &str, cmd: Vec<OsString>, json: bool) -> Res
         return Err(Fail { code: 1, msg });
     }
     // Every password first, one prompt at a time, before any thread starts.
-    let (mut memo, mut secrets) = (vault::Memo::default(), Vec::with_capacity(hosts.len()));
+    let (mut memo, mut jobs) = (vault::Memo::default(), Vec::with_capacity(hosts.len()));
     for h in &hosts {
-        secrets.push(match h.enroll {
+        let login = match h.enroll {
             true => None,
             false => memo.resolve(&h.auth, &h.name)?,
-        });
+        };
+        let root = match sudo {
+            true => Some(memo.resolve(h.sudo.as_deref().unwrap_or(&h.auth), &h.name)?),
+            false => None,
+        };
+        jobs.push((*h, login, root));
     }
-    let jobs: Vec<_> = hosts.iter().zip(&secrets).collect();
-    let outcomes = parallel(&jobs, |(host, secret)| {
-        one(host, secret.as_deref(), &cmd, json)
+    let outcomes = parallel(&jobs, |(host, login, root)| {
+        let remote = match root {
+            Some(password) => as_root(&cmd, password.is_some()),
+            None => cmd.clone(),
+        };
+        let password = root.as_ref().and_then(Option::as_deref);
+        one(host, login.as_deref(), &remote, password, json)
     });
     if json {
         let docs = hosts.iter().zip(&outcomes).map(|(h, o)| {
@@ -90,8 +105,34 @@ pub fn parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Ve
     results.map(|r| r.expect("every item ran")).collect()
 }
 
+/// `sudo -S -p '' -- sh -c 'exec </dev/null; CMD'`, the password read from
+/// stdin; without one, `sudo -n` (for NOPASSWD).
+fn as_root(cmd: &[OsString], password: bool) -> Vec<OsString> {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let flags: &[u8] = if password { b"-S -p ''" } else { b"-n" };
+    let mut line = [b"sudo ", flags, b" -- sh -c 'exec </dev/null;"].concat();
+    for word in cmd {
+        line.push(b' ');
+        for &b in word.as_bytes() {
+            match b {
+                b'\'' => line.extend(b"'\\''"),
+                _ => line.push(b),
+            }
+        }
+    }
+    line.push(b'\'');
+    vec![OsString::from_vec(line)]
+}
+
 /// Run CMD on one Host, streaming its lines (or collecting them for JSON).
-fn one(host: &Host, secret: Option<&Secret>, cmd: &[OsString], json: bool) -> Outcome {
+/// A sudo `password` goes to ssh's stdin and is masked in every line.
+fn one(
+    host: &Host,
+    secret: Option<&Secret>,
+    cmd: &[OsString],
+    password: Option<&Secret>,
+    json: bool,
+) -> Outcome {
     let mut ssh = crate::remote::command("ssh");
     if secret.is_none() {
         ssh.args(["-o", "BatchMode=yes"]);
@@ -100,19 +141,26 @@ fn one(host: &Host, secret: Option<&Secret>, cmd: &[OsString], json: bool) -> Ou
         .arg(&host.name)
         .arg("--")
         .args(cmd)
-        .stdin(Stdio::null())
+        .stdin(match password {
+            Some(_) => Stdio::piped(),
+            None => Stdio::null(),
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let name = host.name.as_str();
+    let mask = password.map(Secret::expose);
     let (mut stdout, mut stderr) = (String::new(), String::new());
     let (keep_out, keep_err) = (&mut stdout, &mut stderr);
     let status = std::thread::scope(|s| {
         let started = move |child: &mut Child| {
+            if let (Some(mut i), Some(p)) = (child.stdin.take(), mask) {
+                let _ = i.write_all(p.as_bytes()).and_then(|()| i.write_all(b"\n"));
+            }
             if let Some(o) = child.stdout.take() {
-                s.spawn(move || lines(o, name, json, keep_out, &mut io::stdout()));
+                s.spawn(move || lines(o, name, json, mask, keep_out, &mut io::stdout()));
             }
             if let Some(e) = child.stderr.take() {
-                s.spawn(move || lines(e, name, json, keep_err, &mut io::stderr()));
+                s.spawn(move || lines(e, name, json, mask, keep_err, &mut io::stderr()));
             }
         };
         match secret {
@@ -126,7 +174,14 @@ fn one(host: &Host, secret: Option<&Secret>, cmd: &[OsString], json: bool) -> Ou
     let exit = status.as_ref().ok().and_then(ExitStatus::code);
     if let Err(e) = status {
         let msg = format!("can't run ssh: {e}");
-        lines(msg.as_bytes(), name, json, &mut stderr, &mut io::stderr());
+        lines(
+            msg.as_bytes(),
+            name,
+            json,
+            None,
+            &mut stderr,
+            &mut io::stderr(),
+        );
     }
     Outcome {
         exit,
@@ -136,12 +191,23 @@ fn one(host: &Host, secret: Option<&Secret>, cmd: &[OsString], json: bool) -> Ou
 }
 
 /// Copy `from` line by line: into `keep` for JSON, else to `to` as
-/// `host: line`, a whole line per write so Hosts never interleave mid-line.
-fn lines(from: impl Read, host: &str, json: bool, keep: &mut String, to: &mut impl Write) {
+/// `host: line`, a whole line per write so Hosts never interleave mid-line;
+/// `mask` shows as `********`.
+fn lines(
+    from: impl Read,
+    host: &str,
+    json: bool,
+    mask: Option<&str>,
+    keep: &mut String,
+    to: &mut impl Write,
+) {
     let mut from = BufReader::new(from);
     let mut line = Vec::new();
     while matches!(from.read_until(b'\n', &mut line), Ok(n) if n > 0) {
-        let text = String::from_utf8_lossy(&line);
+        let mut text = String::from_utf8_lossy(&line);
+        if let Some(m) = mask.filter(|m| text.contains(m)) {
+            text = text.replace(m, "********").into();
+        }
         if json {
             keep.push_str(&text);
         } else {
