@@ -59,9 +59,21 @@ fn keyctl(args: &[&str], input: &[u8]) -> std::io::Result<Output> {
     Ok(out)
 }
 
+/// The id of the session key in the user keyring (@u), or None. Looked up
+/// in @u by name rather than through the session: after `su`, the session
+/// keyring doesn't lead to this user's keyring.
+fn find() -> std::io::Result<Option<String>> {
+    let out = keyctl(&["search", "@u", "user", KEY], b"")?;
+    let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok((out.status.success() && !id.is_empty()).then_some(id))
+}
+
 /// The session key in the keyring, or None if it's missing or expired.
 fn stored() -> std::io::Result<Option<Zeroizing<String>>> {
-    let out = keyctl(&["pipe", &format!("%user:{KEY}")], b"")?;
+    let Some(id) = find()? else {
+        return Ok(None);
+    };
+    let out = keyctl(&["pipe", &id], b"")?;
     let key = Zeroizing::new(out.stdout);
     let key = Zeroizing::new(String::from_utf8_lossy(&key).trim().to_string());
     Ok((out.status.success() && !key.is_empty()).then_some(key))
@@ -169,15 +181,25 @@ pub fn unlock() -> Result<(), Fail> {
         Ok(out) if out.status.success() => Ok(out.stdout),
         _ => Err(failed(format!("vault unlock: keyctl {} failed", args[0]))),
     };
-    let id = store(&["padd", "user", KEY, "@u"], session.as_bytes())?;
+    forget();
+    // Added to the session keyring, which the process always possesses (a key
+    // added straight to @u isn't possessed after `su`, and its permissions
+    // can't be set); set up there, then moved into the user keyring.
+    let id = store(&["padd", "user", KEY, "@s"], session.as_bytes())?;
     let id = String::from_utf8_lossy(&id).trim().to_string();
     // Possessor: all. The owner's other processes, such as `roster sync` from
     // cron in its own keyring session: view, read, search, nothing more (no
     // write, link or setattr, so they can't replace the key or extend its
     // life). Group and other users: none.
-    for args in [["setperm", &id, PERM], ["timeout", &id, TIMEOUT]] {
+    let steps = [
+        ["setperm", id.as_str(), PERM],
+        ["timeout", id.as_str(), TIMEOUT],
+        ["link", id.as_str(), "@u"],
+        ["unlink", id.as_str(), "@s"],
+    ];
+    for args in steps {
         if let Err(e) = store(&args, b"") {
-            let _ = keyctl(&["purge", "user", KEY], b"");
+            let _ = keyctl(&["invalidate", &id], b"");
             return Err(e);
         }
     }
@@ -201,10 +223,17 @@ pub fn list() -> Result<[Zeroizing<Vec<u8>>; 2], String> {
     ])
 }
 
+/// Remove the session key from the user keyring, if it's there.
+fn forget() {
+    if let Ok(Some(id)) = find() {
+        let _ = keyctl(&["invalidate", &id], b"");
+    }
+}
+
 /// `roster vault lock`: forget the session key and lock bw.
 pub fn lock() -> Result<(), Fail> {
     drop_legacy();
-    let _ = keyctl(&["purge", "user", KEY], b"");
+    forget();
     bw(&["lock"], &[]).map_err(|e| failed(format!("vault lock: {e}")))?;
     println!("Bitwarden locked");
     Ok(())
