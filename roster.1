@@ -1,4 +1,4 @@
-.TH ROSTER 1 2026-11-09 "roster 0.7.5" "User Commands"
+.TH ROSTER 1 2026-11-09 "roster 0.7.6" "User Commands"
 .SH NAME
 roster \- know your network: list and reach the Hosts in roster.yml
 .SH SYNOPSIS
@@ -1023,6 +1023,14 @@ key
 in the user keyring
 .BR @u ,
 which expires after 12 hours.
+It is added to the session keyring first, where it can be set up, then
+moved into
+.BR @u ,
+and found there by name, so this also works after
+.B su
+or
+.B sudo \-i
+(whose session keyring leads to the first user's keyring, not root's).
 It is never written to a file.
 Without
 .B keyctl
@@ -1031,7 +1039,7 @@ nothing can be kept: roster says to install keyutils, exits 1, and each
 reference asks for the master password.
 .TP
 .B vault lock
-Purge the key from the keyring and run
+Invalidate the key in the keyring and run
 .BR "bw lock" .
 .IP
 Both delete roster 0.7's
