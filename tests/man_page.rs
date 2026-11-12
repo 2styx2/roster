@@ -57,6 +57,11 @@ const DOCUMENTED: &[&str] = &[
     "password",
     "notes",
     "links",
+    // Claude may log in (claude: true)
+    ".B claude",
+    "autoMode.allow",
+    "Bash(roster run:*)",
+    "passwordless sudo",
     "via",
     "box_name",
     "key_path",

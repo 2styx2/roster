@@ -1,4 +1,4 @@
-.TH ROSTER 1 2026-11-10 "roster 0.7.11" "User Commands"
+.TH ROSTER 1 2026-11-12 "roster 0.7.12" "User Commands"
 .SH NAME
 roster \- know your network: list and reach the Hosts in roster.yml
 .SH SYNOPSIS
@@ -361,12 +361,43 @@ gets
 and
 .BR Edit(~/.ssh/**) ,
 each added once.
-Every other key is kept, and a file that denies both already is left
-as it is.
+Every other key is kept (keys come out sorted), and a file that denies both
+already is left as it is.
 A file that isn't valid JSON is left alone with a warning.
-The user's own
-.I ~/.claude
-is never touched.
+.IP
+Then, unless
+.I roster.yml
+says
+.BR "claude: false" ,
+the user's own
+.IR ~/.claude ,
+so that Claude knows the Hosts and may log in to them from any directory:
+.I ~/.claude/CLAUDE.md
+gets an
+.BI @ PATH /ROSTER.md
+line (the ROSTER.md above, by its full path), and
+.I ~/.claude/settings.json
+gets, each once,
+.B permissions.allow
+.BR Bash(ssh:*) ,
+.BR Bash(scp:*) ,
+.BR Bash(rsync:*) ,
+.BR "Bash(roster ls:*)" ,
+.B "Bash(roster check:*)"
+and
+.BR "Bash(roster run:*)" ;
+the two deny rules above; and
+.BR autoMode.allow ,
+which auto mode's classifier reads (only from the user's own settings),
+.B $defaults
+(so the classifier keeps its built-in rules) and a sentence saying that
+logging in to the Hosts in ROSTER.md and running commands there is
+authorized.
+ROSTER.md then also says that Claude has permission to log in.
+With
+.BR "claude: false" ,
+those lines and rules are taken out again (and a file left empty is
+deleted); the user's own keys and rules are always kept.
 .IP 7. 4
 The Hosts, one at a time, in Inventory order.
 A Host that is unreviewed, has
@@ -531,17 +562,48 @@ and
 .I ~/ROSTER.md
 lists the peers for Claude there (first line
 .BI "<!\-\- roster\-mesh: written by roster for " SRC " (owner " BOX );\fR...),
-and when
+and, unless
+.BR "claude: false" ,
+the login user's
 .I ~/.claude
-exists and the login user can write it,
-.I ~/.claude/CLAUDE.md
-gets
-.BR @~/ROSTER.md .
+(made when missing) gets
+.B @~/ROSTER.md
+in
+.I CLAUDE.md
+and the same rules in
+.I settings.json
+as the Box's (see step 6).
 A
 .I ~/.claude
 owned by someone else (root, after
 .BR "sudo claude" )
-gets no import; the rest of the Mesh is set up as usual.
+is left alone; the rest of the Mesh is set up as usual.
+.IP
+Root gets the same, because Claude often runs as root:
+when the login isn't root and
+.B sudo \-n
+works, root's
+.I ~/.ssh/config
+gets the mark and
+.BI "Include " ROOT /.ssh/roster\-mesh.config
+(root's own copy of the login's Mesh config, since ssh refuses a config file
+another user owns;
+so root reaches the peers with the login's Mesh key, as the peers'
+own users), root's
+.I ~/.claude/CLAUDE.md
+gets
+.BI @ HOME /ROSTER.md\fR,
+and root's
+.I ~/.claude/settings.json
+the same rules.
+roster never types a sudo password here: where sudo asks for one,
+root is left out and one line says so, with the hint to give the login
+passwordless sudo or set
+.BR "claude: false" .
+.B setup \-\-undo
+and
+.B "claude: false"
+take root's part out again.
 Each peer's
 .I ~/.ssh/authorized_keys
 gets one line per source:
@@ -1436,6 +1498,22 @@ A
 .B key_path
 that names another type's key is refused: remove it or point it at another file.
 .TP
+.B claude
+.B true
+(default) lets Claude log in to the Hosts without asking: on this Box and
+on each Mesh Host (the login user and root),
+.B setup
+writes the import and the rules into
+.I ~/.claude
+(see
+.BR setup ,
+step 6).
+.B false
+takes them out again and writes none;
+ROSTER.md and the deny rules next to
+.I roster.yml
+stay.
+.TP
 .B web_login_names
 Login names to login types, for a service's
 .BR login :
@@ -2088,6 +2166,12 @@ Next to
 .IR roster.yml ;
 what Claude reads, written by
 .BR setup .
+.TP
+.IR ~/.claude/CLAUDE.md ", " ~/.claude/settings.json
+The user's own: the ROSTER.md import and the rules that let Claude log
+in to the Hosts, unless
+.BR "claude: false" ;
+also root's on each Mesh Host.
 .SH SEE ALSO
 .BR ssh (1),
 .BR fzf (1),

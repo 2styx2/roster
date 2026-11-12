@@ -28,6 +28,7 @@ fn sandbox(name: &str, inventory: &str) -> Sandbox {
     let hosts = s.home.join("hosts");
     std::fs::create_dir_all(&hosts).unwrap();
     s.set_env("FAKE_HOSTS", hosts.to_str().unwrap());
+    s.set_env("FAKE_SUDO_NOPASSWD", "1");
     s.write(".ssh/roster_ed25519", "FAKE PRIVATE KEY\n");
     s.write(".ssh/roster_ed25519.pub", BOX_LINE);
     s
@@ -88,14 +89,15 @@ fn mode(path: impl AsRef<std::path::Path>) -> u32 {
     std::fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
 
-/// Every file under `dir`, with its contents, for "nothing changed" checks.
+/// Every file under `dir`, with its contents, for "nothing changed" checks
+/// (fake sudo's log aside: each run reads root's files through it).
 fn snapshot(dir: &std::path::Path) -> Vec<(PathBuf, String)> {
     let mut out = Vec::new();
     for e in std::fs::read_dir(dir).unwrap() {
         let p = e.unwrap().path();
         if p.is_dir() {
             out.extend(snapshot(&p));
-        } else {
+        } else if !p.ends_with("sudo.log") {
             out.push((p.clone(), read(&p)));
         }
     }
@@ -209,8 +211,43 @@ fn setup_forms_the_web_with_v070_files_and_a_rerun_changes_nothing() {
         md.contains("| box-c | admin@10.0.0.7:2222 | key |\n"),
         "{md}"
     );
-    assert_eq!(read(b.join(".claude/CLAUDE.md")), "@~/ROSTER.md\n");
-    assert!(!c.join(".claude").exists(), "no ~/.claude, no import");
+    assert!(
+        md.contains("You have the user's permission to log in"),
+        "{md}"
+    );
+    // Claude, for the login (a missing ~/.claude is made) and for root.
+    for h in [&b, &c] {
+        assert_eq!(read(h.join(".claude/CLAUDE.md")), "@~/ROSTER.md\n");
+        let root = h.join(".fakeroot");
+        assert_eq!(
+            read(root.join(".claude/CLAUDE.md")),
+            format!("@{}/ROSTER.md\n", h.display())
+        );
+        // Root includes its own copy of the login's Mesh config: ssh
+        // refuses a config file another user owns.
+        let copy = root.join(".ssh/roster-mesh.config");
+        assert_eq!(
+            read(root.join(".ssh/config")),
+            format!("{MARK}\nInclude {}\n", copy.display())
+        );
+        assert_eq!(read(&copy), read(h.join(".ssh/roster-mesh/config")));
+        assert_eq!(mode(&copy), 0o600);
+        for f in [
+            h.join(".claude/settings.json"),
+            root.join(".claude/settings.json"),
+        ] {
+            let v: serde_json::Value = serde_json::from_str(&read(&f)).unwrap();
+            assert_eq!(
+                v["permissions"]["allow"][0],
+                "Bash(ssh:*)",
+                "{}",
+                f.display()
+            );
+            assert_eq!(v["permissions"]["deny"][0], "Read(~/.ssh/**)");
+            assert_eq!(v["autoMode"]["allow"][0], "$defaults");
+            assert_eq!(mode(&f), 0o600);
+        }
+    }
     // Hosts outside the web are left as they were.
     for h in [&d, &ops] {
         assert_eq!(read(h.join(".ssh/authorized_keys")), BOX_LINE);
@@ -471,17 +508,29 @@ fn dry_run_lists_each_hosts_changes() {
         [
             "box-b -> box-c",
             "box-c -> box-b",
+            "box-b: would write ~/.claude/settings.json",
+            "box-b: would write root's ~/.claude/settings.json",
             "box-b: would make the Mesh key ~/.ssh/roster-mesh/id_ed25519",
             "box-b: would write ~/.ssh/roster-mesh/config",
             "box-b: would write ~/.ssh/roster-mesh/known_hosts",
             "box-b: would write ~/ROSTER.md",
             "box-b: would add the Include to ~/.ssh/config",
+            "box-b: would add the import to ~/.claude/CLAUDE.md",
+            "box-b: would write root's ~/.ssh/roster-mesh.config",
+            "box-b: would add the Include to root's ~/.ssh/config",
+            "box-b: would add the import to root's ~/.claude/CLAUDE.md",
             "box-b: would add box-c's key once it's made",
+            "box-c: would write ~/.claude/settings.json",
+            "box-c: would write root's ~/.claude/settings.json",
             "box-c: would make the Mesh key ~/.ssh/roster-mesh/id_ed25519",
             "box-c: would write ~/.ssh/roster-mesh/config",
             "box-c: would write ~/.ssh/roster-mesh/known_hosts",
             "box-c: would write ~/ROSTER.md",
             "box-c: would add the Include to ~/.ssh/config",
+            "box-c: would add the import to ~/.claude/CLAUDE.md",
+            "box-c: would write root's ~/.ssh/roster-mesh.config",
+            "box-c: would add the Include to root's ~/.ssh/config",
+            "box-c: would add the import to root's ~/.claude/CLAUDE.md",
             "box-c: would add box-b's key once it's made",
         ]
     );
@@ -733,4 +782,43 @@ fn a_symlinked_file_on_a_host_stays_a_link() {
         read(c.join("keys")),
         BOX_LINE.to_string() + &peer_line("box-b", "10.0.0.6")
     );
+}
+
+#[test]
+fn claude_false_takes_claude_out_for_the_login_and_root_and_keeps_their_own_settings() {
+    let s = sandbox("mesh-claude-off", INVENTORY);
+    let [b, ..] = hosts_up(&s);
+    let own = "{\n  \"model\": \"x\"\n}\n";
+    let ssh = "Host *\n    ServerAliveInterval 5\n";
+    s.write("hosts/box-b/.fakeroot/.claude/settings.json", own);
+    s.write("hosts/box-b/.fakeroot/.ssh/config", ssh);
+    assert_eq!(s.roster(&["setup"]).code, 0);
+    let root = b.join(".fakeroot");
+    assert!(read(root.join(".claude/settings.json")).contains("Bash(ssh:*)"));
+    assert!(read(root.join(".ssh/config")).ends_with(ssh));
+
+    s.write("roster.yml", &format!("claude: false\n{INVENTORY}"));
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(read(root.join(".claude/settings.json")), own);
+    assert_eq!(read(root.join(".claude/CLAUDE.md")), "");
+    assert_eq!(read(root.join(".ssh/config")), ssh);
+    assert!(!b.join(".claude/settings.json").exists());
+    assert_eq!(read(b.join(".claude/CLAUDE.md")), "");
+    // The Mesh itself stays.
+    assert!(b.join(".ssh/roster-mesh/config").exists());
+}
+
+#[test]
+fn without_passwordless_sudo_root_is_left_out_with_one_hint() {
+    let mut s = sandbox("mesh-nosudo", INVENTORY);
+    s.set_env("FAKE_SUDO_NOPASSWD", "");
+    let [b, ..] = hosts_up(&s);
+    let out = s.roster(&["setup"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let why =
+        "roster: root on box-b, box-c isn't set up for Claude: sudo asks for a password there";
+    assert!(out.stderr.contains(why), "{}", out.stderr);
+    assert!(!b.join(".fakeroot").exists());
+    assert!(read(b.join(".claude/settings.json")).contains("Bash(ssh:*)"));
 }
