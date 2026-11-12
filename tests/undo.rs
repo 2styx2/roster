@@ -37,6 +37,7 @@ fn sandbox(name: &str) -> Sandbox {
     let hosts = s.home.join("hosts");
     std::fs::create_dir_all(&hosts).unwrap();
     s.set_env("FAKE_HOSTS", hosts.to_str().unwrap());
+    s.set_env("FAKE_SUDO_NOPASSWD", "1");
     s.write(".ssh/roster_ed25519", "FAKE PRIVATE KEY\n");
     s.write(".ssh/roster_ed25519.pub", BOX_LINE);
     s
@@ -277,7 +278,10 @@ fn snapshot(dir: &Path) -> Vec<(PathBuf, String)> {
         let p = e.unwrap().path();
         if p.is_dir() {
             out.extend(snapshot(&p));
-        } else if !p.ends_with("ssh.log") && !p.ends_with("ssh-hosts.env") {
+        } else if !p.ends_with("ssh.log")
+            && !p.ends_with("sudo.log")
+            && !p.ends_with("ssh-hosts.env")
+        {
             out.push((p.clone(), read(&p)));
         }
     }
@@ -364,6 +368,8 @@ fn undo_removes_this_boxs_mesh_and_leaves_other_boxes_alone() {
         "THEIR KEY\n",
     );
 
+    assert!(b.join(".fakeroot/.claude/settings.json").exists());
+    assert!(b.join(".fakeroot/.ssh/config").exists());
     let out = s.roster(&["setup", "--undo"]);
     assert_eq!(out.code, 0, "{}\n{}", out.stdout, out.stderr);
     for h in [&b, &c, &ops] {
@@ -381,6 +387,19 @@ fn undo_removes_this_boxs_mesh_and_leaves_other_boxes_alone() {
         "only the Mesh's lines were in it"
     );
     assert_eq!(read(b.join(".claude/CLAUDE.md")), "");
+    // Claude's settings and root's part go too.
+    for h in [&b, &c] {
+        let root = h.join(".fakeroot");
+        for f in [
+            h.join(".claude/settings.json"),
+            root.join(".claude/settings.json"),
+            root.join(".ssh/config"),
+            root.join(".ssh/roster-mesh.config"),
+        ] {
+            assert!(!f.exists(), "{}", f.display());
+        }
+        assert_eq!(read(root.join(".claude/CLAUDE.md")), "");
+    }
     let mut left: Vec<_> = std::fs::read_dir(c.join(".ssh/roster-mesh"))
         .unwrap()
         .map(|e| e.unwrap().file_name())

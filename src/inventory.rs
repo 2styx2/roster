@@ -21,6 +21,9 @@ pub struct Inventory {
     pub links: Vec<Link>,
     /// The groups in file order, with their own `title` and `description`.
     pub groups: Vec<Group>,
+    /// `claude` (default true): Claude may ssh to the Hosts, in the user's
+    /// own `~/.claude` on this Box and on each Mesh Host.
+    pub claude: bool,
 }
 
 /// A group as it describes itself; what its Hosts inherit is in each Host.
@@ -488,6 +491,10 @@ fn parse(doc: &Value) -> Result<Inventory, Bad> {
     Ok(Inventory {
         path: PathBuf::new(),
         box_name: box_name(text(&doc["box_name"]))?,
+        claude: match doc.get("claude") {
+            None | Some(Value::Null) => true,
+            Some(v) => flag(v).map_or_else(|| bad(&["claude"], BOOL), Ok)?,
+        },
         key_path,
         key_type,
         links: links(&doc["links"], &hosts, &groups)?,

@@ -14,7 +14,9 @@ curl -fsSL https://raw.githubusercontent.com/2styx2/roster/main/scripts/bootstra
 less bootstrap.sh && sh bootstrap.sh
 ```
 
-From a clone: `make deps` installs the dependencies, and `make install` installs roster, its completion and its man page into `~/.local` (or `sudo make install PREFIX=/usr/local`).
+From a clone: `make deps` installs the dependencies, and `make install` installs roster, its completion and its man page into `~/.local` (or `sudo make install PREFIX=/usr/local`). If Tab doesn't complete `roster` in a new shell, `make autocomplete` installs the completion and sources it from `~/.bashrc` (once; `make uninstall` takes the line out).
+
+By default `roster setup` also tells Claude about your Hosts and lets it log in to them without asking: it writes an import of ROSTER.md and allow rules (including auto mode's) into your own `~/.claude`, and on each Mesh Host into the login user's and root's. Put `claude: false` at the top of `roster.yml` to leave Claude's settings alone (and take out what roster added).
 
 Then follow the **[tutorial](docs/tutorial.md)**: install, first setup, daily use, adding Hosts from Bitwarden, and a 30-minute outline for teaching it. `roster.1` (`man ./roster.1`) is the reference for every command and flag.
 

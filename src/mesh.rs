@@ -32,7 +32,17 @@ pub struct Seen {
     mark: bool,
     claude: bool,
     import: bool,
-    /// `config`, `known_hosts` (in `~/.ssh/roster-mesh`) and `ROSTER.md`.
+    /// Root's home, when the login isn't root and `sudo -n` works.
+    root: Option<String>,
+    /// The login isn't root and `sudo -n` asks for a password.
+    nosudo: bool,
+    /// Root's CLAUDE.md imports the login's ROSTER.md / root's ssh config
+    /// has the Include / roster's mark.
+    rimport: bool,
+    rinclude: bool,
+    rmark: bool,
+    /// `config`, `known_hosts` (in `~/.ssh/roster-mesh`), `ROSTER.md`,
+    /// `settings.json` (`~/.claude`'s) and `root-settings.json`.
     files: BTreeMap<String, String>,
     /// authorized_keys lines tagged `roster-mesh:SRC@BOX`.
     lines: Vec<String>,
@@ -45,6 +55,8 @@ pub struct Todo {
     /// The Host's Mesh files are another Box's: left alone, and not a
     /// failure (two Boxes may share an Inventory; one of them runs its Mesh).
     foreign: bool,
+    /// Root is left out: `sudo -n` asks for a password there.
+    nosudo: bool,
     warn: Option<String>,
     make: Option<String>,
     drop_keys: Vec<String>,
@@ -53,6 +65,15 @@ pub struct Todo {
     /// Some(true): add the Include (or the import); Some(false): remove it.
     include: Option<bool>,
     import: Option<bool>,
+    /// The same for root's ssh config and CLAUDE.md.
+    rinclude: Option<bool>,
+    rimport: Option<bool>,
+    /// `~/.claude/settings.json`'s new text ("" removes it), and root's.
+    settings: Option<String>,
+    rsettings: Option<String>,
+    /// Root's own copy of the Mesh config (ssh refuses one another user
+    /// owns): its new text, or "" to remove it.
+    rconfig: Option<String>,
     /// (source, its line; None until its key is made).
     add: Vec<(String, Option<String>)>,
     /// (source, the exact line there now).
@@ -68,6 +89,11 @@ impl Todo {
             && self.drop.is_empty()
             && self.include.is_none()
             && self.import.is_none()
+            && self.rinclude.is_none()
+            && self.rimport.is_none()
+            && self.settings.is_none()
+            && self.rsettings.is_none()
+            && self.rconfig.is_none()
             && self.add.iter().all(|(_, l)| l.is_none())
             && self.del.is_empty()
     }
@@ -75,6 +101,25 @@ impl Todo {
     /// Each change as (what `--dry-run` says after "would ", what's said once done).
     fn says(&self) -> Vec<(String, String)> {
         let mut out = Vec::new();
+        let json = |s: &Option<String>, whose: &str| match s.as_deref() {
+            None => None,
+            Some("") => Some(format!("remove {whose}~/.claude/settings.json")),
+            Some(_) => Some(format!("write {whose}~/.claude/settings.json")),
+        };
+        let both = |a: String| (a.clone(), done(&a));
+        let early = [json(&self.settings, ""), json(&self.rsettings, "root's ")];
+        out.extend(early.into_iter().flatten().map(both));
+        if self.rimport == Some(false) {
+            out.push(both(
+                "remove the import from root's ~/.claude/CLAUDE.md".into(),
+            ));
+        }
+        if self.rinclude == Some(false) {
+            out.push(both("remove the Include from root's ~/.ssh/config".into()));
+        }
+        if self.rconfig.as_deref() == Some("") {
+            out.push(both("remove root's ~/.ssh/roster-mesh.config".into()));
+        }
         let mut say = |a: String, b: String| out.push((a, b));
         let dir = "~/.ssh/roster-mesh";
         let file = |f: &str| match f {
@@ -130,6 +175,18 @@ impl Todo {
                 "added the import to ~/.claude/CLAUDE.md".into(),
             );
         }
+        if self.rconfig.as_deref().is_some_and(|c| !c.is_empty()) {
+            let a = "write root's ~/.ssh/roster-mesh.config";
+            say(a.into(), done(a));
+        }
+        for (on, what) in [
+            (self.rinclude, "the Include to root's ~/.ssh/config"),
+            (self.rimport, "the import to root's ~/.claude/CLAUDE.md"),
+        ] {
+            if on == Some(true) {
+                say(format!("add {what}"), format!("added {what}"));
+            }
+        }
         for (src, _) in &self.del {
             say(
                 format!("remove {src}'s key"),
@@ -144,6 +201,31 @@ impl Todo {
         }
         out
     }
+}
+
+/// "remove the X" said once done: "removed the X".
+fn done(would: &str) -> String {
+    let (verb, rest) = would.split_once(' ').unwrap_or((would, ""));
+    let verb = match verb {
+        "remove" => "removed",
+        "write" => "wrote",
+        v => v,
+    };
+    format!("{verb} {rest}")
+}
+
+/// A settings file's new text with (`on`) or without roster's rules for
+/// Claude, or None; a warning instead when it isn't JSON.
+fn rules(s: &Seen, file: &str, on: bool, warn: &mut Option<String>) -> Option<String> {
+    let path = match file {
+        "settings.json" => "~/.claude/settings.json",
+        _ => "root's ~/.claude/settings.json",
+    };
+    let old = s.files.get(file).map(String::as_str);
+    crate::claude::rules(old, on, &crate::claude::USER).unwrap_or_else(|()| {
+        *warn = Some(format!("{path} isn't valid JSON; left alone"));
+        None
+    })
 }
 
 /// Why a Host can't take part, if it can't: only Enrolled, reviewed, POSIX
@@ -288,6 +370,19 @@ pub fn plan(
             if md && s.import {
                 t.import = Some(false);
             }
+            if md {
+                t.settings = rules(s, "settings.json", false, &mut t.warn);
+                t.rsettings = rules(s, "root-settings.json", false, &mut t.warn);
+            }
+            if s.rimport {
+                t.rimport = Some(false);
+            }
+            if s.files.get("root-config").is_some_and(|c| config_ours(c)) {
+                t.rconfig = Some(String::new());
+            }
+            if (s.rinclude || s.rmark) && config != Some(false) {
+                t.rinclude = Some(false);
+            }
             if (s.include || s.mark) && config != Some(false) {
                 t.include = Some(false);
             }
@@ -339,8 +434,9 @@ pub fn plan(
             }
         }
         let dir = format!("{home}/.ssh/roster-mesh");
+        let conf = config(inv, h, &peers, &dir, &want);
         let files = [
-            ("config", config(inv, h, &peers, &dir, &want)),
+            ("config", conf.clone()),
             ("known_hosts", known_hosts(&peers, known)),
             ("ROSTER.md", roster_md(inv, h, &peers)),
         ];
@@ -357,8 +453,30 @@ pub fn plan(
         if !s.include {
             t.include = Some(true);
         }
-        if s.claude && !s.import {
-            t.import = Some(true);
+        // Claude, for the login and for root: `claude: false` takes it out.
+        let on = inv.claude;
+        if s.claude {
+            if on != s.import {
+                t.import = Some(on);
+            }
+            t.settings = rules(s, "settings.json", on, &mut t.warn);
+        }
+        if s.root.is_some() {
+            if on != s.rinclude {
+                t.rinclude = Some(on);
+            }
+            if on != s.rimport {
+                t.rimport = Some(on);
+            }
+            t.rsettings = rules(s, "root-settings.json", on, &mut t.warn);
+            let now = s.files.get("root-config");
+            t.rconfig = match on {
+                true if now.map(|n| n.trim_end()) != Some(conf.trim_end()) => Some(conf),
+                false if now.is_some_and(|c| config_ours(c)) => Some(String::new()),
+                _ => None,
+            };
+        } else if s.nosudo && on {
+            t.nosudo = true;
         }
     }
     // Peers: each Host gets its sources' lines; a line for a source that
@@ -449,6 +567,10 @@ fn roster_md(inv: &Inventory, src: &Host, peers: &[&Host]) -> String {
          | name | address | access |\n|---|---|---|\n",
         src.name, inv.box_name, src.name
     );
+    if inv.claude {
+        let at = out.find("- Never read").unwrap_or(out.len());
+        out.insert_str(at, crate::claude::GRANT);
+    }
     for p in peers {
         out += &format!("| {} | {}@{}:{} | key |\n", p.name, p.user, p.ip, p.port);
     }
@@ -480,6 +602,11 @@ fn parse(out: &str) -> Option<Seen> {
             "mark" => s.mark = true,
             "claude" => s.claude = true,
             "import" => s.import = true,
+            "sudo" => s.root = Some(rest.into()),
+            "nosudo" => s.nosudo = true,
+            "rimport" => s.rimport = true,
+            "rinclude" => s.rinclude = true,
+            "rmark" => s.rmark = true,
             "file" => {
                 s.files.insert(rest.into(), String::new());
                 file = Some(rest.into());
@@ -541,6 +668,11 @@ fn apply(inv: &Inventory, h: &Host, t: &Todo) -> Result<Seen, String> {
         Some(false) => "remove",
         None => "",
     };
+    let json = |s: &Option<String>| match s.as_deref() {
+        None => "",
+        Some("") => "drop",
+        Some(_) => "put",
+    };
     let (put, drop_keys, drop) = (words(&put), words(&drop_keys), words(&t.drop));
     let (add, del) = (add.join("\n"), del.join("\n"));
     let vars = [
@@ -554,6 +686,14 @@ fn apply(inv: &Inventory, h: &Host, t: &Todo) -> Result<Seen, String> {
         ("DROP", drop.as_str()),
         ("INCLUDE", flag(t.include)),
         ("IMPORT", flag(t.import)),
+        ("RINCLUDE", flag(t.rinclude)),
+        ("RIMPORT", flag(t.rimport)),
+        ("SETTINGS", json(&t.settings)),
+        ("C_settings", t.settings.as_deref().unwrap_or("")),
+        ("RSETTINGS", json(&t.rsettings)),
+        ("C_rsettings", t.rsettings.as_deref().unwrap_or("")),
+        ("RCONFIG", json(&t.rconfig)),
+        ("C_rconfig", t.rconfig.as_deref().unwrap_or("")),
         ("ADD", add.as_str()),
         ("DEL", del.as_str()),
     ];
@@ -634,6 +774,22 @@ pub fn run(inv: &Inventory, ready: &[&Host], dry: bool) -> usize {
         eprintln!(
             "roster: the Mesh on {} is another Box's; left alone (run `roster setup` there)",
             foreign.join(", ")
+        );
+    }
+    let nosudo: Vec<&str> = (inv.hosts.iter().zip(&first))
+        .filter(|(_, t)| t.nosudo)
+        .map(|(h, _)| h.name.as_str())
+        .collect();
+    if !nosudo.is_empty() {
+        eprintln!(
+            "{}",
+            errors::hint(
+                format!(
+                    "roster: root on {} isn't set up for Claude: sudo asks for a password there",
+                    nosudo.join(", ")
+                ),
+                "give the login passwordless sudo, or set `claude: false` in roster.yml"
+            )
         );
     }
     if dry {
