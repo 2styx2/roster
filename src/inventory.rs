@@ -92,7 +92,7 @@ pub struct Service {
     /// A vault reference, as `Host::auth`.
     pub auth: Option<String>,
     pub verify: bool,
-    /// `basic`, `bearer`, `token` or `none`; `web_login_names` and the
+    /// `basic`, `bearer`, `token`, `unifi` or `none`; `web_login_names` and the
     /// built-in `hub` (a `token`) already resolved.
     pub login: String,
     /// How a `token` login asks for its token.
@@ -867,7 +867,7 @@ fn service(
     } else {
         login_type
     };
-    if !["basic", "bearer", "token", "none"].contains(&login_type.as_str()) {
+    if !["basic", "bearer", "token", "unifi", "none"].contains(&login_type.as_str()) {
         return None;
     }
     let field = |key: &str, default: &str| match e.get(key) {

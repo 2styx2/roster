@@ -276,6 +276,15 @@ const DOCUMENTED: &[&str] = &[
     ".B web_login_names",
     "token login to",
     "neither the password nor the token",
+    // web unifi login
+    ".B login: unifi",
+    "rememberMe",
+    ".B X\\-CSRF\\-Token",
+    "roster/sessions/HOST\\-SERVICE.json",
+    "unifi login to /api/auth/login",
+    "too many logins (HTTP 429)",
+    "no TOKEN cookie in the reply",
+    "logs in again",
     // run --sudo
     ".B run \\-\\-sudo",
     ".RB [ \\-\\-sudo ]",
