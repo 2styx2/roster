@@ -543,3 +543,212 @@ fn the_password_and_the_token_never_leak() {
         }
     }
 }
+
+const COOKIE: &str = "jwt-4b8e-made-up";
+const CSRF: &str = "csrf-77a0-made-up";
+
+/// box-u is a UniFi OS console: its `web` service has `login: unifi` and a
+/// Login from env:API_PASS; the fake console answers a login with the
+/// TOKEN cookie and the CSRF token in its headers (curl's `-D -`).
+fn unifi_sandbox(name: &str) -> Sandbox {
+    let mut s = Sandbox::new(name);
+    s.write(
+        "roster.yml",
+        "defaults: {user: admin}\ngroups:\n  lab:\n    hosts:\n      box-u:\n        ip: 10.0.0.1\n        \
+         services:\n          \
+         web: {url: \"https://10.0.0.1\", verify: false, login: unifi, user: ops, auth: env:API_PASS}\n",
+    );
+    s.set_env("API_PASS", PASSWORD);
+    s.set_env(
+        "FAKE_CURL_TOKEN_BODY",
+        &format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+             Set-Cookie: TOKEN={COOKIE}; path=/; samesite=strict; secure; httponly\r\n\
+             X-CSRF-Token: {CSRF}\r\n\r\n{{\"username\": \"ops\"}}"
+        ),
+    );
+    s
+}
+
+fn session_file(s: &Sandbox) -> std::path::PathBuf {
+    s.home.join(".cache/roster/sessions/box-u-web.json")
+}
+
+fn mode(path: &std::path::Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+fn unifi_config() -> String {
+    format!("header = \"Cookie: TOKEN={COOKIE}\"\nheader = \"X-CSRF-Token: {CSRF}\"\n")
+}
+
+#[test]
+fn a_unifi_login_sends_the_cookie_and_csrf_token_and_keeps_the_session() {
+    let mut s = unifi_sandbox("web-unifi");
+    s.set_env("FAKE_CURL_BODY", "{\"data\": []}\n");
+    let out = s.roster(&["web", "box-u", "GET", "/proxy/network/api/self"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        out.stdout, "{\"data\": []}\n",
+        "the login reply isn't printed"
+    );
+    assert_eq!(out.stderr, "");
+    let request = argv(&["-k", "-X", "GET", "https://10.0.0.1/proxy/network/api/self"]);
+    assert_eq!(
+        calls(&s),
+        [
+            argv(&[
+                "-k",
+                "-D",
+                "-",
+                "-H",
+                "Content-Type: application/json",
+                "-X",
+                "POST",
+                "https://10.0.0.1/api/auth/login"
+            ]),
+            request.clone(),
+        ]
+    );
+    assert_eq!(
+        login_body(&s),
+        serde_json::json!({"username": "ops", "password": PASSWORD, "rememberMe": false})
+    );
+    assert_eq!(read(&s, "curl.stdin"), unifi_config());
+    let file = session_file(&s);
+    assert_eq!(mode(&file), 0o600);
+    assert_eq!(mode(file.parent().unwrap()), 0o700);
+
+    // The next call uses the kept session: no login.
+    let out = s.roster(&["web", "box-u", "web", "POST", "/api/x", "-d", "{}"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        out.stdout, "{\"data\": []}\n",
+        "a kept session's reply is printed"
+    );
+    assert_eq!(calls(&s).len(), 3, "one more call, not a login");
+    assert_eq!(
+        read(&s, "curl.stdin"),
+        unifi_config() + "data-raw = \"{}\"\n"
+    );
+}
+
+#[test]
+fn a_kept_unifi_session_the_console_rejects_logs_in_again_once() {
+    let mut s = unifi_sandbox("web-unifi-relogin");
+    assert_eq!(s.roster(&["web", "box-u", "GET", "/x"]).code, 0);
+    s.set_env("FAKE_CURL_STATUS", "401");
+    s.set_env("FAKE_CURL_BODY", "{\"error\": \"expired\"}\n");
+    let out = s.roster(&["web", "box-u", "GET", "/x"]);
+    assert_eq!(out.code, 1);
+    let paths: Vec<_> = calls(&s)
+        .iter()
+        .map(|c| c.last().unwrap().clone())
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            "https://10.0.0.1/api/auth/login",
+            "https://10.0.0.1/x",
+            "https://10.0.0.1/x",
+            "https://10.0.0.1/api/auth/login",
+            "https://10.0.0.1/x"
+        ],
+        "kept session, then a new login and one retry"
+    );
+    assert_eq!(out.stdout, "{\"error\": \"expired\"}\n", "printed once");
+    assert!(
+        out.stderr.contains("login refused (HTTP 401)"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn a_unifi_session_is_kept_under_xdg_runtime_dir_and_only_when_private() {
+    let mut s = unifi_sandbox("web-unifi-runtime");
+    let run = s.home.join("run");
+    std::fs::create_dir(&run).unwrap();
+    s.set_env("XDG_RUNTIME_DIR", run.to_str().unwrap());
+    assert_eq!(s.roster(&["web", "box-u", "GET", "/x"]).code, 0);
+    let file = run.join("roster/sessions/box-u-web.json");
+    assert_eq!(mode(&file), 0o600);
+    assert!(!session_file(&s).exists());
+    // A session others can read isn't used: it is removed and a new login made.
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(s.roster(&["web", "box-u", "GET", "/x"]).code, 0);
+    assert_eq!(calls(&s).len(), 4, "logged in again");
+    assert_eq!(mode(&file), 0o600);
+}
+
+#[test]
+fn a_refused_unifi_login_or_one_without_a_cookie_stops_before_the_request() {
+    let mut s = unifi_sandbox("web-unifi-refused");
+    s.set_env("FAKE_CURL_LOGIN_STATUS", "429");
+    let out = s.roster(&["web", "box-u", "GET", "/x"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "roster: box-u web: unifi login to /api/auth/login: too many logins (HTTP 429)\n  \
+         hint: wait a minute, then try again\n"
+    );
+    s.set_env("FAKE_CURL_LOGIN_STATUS", "200");
+    s.set_env(
+        "FAKE_CURL_TOKEN_BODY",
+        "HTTP/1.1 200 OK\r\nSet-Cookie: other=1\r\n\r\n{}",
+    );
+    let out = s.roster(&["web", "box-u", "GET", "/x"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "roster: box-u web: unifi login to /api/auth/login: no TOKEN cookie in the reply\n"
+    );
+    assert_eq!(out.stdout, "", "the login reply isn't printed");
+    assert_eq!(calls(&s).len(), 2, "never the request");
+    assert!(!session_file(&s).exists());
+}
+
+#[test]
+fn the_unifi_password_and_session_never_leak() {
+    let mut s = unifi_sandbox("web-unifi-secrets");
+    s.set_env("FAKE_CURL_STATUS", "500");
+    for _ in 0..2 {
+        let out = s.roster(&["web", "box-u", "GET", "/x"]);
+        assert_eq!(out.code, 1, "{}", out.stderr);
+        for secret in [PASSWORD, COOKIE, CSRF] {
+            assert!(!out.stdout.contains(secret) && !out.stderr.contains(secret));
+        }
+    }
+    // The cookie and CSRF token are in the scripted reply, a multi-line
+    // FAKE_ variable, so only the password is looked for in curl's env.
+    assert!(
+        !read(&s, "curl.env").contains(PASSWORD),
+        "curl's environment"
+    );
+    for secret in [PASSWORD, COOKIE, CSRF] {
+        assert!(!read(&s, "curl.log").contains(secret), "argv");
+    }
+    let session = std::fs::read_to_string(session_file(&s)).unwrap();
+    assert!(
+        !session.contains(PASSWORD),
+        "the session file holds no password"
+    );
+    for file in files(&s.home) {
+        let own = [
+            "curl.stdin",
+            "curl.login.stdin",
+            "curl.env",
+            "box-u-web.json",
+        ];
+        if own.iter().any(|f| file.ends_with(f)) {
+            continue;
+        }
+        let bytes = std::fs::read(&file).unwrap();
+        for secret in [PASSWORD, COOKIE, CSRF] {
+            let hit = bytes.windows(secret.len()).any(|w| w == secret.as_bytes());
+            assert!(!hit, "a credential is in {}", file.display());
+        }
+    }
+}

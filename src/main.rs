@@ -20,6 +20,7 @@ mod setup;
 mod ssh;
 mod sshconf;
 mod undo;
+mod unifi;
 mod vault;
 mod web;
 

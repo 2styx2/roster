@@ -1277,6 +1277,50 @@ sent as
 any other header gets the bare token.
 .RE
 .IP
+.B login: unifi
+is for UniFi OS consoles (UDM, Cloud Key, UniFi OS Server), which take a
+session cookie rather than a header.
+roster POSTs
+.B {\(dqusername\(dq: USER, \(dqpassword\(dq: PASSWORD, \(dqrememberMe\(dq: false}
+to
+.I ORIGIN/api/auth/login
+as above, with
+.B \-D \-
+so the reply's headers come back, takes its
+.B TOKEN
+cookie and
+.B X\-CSRF\-Token
+header, and sends them as
+.B header = """Cookie: TOKEN=..."""
+and
+.B header = """X\-CSRF\-Token: ..."""
+in the request's stdin config.
+The session is kept for up to 10 minutes in a private file
+.RB ( 0600 ,
+in a
+.B 0700
+folder),
+.IR $XDG_RUNTIME_DIR/roster/sessions/HOST\-SERVICE.json ,
+or under
+.I ~/.cache
+without
+.BR $XDG_RUNTIME_DIR ,
+so a loop of calls logs in once instead of tripping the console's login
+limit; a kept file others can read is removed and not used.
+If the console answers a kept session with HTTP 401, roster logs in again
+and calls once more, printing only the second reply.
+A refused login exits 1 with
+.BI "roster: " "HOST SERVICE" ": unifi login to /api/auth/login: " WHY
+.RB ( "too many logins (HTTP 429)" ,
+.BR "no TOKEN cookie in the reply" ,
+\&...) before the request runs.
+Paths are
+.B /api/...
+for UniFi OS and
+.B /proxy/network/api/s/default/...
+for the Network app, for example
+.BR "roster web gw\-a GET /proxy/network/api/s/default/stat/health" .
+.IP
 .B login: hub
 is
 .B login: token
@@ -1599,7 +1643,7 @@ Entries merge field by field down the layers.
 Ports 443 and 8443 mean https, and 80, 8000, 8008, 8080 and 8888 http.
 .B login
 is
-.BR basic " (default), " bearer ", " token " (or " hub ") or " none ,
+.BR basic " (default), " bearer ", " token " (or " hub "), " unifi " or " none ,
 or a name
 .B web_login_names
 maps to one of them;

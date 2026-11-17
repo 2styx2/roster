@@ -23,13 +23,13 @@ pub struct Args {
     pub insecure: bool,
 }
 
-fn failed(msg: String) -> Fail {
+pub(crate) fn failed(msg: String) -> Fail {
     Fail { code: 1, msg }
 }
 
 /// A `KEY = "VALUE"` line of a curl config, written straight into `config`
 /// so no copy of the value is left unwiped.
-fn option(config: &mut String, key: &str, parts: &[&str]) {
+pub(crate) fn option(config: &mut String, key: &str, parts: &[&str]) {
     config.push_str(key);
     config.push_str(" = \"");
     for c in parts.iter().flat_map(|p| p.chars()) {
@@ -94,20 +94,33 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
     let base = svc.url.as_deref().and_then(origin);
     let base = base.ok_or_else(|| failed(format!("{what} has no http(s) URL")))?;
     let mut config = Zeroizing::new(String::new());
+    // A kept UniFi session, and where it is kept.
+    let mut unifi = None;
     let secret = match &svc.auth {
         Some(auth) if svc.login != "none" => vault::resolve(auth, &what)?,
         _ => None,
     };
     let insecure = args.insecure || !svc.verify;
     let user = svc.user.as_deref().unwrap_or_default();
+    let call = Call {
+        what: &what,
+        base: &base,
+        insecure,
+    };
     if let Some(secret) = &secret {
         match svc.login.as_str() {
-            "token" => {
-                let call = Call {
-                    what: &what,
-                    base: &base,
-                    insecure,
+            "unifi" => {
+                let path = crate::unifi::path(name, &svc.name);
+                let kept = crate::unifi::load(&path, &base, user);
+                let cached = kept.is_some();
+                let session = match kept {
+                    Some(s) => s,
+                    None => crate::unifi::login(&call, &path, user, secret)?,
                 };
+                config.push_str(&session.config());
+                unifi = Some((path, cached));
+            }
+            "token" => {
                 let token = login(svc, &call, user, secret)?;
                 let header = &svc.token.token_header;
                 let bearer = if header.eq_ignore_ascii_case("authorization") {
@@ -129,27 +142,47 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
     for header in &args.headers {
         extra.extend(["-H", header]);
     }
+    let mut data = Zeroizing::new(String::new());
     match args.body.as_deref() {
         Some(file) if file.starts_with('@') => extra.extend(["--data-binary", file]),
-        Some(body) => option(&mut config, "data-raw", &[body]),
+        Some(body) => option(&mut data, "data-raw", &[body]),
         None => {}
     }
+    config.push_str(&data);
     let url = format!("{base}{path}");
-    let call = Call {
-        what: &what,
-        base: &base,
-        insecure,
+    let status = match (&unifi, &secret) {
+        // A kept session the console may have ended: the reply is held back,
+        // and a 401 logs in again and calls once more.
+        (Some((kept, true)), Some(secret)) => {
+            let (status, out) = call.curl(&extra, method, &url, &config, Some(secret))?;
+            if status == 401 {
+                crate::unifi::drop_file(kept);
+                let session = crate::unifi::login(&call, kept, user, secret)?;
+                let mut config = session.config();
+                config.push_str(&data);
+                call.curl(&extra, method, &url, &config, None)?.0
+            } else {
+                let mut stdout = std::io::stdout().lock();
+                let _ = stdout.write_all(&out).and_then(|()| stdout.flush());
+                status
+            }
+        }
+        _ => call.curl(&extra, method, &url, &config, None)?.0,
     };
-    match call.curl(&extra, method, &url, &config, None)?.0 {
+    match status {
         100..400 => Ok(()),
         status => Err(failed(format!("{what}: {}", http(status)))),
     }
 }
 
 /// An HTTP status of 400 or more, or none, in words.
-fn http(status: u16) -> String {
+pub(crate) fn http(status: u16) -> String {
     match status {
         0 => "no HTTP response".into(),
+        429 => errors::hint(
+            "too many logins (HTTP 429)",
+            "wait a minute, then try again",
+        ),
         401 | 403 => errors::hint(
             format!("login refused (HTTP {status})"),
             "check the service's user: and auth: in roster.yml",
@@ -197,10 +230,10 @@ fn login(
 }
 
 /// A service's calls: `what` names it in errors, `base` is its origin.
-struct Call<'a> {
-    what: &'a str,
-    base: &'a str,
-    insecure: bool,
+pub(crate) struct Call<'a> {
+    pub what: &'a str,
+    pub base: &'a str,
+    pub insecure: bool,
 }
 
 impl Call<'_> {
@@ -208,7 +241,7 @@ impl Call<'_> {
     /// HTTP status (0: none) and, when `capture` is given, its stdout kept
     /// rather than printed, and `capture` masked in curl's errors. curl's own
     /// errors are told in roster's words.
-    fn curl(
+    pub(crate) fn curl(
         &self,
         extra: &[&str],
         method: &str,
