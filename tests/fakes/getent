@@ -1,0 +1,9 @@
+#!/bin/sh
+# Fake getent: `getent passwd root` gives root the home $HOME/.fakeroot, so
+# a fake Host's root (through fake sudo) writes inside that Host's HOME and
+# never to the real /root. Anything else fails.
+if [ "$1" = passwd ] && [ "$2" = root ]; then
+  echo "root:x:0:0:root:$HOME/.fakeroot:/bin/sh"
+  exit 0
+fi
+exit 2

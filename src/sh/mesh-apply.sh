@@ -1,6 +1,8 @@
 # Run on a Host by `roster setup`, with the plan set above (BOX, NAME, MARK,
 # MAKE, KEYGEN, DROPKEYS, PUT, C_config, C_known_hosts, C_md, DROP, INCLUDE,
-# IMPORT, ADD, DEL): make this Host's part of the Mesh so. Every file is
+# IMPORT, ADD, DEL, SETTINGS, C_settings, RIMPORT, RINCLUDE, RSETTINGS,
+# C_rsettings, RCONFIG, C_rconfig): make this Host's part of the Mesh so. Root's files (the R*
+# steps) are written through sudo -n. Every file is
 # written as a copy beside it, then moved into place, so a cut run leaves
 # the old file whole. Removals go first, and a file that shows a thing is
 # this Box's goes last. Only keys whose .pub carries roster-mesh:*@BOX, and
@@ -42,9 +44,46 @@ config_with() {
 	echo "$INC"
 	if [ -f .ssh/config ]; then config_without; fi
 }
-config_without() {
-	awk -v m="$MARK" -v i="$INC" 'd { d = 0; if (/^Include /) next } $0 == m { d = 1; next } $0 == i { next } { print }' .ssh/config
+config_without() { config_strip "$INC" <.ssh/config; }
+# config_strip LINE [LINE2]: stdin without roster's mark and these Includes.
+config_strip() {
+	awk -v m="$MARK" -v i="$1" -v j="${2:-$1}" 'd { d = 0; if (/^Include /) next } $0 == m { d = 1; next } $0 == i || $0 == j { next } { print }'
 }
+# Root's side. R is root's home, RIMP the import of this user's ROSTER.md.
+R=$(getent passwd root | cut -d: -f6)
+R=${R:-/root}
+RIMP="@$HOME/ROSTER.md"
+# ssh refuses a config file another user owns: root includes its own copy
+# of the Mesh config (which names this user's key and known_hosts).
+RINC="Include $R/.ssh/roster-mesh.config"
+rcat() { sudo -n -- cat "$1" 2>/dev/null || true; }
+# rput FILE MODE CMD...: as put, for a file of root's.
+rput() {
+	f=$1 m=$2
+	shift 2
+	t=$(mktemp)
+	"$@" >"$t"
+	sudo -n -- sh -c 'set -e; umask 077; f=$1; mkdir -p "${f%/*}"
+		if [ -L "$f" ]; then f=$(readlink -f "$f"); fi
+		n=$f.roster-$$
+		if [ -f "$f" ]; then cp -p "$f" "$n"; else : >"$n" && chmod "$2" "$n"; fi
+		cat "$3" >"$n"; mv -f "$n" "$f"
+		if command -v restorecon >/dev/null 2>&1; then restorecon -F "$f" 2>/dev/null || true; fi' rput "$f" "$m" "$t"
+	rm -f "$t"
+	t=
+}
+rclaude_with() {
+	c=$(rcat "$R/.claude/CLAUDE.md")
+	if [ -n "$c" ]; then printf '%s\n\n' "$c"; fi
+	echo "$RIMP"
+}
+rclaude_without() { rcat "$R/.claude/CLAUDE.md" | grep -vxF "$RIMP" || [ $? -eq 1 ]; }
+rconfig_with() {
+	echo "$MARK"
+	echo "$RINC"
+	rcat "$R/.ssh/config" | config_strip "$RINC" "$INC"
+}
+rconfig_without() { rcat "$R/.ssh/config" | config_strip "$RINC" "$INC"; }
 claude_with() {
 	if [ -s .claude/CLAUDE.md ]; then
 		cat .claude/CLAUDE.md
@@ -65,6 +104,21 @@ keys() {
 }
 
 [ -d .ssh ] || mkdir -m 700 .ssh
+# Claude's settings first, root's removals next: evidence (~/ROSTER.md) last.
+case $SETTINGS in
+put) mkdir -p .claude && put .claude/settings.json 600 show "$C_settings" ;;
+drop) rm -f .claude/settings.json ;;
+esac
+case $RSETTINGS in
+put) rput "$R/.claude/settings.json" 600 show "$C_rsettings" ;;
+drop) sudo -n -- rm -f "$R/.claude/settings.json" ;;
+esac
+if [ "$RIMPORT" = remove ]; then rput "$R/.claude/CLAUDE.md" 644 rclaude_without; fi
+if [ "$RINCLUDE" = remove ]; then
+	rput "$R/.ssh/config" 600 rconfig_without
+	if [ -z "$(rcat "$R/.ssh/config")" ]; then sudo -n -- rm -f "$R/.ssh/config"; fi
+fi
+if [ "$RCONFIG" = drop ]; then sudo -n -- rm -f "$R/.ssh/roster-mesh.config"; fi
 if [ "$IMPORT" = remove ] && [ -f .claude/CLAUDE.md ] && [ -w .claude ]; then
 	put .claude/CLAUDE.md 644 claude_without
 fi
@@ -110,7 +164,13 @@ for f in $PUT; do
 	esac
 done
 if [ "$INCLUDE" = add ]; then put .ssh/config 600 config_with; fi
-if [ "$IMPORT" = add ] && [ -w .claude ]; then put .claude/CLAUDE.md 644 claude_with; fi
+if [ "$IMPORT" = add ]; then
+	mkdir -p .claude
+	if [ -w .claude ]; then put .claude/CLAUDE.md 644 claude_with; fi
+fi
+if [ "$RCONFIG" = put ]; then rput "$R/.ssh/roster-mesh.config" 600 show "$C_rconfig"; fi
+if [ "$RINCLUDE" = add ]; then rput "$R/.ssh/config" 600 rconfig_with; fi
+if [ "$RIMPORT" = add ]; then rput "$R/.claude/CLAUDE.md" 644 rclaude_with; fi
 if [ -n "$ADD$DEL" ]; then
 	d=.ssh/authorized_keys.roster-del-$$
 	printf '%s\n' "$DEL" >"$d"

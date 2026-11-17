@@ -217,29 +217,66 @@ fn ssh_config(inv: &Inventory) -> Result<(), Fail> {
     Ok(())
 }
 
-/// ROSTER.md, the CLAUDE.md import and the Claude settings, beside roster.yml.
+/// ROSTER.md, the CLAUDE.md import and the deny rules, beside roster.yml;
+/// then the user's own `~/.claude`: an import of that ROSTER.md and the
+/// rules that let Claude ssh to the Hosts, or neither with `claude: false`.
 fn claude_files(inv: &Inventory) -> Result<(), Fail> {
     let dir = &beside_inventory(inv);
     save(&dir.join("ROSTER.md"), &claude::roster_md(inv), 0o644)?;
-    let md = dir.join("CLAUDE.md");
-    if let Some(text) = claude::with_import(&read(&md)?.unwrap_or_default()) {
-        save(&md, &text, 0o644)?;
-    }
-    let settings = dir.join(".claude/settings.json");
-    match claude::with_deny(read(&settings)?.as_deref()) {
-        Ok(None) => {}
-        Ok(Some(_)) if dry() => println!("would write {}", settings.display()),
-        Ok(Some(text)) => {
-            std::fs::create_dir_all(dir.join(".claude"))
-                .map_err(|e| failed(format!("{}: {}", dir.display(), errors::io(&e))))?;
-            save(&settings, &text, 0o644)?;
+    import(&dir.join("CLAUDE.md"), true, "@ROSTER.md")?;
+    settings(&dir.join(".claude/settings.json"), true, &claude::LOCAL)?;
+    let user = home().join(".claude");
+    let line = format!("@{}", dir.join("ROSTER.md").display());
+    import(&user.join("CLAUDE.md"), inv.claude, &line)?;
+    settings(&user.join("settings.json"), inv.claude, &claude::USER)
+}
+
+/// The import `line` added to CLAUDE.md `path` (`on`) or taken out; an
+/// emptied file goes.
+pub fn import(path: &std::path::Path, on: bool, line: &str) -> Result<(), Fail> {
+    let old = read(path)?;
+    let new = match (on, old.as_deref()) {
+        (true, old) => claude::with_import(old.unwrap_or_default(), line),
+        (false, Some(old)) => claude::without_import(old, line),
+        (false, None) => None,
+    };
+    write_or_remove(path, new)
+}
+
+/// The settings.json at `path` with (`on`) or without `lists`' rules; an
+/// emptied file goes, and one that isn't JSON is left alone with a warning.
+pub fn settings(path: &std::path::Path, on: bool, lists: &[claude::Rules]) -> Result<(), Fail> {
+    match claude::rules(read(path)?.as_deref(), on, lists) {
+        Ok(new) => write_or_remove(path, new),
+        Err(()) => {
+            eprintln!(
+                "roster: warning: {} isn't valid JSON; left it alone",
+                path.display()
+            );
+            Ok(())
         }
-        Err(()) => eprintln!(
-            "roster: warning: {} isn't valid JSON; left it alone",
-            settings.display()
-        ),
     }
-    Ok(())
+}
+
+/// None: leave `path`; "" (or blank): remove it; else write it, making its
+/// directory first.
+fn write_or_remove(path: &std::path::Path, new: Option<String>) -> Result<(), Fail> {
+    let Some(text) = new else { return Ok(()) };
+    if text.trim().is_empty() {
+        if !dry() && path.exists() {
+            std::fs::remove_file(path)
+                .map_err(|e| failed(format!("{}: {}", path.display(), errors::io(&e))))?;
+            println!("removed {}", path.display());
+        } else if dry() && path.exists() {
+            println!("would remove {}", path.display());
+        }
+        return Ok(());
+    }
+    if let Some(dir) = path.parent().filter(|_| !dry()) {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| failed(format!("{}: {}", dir.display(), errors::io(&e))))?;
+    }
+    save(path, &text, 0o644)
 }
 
 /// The directory roster.yml is in, where ROSTER.md and the Claude files go.

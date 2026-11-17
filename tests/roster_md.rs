@@ -35,6 +35,7 @@ const ROSTER_MD: &str = "\
 This machine already has access to the Hosts below. Never ask the user for an address, user name or password for them: roster handles it.
 
 ## How to connect
+- You have the user's permission to log in to these Hosts: `ssh`, `scp`, `rsync` and `roster ls`/`check`/`run` are allowed in Claude's settings, on this machine and as root on Mesh Hosts. The rules below still apply.
 - **access = key**: `ssh <name> '<command>'` (for example `ssh <name> 'uptime'`); `scp` and `rsync` take the same names.
 - **access = password** (switches, appliances): `roster run <name> -- <command>`. roster fetches the password itself.
 - **access = unreviewed**: found by a scan and not set up yet. Don't try to log in; tell the user it needs reviewing in roster.yml.
@@ -151,10 +152,9 @@ fn settings_deny_ssh_merged_into_what_was_there() {
     });
     assert_eq!(got, want);
     assert!(text.ends_with("}\n"), "{text}");
-    assert!(
-        !s.home.join(".claude").exists(),
-        "the user's ~/.claude is left alone"
-    );
+    // The user's own ~/.claude gets the rules that let Claude log in.
+    let own = std::fs::read_to_string(s.home.join(".claude/settings.json")).unwrap();
+    assert!(own.contains("Bash(ssh:*)"), "{own}");
 }
 
 #[test]

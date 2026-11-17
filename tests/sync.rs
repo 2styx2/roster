@@ -97,3 +97,39 @@ fn sync_warns_about_hosts_that_are_the_same_login() {
     // Another user on the same address is another login: no warning.
     assert!(!out.stderr.contains("box-b-root"), "{}", out.stderr);
 }
+
+#[test]
+fn sync_lets_claude_ssh_from_the_users_own_settings_and_claude_false_takes_it_out() {
+    let mut s = Sandbox::new("sync-claude");
+    let yml = s.write("infra/roster.yml", INVENTORY);
+    s.set_env("ROSTER_CONFIG", yml.to_str().unwrap());
+    // The user's own settings are kept (with keys sorted, as serde_json
+    // writes them, so this one comes back byte for byte).
+    let own = "{\n  \"autoMode\": {\n    \"allow\": [\n      \"$defaults\",\n      \"Mine\"\n    ]\n  },\n  \"model\": \"x\"\n}\n";
+    s.write(".claude/settings.json", own);
+    assert_eq!(s.roster(&["sync"]).code, 0);
+    let md = format!("@{}/infra/ROSTER.md\n", s.home.display());
+    assert_eq!(read(&s, ".claude/CLAUDE.md"), md);
+    assert!(read(&s, "infra/ROSTER.md").contains("You have the user's permission"));
+    let text = read(&s, ".claude/settings.json");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["autoMode"]["allow"][1], "Mine");
+    assert!(
+        v["autoMode"]["allow"][2]
+            .as_str()
+            .unwrap()
+            .contains("ROSTER.md")
+    );
+    assert_eq!(v["permissions"]["allow"][0], "Bash(ssh:*)");
+    assert_eq!(v["permissions"]["deny"][0], "Read(~/.ssh/**)");
+    // A rerun changes nothing.
+    assert_eq!(s.roster(&["sync"]).stdout, "");
+
+    s.write("infra/roster.yml", &format!("claude: false\n{INVENTORY}"));
+    assert_eq!(s.roster(&["sync"]).code, 0);
+    assert!(!s.home.join(".claude/CLAUDE.md").exists());
+    assert_eq!(read(&s, ".claude/settings.json"), own);
+    assert!(!read(&s, "infra/ROSTER.md").contains("You have the user's permission"));
+    // The deny rules beside roster.yml stay either way.
+    assert!(read(&s, "infra/.claude/settings.json").contains("Read(~/.ssh/**)"));
+}
