@@ -2,7 +2,7 @@
 //! its stored Login. curl's argv holds nothing secret: the Login goes to it
 //! as a config on stdin (`-K -`).
 
-use crate::inventory::{Inventory, Service};
+use crate::inventory::{Inventory, LOGINS, Service};
 use crate::vault::{self, Secret};
 use crate::{Fail, errors, usage_error};
 use std::collections::BTreeMap;
@@ -91,11 +91,20 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
         None => failed(format!("{name} has no web service: name one")),
     })?;
     let what = format!("{name} {}", svc.name);
+    if !LOGINS.contains(&svc.login.as_str()) {
+        let msg = format!("{what}: login: {} isn't a login roster knows", svc.login);
+        let hint = format!(
+            "use one of {}, or map the name to one in web_login_names",
+            LOGINS.join(", ")
+        );
+        return Err(failed(errors::hint(msg, &hint)));
+    }
     let base = svc.url.as_deref().and_then(origin);
     let base = base.ok_or_else(|| failed(format!("{what} has no http(s) URL")))?;
     let mut config = Zeroizing::new(String::new());
-    // A kept UniFi session, and where it is kept.
+    // A kept UniFi session, and where it is kept; a vSphere session.
     let mut unifi = None;
+    let mut vsphere = None;
     let secret = match &svc.auth {
         Some(auth) if svc.login != "none" => vault::resolve(auth, &what)?,
         _ => None,
@@ -120,21 +129,16 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
                 config.push_str(&session.config());
                 unifi = Some((path, cached));
             }
-            "token" => {
-                let token = login(svc, &call, user, secret)?;
-                let header = &svc.token.token_header;
-                let bearer = if header.eq_ignore_ascii_case("authorization") {
-                    ": Bearer "
-                } else {
-                    ": "
-                };
-                option(&mut config, "header", &[header, bearer, &token]);
+            "vsphere" => {
+                let session = crate::vsphere::login(&call, user, secret)?;
+                config.push_str(&session.config());
+                vsphere = Some(session);
             }
-            "bearer" => option(
-                &mut config,
-                "header",
-                &["Authorization: Bearer ", secret.expose()],
-            ),
+            "token" | "openvpnas" => {
+                let token = login(svc, &call, user, secret)?;
+                send_token(&mut config, &svc.token.token_header, &token);
+            }
+            "bearer" => send_token(&mut config, &svc.token.token_header, secret.expose()),
             _ => option(&mut config, "user", &[user, ":", secret.expose()]),
         }
     }
@@ -142,9 +146,27 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
     for header in &args.headers {
         extra.extend(["-H", header]);
     }
+    // A vSphere call under /sdk: its SOAPAction, and XML unless told.
+    let soap = vsphere.as_ref().filter(|_| path.starts_with("/sdk"));
+    let action = soap.map(|s| format!("SOAPAction: {}", s.action));
+    let given = |name: &str| {
+        let prefix = format!("{}:", name.to_ascii_lowercase());
+        args.headers
+            .iter()
+            .any(|h| h.to_ascii_lowercase().starts_with(&prefix))
+    };
+    if let Some(action) = action.as_deref().filter(|_| !given("soapaction")) {
+        extra.extend(["-H", action]);
+    }
+    if soap.is_some() && args.body.is_some() && !given("content-type") {
+        extra.extend(["-H", crate::vsphere::CONTENT_TYPE]);
+    }
     let mut data = Zeroizing::new(String::new());
     match args.body.as_deref() {
         Some(file) if file.starts_with('@') => extra.extend(["--data-binary", file]),
+        Some(body) if soap.is_some() => {
+            option(&mut data, "data-raw", &[&crate::vsphere::envelope(body)]);
+        }
         Some(body) => option(&mut data, "data-raw", &[body]),
         None => {}
     }
@@ -167,12 +189,29 @@ pub fn run(inv: &Inventory, args: Args) -> Result<(), Fail> {
                 status
             }
         }
-        _ => call.curl(&extra, method, &url, &config, None)?.0,
+        _ => {
+            let result = call.curl(&extra, method, &url, &config, None);
+            if let (Some(session), Some(secret)) = (&vsphere, &secret) {
+                crate::vsphere::logout(&call, session, secret);
+            }
+            result?.0
+        }
     };
     match status {
         100..400 => Ok(()),
         status => Err(failed(format!("{what}: {}", http(status)))),
     }
+}
+
+/// A token in `header`: `Authorization` gets `Bearer TOKEN`, any other the
+/// bare token.
+fn send_token(config: &mut String, header: &str, token: &str) {
+    let bearer = if header.eq_ignore_ascii_case("authorization") {
+        ": Bearer "
+    } else {
+        ": "
+    };
+    option(config, "header", &[header, bearer, token]);
 }
 
 /// An HTTP status of 400 or more, or none, in words.
@@ -201,10 +240,19 @@ fn login(
 ) -> Result<Zeroizing<String>, Fail> {
     let what = call.what;
     let t = &svc.token;
-    let fields = BTreeMap::from([
-        (t.user_field.as_str(), user),
-        (t.password_field.as_str(), secret.expose()),
-    ]);
+    #[derive(serde::Serialize)]
+    #[serde(untagged)]
+    enum Field<'a> {
+        Text(&'a str),
+        Fixed(&'a serde_json::Value),
+    }
+    let mut fields: BTreeMap<&str, Field> = t
+        .body
+        .iter()
+        .map(|(k, v)| (k.as_str(), Field::Fixed(v)))
+        .collect();
+    fields.insert(t.user_field.as_str(), Field::Text(user));
+    fields.insert(t.password_field.as_str(), Field::Text(secret.expose()));
     let mut body = Zeroizing::new(Vec::new());
     serde_json::to_writer(&mut *body, &fields).map_err(|e| failed(format!("{what}: {e}")))?;
     let mut config = Zeroizing::new(String::new());

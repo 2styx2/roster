@@ -41,8 +41,8 @@ This machine already has access to the Hosts below. Never ask the user for an ad
 - **access = unreviewed**: found by a scan and not set up yet. Don't try to log in; tell the user it needs reviewing in roster.yml.
 - To find a Host by name, group, type or product: `roster ls <word>`. Add `--json` to read the data rather than show it.
 - If a Host doesn't respond, `roster check <name> --json` shows which step fails; report what you find.
-- Web UIs: open the URL in the browser. If it shows a login page, ask the user to sign in.
-- A service marked **(login)** has a stored login: a password, or a token login. To call its web API run `roster web <name> [service] METHOD /path`, with `-d '<body>'` and `-H 'Header: value'` as needed (for example `roster web box-a api POST /api/v1/jobs -d '{\"name\": \"backup\"}'`). roster logs in with the vault credentials and you see only the response. Ask before any request that changes something (POST, PUT, PATCH, DELETE).
+- Web APIs: a service with a stored login (marked **(login)**, or `\"has_login\": true` in `roster ls --json <name>`) is called with `roster web <name> [service] METHOD /path`, with `-d '<body>'` and `-H 'Header: value'` as needed (for example `roster web box-a api GET /api/v1/jobs`). roster logs in itself (basic, bearer, token, UniFi, vSphere and OpenVPN Access Server logins) and you see only the response; it exits 1 on HTTP 400 or more. GET calls are fine; ask before any request that changes something (POST, PUT, PATCH, DELETE). For vSphere (ESXi) a PATH under `/sdk` takes a bare SOAP call as the body, such as `-d '<urn:RetrieveServiceContent><urn:_this type=\"ServiceInstance\">ServiceInstance</urn:_this></urn:RetrieveServiceContent>'`.
+- Web UIs: prefer `roster web` against the API to driving the UI in a browser. To use a UI, open its URL; at a login page, ask the user to sign in, and never type a password into it yourself.
 - To run a command as root: `roster run --sudo <name> -- <command>` (for example `roster run --sudo box-a -- systemctl restart nginx`). roster gives sudo its password itself.
 
 ## Rules
@@ -228,7 +228,14 @@ fn more_hosts_than_the_inline_limit_get_a_summary() {
     for i in 0..61 {
         let product = if i < 40 { "Widget" } else { "Gadget" };
         let kind = if i % 2 == 0 { "type: vm, " } else { "" };
-        yml += &format!("      h-{i:02}: {{ip: 10.0.1.{i}, {kind}product: {product}}}\n");
+        // Only stored logins other than basic are named.
+        let services = if i == 60 {
+            ", services: {gw: {url: \"https://10.0.1.60\", login: unifi, auth: env:GW}, \
+             ui: {port: 8443, auth: env:GW}, open: {port: 80, login: token}}"
+        } else {
+            ""
+        };
+        yml += &format!("      h-{i:02}: {{ip: 10.0.1.{i}, {kind}product: {product}{services}}}\n");
     }
     s.write("roster.yml", &yml);
     let out = s.roster(&["setup"]);
@@ -244,6 +251,7 @@ fn more_hosts_than_the_inline_limit_get_a_summary() {
 61 hosts - too many to list here. Find one with `roster ls <word>`.
 - Products: Gadget (21), Widget (40)
 - Types: (none) (30), vm (31)
+- Web APIs with a login: `h-60 gw` (unifi)
 "
     );
 }

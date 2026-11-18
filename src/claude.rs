@@ -23,8 +23,8 @@ This machine already has access to the Hosts below. Never ask the user for an ad
 - **access = unreviewed**: found by a scan and not set up yet. Don't try to log in; tell the user it needs reviewing in roster.yml.
 - To find a Host by name, group, type or product: `roster ls <word>`. Add `--json` to read the data rather than show it.
 - If a Host doesn't respond, `roster check <name> --json` shows which step fails; report what you find.
-- Web UIs: open the URL in the browser. If it shows a login page, ask the user to sign in.
-- A service marked **(login)** has a stored login: a password, or a token login. To call its web API run `roster web <name> [service] METHOD /path`, with `-d '<body>'` and `-H 'Header: value'` as needed (for example `roster web box-a api POST /api/v1/jobs -d '{\"name\": \"backup\"}'`). roster logs in with the vault credentials and you see only the response. Ask before any request that changes something (POST, PUT, PATCH, DELETE).
+- Web APIs: a service with a stored login (marked **(login)**, or `\"has_login\": true` in `roster ls --json <name>`) is called with `roster web <name> [service] METHOD /path`, with `-d '<body>'` and `-H 'Header: value'` as needed (for example `roster web box-a api GET /api/v1/jobs`). roster logs in itself (basic, bearer, token, UniFi, vSphere and OpenVPN Access Server logins) and you see only the response; it exits 1 on HTTP 400 or more. GET calls are fine; ask before any request that changes something (POST, PUT, PATCH, DELETE). For vSphere (ESXi) a PATH under `/sdk` takes a bare SOAP call as the body, such as `-d '<urn:RetrieveServiceContent><urn:_this type=\"ServiceInstance\">ServiceInstance</urn:_this></urn:RetrieveServiceContent>'`.
+- Web UIs: prefer `roster web` against the API to driving the UI in a browser. To use a UI, open its URL; at a login page, ask the user to sign in, and never type a password into it yourself.
 - To run a command as root: `roster run --sudo <name> -- <command>` (for example `roster run --sudo box-a -- systemctl restart nginx`). roster gives sudo its password itself.
 
 ## Rules
@@ -77,6 +77,7 @@ pub fn roster_md(inv: &Inventory) -> String {
         );
         md += &format!("- Products: {}\n", counts(&hosts, |h| &h.product));
         md += &format!("- Types: {}\n", counts(&hosts, |h| &h.r#type));
+        md += &web_logins(&hosts);
         return md;
     }
     md +=
@@ -87,15 +88,7 @@ pub fn roster_md(inv: &Inventory) -> String {
             .services
             .iter()
             .map(|s| {
-                let stored = s
-                    .auth
-                    .as_deref()
-                    .is_some_and(|a| !a.is_empty() && a != "prompt");
-                let mark = if stored && s.login != "none" {
-                    " (login)"
-                } else {
-                    ""
-                };
+                let mark = if s.has_login() { " (login)" } else { "" };
                 format!("{}:{}{mark}", s.name, s.port)
             })
             .collect();
@@ -117,6 +110,29 @@ pub fn roster_md(inv: &Inventory) -> String {
     }
     md
 }
+
+/// The summary's line of services with a stored login other than basic:
+/// the web APIs worth knowing by name.
+fn web_logins(hosts: &[&Host]) -> String {
+    let apis: Vec<String> = hosts
+        .iter()
+        .flat_map(|h| h.services.iter().map(move |s| (h, s)))
+        .filter(|(_, s)| s.has_login() && s.login != "basic")
+        .map(|(h, s)| format!("`{} {}` ({})", h.name, s.name, s.login))
+        .collect();
+    match apis.len() {
+        0 => String::new(),
+        n if n > WEB_LIMIT => format!(
+            "- Web APIs with a login: {} and {} more (`roster ls --json`)\n",
+            apis[..WEB_LIMIT].join(", "),
+            n - WEB_LIMIT
+        ),
+        _ => format!("- Web APIs with a login: {}\n", apis.join(", ")),
+    }
+}
+
+/// More web APIs than this and the summary names only the first ones.
+const WEB_LIMIT: usize = 40;
 
 /// `a (2), b (1)`, sorted, with `(none)` for an empty value.
 fn counts(hosts: &[&Host], field: impl Fn(&Host) -> &String) -> String {
@@ -167,9 +183,10 @@ pub const ALLOW: [&str; 6] = [
 
 /// Auto mode's classifier reads plain sentences, and suspends shell allow
 /// rules when `classifyAllShell` is on: this says the same in words.
-pub const AUTO: [&str; 2] = [
+pub const AUTO: [&str; 3] = [
     "$defaults",
     "Logging in with ssh, scp, rsync or `roster run` to the Hosts listed in ROSTER.md (roster's Inventory and Mesh), and running commands there, is authorized by the user",
+    "Reading the web APIs of the Hosts listed in ROSTER.md with `roster web HOST [SERVICE] GET PATH` (or HEAD) is authorized by the user; a `roster web` call that changes something (POST, PUT, PATCH, DELETE) needs the user's OK first",
 ];
 
 /// A rule list in settings.json: section, list, rules.

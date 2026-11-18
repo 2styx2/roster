@@ -147,6 +147,12 @@ pub fn get(reference: &str, what: &str) -> Result<Zeroizing<String>, Fail> {
     let mut run = RUN.lock().unwrap_or_else(|e| e.into_inner());
     let session = match (run.clone(), stored()) {
         (Some(session), _) | (None, Ok(Some(session))) => session,
+        (None, Ok(None)) if std::env::var_os("BW_PASSWORD").is_none() && !vault::has_tty() => {
+            return Err(failed(errors::hint(
+                format!("{what}: Bitwarden is locked and there's no terminal to unlock it on"),
+                "the user runs `roster vault unlock` in their own terminal (it stays unlocked 12 h)",
+            )));
+        }
         (None, Ok(None)) => {
             eprintln!(
                 "roster: Bitwarden is locked; `roster vault unlock` unlocks it for 12 h. \

@@ -9,6 +9,9 @@
 # login when $FAKE_CURL_TOKEN_BODY is set: its stdin goes to
 # $HOME/curl.login.stdin instead, and it prints that body with the status
 # $FAKE_CURL_LOGIN_STATUS (200).
+# With $FAKE_CURL_REPLIES (a folder), call N prints that folder's file N, if
+# any, with the status in N.status (200), and also saves its stdin to
+# curl.stdin.N: a scripted run of several calls.
 for a in "$@"; do printf '%s\n' "$a"; done >>"$HOME/curl.log"
 echo >>"$HOME/curl.log"
 fmt='' url=''
@@ -23,7 +26,16 @@ case $url in *"${FAKE_CURL_LOGIN_PATH:-/api/auth/login}")
     body=$FAKE_CURL_TOKEN_BODY status=${FAKE_CURL_LOGIN_STATUS:-200} save=curl.login.stdin
   fi ;;
 esac
-cat >"$HOME/$save"
+if [ -n "$FAKE_CURL_REPLIES" ]; then
+  n=$(($(cat "$HOME/curl.count" 2>/dev/null || echo 0) + 1))
+  echo "$n" >"$HOME/curl.count"
+  [ -f "$FAKE_CURL_REPLIES/$n" ] && body=$(cat "$FAKE_CURL_REPLIES/$n")
+  [ -f "$FAKE_CURL_REPLIES/$n.status" ] && status=$(cat "$FAKE_CURL_REPLIES/$n.status")
+  cat >"$HOME/$save"
+  cp "$HOME/$save" "$HOME/curl.stdin.$n"
+else
+  cat >"$HOME/$save"
+fi
 env >"$HOME/curl.env"
 printf '%s' "$body"
 if [ "${FAKE_CURL_EXIT:-0}" != 0 ]; then
