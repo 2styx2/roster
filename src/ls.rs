@@ -15,6 +15,7 @@ pub fn json(hosts: &[Host]) -> String {
                     serde_json::json!({
                         "name": s.name, "port": s.port, "url": s.url, "scheme": s.scheme,
                         "user": s.user, "login": s.login, "verify": s.verify,
+                        "has_login": s.has_login(),
                     })
                 })
                 .collect();

@@ -212,7 +212,8 @@ Print one JSON document:
   "web": null,
   "services": [{"name": "web", "port": 443,
     "url": "https://10.0.0.5", "scheme": "https",
-    "user": "admin", "login": "basic", "verify": true}]}]}
+    "user": "admin", "login": "basic", "verify": true,
+    "has_login": false}]}]}
 .fi
 .PP
 Each field is the Host's resolved setting (see
@@ -231,6 +232,17 @@ is null unless the Inventory gives a service a URL;
 and
 .B url
 are null when roster can't tell.
+.B has_login
+is true when
+.B web
+sends the service a stored Login: an
+.B auth
+other than
+.B prompt
+and a
+.B login
+other than
+.BR none .
 A service's
 .B auth
 and the Host's are vault references and are never printed.
@@ -392,7 +404,10 @@ which auto mode's classifier reads (only from the user's own settings),
 .B $defaults
 (so the classifier keeps its built-in rules) and a sentence saying that
 logging in to the Hosts in ROSTER.md and running commands there is
-authorized.
+authorized, and one saying that reading their web APIs with
+.B roster web
+GET (or HEAD) is authorized, while a call that changes something needs the
+user's OK first.
 ROSTER.md then also says that Claude has permission to log in.
 With
 .BR "claude: false" ,
@@ -1221,7 +1236,12 @@ for
 or
 .B header = """Authorization: Bearer TOKEN"""
 for
-.BR "login: bearer" .
+.B login: bearer
+(with a
+.BR token_header ,
+such as
+.BR X\-API\-KEY ,
+that header with the bare token).
 .IP
 .B login: token
 logs in first, for apps whose login is "POST a user name and password, get
@@ -1275,6 +1295,11 @@ The request header for the token (default
 sent as
 .BR "Bearer TOKEN" );
 any other header gets the bare token.
+.TP
+.B login_body
+Fixed fields to send with the user name and password, such as
+.BR "{client: cli, remember: false}" ;
+strings, numbers and booleans only, or the service is left out.
 .RE
 .IP
 .B login: unifi
@@ -1320,6 +1345,59 @@ for UniFi OS and
 .B /proxy/network/api/s/default/...
 for the Network app, for example
 .BR "roster web gw\-a GET /proxy/network/api/s/default/stat/health" .
+.IP
+.B login: openvpnas
+is for OpenVPN Access Server's admin API: a token login with
+.BR "login_path /api/auth/login/userpassword" ,
+.BR "token_field auth_token" ,
+.B token_header X\-OpenVPN\-As\-AuthToken
+and
+.BR "login_body {request_admin: true}" ,
+since without that field the server gives a token the admin API refuses
+(HTTP 403); any of them can still be set.
+.IP
+.B login: vsphere
+is for ESXi and vCenter, whose SOAP API at
+.I ORIGIN/sdk
+answers a Login with a
+.B vmware_soap_session
+cookie.
+roster GETs
+.I /sdk/vimServiceVersions.xml
+for the API version (the SOAPAction
+.BR urn:vim25/VERSION ),
+asks the ServiceInstance for its SessionManager, POSTs the Login there
+(the user name and password XML\-escaped, in the stdin config, with
+.BR "\-D \-" ),
+sends
+.B header = """Cookie: vmware_soap_session=..."""
+with the request, and logs out after it, since ESXi allows few sessions at
+once; no session is kept.
+A PATH under
+.B /sdk
+gets the
+.B SOAPAction
+header and, with a body,
+.B Content\-Type: text/xml
+(unless
+.B \-H
+gives them), and a body without an envelope, such as
+.BR "\-d '<urn:RetrieveServiceContent><urn:_this type=""ServiceInstance"">ServiceInstance</urn:_this></urn:RetrieveServiceContent>'" ,
+is wrapped in one.
+A refused login exits 1 with
+.BI "roster: " "HOST SERVICE" ": vsphere login to /sdk: login refused: " FAULT
+(the server's own fault text), or
+.B no vSphere API there (is it ESXi or vCenter?)
+when
+.I /sdk
+doesn't answer as one, before the request runs.
+.IP
+A
+.B login
+roster doesn't know stops before any vault lookup or call, with
+.BI "roster: " "HOST SERVICE" ": login: " NAME " isn't a login roster knows"
+and a hint listing the ones it does; map the name in
+.BR web_login_names .
 .IP
 .B login: hub
 is
@@ -1638,16 +1716,19 @@ a URL
 or
 .B {port, url, scheme, user, auth, verify, login}
 and a token login's
-.BR "login_path, token_field, user_field, password_field, token_header" .
+.BR "login_path, token_field, user_field, password_field, token_header, login_body" .
 Entries merge field by field down the layers.
 Ports 443 and 8443 mean https, and 80, 8000, 8008, 8080 and 8888 http.
 .B login
 is
-.BR basic " (default), " bearer ", " token " (or " hub "), " unifi " or " none ,
+.BR basic " (default), " bearer ", " token " (or " hub "), " unifi ", " vsphere ", " openvpnas " or " none ,
 or a name
 .B web_login_names
-maps to one of them;
-an entry roster can't use, such as one with an unknown login, is left out.
+maps to one of them; a service with another login is kept, shown by
+.BR ls ,
+and refused by
+.BR web .
+An entry roster can't otherwise use, such as one with a bad port, is left out.
 The legacy
 .BI "web: " URL
 is a service named web.
@@ -1948,6 +2029,13 @@ No item has that exact name and bw's search found several.
 Hint:
 .BR "roster vault unlock" .
 .TP
+.B Bitwarden is locked and there's no terminal to unlock it on
+No terminal and no
+.BR BW_PASSWORD ,
+as when an agent runs roster; hint: the user runs
+.B roster vault unlock
+in their own terminal.
+.TP
 .B bw isn't logged in
 Hint: run
 .B bw login
@@ -1987,6 +2075,14 @@ or pass
 .TP
 .BI "login refused (HTTP " STATUS )
 401 or 403, from the request or the token login.
+.TP
+.BI "login: " NAME " isn't a login roster knows"
+Hint: the login types roster knows, or
+.BR web_login_names .
+.TP
+.BI "vsphere login to /sdk: login refused: " FAULT
+.TQ
+.B no vSphere API there (is it ESXi or vCenter?)
 .PP
 The picker:
 .BR "fzf isn't installed" ,

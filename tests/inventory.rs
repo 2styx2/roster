@@ -199,18 +199,18 @@ fn a_full_v0_7_0_inventory_loads_and_resolves() {
             "web": "https://198.51.100.12/ui",
             "services": [
                 {"name": "web", "port": 443, "scheme": "https", "url": "https://198.51.100.12/ui",
-                 "user": "admin", "login": "basic", "verify": true},
+                 "user": "admin", "login": "basic", "verify": true, "has_login": false},
                 {"name": "node-exporter", "port": 9200, "scheme": null, "url": null,
-                 "user": "admin", "login": "basic", "verify": true},
+                 "user": "admin", "login": "basic", "verify": true, "has_login": false},
                 {"name": "api", "port": 8443, "scheme": "https",
                  "url": "https://198.51.100.12:8443/api", "user": "api", "login": "bearer",
-                 "verify": false},
+                 "verify": false, "has_login": true},
                 {"name": "admin", "port": 8443, "scheme": "https",
                  "url": "https://198.51.100.12:8443", "user": "admin", "login": "basic",
-                 "verify": true},
+                 "verify": true, "has_login": false},
                 // `portal` is `basic` through web_login_names.
                 {"name": "portal", "port": 9443, "scheme": null, "url": null,
-                 "user": "admin", "login": "basic", "verify": true},
+                 "user": "admin", "login": "basic", "verify": true, "has_login": false},
             ],
         })
     );

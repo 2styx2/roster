@@ -146,7 +146,7 @@ pub fn login(call: &Call, path: &Path, user: &str, secret: &Secret) -> Result<Se
     if !(200..300).contains(&status) {
         return Err(failed(format!("{what}: {}", http(status))));
     }
-    let (cookie, csrf) = headers(&reply);
+    let (cookie, csrf) = headers(&reply, "TOKEN=");
     let cookie = cookie.ok_or_else(|| failed(format!("{what}: no TOKEN cookie in the reply")))?;
     let session = Session {
         origin: call.base.to_string(),
@@ -159,9 +159,9 @@ pub fn login(call: &Call, path: &Path, user: &str, secret: &Secret) -> Result<Se
     Ok(session)
 }
 
-/// The `TOKEN=...` cookie and the X-CSRF-Token of the final header block of
-/// `reply` (a 1xx block before it is skipped).
-fn headers(reply: &[u8]) -> (Option<&str>, Option<&str>) {
+/// The `NAME=...` cookie (`cookie` is `NAME=`) and the X-CSRF-Token of the
+/// final header block of `reply` (a 1xx block before it is skipped).
+pub(crate) fn headers<'a>(reply: &'a [u8], cookie: &str) -> (Option<&'a str>, Option<&'a str>) {
     let text = std::str::from_utf8(reply).unwrap_or_default();
     let mut rest = text;
     let mut block = "";
@@ -184,17 +184,17 @@ fn headers(reply: &[u8]) -> (Option<&str>, Option<&str>) {
             break;
         }
     }
-    let (mut cookie, mut csrf) = (None, None);
+    let (mut found, mut csrf) = (None, None);
     for line in block.lines().skip(1) {
-        let Some((name, value)) = line.split_once(':') else {
+        let Some((key, value)) = line.split_once(':') else {
             continue;
         };
         let value = value.trim();
-        if name.eq_ignore_ascii_case("set-cookie") && value.starts_with("TOKEN=") {
-            cookie = value.split(';').next().filter(|c| c.len() > "TOKEN=".len());
-        } else if name.eq_ignore_ascii_case("x-csrf-token") && !value.is_empty() {
+        if key.eq_ignore_ascii_case("set-cookie") && value.starts_with(cookie) {
+            found = value.split(';').next().filter(|c| c.len() > cookie.len());
+        } else if key.eq_ignore_ascii_case("x-csrf-token") && !value.is_empty() {
             csrf = Some(value);
         }
     }
-    (cookie, csrf)
+    (found, csrf)
 }
