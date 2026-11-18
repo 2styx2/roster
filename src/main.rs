@@ -22,6 +22,7 @@ mod sshconf;
 mod undo;
 mod unifi;
 mod vault;
+mod vsphere;
 mod web;
 
 /// Commands roster runs itself; any other name is a plugin.

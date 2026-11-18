@@ -429,3 +429,25 @@ fn the_session_key_and_master_password_never_leak() {
         }
     }
 }
+
+/// With no terminal and no BW_PASSWORD, a locked vault says what the user
+/// does, and nothing is asked.
+#[test]
+fn locked_without_a_terminal_says_the_user_unlocks_it() {
+    let s = sandbox("bw-locked-notty", "bw:sw-01");
+    let roster = env!("CARGO_BIN_EXE_roster");
+    let out = s.run(
+        std::path::Path::new("setsid"),
+        &["-w", roster, "run", "sw-01", "--", "uptime"],
+    );
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(
+        out.stderr.contains(
+            "Bitwarden is locked and there's no terminal to unlock it on\n  \
+             hint: the user runs `roster vault unlock` in their own terminal (it stays unlocked 12 h)"
+        ),
+        "{}",
+        out.stderr
+    );
+    assert!(!out.stderr.contains("for this run only"), "{}", out.stderr);
+}

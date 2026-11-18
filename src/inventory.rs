@@ -92,11 +92,37 @@ pub struct Service {
     /// A vault reference, as `Host::auth`.
     pub auth: Option<String>,
     pub verify: bool,
-    /// `basic`, `bearer`, `token`, `unifi` or `none`; `web_login_names` and the
-    /// built-in `hub` (a `token`) already resolved.
+    /// One of `LOGINS`, with `web_login_names` and the built-in `hub` (a
+    /// `token`) already resolved; any other is kept, and `web` refuses it.
     pub login: String,
     /// How a `token` login asks for its token.
     pub token: Token,
+}
+
+/// The login types `roster web` knows.
+pub const LOGINS: [&str; 7] = [
+    "basic",
+    "bearer",
+    "token",
+    "unifi",
+    "vsphere",
+    "openvpnas",
+    "none",
+];
+
+/// Where OpenVPN Access Server takes its admin Login.
+pub const OPENVPNAS_PATH: &str = "/api/auth/login/userpassword";
+
+impl Service {
+    /// Whether `roster web` sends it a stored Login: an `auth` that is
+    /// neither `prompt` nor empty, and a login other than `none`.
+    pub fn has_login(&self) -> bool {
+        let stored = self
+            .auth
+            .as_deref()
+            .is_some_and(|a| !a.is_empty() && a != "prompt");
+        stored && self.login != "none"
+    }
 }
 
 /// A `token` login: POST `{user_field: USER, password_field: PASSWORD}` as
@@ -108,6 +134,9 @@ pub struct Token {
     pub user_field: String,
     pub password_field: String,
     pub token_header: String,
+    /// `login_body`: fixed fields sent with the user and password, such as
+    /// `request_admin: true`; scalars only.
+    pub body: Vec<(String, serde_json::Value)>,
 }
 
 impl Host {
@@ -732,7 +761,7 @@ fn host(
     Ok(host)
 }
 
-const SERVICE_KEYS: [&str; 12] = [
+const SERVICE_KEYS: [&str; 13] = [
     "port",
     "url",
     "scheme",
@@ -745,6 +774,7 @@ const SERVICE_KEYS: [&str; 12] = [
     "user_field",
     "password_field",
     "token_header",
+    "login_body",
 ];
 
 /// Services merge per name, field by field: defaults < group < Host. An
@@ -867,19 +897,37 @@ fn service(
     } else {
         login_type
     };
-    if !["basic", "bearer", "token", "unifi", "none"].contains(&login_type.as_str()) {
-        return None;
-    }
     let field = |key: &str, default: &str| match e.get(key) {
         None => Some(default.to_string()),
         Some(v) => text(v).filter(|s| !s.trim().is_empty()),
     };
+    // OpenVPN Access Server's admin API is a token login with its own names.
+    let vpn = login_type == "openvpnas";
     let token = Token {
-        login_path: field("login_path", "/api/auth/login").filter(|p| p.starts_with('/'))?,
-        token_field: field("token_field", "access_token")?,
+        login_path: field(
+            "login_path",
+            if vpn {
+                OPENVPNAS_PATH
+            } else {
+                "/api/auth/login"
+            },
+        )
+        .filter(|p| p.starts_with('/'))?,
+        token_field: field(
+            "token_field",
+            if vpn { "auth_token" } else { "access_token" },
+        )?,
         user_field: field("user_field", "username")?,
         password_field: field("password_field", "password")?,
-        token_header: field("token_header", "Authorization")?,
+        token_header: field(
+            "token_header",
+            if vpn {
+                "X-OpenVPN-As-AuthToken"
+            } else {
+                "Authorization"
+            },
+        )?,
+        body: login_body(e.get("login_body"), vpn)?,
     };
     let or_host = |key: &str, host: &Option<String>| match e.get(key) {
         Some(v) => text(v).map(|s| s.trim().to_string()),
@@ -897,6 +945,32 @@ fn service(
         login: login_type,
         token,
     })
+}
+
+/// A token login's fixed body fields: scalars by name; `openvpnas` asks
+/// for an admin token unless told otherwise. None: not a mapping of scalars.
+fn login_body(v: Option<&Value>, vpn: bool) -> Option<Vec<(String, serde_json::Value)>> {
+    let mut body = Vec::new();
+    if vpn {
+        body.push(("request_admin".to_string(), true.into()));
+    }
+    let Some(v) = v.filter(|v| !v.is_null()) else {
+        return Some(body);
+    };
+    for (k, v) in v.as_mapping()? {
+        let key = text(k)?;
+        let value: serde_json::Value = match v {
+            Value::Bool(b) => (*b).into(),
+            Value::Number(n) if n.is_i64() => n.as_i64()?.into(),
+            Value::Number(n) if n.is_u64() => n.as_u64()?.into(),
+            Value::Number(n) => n.as_f64()?.into(),
+            Value::String(t) => t.clone().into(),
+            _ => return None,
+        };
+        body.retain(|(k, _)| *k != key);
+        body.push((key, value));
+    }
+    Some(body)
 }
 
 /// A URL's scheme and port: `http(s)://HOST[:PORT][/PATH]`, no whitespace.

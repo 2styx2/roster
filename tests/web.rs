@@ -453,7 +453,7 @@ fn a_token_login_takes_its_path_fields_and_header_from_the_service() {
 }
 
 #[test]
-fn login_hub_is_a_token_login_and_an_unknown_login_drops_the_service() {
+fn login_hub_is_a_token_login_and_an_unknown_login_is_named() {
     let s = token_sandbox("web-hub-plain", ", login: hub");
     let out = s.roster(&["web", "box-t", "GET", "/"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
@@ -464,11 +464,15 @@ fn login_hub_is_a_token_login_and_an_unknown_login_drops_the_service() {
     let s = token_sandbox("web-login-unknown", ", login: sso");
     let out = s.roster(&["web", "box-t", "web", "GET", "/"]);
     assert_eq!(out.code, 1);
-    assert!(
-        out.stderr.contains("box-t has no service 'web'"),
-        "{}",
-        out.stderr
+    assert_eq!(
+        out.stderr,
+        "roster: box-t web: login: sso isn't a login roster knows\n  \
+         hint: use one of basic, bearer, token, unifi, vsphere, openvpnas, none, \
+         or map the name to one in web_login_names\n"
     );
+    assert_eq!(read(&s, "curl.log"), "", "no call, and no vault lookup");
+    let out = s.roster(&["ls", "--json", "box-t"]);
+    assert!(out.stdout.contains("\"login\":\"sso\""), "{}", out.stdout);
 }
 
 #[test]
@@ -751,4 +755,206 @@ fn the_unifi_password_and_session_never_leak() {
             assert!(!hit, "a credential is in {}", file.display());
         }
     }
+}
+
+#[test]
+fn an_openvpnas_login_asks_for_an_admin_token_and_sends_it_in_its_header() {
+    let mut s = token_sandbox("web-openvpnas", ", login: openvpnas");
+    s.set_env("FAKE_CURL_LOGIN_PATH", "/api/auth/login/userpassword");
+    s.set_env(
+        "FAKE_CURL_TOKEN_BODY",
+        &format!("{{\"auth_token\": \"{TOKEN}\"}}"),
+    );
+    let out = s.roster(&["web", "box-t", "GET", "/api/status"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        calls(&s)[0].last().unwrap(),
+        "https://10.0.0.9/api/auth/login/userpassword"
+    );
+    assert_eq!(
+        login_body(&s),
+        serde_json::json!({"username": "ops", "password": PASSWORD, "request_admin": true})
+    );
+    assert_eq!(
+        read(&s, "curl.stdin"),
+        format!("header = \"X-OpenVPN-As-AuthToken: {TOKEN}\"\n")
+    );
+}
+
+#[test]
+fn login_body_adds_fixed_fields_to_a_token_login() {
+    let s = token_sandbox(
+        "web-login-body",
+        ", login: token, login_body: {client: roster, remember: false, ttl: 60}",
+    );
+    let out = s.roster(&["web", "box-t", "GET", "/"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        login_body(&s),
+        serde_json::json!({"username": "ops", "password": PASSWORD,
+            "client": "roster", "remember": false, "ttl": 60})
+    );
+    // Only scalars: anything else leaves the service out.
+    let s = token_sandbox("web-login-body-bad", ", login: token, login_body: {a: [1]}");
+    let out = s.roster(&["web", "box-t", "web", "GET", "/"]);
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("no service 'web'"), "{}", out.stderr);
+}
+
+#[test]
+fn a_bearer_login_uses_token_header() {
+    let s = token_sandbox(
+        "web-bearer-header",
+        ", login: bearer, token_header: X-API-KEY",
+    );
+    let out = s.roster(&["web", "box-t", "GET", "/"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(calls(&s).len(), 1, "no login call");
+    assert_eq!(
+        read(&s, "curl.stdin"),
+        format!("header = \"X-API-KEY: {PASSWORD}\"\n")
+    );
+}
+
+#[test]
+fn ls_json_says_which_services_have_a_stored_login() {
+    let s = sandbox("web-has-login");
+    let out = s.roster(&["ls", "--json", "box-a"]);
+    let v: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    let has: Vec<(String, bool)> = v["hosts"][0]["services"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            let name = s["name"].as_str().unwrap().to_string();
+            (name, s["has_login"].as_bool().unwrap())
+        })
+        .collect();
+    let want = [
+        ("api", true),
+        ("token", true),
+        ("open", false),
+        ("self", false),
+    ];
+    for (name, login) in want {
+        assert!(has.contains(&(name.into(), login)), "{name}: {has:?}");
+    }
+}
+
+const SOAP_COOKIE: &str = "soap-5d2c-made-up";
+const SOAP_PASSWORD: &str = "pw<&>\"-made-up";
+
+/// box-v has an `api` service with `login: vsphere`; the fake curl scripts
+/// the version, service content and Login replies, then the call's.
+fn vsphere_sandbox(name: &str, login_status: &str, login_reply: &str) -> Sandbox {
+    let mut s = Sandbox::new(name);
+    s.write(
+        "roster.yml",
+        "defaults: {user: admin}\ngroups:\n  lab:\n    hosts:\n      box-v:\n        \
+         ip: 10.0.0.8\n        services:\n          \
+         api: {url: \"https://10.0.0.8\", verify: false, login: vsphere, user: root, auth: env:API_PASS}\n",
+    );
+    s.set_env("API_PASS", SOAP_PASSWORD);
+    s.write(
+        "replies/1",
+        "<namespaces><namespace><name>urn:vim25</name><version>8.0.3.0</version></namespace></namespaces>",
+    );
+    s.write(
+        "replies/2",
+        "<returnval><sessionManager type=\"SessionManager\">ha-sessionmgr</sessionManager></returnval>",
+    );
+    s.write("replies/3", login_reply);
+    s.write("replies/3.status", login_status);
+    s.write("replies/4", "<CurrentTimeResponse/>");
+    let replies = s.home.join("replies");
+    s.set_env("FAKE_CURL_REPLIES", replies.to_str().unwrap());
+    s
+}
+
+#[test]
+fn a_vsphere_login_takes_a_soap_session_makes_the_call_and_logs_out() {
+    let login = format!(
+        "HTTP/1.1 200 OK\r\nSet-Cookie: vmware_soap_session=\"{SOAP_COOKIE}\"; Path=/; HttpOnly\r\n\r\n<ok/>"
+    );
+    let s = vsphere_sandbox("web-vsphere", "200", &login);
+    let out = s.roster(&[
+        "web",
+        "box-v",
+        "api",
+        "POST",
+        "/sdk",
+        "-d",
+        "<urn:CurrentTime/>",
+    ]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        out.stdout, "<CurrentTimeResponse/>",
+        "only the call's reply"
+    );
+    let calls = calls(&s);
+    assert_eq!(calls.len(), 5, "versions, content, login, call, logout");
+    assert_eq!(
+        calls[0],
+        argv(&[
+            "-k",
+            "-X",
+            "GET",
+            "https://10.0.0.8/sdk/vimServiceVersions.xml"
+        ])
+    );
+    let action = "SOAPAction: urn:vim25/8.0.3.0";
+    let xml = "Content-Type: text/xml; charset=utf-8";
+    let sdk = "https://10.0.0.8/sdk";
+    assert_eq!(
+        calls[2],
+        argv(&["-k", "-D", "-", "-H", xml, "-H", action, "-X", "POST", sdk])
+    );
+    let login = read(&s, "curl.stdin.3");
+    assert!(
+        login.contains("<urn:userName>root</urn:userName>")
+            && login.contains("<urn:password>pw&lt;&amp;&gt;&quot;-made-up</urn:password>")
+            && login.contains("ha-sessionmgr"),
+        "{login}"
+    );
+    assert_eq!(
+        calls[3],
+        argv(&["-k", "-H", action, "-H", xml, "-X", "POST", sdk])
+    );
+    let call = read(&s, "curl.stdin.4");
+    let cookie = format!("header = \"Cookie: vmware_soap_session=\\\"{SOAP_COOKIE}\\\"\"\n");
+    assert!(call.starts_with(&cookie), "{call}");
+    assert!(
+        call.contains("<soapenv:Body><urn:CurrentTime/></soapenv:Body>"),
+        "a bare call gets its envelope: {call}"
+    );
+    let logout = read(&s, "curl.stdin.5");
+    assert!(
+        logout.starts_with(&cookie) && logout.contains("<urn:Logout>"),
+        "{logout}"
+    );
+    // Neither the password nor the session shows.
+    for secret in [SOAP_PASSWORD, SOAP_COOKIE] {
+        assert!(!out.stdout.contains(secret) && !out.stderr.contains(secret));
+        assert!(!read(&s, "curl.log").contains(secret), "argv");
+    }
+    assert!(!read(&s, "curl.env").contains(SOAP_PASSWORD));
+}
+
+#[test]
+fn a_refused_vsphere_login_stops_before_the_call() {
+    let fault = "<soapenv:Fault><faultstring>Cannot complete login due to an incorrect \
+                 user name or password.</faultstring></soapenv:Fault>";
+    let s = vsphere_sandbox(
+        "web-vsphere-refused",
+        "500",
+        &format!("HTTP/1.1 500 Internal Server Error\r\n\r\n{fault}"),
+    );
+    let out = s.roster(&["web", "box-v", "api", "GET", "/sdk"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "roster: box-v api: vsphere login to /sdk: login refused: Cannot complete login \
+         due to an incorrect user name or password.\n"
+    );
+    assert_eq!(calls(&s).len(), 3);
 }

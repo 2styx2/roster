@@ -333,6 +333,18 @@ const DOCUMENTED: &[&str] = &[
     "not valid YAML: ",
     "`roster \\-h` lists the commands and their options",
     ": skipped: unreviewed",
+    // web logins for agents
+    "has_login",
+    "login_body",
+    ".B login: openvpnas",
+    "X\\-OpenVPN\\-As\\-AuthToken",
+    ".B login: vsphere",
+    "vmware_soap_session",
+    "isn't a login roster knows",
+    "vsphere login to /sdk: login refused: ",
+    "no vSphere API there (is it ESXi or vCenter?)",
+    ".B Bitwarden is locked and there's no terminal to unlock it on",
+    "reading their web APIs with",
 ];
 
 #[test]

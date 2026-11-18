@@ -108,6 +108,15 @@ fn command_line(command: &str, what: &str) -> Result<Zeroizing<String>, Fail> {
     }
 }
 
+/// Whether there's a terminal to ask on.
+pub fn has_tty() -> bool {
+    File::options()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .is_ok()
+}
+
 /// Ask for `label` on /dev/tty with echo off.
 pub fn ask(label: &str, what: &str) -> Result<Zeroizing<String>, Fail> {
     let tty_err = |e: std::io::Error| {
